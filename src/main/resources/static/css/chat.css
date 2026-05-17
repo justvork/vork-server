@@ -99,10 +99,84 @@ body {
     margin-bottom: 0.2rem;
 }
 
+.prompt-reasoning {
+    margin-top: 0.35rem;
+    margin-bottom: 0.45rem;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.45rem;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.prompt-reasoning summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 0.45rem 0.65rem;
+    color: var(--bs-secondary-color);
+    font-size: 0.86rem;
+    user-select: none;
+}
+
+.prompt-reasoning summary::-webkit-details-marker {
+    display: none;
+}
+
+.prompt-reasoning summary::before {
+    content: "▸";
+    display: inline-block;
+    margin-right: 0.4rem;
+    transition: transform 0.15s ease;
+}
+
+.prompt-reasoning[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.prompt-reasoning-body {
+    padding: 0 0.65rem 0.55rem;
+}
+
 .prompt-args {
     margin-top: 0.45rem;
     margin-bottom: 0.45rem;
     max-height: 180px;
+}
+
+.prompt-args-toggle {
+    margin-top: 0.15rem;
+    margin-bottom: 0.35rem;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.45rem;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.prompt-args-toggle summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 0.45rem 0.65rem;
+    color: var(--bs-secondary-color);
+    font-size: 0.86rem;
+    user-select: none;
+}
+
+.prompt-args-toggle summary::-webkit-details-marker {
+    display: none;
+}
+
+.prompt-args-toggle summary::before {
+    content: "▸";
+    display: inline-block;
+    margin-right: 0.4rem;
+    transition: transform 0.15s ease;
+}
+
+.prompt-args-toggle[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.prompt-args-toggle .prompt-args {
+    margin: 0;
+    padding: 0 0.65rem 0.55rem;
+    max-height: none;
 }
 
 .prompt-actions {

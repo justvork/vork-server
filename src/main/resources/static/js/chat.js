@@ -54,6 +54,13 @@ function setInputEnabled(on) {
     waiting = !on;
 }
 
+function focusMessageInput() {
+    if (!messageInput || messageInput.disabled) return;
+    requestAnimationFrame(function () {
+        messageInput.focus();
+    });
+}
+
 // ── MIME-type helpers ─────────────────────────────────────────────────────────
 
 function isImage(mime) {
@@ -144,9 +151,11 @@ function tryParseJson(text) {
 
 function renderPromptRequiredFrame(frame) {
     const payload = frame.payload || {};
-    const toolName = payload.toolName || 'unknown-tool';
-    const toolCallId = payload.toolCallId || '';
-    const args = typeof payload.arguments === 'string' ? payload.arguments : JSON.stringify(payload.arguments || {});
+    const reasoning = typeof payload.reasoning === 'string' && payload.reasoning.trim()
+        ? payload.reasoning
+        : 'The AI requested this action to process your command.';
+    const rawArgs = typeof payload.arguments === 'string' ? payload.arguments : JSON.stringify(payload.arguments || {});
+    const displayArgs = typeof payload.displayArguments === 'string' ? payload.displayArguments : rawArgs;
     const actions = Array.isArray(payload.actions) ? payload.actions : [];
 
     const row = document.createElement('div');
@@ -155,9 +164,11 @@ function renderPromptRequiredFrame(frame) {
         '<div class="avatar assistant"><i class="fa-solid fa-robot"></i></div>' +
         '<div class="bubble assistant prompt-required">' +
         '  <div class="prompt-title"><i class="fa-solid fa-shield-halved"></i> Authorization Required</div>' +
-        '  <div class="prompt-meta"><strong>Tool:</strong> ' + escapeHtml(toolName) + '</div>' +
-        '  <div class="prompt-meta"><strong>Call ID:</strong> ' + escapeHtml(toolCallId) + '</div>' +
-        '  <pre class="prompt-args">' + escapeHtml(args) + '</pre>' +
+        '  <div class="prompt-reasoning-body">' + marked.parse(reasoning) + '</div>' +
+        '  <details class="prompt-args-toggle">' +
+        '    <summary>Tool input preview</summary>' +
+        '    <div class="prompt-args">' + marked.parse(displayArgs) + '</div>' +
+        '  </details>' +
         '  <div class="prompt-actions"></div>' +
         '</div>';
 
@@ -466,6 +477,7 @@ function connectWebSocket() {
                 } else {
                     renderMessage(msg);
                 }
+                focusMessageInput();
             });
         },
         onDisconnect: function () { setStatus('disconnected'); },
@@ -487,7 +499,7 @@ function initSession() {
             sessionDisplay.textContent = sessionUuid.substring(0, 8) + '\u2026';
             (data.messages || []).forEach(renderSessionRecord);
             connectWebSocket();
-            messageInput.focus();
+            focusMessageInput();
         })
         .catch(function (err) {
             renderMessage({ role: 'ERROR', content: '**Failed to initialise session:** ' + err.message });
@@ -559,6 +571,7 @@ chatForm.addEventListener('submit', function (e) {
     setTimeout(function () {
         chatLayout.classList.add('visible');
         splash.classList.add('fade-out');
+        focusMessageInput();
         splash.addEventListener('transitionend', function () { splash.remove(); }, { once: true });
     }, 5000);
 }());

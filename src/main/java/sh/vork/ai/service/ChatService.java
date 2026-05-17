@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -14,6 +15,7 @@ import org.slf4j.MDC;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.content.Media;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -30,6 +32,7 @@ import sh.vork.ai.entity.AiChatMessage.ToolCallRef;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.security.ToolSuspensionException;
+import sh.vork.ai.security.VisualizableTool;
 import sh.vork.database.DatabaseRepository;
 import sh.vork.storage.FileStorageService;
 import sh.vork.storage.StoredFile;
@@ -53,17 +56,24 @@ public class ChatService {
     private final FileStorageService            fileStorageService;
     private final SimpMessagingTemplate         messaging;
     private final ObjectMapper                  objectMapper;
+    private final Map<String, ToolCallback>     toolCallbacksByName;
   
     public ChatService(DatabaseRepository<AiSession> aiSessionRepository,
                        AiOrchestrationService aiOrchestrationService,
                        FileStorageService fileStorageService,
                        SimpMessagingTemplate messaging,
-                       ObjectMapper objectMapper) {
+                       ObjectMapper objectMapper,
+                       List<ToolCallback> toolCallbacks) {
         this.sessionRepo         = aiSessionRepository;
         this.aiService           = aiOrchestrationService;
         this.fileStorageService  = fileStorageService;
         this.messaging           = messaging;
         this.objectMapper        = objectMapper;
+        this.toolCallbacksByName = toolCallbacks.stream().collect(
+                Collectors.toMap(
+                        t -> t.getToolDefinition().name(),
+                        t -> t,
+                        (a, b) -> a));
     }
 
     /**
@@ -188,6 +198,21 @@ public class ChatService {
             List<ToolCallRef> pendingToolCalls = List.of(
                     new ToolCallRef(simulatedToolCallId, "FUNCTION", ex.getToolName(), ex.getArguments()));
 
+            ToolCallback targetTool = toolCallbacksByName.get(ex.getToolName());
+            String displayArguments = ex.getArguments();
+            if (targetTool instanceof VisualizableTool visualTool) {
+                try {
+                    displayArguments = visualTool.formatAuthorizationDetails(ex.getArguments());
+                } catch (Exception e) {
+                    log.warn("Failed to pretty print tool arguments, falling back to raw JSON", e);
+                }
+            }
+
+            String justification = ex.getReasoning();
+            if (justification == null || justification.isBlank()) {
+                justification = defaultAuthorizationReason(ex.getToolName());
+            }
+
             String eventId = UUID.randomUUID().toString();
             UiEventFrame promptEvent = new UiEventFrame(
                 eventId,
@@ -196,7 +221,9 @@ public class ChatService {
                 java.util.Map.of(
                     "toolName", ex.getToolName(),
                     "toolCallId", simulatedToolCallId,
+                    "reasoning", justification,
                     "arguments", ex.getArguments(),
+                    "displayArguments", displayArguments,
                     "actions", java.util.List.of("ONCE", "SESSION", "ALWAYS", "DENIED")
                 ));
 
@@ -238,4 +265,12 @@ public class ChatService {
             return null;
         }
     }
+
+    private static String defaultAuthorizationReason(String toolName) {
+        if ("compileJavaType".equals(toolName)) {
+            return "Approval is required to compile and register a new Java type so it can be used in later steps.";
+        }
+        return "Approval is required to run this protected action so your request can continue safely.";
+    }
+
 }

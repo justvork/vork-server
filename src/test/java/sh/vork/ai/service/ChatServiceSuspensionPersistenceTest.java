@@ -13,6 +13,8 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,6 +24,7 @@ import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.security.ToolSuspensionException;
+import sh.vork.ai.security.VisualizableToolCallback;
 import sh.vork.database.mock.MapDatabaseRepository;
 import sh.vork.storage.FileStorageService;
 
@@ -51,7 +54,22 @@ class ChatServiceSuspensionPersistenceTest {
             any(AiProvider.class)))
                 .thenReturn("unused");
 
-        ChatService chatService = new ChatService(sessionRepo, aiService, fileStorageService, messaging, objectMapper);
+        ToolCallback compileDelegate = mock(ToolCallback.class);
+        ToolDefinition def = mock(ToolDefinition.class);
+        when(def.name()).thenReturn("compileJavaType");
+        when(compileDelegate.getToolDefinition()).thenReturn(def);
+        ToolCallback compileTool = new VisualizableToolCallback(
+            compileDelegate,
+            args -> "```java\nclass Demo {}\n```"
+        );
+
+        ChatService chatService = new ChatService(
+            sessionRepo,
+            aiService,
+            fileStorageService,
+            messaging,
+            objectMapper,
+            List.of(compileTool));
 
         AiChatMessage out = chatService.sendMessage(sessionId, "please compile", null, AiProvider.GEMINI);
 
@@ -72,6 +90,10 @@ class ChatServiceSuspensionPersistenceTest {
         assertEquals("PROMPT_REQUIRED", frame.type());
         assertEquals("AUTHORIZE_TOOL", frame.intent());
         assertEquals("compileJavaType", String.valueOf(frame.payload().get("toolName")));
+        assertEquals("Approval is required to compile and register a new Java type so it can be used in later steps.",
+            String.valueOf(frame.payload().get("reasoning")));
+        assertEquals("{\"source\":\"class Demo {}\"}", String.valueOf(frame.payload().get("arguments")));
+        assertEquals("```java\nclass Demo {}\n```", String.valueOf(frame.payload().get("displayArguments")));
         assertNotNull(awaiting.toolCalls());
         assertEquals(1, awaiting.toolCalls().size());
 

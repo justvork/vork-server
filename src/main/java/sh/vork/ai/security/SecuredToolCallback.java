@@ -22,13 +22,13 @@ public class SecuredToolCallback implements ToolCallback {
 
     @Override
     public String call(String arguments) {
-        enforce(arguments);
+        enforce(arguments, null);
         return delegate.call(arguments);
     }
 
     @Override
     public String call(String arguments, ToolContext toolContext) {
-        enforce(arguments);
+        enforce(arguments, toolContext);
         return delegate.call(arguments, toolContext);
     }
 
@@ -42,13 +42,55 @@ public class SecuredToolCallback implements ToolCallback {
         return delegate.getToolMetadata();
     }
 
-    private void enforce(String arguments) {
+    private void enforce(String arguments, ToolContext toolContext) {
         String username = resolveUsername();
         String toolName = delegate.getToolDefinition().name();
 
         if (ruleEngine.requiresAuthorization(toolName, username, "pending-id")) {
-            throw new ToolSuspensionException(toolName, arguments);
+            throw new ToolSuspensionException(toolName, arguments, extractReasoning(toolContext));
         }
+    }
+
+    private static String extractReasoning(ToolContext toolContext) {
+        if (toolContext == null) {
+            return null;
+        }
+
+        try {
+            var method = toolContext.getClass().getMethod("getContext");
+            Object contextObj = method.invoke(toolContext);
+            if (contextObj instanceof java.util.Map<?, ?> context) {
+                String fromMap = firstNonBlank(
+                        context.get("reasoning"),
+                        context.get("justification"),
+                        context.get("content"),
+                        context.get("text"),
+                        context.get("assistantMessage"),
+                        context.get("assistant_message"),
+                        context.get("message"),
+                        context.get("output"));
+                if (fromMap != null) {
+                    return fromMap;
+                }
+            }
+        } catch (Exception ignored) {
+            // Best-effort extraction only.
+        }
+
+        return null;
+    }
+
+    private static String firstNonBlank(Object... values) {
+        for (Object value : values) {
+            if (value == null) {
+                continue;
+            }
+            String text = String.valueOf(value).trim();
+            if (!text.isBlank()) {
+                return text;
+            }
+        }
+        return null;
     }
 
     private static String resolveUsername() {

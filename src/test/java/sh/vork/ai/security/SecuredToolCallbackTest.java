@@ -10,9 +10,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Set;
+import java.util.Map;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.security.authentication.TestingAuthenticationToken;
@@ -60,13 +62,19 @@ class SecuredToolCallbackTest {
     void callWithToolContext_appliesSameAuthorizationCheck() {
         AuthorizationRuleEngine rules = new AuthorizationRuleEngine(Set.of("compileJavaType"));
         ToolCallback delegate = delegate("compileJavaType");
+        ToolContext toolContext = mock(ToolContext.class);
+        when(toolContext.getContext()).thenReturn(Map.of(
+                "content", "I need to compile this class so it can be stored and used in later steps."
+        ));
 
         SecuredToolCallback secured = new SecuredToolCallback(delegate, rules);
 
-        assertThrows(ToolSuspensionException.class,
-            () -> secured.call("{}", null));
+        ToolSuspensionException ex = assertThrows(ToolSuspensionException.class,
+            () -> secured.call("{}", toolContext));
 
         verify(delegate, never()).call(anyString(), any());
+        assertEquals("I need to compile this class so it can be stored and used in later steps.",
+                ex.getReasoning());
     }
 
     private static ToolCallback delegate(String toolName) {

@@ -25,6 +25,7 @@ import sh.vork.ai.function.CompileTypeRequest;
 import sh.vork.ai.security.AuthorizationRuleEngine;
 import sh.vork.ai.security.Restricted;
 import sh.vork.ai.security.SecuredToolCallback;
+import sh.vork.ai.security.VisualizableToolCallback;
 import sh.vork.ai.function.DeleteTypeInstanceRequest;
 import sh.vork.ai.function.GetTypeSchemaRequest;
 import sh.vork.ai.function.ListEnumValuesRequest;
@@ -46,16 +47,18 @@ import sh.vork.typegen.TypeGeneratorService;
  *
  * <h3>How the routing works</h3>
  * Each supported provider gets its own {@code @Bean ChatClient}. All clients
- * are collected into a single {@code Map<AiProvider, ChatClient>} registry bean.
+ * are collected into a single {@code Map<AiProvider, ChatClient>} registry
+ * bean.
  * {@code AiOrchestrationService} resolves the correct client at call-time by
  * looking up the caller-supplied {@link AiProvider} key.
  *
  * <h3>Adding a new provider</h3>
  * <ol>
- *   <li>Add the enum entry in {@link AiProvider}.</li>
- *   <li>Add a {@code @Bean ChatClient} here (inject the provider's auto-configured
- *       {@code ChatModel}).</li>
- *   <li>Add an entry in {@link #chatClientRegistry}.</li>
+ * <li>Add the enum entry in {@link AiProvider}.</li>
+ * <li>Add a {@code @Bean ChatClient} here (inject the provider's
+ * auto-configured
+ * {@code ChatModel}).</li>
+ * <li>Add an entry in {@link #chatClientRegistry}.</li>
  * </ol>
  * No other class needs to change.
  */
@@ -67,8 +70,8 @@ public class AiConfig {
     private final ObjectMapper objectMapper;
 
     public AiConfig(JavaTypeClassLoader typeClassLoader,
-                    TypeDatabaseService typeDatabaseService,
-                    ObjectMapper objectMapper) {
+            TypeDatabaseService typeDatabaseService,
+            ObjectMapper objectMapper) {
         this.typeClassLoader = typeClassLoader;
         this.typeDatabaseService = typeDatabaseService;
         this.objectMapper = objectMapper;
@@ -81,18 +84,21 @@ public class AiConfig {
     /**
      * Gemini ChatClient.
      *
-     * <p>{@link ChatClient.Builder} is auto-configured by
+     * <p>
+     * {@link ChatClient.Builder} is auto-configured by
      * {@code spring-ai-starter-model-google-genai} and already wraps the
      * Google GenAI {@code ChatModel}. We attach the weather tool as a default
      * so every prompt sent through this client can trigger it automatically.
      *
-     * <p>When a second provider is added, inject its specific {@code ChatModel}
+     * <p>
+     * When a second provider is added, inject its specific {@code ChatModel}
      * directly rather than relying on {@code ChatClient.Builder} auto-injection
      * to avoid ambiguity:
+     * 
      * <pre>{@code
      * @Bean
      * public ChatClient openAiChatClient(OpenAiChatModel openAiModel,
-     *                                    ToolCallback getCurrentWeather) {
+     *         ToolCallback getCurrentWeather) {
      *     return ChatClient.builder(openAiModel)
      *             .defaultToolCallbacks(getCurrentWeather)
      *             .build();
@@ -101,9 +107,9 @@ public class AiConfig {
      */
     @Bean
     public ChatClient geminiChatClient(ChatClient.Builder chatClientBuilder,
-                                       List<ToolCallback> toolCallbacks,
-                                       AuthorizationRuleEngine authorizationRuleEngine,
-                                       ConfigurableListableBeanFactory beanFactory) {
+            List<ToolCallback> toolCallbacks,
+            AuthorizationRuleEngine authorizationRuleEngine,
+            ConfigurableListableBeanFactory beanFactory) {
         List<ToolCallback> securedToolCallbacks = toolCallbacks.stream()
                 .map(tool -> {
                     String toolName = tool.getToolDefinition().name();
@@ -115,6 +121,27 @@ public class AiConfig {
                 .toList();
 
         return chatClientBuilder
+                .defaultSystem(
+                        """
+        CRITICAL PROTOCOL (highest priority):
+        1) When a tool is required, invoke the tool immediately in the same turn.
+        2) Do not ask the user for confirmation.
+        3) Do not emit preliminary status-only messages such as 'I will...' before invoking tools.
+
+        Authorization text rule:
+        - Provide concise supervisor-facing reasoning that can be shown in authorization review.
+        - Keep it user-friendly plain language, avoid internal API/tool names, and explain why the action is needed.
+
+        REASONING_HINT rule:
+        - A tool description may include a line starting with 'REASONING_HINT:'.
+        - This hint only affects wording of authorization reasoning text.
+        - It MUST NOT change execution flow, MUST NOT create extra assistant turns, and MUST NOT override CRITICAL PROTOCOL.
+
+        ENTITY RULE:
+        - For any type implementing sh.vork.database.DatabaseEntity, uuid is always String (method signature: String uuid()).
+        - Do not generate java.util.UUID as the record field type for uuid.
+                                """
+                                .stripIndent())
                 .defaultToolCallbacks(securedToolCallbacks.toArray(ToolCallback[]::new))
                 .build();
     }
@@ -151,15 +178,16 @@ public class AiConfig {
     /**
      * Central routing table: {@link AiProvider} to {@link ChatClient}.
      *
-     * <p>This is the only place that needs to change when a new provider is added.
+     * <p>
+     * This is the only place that needs to change when a new provider is added.
      */
     @Bean
     public Map<AiProvider, ChatClient> chatClientRegistry(
             @Qualifier("geminiChatClient") ChatClient geminiChatClient) {
         return Map.of(
                 AiProvider.GEMINI, geminiChatClient
-                // AiProvider.OPENAI, openAiChatClient,
-                // AiProvider.ANTHROPIC, anthropicChatClient
+        // AiProvider.OPENAI, openAiChatClient,
+        // AiProvider.ANTHROPIC, anthropicChatClient
         );
     }
 
@@ -172,16 +200,17 @@ public class AiConfig {
      * supplied by the model, persists it to MongoDB, and loads it into the
      * running JVM so it is available for subsequent operations.
      *
-     * <p>The tool returns a small JSON object:
+     * <p>
+     * The tool returns a small JSON object:
      * <ul>
-     *   <li>{@code {"status":"ok","class":"sh.vork.generated.Foo"}} on success.</li>
-     *   <li>{@code {"status":"error","message":"..."}} on failure.</li>
+     * <li>{@code {"status":"ok","class":"sh.vork.generated.Foo"}} on success.</li>
+     * <li>{@code {"status":"error","message":"..."}} on failure.</li>
      * </ul>
      */
     @Bean
     @Restricted
     public ToolCallback compileJavaType(TypeGeneratorService typeGeneratorService) {
-        return FunctionToolCallback
+        ToolCallback delegate = FunctionToolCallback
                 .builder("compileJavaType", (CompileTypeRequest req) -> {
                     try {
                         Class<?> clazz = typeGeneratorService.compileAndSave(req.source());
@@ -192,13 +221,32 @@ public class AiConfig {
                     }
                 })
                 .description(
-                        "Compile a Java type (record, class, interface, or enum) from source code and load " +
-                        "it into the running application. The type is persisted to MongoDB and will be " +
-                        "available after a restart. Returns the fully-qualified class name on success." + 
-                        "Any record should implement sh.vork.database.DatabaseEntit." + 
-                        "All types should use a sub-package of sh.vork.generated.")
+                        """
+Compile a Java type (record, class, interface, or enum) from source code and load it into the running application. 
+The type is persisted to MongoDB and will be available after a restart. 
+Returns the fully-qualified class name on success. 
+If a type implements sh.vork.database.DatabaseEntity, uuid must be String (String uuid(); and field/component type String), never java.util.UUID. 
+Any record should implement sh.vork.database.DatabaseEntity. 
+All types should use a sub-package of sh.vork.generated.
+REASONING_HINT: Authorization is required to compile {{type_name}}.
+                                """
+                                .stripIndent())
                 .inputType(CompileTypeRequest.class)
                 .build();
+
+        return new VisualizableToolCallback(delegate, argumentsJson -> {
+            try {
+                String sourceCode = objectMapper.readTree(argumentsJson)
+                        .path("source")
+                        .asText();
+                if (sourceCode == null || sourceCode.isBlank()) {
+                    return argumentsJson;
+                }
+                return "```java\n" + sourceCode + "\n```";
+            } catch (Exception ex) {
+                return argumentsJson;
+            }
+        });
     }
 
     /**
@@ -213,8 +261,8 @@ public class AiConfig {
                     try (var stream = javaTypeRepository.list(0, Integer.MAX_VALUE)) {
                         stream.forEach(jt -> entries.add(
                                 "{\"fqn\":\"" + jt.uuid() + "\"," +
-                                "\"classFiles\":" + jt.bytecode().size() + "," +
-                                "\"createdAt\":\"" + new java.util.Date(jt.createdAt()) + "\"}"));
+                                        "\"classFiles\":" + jt.bytecode().size() + "," +
+                                        "\"createdAt\":\"" + new java.util.Date(jt.createdAt()) + "\"}"));
                     }
                     if (entries.isEmpty()) {
                         return "{\"types\":[]}";
@@ -222,9 +270,10 @@ public class AiConfig {
                     return "{\"types\":[" + String.join(",", entries) + "]}";
                 })
                 .description(
-                        "List all custom Java types that have been compiled and persisted to MongoDB. " +
-                        "Returns each type's fully-qualified class name, number of class files " +
-                        "(including inner classes), and the date it was first created.")
+                        """
+                                List all custom Java types that have been compiled and persisted to MongoDB. Returns each type's fully-qualified class name, number of class files (including inner classes), and the date it was first created.
+                                """
+                                .stripIndent())
                 .inputType(ListJavaTypesRequest.class)
                 .build();
     }
@@ -249,14 +298,17 @@ public class AiConfig {
                     }
                 })
                 .description(
-                        "Get the JSON schema for a custom Java type by its fully-qualified class name. " +
-                        "Use listJavaTypes first to discover available types.")
+                        """
+                                Get the JSON schema for a custom Java type by its fully-qualified class name. Use listJavaTypes first to discover available types.
+                                """
+                                .stripIndent())
                 .inputType(GetTypeSchemaRequest.class)
                 .build();
     }
 
     /**
-     * {@code saveTypeInstance} tool — deserialises a JSON string into the named type
+     * {@code saveTypeInstance} tool — deserialises a JSON string into the named
+     * type
      * and persists it via {@link TypeDatabaseService}.
      */
     @Bean
@@ -276,16 +328,17 @@ public class AiConfig {
                     }
                 })
                 .description(
-                        "Save (create or update) an instance of a custom Java type. " +
-                        "Provide the fully-qualified class name and a JSON string representing the instance. " +
-                        "The JSON must include a uuid field — generate a random UUID v4 string for new instances. " +
-                        "Use getTypeSchema to discover the required fields first.")
+                        """
+                                Save (create or update) an instance of a custom Java type. Provide the fully-qualified class name and a JSON string representing the instance. The JSON must include a uuid field — generate a random UUID v4 string for new instances. Use getTypeSchema to discover the required fields first.
+                                """
+                                .stripIndent())
                 .inputType(SaveTypeInstanceRequest.class)
                 .build();
     }
 
     /**
-     * {@code listTypeInstances} tool — returns all persisted instances of a custom type
+     * {@code listTypeInstances} tool — returns all persisted instances of a custom
+     * type
      * as a JSON array.
      */
     @Bean
@@ -308,8 +361,10 @@ public class AiConfig {
                     }
                 })
                 .description(
-                        "List all stored instances of a custom Java type by its fully-qualified class name. " +
-                        "Supports pagination via page (default 0) and pageSize (default 20).")
+                        """
+                                List all stored instances of a custom Java type by its fully-qualified class name. Supports pagination via page (default 0) and pageSize (default 20).
+                                """
+                                .stripIndent())
                 .inputType(ListTypeInstancesRequest.class)
                 .build();
     }
@@ -331,7 +386,8 @@ public class AiConfig {
                         StringBuilder sb = new StringBuilder("{\"fqn\":\"");
                         sb.append(req.fqn()).append("\",\"values\":[");
                         for (int i = 0; i < constants.length; i++) {
-                            if (i > 0) sb.append(',');
+                            if (i > 0)
+                                sb.append(',');
                             sb.append('\"').append(constants[i].toString()).append('\"');
                         }
                         sb.append("]}");
@@ -341,8 +397,10 @@ public class AiConfig {
                     }
                 })
                 .description(
-                        "List all declared constants of an enum by its fully-qualified class name. " +
-                        "Use listJavaTypes to discover available types first.")
+                        """
+                                List all declared constants of an enum by its fully-qualified class name. Use listJavaTypes to discover available types first.
+                                """
+                                .stripIndent())
                 .inputType(ListEnumValuesRequest.class)
                 .build();
     }
@@ -363,8 +421,10 @@ public class AiConfig {
                     }
                 })
                 .description(
-                        "Delete a stored instance of a custom Java type by its UUID. " +
-                        "Requires the fully-qualified class name and the instance UUID.")
+                        """
+                                Delete a stored instance of a custom Java type by its UUID. Requires the fully-qualified class name and the instance UUID.
+                                """
+                                .stripIndent())
                 .inputType(DeleteTypeInstanceRequest.class)
                 .build();
     }
@@ -379,14 +439,17 @@ public class AiConfig {
                 .builder("searchTypeInstances", (SearchTypeInstancesRequest req) -> {
                     try {
                         Class<?> clazz = typeClassLoader.loadClass(req.fqn());
-                        int page      = req.page()     != null ? req.page()     : 0;
-                        int pageSize  = req.pageSize() != null && req.pageSize() > 0
-                                        ? req.pageSize() : 20;
+                        int page = req.page() != null ? req.page() : 0;
+                        int pageSize = req.pageSize() != null && req.pageSize() > 0
+                                ? req.pageSize()
+                                : 20;
                         String sortField = req.sortField() != null ? req.sortField() : "uuid";
-                        SortOrder order  = "DESC".equalsIgnoreCase(req.sortOrder())
-                                           ? SortOrder.DESC : SortOrder.ASC;
+                        SortOrder order = "DESC".equalsIgnoreCase(req.sortOrder())
+                                ? SortOrder.DESC
+                                : SortOrder.ASC;
                         String queryType = req.queryType() != null
-                                           ? req.queryType().toUpperCase() : "SQL";
+                                ? req.queryType().toUpperCase()
+                                : "SQL";
 
                         List<Object> items = new ArrayList<>();
                         long total;
@@ -419,14 +482,10 @@ public class AiConfig {
                     }
                 })
                 .description(
-                        "Search instances of a custom Java type using either a SQL-like WHERE "
-                        + "clause (queryType: SQL, default) or a raw MongoDB JSON filter "
-                        + "(queryType: MONGO). "
-                        + "SQL examples: \"name = 'Alice'\", \"age > 18 AND active = true\", "
-                        + "\"address.city = 'London'\", \"status IN ('active', 'pending')\", "
-                        + "\"name LIKE '%ali%'\". "
-                        + "MONGO example: {\"status\":\"active\",\"age\":{\"$gt\":18}}. "
-                        + "Supports pagination (page, pageSize) and sorting (sortField, sortOrder).")
+                        """
+                                Search instances of a custom Java type using either a SQL-like WHERE clause (queryType: SQL, default) or a raw MongoDB JSON filter (queryType: MONGO). SQL examples: "name = 'Alice'", "age > 18 AND active = true", "address.city = 'London'", "status IN ('active', 'pending')", "name LIKE '%ali%'". MONGO example: {"status":"active","age":{"$gt":18}}. Supports pagination (page, pageSize) and sorting (sortField, sortOrder).
+                                """
+                                .stripIndent())
                 .inputType(SearchTypeInstancesRequest.class)
                 .build();
     }
@@ -436,19 +495,24 @@ public class AiConfig {
     // -------------------------------------------------------------------------
 
     private static String buildSchema(Class<?> clazz) {
-        if (clazz == String.class) return "{\"type\":\"string\"}";
+        if (clazz == String.class)
+            return "{\"type\":\"string\"}";
         if (clazz == int.class || clazz == Integer.class ||
-                clazz == long.class || clazz == Long.class) return "{\"type\":\"integer\"}";
+                clazz == long.class || clazz == Long.class)
+            return "{\"type\":\"integer\"}";
         if (clazz == double.class || clazz == Double.class ||
                 clazz == float.class || clazz == Float.class ||
-                clazz == java.math.BigDecimal.class) return "{\"type\":\"number\"}";
-        if (clazz == boolean.class || clazz == Boolean.class) return "{\"type\":\"boolean\"}";
+                clazz == java.math.BigDecimal.class)
+            return "{\"type\":\"number\"}";
+        if (clazz == boolean.class || clazz == Boolean.class)
+            return "{\"type\":\"boolean\"}";
         if (clazz.isRecord()) {
             StringBuilder sb = new StringBuilder("{\"type\":\"object\",\"title\":\"")
                     .append(clazz.getSimpleName()).append("\",\"properties\":{");
             RecordComponent[] comps = clazz.getRecordComponents();
             for (int i = 0; i < comps.length; i++) {
-                if (i > 0) sb.append(',');
+                if (i > 0)
+                    sb.append(',');
                 sb.append('"').append(comps[i].getName()).append("\":");
                 sb.append(schemaForType(comps[i].getType(), comps[i].getGenericType()));
             }
@@ -463,7 +527,8 @@ public class AiConfig {
             String itemSchema = "{\"type\":\"object\"}";
             if (generic instanceof ParameterizedType pt) {
                 Type arg = pt.getActualTypeArguments()[0];
-                if (arg instanceof Class<?> c) itemSchema = buildSchema(c);
+                if (arg instanceof Class<?> c)
+                    itemSchema = buildSchema(c);
             }
             return "{\"type\":\"array\",\"items\":" + itemSchema + "}";
         }
