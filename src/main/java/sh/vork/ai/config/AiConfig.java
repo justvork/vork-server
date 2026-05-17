@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import sh.vork.ai.AiProvider;
 import sh.vork.ai.function.CompileTypeRequest;
+import sh.vork.ai.security.Restricted;
 import sh.vork.ai.function.DeleteTypeInstanceRequest;
 import sh.vork.ai.function.GetTypeSchemaRequest;
 import sh.vork.ai.function.ListEnumValuesRequest;
@@ -135,6 +136,7 @@ public class AiConfig {
      * </ul>
      */
     @Bean
+    @Restricted
     public ToolCallback compileJavaType(TypeGeneratorService typeGeneratorService) {
         return FunctionToolCallback
                 .builder("compileJavaType", (CompileTypeRequest req) -> {
