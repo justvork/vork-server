@@ -56,7 +56,7 @@ public class SecurityConfig {
                 .key("vork-remember-me-key-change-in-production")
             )
             .csrf(csrf -> csrf
-                .ignoringRequestMatchers("/api/authorization/**", "/ws/**")
+                .ignoringRequestMatchers("/api/authorization/**", "/ws/**", "/logout")
             )
             .sessionManagement(session -> session
                 .sessionConcurrency(concurrency -> concurrency

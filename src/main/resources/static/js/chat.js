@@ -15,6 +15,8 @@ const sessionDisplay = document.getElementById('session-display');
 const attachStrip    = document.getElementById('attachment-strip');
 const fileInput      = document.getElementById('file-input');
 const uploadFilesBtn = document.getElementById('upload-files-btn');
+const logoutBtn      = document.getElementById('logout-btn');
+const logoutForm     = document.getElementById('logout-form');
 
 let sessionUuid = null;
 let stomp       = null;
@@ -1011,6 +1013,30 @@ function uploadFile(file) {
         });
 }
 
+// ── Logout ───────────────────────────────────────────────────────────────────
+
+if (logoutBtn) {
+    logoutBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        // Fetch CSRF token from server meta tag or make logout request with fetch
+        fetch('/logout', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            credentials: 'same-origin'
+        })
+        .then(function (response) {
+            // Spring Security redirect to /login?logout=true will be followed
+            window.location.href = '/login?logout=true';
+        })
+        .catch(function (error) {
+            console.error('Logout failed:', error);
+            window.location.href = '/login?logout=true';
+        });
+    });
+}
+
 // ── WebSocket / STOMP ────────────────────────────────────────────────────────
 
 function connectWebSocket() {
@@ -1132,8 +1158,15 @@ chatForm.addEventListener('submit', function (e) {
 
 (function runSplash() {
     const splash     = document.getElementById('splash');
+    const splashImg  = splash.querySelector('img');
     const chatLayout = document.querySelector('.chat-layout');
 
+    // Start glitch after ~4.4 seconds (0.6s glitch + fade before 5s total)
+    setTimeout(function () {
+        splashImg.classList.add('glitch');
+    }, 4400);
+
+    // Fade out after glitch completes
     setTimeout(function () {
         chatLayout.classList.add('visible');
         splash.classList.add('fade-out');

@@ -39,9 +39,9 @@
                 <option value="OPENAI">OpenAI</option>
                 <option value="ANTHROPIC">Anthropic</option>
             </select>
-            <a href="/logout" class="btn btn-outline-secondary btn-sm logout-btn" title="Logout">
+            <button id="logout-btn" type="button" class="btn btn-outline-secondary btn-sm logout-btn" title="Logout">
                 <i class="fa-solid fa-sign-out-alt"></i>
-            </a>
+            </button>
         </div>
     </header>
 
@@ -97,6 +97,10 @@
     </div>
     <div id="console-terminal"></div>
 </div>
+
+<!-- Hidden logout form (required for CSRF protection) -->
+<form id="logout-form" action="/logout" method="POST" style="display: none;">
+</form>
 
 </div><!-- /.page-layout -->
 
