@@ -24,6 +24,7 @@ import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
+import sh.vork.ai.exception.ToolSuspensionException;
 import sh.vork.ai.function.ExecuteTerminalCommandRequest;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.protocol.interaction.FieldSource;
@@ -35,7 +36,6 @@ import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.database.mock.MapDatabaseRepository;
 import sh.vork.scheduling.service.AiSchedulerService;
 import sh.vork.security.SecureCredentialStore;
-import sh.vork.security.SecureCredentialStoreService;
 
 class ChatAuthorizationControllerIsolationTest {
 
@@ -76,7 +76,7 @@ class ChatAuthorizationControllerIsolationTest {
                 schedulerService,
                 null,
                 null,
-                new SecureCredentialStoreService(new SecureCredentialStore()),
+                new SecureCredentialStore(),
                 null);
 
         ResponseEntity<Map<String, Object>> response = controller.respond(
@@ -130,7 +130,7 @@ class ChatAuthorizationControllerIsolationTest {
                 schedulerService,
                 null,
                 null,
-                new SecureCredentialStoreService(new SecureCredentialStore()),
+                new SecureCredentialStore(),
                 null);
 
         ResponseEntity<Map<String, Object>> response = controller.respond(
@@ -183,7 +183,7 @@ class ChatAuthorizationControllerIsolationTest {
                 schedulerService,
                 null,
                 null,
-                new SecureCredentialStoreService(new SecureCredentialStore()),
+                new SecureCredentialStore(),
                 null);
 
         ResponseEntity<Map<String, Object>> response = controller.authorizeViaLink(
@@ -237,7 +237,7 @@ class ChatAuthorizationControllerIsolationTest {
                 new RecordingSchedulerService(),
                 null,
                 null,
-                new SecureCredentialStoreService(new SecureCredentialStore()),
+                new SecureCredentialStore(),
                 null);
 
         ResponseEntity<Map<String, Object>> response = controller.pendingAuthorization(sessionUuid, null);
@@ -291,7 +291,7 @@ class ChatAuthorizationControllerIsolationTest {
                 new RecordingSchedulerService(),
                 null,
                 null,
-                new SecureCredentialStoreService(new SecureCredentialStore()),
+                new SecureCredentialStore(),
                 null);
 
         controller.respond(sessionUuid,
@@ -310,6 +310,79 @@ class ChatAuthorizationControllerIsolationTest {
         assertEquals("total 1\nfile.txt\n", transcript.get("output"));
         assertEquals("ls -lls -l\ntotal 1\nfile.txt\n", transcript.get("rawOutput"));
         assertNull(payload.get("nonexistent"));
+    }
+
+    @Test
+    void respond_toolExecutionSuspension_returnsAwaitingInputAndPersistsPrompt() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+        MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+
+        String sessionUuid = "session-credential-prompt";
+        AiChatMessage prompt = promptMessage(
+                "evt-ssh",
+                "executeTerminalCommand",
+                "pending-ssh",
+                "{\"command\":\"ls -l\",\"host\":\"system@example.com\"}",
+                "Need approval");
+
+        sessionRepo.save(new AiSession(
+                sessionUuid,
+                AiProvider.GEMINI.name(),
+                SessionOriginMode.WEB,
+                "alice",
+                "Untitled",
+                System.currentTimeMillis(),
+                0,
+                List.of(prompt),
+                AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.AWAITING_INPUT));
+
+        InteractionFormSchema credentialSchema = new InteractionFormSchema(
+                "AUTHORIZE_TOOL",
+                "SSH Credentials Required",
+                "Provide credentials",
+                List.of(new FormField("ssh-password-system-example.com", "password", "SSH Password", "", false, FieldSource.SECRET, List.of())),
+                List.of(new FormAction("ONCE", "Save & Continue", "primary"),
+                        new FormAction("DENIED", "Cancel", "danger")));
+
+        ToolCallback terminalTool = FunctionToolCallback.builder("executeTerminalCommand",
+                (ExecuteTerminalCommandRequest req) -> {
+                    throw new ToolSuspensionException("executeTerminalCommand", "{}", "Provide credentials", credentialSchema);
+                })
+                .description("Execute a terminal command")
+                .inputType(ExecuteTerminalCommandRequest.class)
+                .build();
+
+        ChatAuthorizationController controller = new ChatAuthorizationController(
+                sessionRepo,
+                new AuthorizationRuleEngine(List.of(), null),
+                new RecordingAiService("unused"),
+                new SimpMessagingTemplate(new NoOpMessageChannel()),
+                objectMapper,
+                List.of(terminalTool),
+                Runnable::run,
+                new RecordingSchedulerService(),
+                null,
+                null,
+                new SecureCredentialStore(),
+                null);
+
+        ResponseEntity<Map<String, Object>> response = controller.respond(
+                sessionUuid,
+                new ChatAuthorizationController.InteractionResponse("evt-ssh", "AUTHORIZE_TOOL", "ONCE", Map.of()));
+
+        assertEquals("AWAITING_INPUT", response.getBody().get("status"));
+
+        AiSession saved = sessionRepo.get(sessionUuid);
+        assertNotNull(saved);
+        assertEquals(AiSessionStatus.AWAITING_INPUT, saved.status());
+        AiChatMessage latest = saved.messages().get(saved.messages().size() - 1);
+        assertEquals("PROMPT_REQUIRED", latest.role());
+        assertEquals("executeTerminalCommand", latest.toolName());
+        assertNotNull(latest.toolCalls());
+        assertEquals(1, latest.toolCalls().size());
+        assertEquals("{\"command\":\"ls -l\",\"host\":\"system@example.com\"}",
+                latest.toolCalls().get(0).arguments());
     }
 
     private static AiChatMessage promptMessage(

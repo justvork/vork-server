@@ -1,9 +1,19 @@
 package sh.vork.ai.terminal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.lang.reflect.Method;
 
 import org.junit.jupiter.api.Test;
+
+import com.sshtools.client.SshClient;
+
+import sh.vork.ssh.VirtualSshService;
 
 class TerminalStreamRouterTest {
 
@@ -53,5 +63,43 @@ class TerminalStreamRouterTest {
     @Test
     void hasDisplayableContent_trueForTextChunks() {
         assertTrue(TerminalStreamRouter.hasDisplayableContent("total 12\n"));
+    }
+
+    @Test
+    void appendLimited_truncatesAtConfiguredMaximum() {
+        StringBuilder sb = new StringBuilder();
+        TerminalStreamRouter.appendLimited(sb, "abcdef", 4);
+        TerminalStreamRouter.appendLimited(sb, "gh", 4);
+        assertEquals("abcd", sb.toString());
+    }
+
+    @Test
+    void createClient_remoteHostWithoutUser_delegatesToVirtualSshService() throws Exception {
+        VirtualSshService virtualSshService = mock(VirtualSshService.class);
+        SshClient expectedClient = mock(SshClient.class);
+        when(virtualSshService.connectClient(null, "example.com", 10)).thenReturn(expectedClient);
+
+        TerminalStreamRouter router = new TerminalStreamRouter(virtualSshService, null);
+        Method createClient = TerminalStreamRouter.class.getDeclaredMethod("createClient", String.class, int.class);
+        createClient.setAccessible(true);
+
+        Object actual = createClient.invoke(router, "example.com", 10);
+        assertSame(expectedClient, actual);
+        verify(virtualSshService).connectClient(null, "example.com", 10);
+    }
+
+    @Test
+    void createClient_remoteHostWithUser_delegatesExplicitUsername() throws Exception {
+        VirtualSshService virtualSshService = mock(VirtualSshService.class);
+        SshClient expectedClient = mock(SshClient.class);
+        when(virtualSshService.connectClient("ubuntu", "example.com", 10)).thenReturn(expectedClient);
+
+        TerminalStreamRouter router = new TerminalStreamRouter(virtualSshService, null);
+        Method createClient = TerminalStreamRouter.class.getDeclaredMethod("createClient", String.class, int.class);
+        createClient.setAccessible(true);
+
+        Object actual = createClient.invoke(router, "ubuntu@example.com", 10);
+        assertSame(expectedClient, actual);
+        verify(virtualSshService).connectClient("ubuntu", "example.com", 10);
     }
 }

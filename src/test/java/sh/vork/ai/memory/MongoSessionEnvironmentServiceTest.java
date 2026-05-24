@@ -48,6 +48,15 @@ class MongoSessionEnvironmentServiceTest {
     }
 
     @Test
+    void setEnv_whenKeyContainsDots_encodesKeyForMongoPathSafety() {
+        service.setEnv("session-1", "ssh-username-10.0.22.22", "ubuntu");
+
+        verify(sessionCollection).updateOne(
+                Filters.eq("_id", "session-1"),
+                Updates.set("environmentVariables.ssh-username-10__dot__0__dot__22__dot__22", "ubuntu"));
+    }
+
+    @Test
     void setEnv_whenValueNull_persistsEmptyString() {
         service.setEnv("session-2", "selectedProfile", null);
 
@@ -116,5 +125,23 @@ class MongoSessionEnvironmentServiceTest {
         assertEquals("2", env.get("attempt"));
         assertEquals("", env.get("optional"));
         assertThrows(UnsupportedOperationException.class, () -> env.put("k", "v"));
+    }
+
+    @Test
+    void getEnv_whenNestedEnvironmentDocument_present_flattensAndDecodesKeys() {
+        Document nested = new Document("ssh-username-10", new Document("0", new Document("22", new Document("22", "ubuntu"))));
+        Document encoded = new Document("ssh-username-10__dot__0__dot__22__dot__22", "ubuntu-encoded");
+        Document envDoc = new Document();
+        envDoc.putAll(nested);
+        envDoc.putAll(encoded);
+        Document session = new Document("_id", "session-6")
+            .append("environmentVariables", envDoc);
+
+        when(sessionCollection.find(any(Bson.class))).thenReturn(findIterable);
+        when(findIterable.first()).thenReturn(session);
+
+        Map<String, String> env = service.getEnv("session-6");
+
+        assertEquals("ubuntu-encoded", env.get("ssh-username-10.0.22.22"));
     }
 }

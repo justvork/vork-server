@@ -20,6 +20,7 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.HashMap;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.stream.Stream;
@@ -222,10 +223,36 @@ public class MongoDBRepository<T extends DatabaseEntity> implements DatabaseRepo
             // mutating the driver-owned Document.
             Map<String, Object> map = new LinkedHashMap<>(doc);
             map.remove("_id");
+            normalizeEnvironmentVariables(map);
             String json = mapper.writeValueAsString(map);
             return mapper.readValue(json, entityClass);
         } catch (JsonProcessingException e) {
             throw new DatabaseException("Failed to deserialise " + entityClass.getSimpleName(), e);
+        }
+    }
+
+    private static void normalizeEnvironmentVariables(Map<String, Object> map) {
+        Object raw = map.get("environmentVariables");
+        if (!(raw instanceof Map<?, ?> envMap)) {
+            return;
+        }
+
+        Map<String, String> flattened = new HashMap<>();
+        flattenMapInto(flattened, "", envMap);
+        map.put("environmentVariables", flattened);
+    }
+
+    private static void flattenMapInto(Map<String, String> target, String prefix, Map<?, ?> source) {
+        for (Map.Entry<?, ?> entry : source.entrySet()) {
+            String keyPart = String.valueOf(entry.getKey());
+            String fullKey = prefix.isEmpty() ? keyPart : prefix + "." + keyPart;
+            Object value = entry.getValue();
+
+            if (value instanceof Map<?, ?> nested) {
+                flattenMapInto(target, fullKey, nested);
+            } else {
+                target.put(fullKey, value == null ? "" : String.valueOf(value));
+            }
         }
     }
 

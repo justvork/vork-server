@@ -59,7 +59,7 @@ import sh.vork.scheduling.service.SystemBackgroundAuthentication;
 
 import java.util.concurrent.Executor;
 
-import sh.vork.security.SecureCredentialStoreService;
+import sh.vork.security.SecureCredentialStore;
 import sh.vork.security.VorkUser;
 import sh.vork.storage.FileStorageService;
 
@@ -82,7 +82,7 @@ public class ChatAuthorizationController {
     private final AiSchedulerService aiSchedulerService;
     private final FileStorageService fileStorageService;
     private final ChatService chatService;
-    private final SecureCredentialStoreService secureCredentialStoreService;
+    private final SecureCredentialStore secureCredentialStore;
     private final SessionEnvironmentService sessionEnvironmentService;
 
     @Autowired
@@ -96,7 +96,7 @@ public class ChatAuthorizationController {
                                        AiSchedulerService aiSchedulerService,
                                        FileStorageService fileStorageService,
                                        ChatService chatService,
-                                       SecureCredentialStoreService secureCredentialStoreService,
+                                       SecureCredentialStore secureCredentialStore,
                                        SessionEnvironmentService sessionEnvironmentService) {
         this.sessionRepo = sessionRepo;
         this.authorizationRuleEngine = authorizationRuleEngine;
@@ -107,7 +107,7 @@ public class ChatAuthorizationController {
         this.aiBackgroundExecutor = aiBackgroundExecutor;
         this.aiSchedulerService = aiSchedulerService;
         this.chatService = chatService;
-        this.secureCredentialStoreService = secureCredentialStoreService;
+        this.secureCredentialStore = secureCredentialStore;
         this.sessionEnvironmentService = sessionEnvironmentService;
         this.toolCallbacksByName = toolCallbacks.stream().collect(
                 java.util.stream.Collectors.toMap(
@@ -157,8 +157,8 @@ public class ChatAuthorizationController {
                 FieldSource source = sourceByField.getOrDefault(key, FieldSource.CONVERSATION);
                 switch (source) {
                     case SECRET -> {
-                        if (secureCredentialStoreService != null) {
-                            secureCredentialStoreService.saveSecret(toPrincipalUser(username), key, value);
+                        if (secureCredentialStore != null) {
+                            secureCredentialStore.saveSecret(toPrincipalUser(username), key, value);
                         }
                     }
                     case CONTEXT -> {
@@ -181,7 +181,64 @@ public class ChatAuthorizationController {
                 applyAuthorizationAction(action, username, toolName, toolCallId);
             }
 
-            String token = toolResponseDataForAction(action, conversationFields, toolName, argumentsJson);
+                String token;
+                try {
+                token = toolResponseDataForAction(action, conversationFields, toolName, argumentsJson);
+                } catch (ToolSuspensionException ex) {
+                String suspendedToolCallId = (toolCallId == null || toolCallId.isBlank())
+                    ? "pending-" + UUID.randomUUID()
+                    : toolCallId;
+                String suspendedArguments = resolveSuspendedArguments(argumentsJson, ex.getArguments());
+                String justification = (ex.getJustification() == null || ex.getJustification().isBlank())
+                    ? defaultAuthorizationReason(ex.getToolName())
+                    : ex.getJustification();
+
+                UiEventFrame suspendedPromptEvent = new UiEventFrame(
+                    UUID.randomUUID().toString(),
+                    "PROMPT_REQUIRED",
+                    "AUTHORIZE_TOOL",
+                    justification,
+                    ex.getFormSchema());
+
+                List<AiChatMessage> suspendedMessages = new ArrayList<>(session.messages());
+                suspendedMessages.add(new AiChatMessage(
+                    UUID.randomUUID().toString(),
+                    "PROMPT_REQUIRED",
+                    toJson(suspendedPromptEvent),
+                    System.currentTimeMillis(),
+                    null,
+                    List.of(new AiChatMessage.ToolCallRef(
+                        suspendedToolCallId,
+                        "FUNCTION",
+                        ex.getToolName(),
+                        suspendedArguments)),
+                    suspendedToolCallId,
+                    ex.getToolName()));
+
+                SessionOriginMode originMode = session.originMode() == null ? SessionOriginMode.WEB : session.originMode();
+                sessionRepo.save(new AiSession(
+                    session.uuid(),
+                    session.provider(),
+                    originMode,
+                    session.username(),
+                    session.name(),
+                    session.createdAt(),
+                    session.currentRoundCount(),
+                    List.copyOf(suspendedMessages),
+                    session.environmentVariables(),
+                    AiSessionStatus.AWAITING_INPUT));
+
+                messaging.convertAndSend("/topic/chat/" + sessionUuid, suspendedPromptEvent);
+                log.info("Tool execution suspended for additional input [tool={}, session={}]",
+                    ex.getToolName(), sessionUuid);
+
+                return ResponseEntity.ok(Map.of(
+                    "status", "AWAITING_INPUT",
+                    "eventType", suspendedPromptEvent.type(),
+                    "eventId", suspendedPromptEvent.eventId(),
+                    "toolName", ex.getToolName()
+                ));
+                }
             ToolResponseMessage.ToolResponse toolResponse =
                 new ToolResponseMessage.ToolResponse(toolCallId, toolName, token);
             ToolResponseMessage toolResponseMessage = ToolResponseMessage.builder()
@@ -232,8 +289,7 @@ public class ChatAuthorizationController {
                 }
             }
 
-            List<AiChatMessage> updated = new ArrayList<>(session.messages());
-            updated.add(new AiChatMessage(
+            AiChatMessage toolMessage = new AiChatMessage(
                 UUID.randomUUID().toString(),
                 "TOOL",
                 toolPayloadJson,
@@ -241,7 +297,10 @@ public class ChatAuthorizationController {
                 attachments,
                 null,
                 toolCallId,
-                toolName));
+                toolName);
+
+            List<AiChatMessage> updated = new ArrayList<>(session.messages());
+            updated.add(toolMessage);
 
             log.info("Tool response persisted [tool={}, toolCallId={}, payloadSize={}]",
                 toolName, toolCallId, toolPayloadJson.length());
@@ -249,6 +308,10 @@ public class ChatAuthorizationController {
 
             List<Message> history = hydrateHistory(updated);
             SessionOriginMode originMode = session.originMode() == null ? SessionOriginMode.WEB : session.originMode();
+
+            if (originMode == SessionOriginMode.WEB) {
+                messaging.convertAndSend("/topic/chat/" + sessionUuid, toolMessage);
+            }
 
             if (originMode == SessionOriginMode.BACKGROUND) {
                 sessionRepo.save(new AiSession(
@@ -739,12 +802,32 @@ public class ChatAuthorizationController {
                 argumentsJson == null ? 0 : argumentsJson.length());
         log.debug("Tool arguments [tool={}]: {}", toolName, abbreviate(argumentsJson, 4000));
 
-        String result = callback.call(argumentsJson);
+        String result;
+        try {
+            result = callback.call(argumentsJson);
+        } catch (RuntimeException ex) {
+            ToolSuspensionException suspension = findCause(ex, ToolSuspensionException.class);
+            if (suspension != null) {
+                throw suspension;
+            }
+            throw ex;
+        }
 
         log.info("Tool execution completed [tool={}, resultSize={}]", toolName,
                 result == null ? 0 : result.length());
         log.debug("Tool result [tool={}]: {}", toolName, abbreviate(result, 4000));
         return result;
+    }
+
+    private static <T extends Throwable> T findCause(Throwable ex, Class<T> type) {
+        Throwable current = ex;
+        while (current != null) {
+            if (type.isInstance(current)) {
+                return type.cast(current);
+            }
+            current = current.getCause();
+        }
+        return null;
     }
 
     private String normalizeToolResponseData(String responseData) {
@@ -764,6 +847,18 @@ public class ChatAuthorizationController {
             return "DENIED";
         }
         return action.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private static String resolveSuspendedArguments(String priorArguments, String suspendedArguments) {
+        String fallback = (priorArguments == null || priorArguments.isBlank()) ? "{}" : priorArguments;
+        if (suspendedArguments == null) {
+            return fallback;
+        }
+        String candidate = suspendedArguments.trim();
+        if (candidate.isBlank() || "{}".equals(candidate)) {
+            return fallback;
+        }
+        return suspendedArguments;
     }
 
     private static String policyToAction(String policy) {

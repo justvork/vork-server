@@ -325,6 +325,7 @@ function createTerminalInlineRow(terminalId, command, options) {
     row.innerHTML =
         '<div class="bubble assistant terminal-stream-bubble">' +
         '  <div class="terminal-stream-header">' +
+        '    <div class="terminal-stream-actions"></div>' +
         '    <button type="button" class="terminal-stream-toggle" aria-label="Collapse output" title="Collapse output">' +
         '      <i class="fa-solid fa-chevron-up" aria-hidden="true"></i>' +
         '    </button>' +
@@ -341,6 +342,7 @@ function createTerminalInlineRow(terminalId, command, options) {
         terminalId: terminalId,
         row: row,
         body: row.querySelector('.terminal-stream-body'),
+        actions: row.querySelector('.terminal-stream-actions'),
         xtermContainer: row.querySelector('.terminal-stream-xterm'),
         passivePre: row.querySelector('.terminal-stream-passive'),
         toggleBtn: row.querySelector('.terminal-stream-toggle'),
@@ -355,7 +357,8 @@ function createTerminalInlineRow(terminalId, command, options) {
         live: false,
         completed: false,
         expanded: expanded,
-        command: command || 'Live Terminal Stream'
+        command: command || 'Live Terminal Stream',
+        attachmentUuid: null
     };
 
     view.toggleBtn.addEventListener('click', function () {
@@ -693,17 +696,68 @@ function renderTerminalTranscript(terminalId, command, output, expanded, attachm
     view.xtermContainer.classList.add('d-none');
     view.passivePre.textContent = buildPassiveTranscript(view);
     view.passivePre.classList.remove('d-none');
-    if (attachment && attachment.uuid) {
-        const download = document.createElement('a');
-        download.className = 'bubble-file-link mt-2 d-inline-block';
-        download.href = '/api/files/' + attachment.uuid;
-        download.download = attachment.name || 'terminal-output.txt';
-        download.target = '_blank';
-        download.innerHTML = '<i class="fa-solid fa-file-lines"></i>' + escapeHtml(attachment.name || 'Download full terminal output');
-        view.passivePre.parentElement.appendChild(download);
-    }
+    attachTerminalHeaderFile(view, attachment);
     setTerminalExpanded(view, expanded);
     return view;
+}
+
+function attachTerminalHeaderFile(view, attachment) {
+    if (!view || !view.actions || !attachment || !attachment.uuid) {
+        return;
+    }
+    if (view.attachmentUuid === attachment.uuid) {
+        return;
+    }
+    view.attachmentUuid = attachment.uuid;
+    view.actions.innerHTML = '';
+
+    const link = document.createElement('a');
+    link.className = 'terminal-stream-attachment-btn';
+    link.href = '/api/files/' + attachment.uuid;
+    link.download = attachment.name || 'terminal-output.txt';
+    link.target = '_blank';
+    link.title = attachment.name || 'Download terminal output';
+    link.setAttribute('aria-label', attachment.name || 'Download terminal output');
+    link.innerHTML = '<i class="fa-solid fa-paperclip" aria-hidden="true"></i>';
+    view.actions.appendChild(link);
+}
+
+function findBestTerminalViewForToolResult(command) {
+    const views = Array.from(terminalState.views.values());
+    for (let i = views.length - 1; i >= 0; i -= 1) {
+        const view = views[i];
+        if (!view) {
+            continue;
+        }
+        if (command && view.command && view.command !== command) {
+            continue;
+        }
+        return view;
+    }
+    return null;
+}
+
+async function renderLiveToolMessage(msg) {
+    const transcript = tryGetTerminalTranscript(msg);
+    if (!transcript) {
+        renderMessage(msg);
+        return;
+    }
+
+    const attachment = Array.isArray(msg.attachments) && msg.attachments.length > 0
+        ? msg.attachments[0]
+        : null;
+    const existing = findBestTerminalViewForToolResult(transcript.command);
+    if (existing) {
+        attachTerminalHeaderFile(existing, attachment || (transcript.outputFileUuid ? {
+            uuid: transcript.outputFileUuid,
+            name: 'terminal-output.txt',
+            mimeType: 'text/plain'
+        } : null));
+        return;
+    }
+
+    await renderTerminalSessionRecord(msg, 0, [msg]);
 }
 
 function buildReplayOutput(text) {
@@ -781,11 +835,22 @@ function findLastUnansweredPromptIndex(messages) {
 function renderPromptRequiredFrame(frame) {
     const payload = frame.payload || {};
     const schema = frame.formSchema || {};
+    const schemaTitle = (typeof schema.title === 'string' && schema.title.trim())
+        ? schema.title.trim()
+        : 'Authorization Required';
+    const schemaFields = Array.isArray(schema.fields)
+        ? schema.fields.filter(function (field) { return !!field && typeof field.name === 'string' && field.name.trim(); })
+        : [];
+    const hasSchemaArgumentsPreview = schemaFields.some(function (field) {
+        return String(field.name || '').toLowerCase() === 'arguments';
+    });
     const reasoning = (typeof frame.textResponse === 'string' && frame.textResponse.trim())
         ? frame.textResponse
-        : ((typeof payload.reasoning === 'string' && payload.reasoning.trim())
+        : ((typeof schema.description === 'string' && schema.description.trim())
+            ? schema.description
+            : ((typeof payload.reasoning === 'string' && payload.reasoning.trim())
             ? payload.reasoning
-            : 'The AI requested this action to process your command.');
+            : 'The AI requested this action to process your command.'));
 
     function contextValue(name) {
         const fields = Array.isArray(schema.fields) ? schema.fields : [];
@@ -802,54 +867,150 @@ function renderPromptRequiredFrame(frame) {
         || (typeof payload.arguments === 'string' ? payload.arguments : JSON.stringify(payload.arguments || {}));
     const displayArgs = typeof payload.displayArguments === 'string' ? payload.displayArguments : rawArgs;
 
-    const schemaActions = Array.isArray(schema.actions)
-        ? schema.actions.map(function (a) { return typeof a === 'string' ? a : a && a.name; }).filter(Boolean)
-        : [];
-    const actions = schemaActions.length > 0
-        ? schemaActions
-        : (Array.isArray(payload.actions) ? payload.actions : []);
+    const actions = Array.isArray(schema.actions) && schema.actions.length > 0
+        ? schema.actions.map(function (a) {
+            if (typeof a === 'string') {
+                return { name: a, label: a, style: '' };
+            }
+            return {
+                name: (a && typeof a.name === 'string') ? a.name : '',
+                label: (a && typeof a.label === 'string' && a.label.trim()) ? a.label : ((a && a.name) ? a.name : 'Continue'),
+                style: (a && typeof a.style === 'string') ? a.style : ''
+            };
+        }).filter(function (a) { return !!a.name; })
+        : ((Array.isArray(payload.actions) ? payload.actions : []).map(function (a) {
+            return { name: String(a || ''), label: String(a || ''), style: '' };
+        }).filter(function (a) { return !!a.name; }));
 
     const previewSource = String(displayArgs || '').trim();
-    const previewLines = previewSource.split(/\r?\n/);
-    const isSingleLinePreview = (previewLines.length === 1)
-        || (previewLines.length === 3 && previewLines[0].startsWith("```") && previewLines[2] === "```");
-    const previewHtml = '<div class="prompt-args">' + marked.parse(displayArgs) + '</div>';
-    const previewSection = isSingleLinePreview
-        ? ('<div class="prompt-args-inline-label">Tool input preview</div>' + previewHtml)
-        : (
-            '<details class="prompt-args-toggle">' +
-            '  <summary>Tool input preview</summary>' +
-            '  ' + previewHtml +
-            '</details>'
-        );
+    let previewSection = '';
+    if (!hasSchemaArgumentsPreview && previewSource && previewSource !== '{}') {
+        const previewLines = previewSource.split(/\r?\n/);
+        const isSingleLinePreview = (previewLines.length === 1)
+            || (previewLines.length === 3 && previewLines[0].startsWith("```") && previewLines[2] === "```");
+        const previewHtml = '<div class="prompt-args">' + marked.parse(displayArgs) + '</div>';
+        previewSection = isSingleLinePreview
+            ? ('<div class="prompt-args-inline-label">Tool input preview</div>' + previewHtml)
+            : (
+                '<details class="prompt-args-toggle">' +
+                '  <summary>Tool input preview</summary>' +
+                '  ' + previewHtml +
+                '</details>'
+            );
+    }
+
+    const formIdPrefix = 'prompt-field-' + String(frame.eventId || Date.now());
+    const fieldsSection = schemaFields.length > 0
+        ? (
+            '<div class="prompt-fields">' +
+            schemaFields.map(function (field, index) {
+                const fieldName = String(field.name || '').trim();
+                const fieldType = String(field.type || 'text').toLowerCase();
+                const fieldLabel = (typeof field.label === 'string' && field.label.trim()) ? field.label : fieldName;
+                const fieldPlaceholder = (typeof field.placeholder === 'string') ? field.placeholder : '';
+                const fieldRequired = !!field.required;
+                const fieldOptions = Array.isArray(field.options) ? field.options : [];
+                const inputId = formIdPrefix + '-' + index;
+                const requiredAttr = fieldRequired ? ' required' : '';
+
+                if (fieldType === 'markdown') {
+                    const markdownContent = (typeof field.placeholder === 'string') ? field.placeholder : '';
+                    return (
+                        '<div class="prompt-field mb-2">' +
+                        '  <div class="prompt-args-inline-label">' + escapeHtml(fieldLabel) + '</div>' +
+                        '  <div class="prompt-args">' + marked.parse(markdownContent) + '</div>' +
+                        '</div>'
+                    );
+                }
+
+                if ((fieldType === 'select' || fieldType === 'dropdown') && fieldOptions.length > 0) {
+                    const optionsHtml = fieldOptions.map(function (option) {
+                        const value = String(option || '');
+                        return '<option value="' + escapeHtml(value) + '">' + escapeHtml(value) + '</option>';
+                    }).join('');
+                    return (
+                        '<div class="prompt-field mb-2">' +
+                        '  <label class="form-label mb-1" for="' + escapeHtml(inputId) + '">' + escapeHtml(fieldLabel) + '</label>' +
+                        '  <select class="form-select form-select-sm" id="' + escapeHtml(inputId) + '" data-field-name="' + escapeHtml(fieldName) + '"' + requiredAttr + '>' +
+                        '    <option value="">Select a value</option>' +
+                        optionsHtml +
+                        '  </select>' +
+                        '</div>'
+                    );
+                }
+
+                if (fieldType === 'textarea') {
+                    return (
+                        '<div class="prompt-field mb-2">' +
+                        '  <label class="form-label mb-1" for="' + escapeHtml(inputId) + '">' + escapeHtml(fieldLabel) + '</label>' +
+                        '  <textarea class="form-control form-control-sm" id="' + escapeHtml(inputId) + '" data-field-name="' + escapeHtml(fieldName) + '" placeholder="' + escapeHtml(fieldPlaceholder) + '" rows="4"' + requiredAttr + '></textarea>' +
+                        '</div>'
+                    );
+                }
+
+                const inputType = fieldType === 'password' ? 'password' : 'text';
+                return (
+                    '<div class="prompt-field mb-2">' +
+                    '  <label class="form-label mb-1" for="' + escapeHtml(inputId) + '">' + escapeHtml(fieldLabel) + '</label>' +
+                    '  <input class="form-control form-control-sm" id="' + escapeHtml(inputId) + '" data-field-name="' + escapeHtml(fieldName) + '" type="' + inputType + '" placeholder="' + escapeHtml(fieldPlaceholder) + '"' + requiredAttr + '>' +
+                    '</div>'
+                );
+            }).join('') +
+            '</div>'
+        )
+        : '';
 
     const row = document.createElement('div');
     row.className = 'message-row';
     row.innerHTML =
         '<div class="avatar assistant"><i class="fa-solid fa-robot"></i></div>' +
         '<div class="bubble assistant prompt-required">' +
-        '  <div class="prompt-title"><i class="fa-solid fa-shield-halved"></i> Authorization Required</div>' +
+        '  <div class="prompt-title"><i class="fa-solid fa-shield-halved"></i> ' + escapeHtml(schemaTitle) + '</div>' +
         '  <div class="prompt-reasoning-body">' + marked.parse(reasoning) + '</div>' +
+        '  ' + fieldsSection +
         '  ' + previewSection +
         '  <div class="prompt-actions"></div>' +
         '</div>';
 
     const actionsEl = row.querySelector('.prompt-actions');
-    actions.forEach(function (action) {
+    actions.forEach(function (actionDef) {
+        const action = actionDef.name;
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'btn btn-sm prompt-action-btn';
         btn.dataset.action = action;
-        btn.textContent = action;
+        btn.textContent = actionDef.label;
 
-        if (action === 'DENIED') {
+        if (actionDef.style) {
+            btn.classList.add('btn-' + actionDef.style);
+        } else if (action === 'DENIED') {
             btn.classList.add('btn-outline-danger');
         } else {
             btn.classList.add('btn-outline-primary');
         }
 
         btn.addEventListener('click', function () {
-            sendAuthorizationAction(frame.eventId, frame.intent, action, {});
+            const fieldValues = {};
+            let missingRequiredField = false;
+            row.querySelectorAll('[data-field-name]').forEach(function (input) {
+                const fieldName = input.getAttribute('data-field-name');
+                const value = input.value == null ? '' : String(input.value);
+                const trimmed = value.trim();
+                const required = input.hasAttribute('required');
+                if (required && !trimmed) {
+                    input.classList.add('is-invalid');
+                    missingRequiredField = true;
+                } else {
+                    input.classList.remove('is-invalid');
+                }
+                fieldValues[fieldName] = value;
+            });
+
+            if (missingRequiredField) {
+                return;
+            }
+
+            sendAuthorizationAction(frame.eventId, frame.intent, action, fieldValues);
             row.querySelectorAll('.prompt-action-btn').forEach(function (b) { b.disabled = true; });
         });
         actionsEl.appendChild(btn);
@@ -1225,7 +1386,11 @@ function subscribeToCurrentSession() {
         if (isUiEventFrame(msg)) {
             handleIncomingUiFrame(msg);
         } else {
-            renderMessage(msg);
+            if (msg && msg.role === 'TOOL') {
+                renderLiveToolMessage(msg);
+            } else {
+                renderMessage(msg);
+            }
         }
 
         if (!hasLiveTerminal()) {

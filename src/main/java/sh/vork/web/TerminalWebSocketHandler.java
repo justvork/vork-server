@@ -51,7 +51,7 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionEstablished(WebSocketSession wsSession) throws Exception {
-        SshClient sshClient = sshService.connectClient(SSH_TIMEOUT_SECS);
+        SshClient sshClient = sshService.connectLocal(SSH_TIMEOUT_SECS);
         SessionChannelNG channel = sshClient.openSessionChannel();
 
         channel.allocatePseudoTerminal("xterm-256color", DEFAULT_COLS, DEFAULT_ROWS)

@@ -28,9 +28,10 @@ public class MongoSessionEnvironmentService implements SessionEnvironmentService
             return;
         }
         String normalizedValue = value == null ? "" : value;
+        String safeKey = encodeKey(key);
         sessionCollection.updateOne(
                 Filters.eq("_id", sessionUuid),
-                Updates.set("environmentVariables." + key, normalizedValue));
+                Updates.set("environmentVariables." + safeKey, normalizedValue));
     }
 
     @Override
@@ -50,11 +51,33 @@ public class MongoSessionEnvironmentService implements SessionEnvironmentService
         }
 
         Map<String, String> result = new LinkedHashMap<>();
-        for (Map.Entry<String, Object> entry : envDoc.entrySet()) {
-            if (entry.getKey() != null) {
-                result.put(entry.getKey(), entry.getValue() == null ? "" : String.valueOf(entry.getValue()));
-            }
+        flattenInto(result, "", envDoc);
+
+        Map<String, String> decoded = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : result.entrySet()) {
+            decoded.put(decodeKey(entry.getKey()), entry.getValue());
         }
-        return Map.copyOf(result);
+        return Map.copyOf(decoded);
+    }
+
+    private static void flattenInto(Map<String, String> target, String prefix, Object value) {
+        if (value instanceof Document nested) {
+            for (Map.Entry<String, Object> entry : nested.entrySet()) {
+                String key = prefix.isEmpty() ? entry.getKey() : prefix + "." + entry.getKey();
+                flattenInto(target, key, entry.getValue());
+            }
+            return;
+        }
+        if (!prefix.isEmpty()) {
+            target.put(prefix, value == null ? "" : String.valueOf(value));
+        }
+    }
+
+    private static String encodeKey(String key) {
+        return key.replace(".", "__dot__");
+    }
+
+    private static String decodeKey(String key) {
+        return key.replace("__dot__", ".");
     }
 }

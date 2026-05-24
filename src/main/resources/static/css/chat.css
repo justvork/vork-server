@@ -420,6 +420,33 @@ body.sidebar-collapsed .sidebar-top {
     margin-bottom: 0.45rem;
 }
 
+.terminal-stream-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-right: auto;
+}
+
+.terminal-stream-attachment-btn {
+    width: 1.9rem;
+    height: 1.9rem;
+    border-radius: 999px;
+    border: 1px solid var(--bs-border-color);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--bs-secondary-color);
+    text-decoration: none;
+    background: rgba(255, 255, 255, 0.03);
+    transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.terminal-stream-attachment-btn:hover {
+    color: var(--bs-body-color);
+    border-color: var(--bs-secondary-color);
+    background: rgba(255, 255, 255, 0.08);
+}
+
 .terminal-stream-toggle {
     flex-shrink: 0;
     display: inline-flex;
