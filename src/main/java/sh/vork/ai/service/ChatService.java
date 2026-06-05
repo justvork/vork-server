@@ -122,7 +122,7 @@ public class ChatService {
         AiSession session = new AiSession(httpSessionId, provider.name(), SessionOriginMode.WEB,
             username, DEFAULT_SESSION_NAME, System.currentTimeMillis(), 0, List.of(),
             AiSession.defaultEnvironmentVariables(), AiSessionStatus.RUNNING,
-            new java.util.ArrayList<>(List.of(AgentTemplateSeeder.UUID_CONCIERGE)));
+            AgentTemplateSeeder.UUID_CONCIERGE);
         sessionRepo.save(session);
         log.info("Created HTTP session-bound AI session [id={}, provider={}, user={}]",
             httpSessionId, provider, username);
@@ -135,7 +135,7 @@ public class ChatService {
         AiSession session = new AiSession(uuid, provider.name(), SessionOriginMode.WEB,
             username, DEFAULT_SESSION_NAME, System.currentTimeMillis(), 0, List.of(),
             AiSession.defaultEnvironmentVariables(), AiSessionStatus.RUNNING,
-            new java.util.ArrayList<>(List.of(AgentTemplateSeeder.UUID_CONCIERGE)));
+            AgentTemplateSeeder.UUID_CONCIERGE);
         sessionRepo.save(session);
         log.info("Created AI session [id={}, provider={}, user={}]", uuid, provider, username);
         return session;
@@ -183,7 +183,7 @@ public class ChatService {
                 session.messages(),
             AiSession.defaultEnvironmentVariables(),
                 session.status(),
-                session.agentTemplateStack());
+                session.activeAgentTemplateId());
         sessionRepo.save(renamed);
         return renamed;
     }
@@ -335,7 +335,7 @@ public class ChatService {
                 if (frozenSession == null) { frozenSession = session; }
                 sessionRepo.save(new AiSession(frozenSession.uuid(), frozenSession.provider(), frozenSession.originMode(), frozenSession.username(),
                     frozenSession.name(), frozenSession.createdAt(), frozenSession.currentRoundCount(), List.copyOf(updated),
-                    frozenSession.environmentVariables(), AiSessionStatus.AWAITING_INPUT, frozenSession.agentTemplateStack()));
+                    frozenSession.environmentVariables(), AiSessionStatus.AWAITING_INPUT, frozenSession.activeAgentTemplateId()));
 
                 if (provider == AiProvider.BACKGROUND_SCHEDULER) {
                 systemNotificationService.notifyOfflineOperator(ex.getToolName(), ex.getArguments(), sessionUuid, eventId);
@@ -343,8 +343,8 @@ public class ChatService {
 
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, promptEvent);
 
-            log.info("Tool suspension caught for tool: {}. Frozen session state [session={}, stackDepth={}]",
-                    ex.getToolName(), sessionUuid, frozenSession.agentTemplateStack().size());
+            log.info("Tool suspension caught for tool: {}. Frozen session state [session={}]",
+                    ex.getToolName(), sessionUuid);
             return null;
         } finally {
             ToolExecutionContext.clear();
@@ -502,7 +502,7 @@ public class ChatService {
                         List.copyOf(updated),
                         frozenSession.environmentVariables(),
                         AiSessionStatus.AWAITING_INPUT,
-                        frozenSession.agentTemplateStack()));
+                        frozenSession.activeAgentTemplateId()));
 
                 if (provider == AiProvider.BACKGROUND_SCHEDULER) {
                     systemNotificationService.notifyOfflineOperator(ex.getToolName(), ex.getArguments(), sessionUuid, eventId);
@@ -510,8 +510,8 @@ public class ChatService {
 
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, promptEvent);
 
-                log.info("Tool suspension caught for tool: {}. Frozen session state [session={}, stackDepth={}]",
-                        ex.getToolName(), sessionUuid, frozenSession.agentTemplateStack().size());
+                log.info("Tool suspension caught for tool: {}. Frozen session state [session={}]",
+                        ex.getToolName(), sessionUuid);
                 return null;
             }
         } finally {
@@ -549,9 +549,8 @@ public class ChatService {
             if (currentSession == null) {
                 currentSession = initialSession;
             }
-            log.debug("Agent loop iteration {} [session={}, stackDepth={}, agent={}]",
-                    i, sessionUuid, currentSession.agentTemplateStack().size(),
-                    currentSession.getActiveAgentTemplateId());
+            log.debug("Agent loop iteration {} [session={}, agent={}]",
+                    i, sessionUuid, currentSession.getActiveAgentTemplateId());
 
             String rawResponse = (i == 0 && !media.isEmpty())
                     ? safeGenerateWithHistoryAndMedia(history, currentPrompt, media, provider)
@@ -582,13 +581,14 @@ public class ChatService {
                     if (current == null) {
                         current = currentSession;
                     }
-                    current.pushAgent(targetId);
-                    sessionRepo.save(current);
-                    log.info("Agent delegated [session={}, target={}, newAgent={}]",
+                    sessionRepo.save(new AiSession(current.uuid(), current.provider(), current.originMode(),
+                            current.username(), current.name(), current.createdAt(), current.currentRoundCount(),
+                            current.messages(), current.environmentVariables(), current.status(), targetId));
+                    log.info("Agent switched [session={}, target={}, newAgent={}]",
                             sessionUuid, structured.targetAgent(), targetId);
 
                     broadcastAndAccumulateTransition(sessionUuid,
-                            "Delegated control to " + structured.targetAgent(), transitionMsgs);
+                            "Switched to " + structured.targetAgent(), transitionMsgs);
 
                     history.add(new AssistantMessage(
                             structured.textResponse() != null ? structured.textResponse() : rawResponse));
@@ -601,28 +601,7 @@ public class ChatService {
                         structured.targetAgent(), sessionUuid);
             }
 
-            // FINISHED_TURN (or unresolvable DELEGATE_TURN falls through here)
-            AiSession current = sessionRepo.get(sessionUuid);
-            if (current == null) {
-                current = currentSession;
-            }
-            int stackDepth = current.agentTemplateStack().size();
-
-            if (stackDepth > 1) {
-                current.popAgent();
-                sessionRepo.save(current);
-                log.info("Agent returned to supervisor [session={}, newAgent={}]",
-                        sessionUuid, current.getActiveAgentTemplateId());
-                String supervisorName = resolveAgentNameById(current.getActiveAgentTemplateId());
-                broadcastAndAccumulateTransition(sessionUuid,
-                        "Returned control to " + supervisorName, transitionMsgs);
-                history.add(new AssistantMessage(
-                        structured.textResponse() != null ? structured.textResponse() : rawResponse));
-                currentPrompt = "[Agent Report] " + structured.textResponse();
-                continue;
-            }
-
-            // Stack depth == 1: terminal response
+            // FINISHED_TURN (or unresolvable DELEGATE_TURN falls through here) — always terminal
             String finalText = structured.textResponse() != null && !structured.textResponse().isBlank()
                     ? structured.textResponse()
                     : rawResponse;
@@ -634,7 +613,7 @@ public class ChatService {
 
             AiSession latest = sessionRepo.get(sessionUuid);
             if (latest == null) {
-                latest = current;
+                latest = currentSession;
             }
             List<AiChatMessage> updated = new ArrayList<>(latest.messages());
             updated.add(userMsg);
@@ -647,7 +626,7 @@ public class ChatService {
                     latest.username(), latest.name(), latest.createdAt(),
                     latest.currentRoundCount(), List.copyOf(updated),
                     latest.environmentVariables(), persistedStatus,
-                    latest.agentTemplateStack()));
+                    latest.activeAgentTemplateId()));
 
             maybeGenerateSessionName(sessionUuid);
             log.info("Agent loop completed [session={}, iterations={}]", sessionUuid, i + 1);
@@ -672,202 +651,66 @@ public class ChatService {
                 latest.username(), latest.name(), latest.createdAt(),
                 latest.currentRoundCount(), List.copyOf(updated),
                 latest.environmentVariables(), AiSessionStatus.RUNNING,
-                latest.agentTemplateStack()));
+                latest.activeAgentTemplateId()));
         return aiMsg;
     }
 
     /**
-     * Resumes the parent-agent loop after a sub-agent returned FINISHED_TURN
-     * during a tool-suspended execution handled by ChatAuthorizationController.
+     * Switches the active agent for a session by agent name.
+     * Resolves the agent template by display name and updates the session.
      *
-     * <p>Called when the sub-agent (e.g. Computer Administrator) completes its
-     * work via the authorization flow and the session still has stackDepth&nbsp;&gt;&nbsp;1.
-     * Pops the sub-agent, broadcasts the "Returned control to X" transition, and
-     * drives the parent agent (e.g. Concierge) until it reaches FINISHED_TURN
-     * at depth&nbsp;1.
-     *
-     * @param sessionUuid   the session UUID
-     * @param accumulated   all messages accumulated so far in the controller
-     *                      (includes tool response messages and any CONTINUE_TURN
-     *                      interim messages; does NOT include the sub-agent's final
-     *                      TEXT_RESPONSE — that is passed separately as subAgentResult)
-     * @param subAgentResult the sub-agent's FINISHED_TURN textResponse
-     * @param originMode     session origin mode
-     * @param provider       AI provider to use
+     * @param sessionUuid the session to update
+     * @param agentName   display name of the target {@link sh.vork.ai.agent.AgentTemplate}
+     * @return the UUID of the newly active agent template, or {@code null} if not found
      */
-    public void continueLoopFromSubAgentReturn(
-            String sessionUuid,
-            List<AiChatMessage> accumulated,
-            String subAgentResult,
-            SessionOriginMode originMode,
-            AiProvider provider) {
+    public String switchActiveAgentByName(String sessionUuid, String agentName) {
+        String targetId = resolveAgentByName(agentName, sessionUuid);
+        if (targetId == null) {
+            log.warn("switchActiveAgentByName: agent not found [name={}, session={}]", agentName, sessionUuid);
+            return null;
+        }
+        return applyAgentSwitch(sessionUuid, targetId);
+    }
 
-        // 1. Reload session to get the live agent stack (may differ from caller's snapshot)
+    /**
+     * Switches the active agent for a session by template UUID.
+     * Validates that the session belongs to the current user before switching.
+     *
+     * @param sessionUuid      the session to update
+     * @param agentTemplateId  UUID of the target {@link sh.vork.ai.agent.AgentTemplate}
+     * @return the UUID of the newly active agent template, or {@code null} if not found / not owned
+     */
+    public String switchActiveAgentById(String sessionUuid, String agentTemplateId) {
+        if (agentTemplateRepo.get(agentTemplateId) == null) {
+            log.warn("switchActiveAgentById: template not found [id={}, session={}]", agentTemplateId, sessionUuid);
+            return null;
+        }
+        return applyAgentSwitch(sessionUuid, agentTemplateId);
+    }
+
+    /**
+     * Returns all configured {@link sh.vork.ai.agent.AgentTemplate} records.
+     */
+    public List<AgentTemplate> listAgentTemplates() {
+        try (var stream = agentTemplateRepo.list(0, Integer.MAX_VALUE)) {
+            return stream.toList();
+        }
+    }
+
+    private String applyAgentSwitch(String sessionUuid, String agentTemplateId) {
         AiSession session = sessionRepo.get(sessionUuid);
         if (session == null) {
-            log.warn("continueLoopFromSubAgentReturn: session not found [session={}]", sessionUuid);
-            return;
+            log.warn("applyAgentSwitch: session not found [session={}]", sessionUuid);
+            return null;
         }
-
-        // 2. Pop the sub-agent; persist the accumulated messages with the updated stack
-        session.popAgent();
-        sessionRepo.save(new AiSession(
-                session.uuid(), session.provider(), originMode,
-                session.username(), session.name(), session.createdAt(),
-                session.currentRoundCount(), List.copyOf(accumulated),
-                session.environmentVariables(), AiSessionStatus.RUNNING,
-                session.agentTemplateStack()));
-
-        // 3. Bind ToolExecutionContext for the parent agent so AiOrchestrationService
-        //    can apply the correct system prompt and tool-filtering restrictions.
-        //    Without this, generateWithHistory sees a null session UUID and falls back
-        //    to exposing all tools with no agent system prompt injected.
-        ToolExecutionContext.bindSessionUuid(sessionUuid);
-        ToolExecutionContext.hydrate(session.environmentVariables());
-
-        // 4. Broadcast "Returned control to <supervisor>" transition
-        String supervisorName = resolveAgentNameById(session.getActiveAgentTemplateId());
-        List<AiChatMessage> transitionMsgs = new ArrayList<>();
-        broadcastAndAccumulateTransition(sessionUuid, "Returned control to " + supervisorName, transitionMsgs);
-
-        // 5. Build Spring AI history from the accumulated messages
-        List<Message> history = hydrateHistory(accumulated);
-
-        // 6. Supervisor continuation loop — mirrors executeAgentLoop but without a userMsg
-        String currentPrompt = "[Agent Report] " + subAgentResult;
-        final int MAX_CONTINUATION_ITERATIONS = 10;
-        String finalText = null;
-
-        try {
-            for (int i = 0; i < MAX_CONTINUATION_ITERATIONS; i++) {
-                AiSession cur = sessionRepo.get(sessionUuid);
-                if (cur == null) cur = session;
-
-                log.debug("Supervisor continuation iter {} [session={}, stackDepth={}, agent={}]",
-                        i, sessionUuid, cur.agentTemplateStack().size(), cur.getActiveAgentTemplateId());
-
-                String rawResponse = safeGenerateWithHistory(history, currentPrompt, provider);
-                StructuredAgentResponse structured = parseStructuredResponse(rawResponse);
-                log.debug("Supervisor continuation response [session={}, status={}, iter={}]",
-                        sessionUuid, structured.status(), i);
-
-                if ("CONTINUE_TURN".equals(structured.status())) {
-                    String progressText = structured.textResponse() != null && !structured.textResponse().isBlank()
-                            ? structured.textResponse() : rawResponse;
-                    UiEventFrame progressEvent = new UiEventFrame(UUID.randomUUID().toString(),
-                            "TEXT_RESPONSE", "CHAT_OUTPUT", progressText, null);
-                    messaging.convertAndSend("/topic/chat/" + sessionUuid, progressEvent);
-                    transitionMsgs.add(new AiChatMessage(UUID.randomUUID().toString(), "ASSISTANT",
-                            progressText, System.currentTimeMillis(), null));
-                    history.add(new AssistantMessage(progressText));
-                    currentPrompt = "Continue executing the task. Use available tools as needed.";
-                    log.debug("Supervisor CONTINUE_TURN [session={}, iter={}]", sessionUuid, i);
-                    continue;
-                }
-
-                if ("DELEGATE_TURN".equals(structured.status())) {
-                    String targetId = resolveAgentByName(structured.targetAgent(), sessionUuid);
-                    if (targetId != null) {
-                        cur.pushAgent(targetId);
-                        sessionRepo.save(cur);
-                        log.info("Supervisor re-delegated [session={}, target={}]", sessionUuid, structured.targetAgent());
-                        broadcastAndAccumulateTransition(sessionUuid,
-                                "Delegated control to " + structured.targetAgent(), transitionMsgs);
-                        history.add(new AssistantMessage(
-                                structured.textResponse() != null ? structured.textResponse() : rawResponse));
-                        currentPrompt = structured.delegationInstructions() != null
-                                ? structured.delegationInstructions()
-                                : "Proceed with the assigned task.";
-                        continue;
-                    }
-                    log.warn("Supervisor continuation: target agent not found, treating as FINISHED_TURN [target={}, session={}]",
-                            structured.targetAgent(), sessionUuid);
-                }
-
-                // FINISHED_TURN (or unresolvable DELEGATE_TURN falls through here)
-                int stackDepth = cur.agentTemplateStack().size();
-                if (stackDepth > 1) {
-                    // Nested sub-agent returned; pop and continue upward
-                    cur.popAgent();
-                    sessionRepo.save(cur);
-                    String parentName = resolveAgentNameById(cur.getActiveAgentTemplateId());
-                    broadcastAndAccumulateTransition(sessionUuid,
-                            "Returned control to " + parentName, transitionMsgs);
-                    history.add(new AssistantMessage(
-                            structured.textResponse() != null ? structured.textResponse() : rawResponse));
-                    currentPrompt = "[Agent Report] " + (structured.textResponse() != null
-                            ? structured.textResponse() : rawResponse);
-                    continue;
-                }
-
-                // stackDepth == 1: terminal response
-                finalText = structured.textResponse() != null && !structured.textResponse().isBlank()
-                        ? structured.textResponse() : rawResponse;
-                break;
-            }
-        } catch (ToolSuspensionException ex) {
-            // Supervisor itself suspended on a tool — save AWAITING_INPUT.
-            // NOTE: userMsg is already baked into the session's persisted messages; do NOT add it again.
-            String simulatedToolCallId = "pending-" + UUID.randomUUID();
-            List<AiChatMessage.ToolCallRef> pendingCalls = List.of(
-                    new AiChatMessage.ToolCallRef(simulatedToolCallId, "FUNCTION", ex.getToolName(), ex.getArguments()));
-            String justification = ex.getJustification() != null && !ex.getJustification().isBlank()
-                    ? ex.getJustification() : defaultAuthorizationReason(ex.getToolName());
-
-            String eventId = UUID.randomUUID().toString();
-            UiEventFrame promptEvent = new UiEventFrame(eventId, "PROMPT_REQUIRED",
-                    "AUTHORIZE_TOOL", justification, ex.getFormSchema());
-
-            List<AiChatMessage> suspendedMessages = new ArrayList<>(accumulated);
-            suspendedMessages.addAll(transitionMsgs);
-            suspendedMessages.add(new AiChatMessage(UUID.randomUUID().toString(), "PROMPT_REQUIRED",
-                    toJson(promptEvent), System.currentTimeMillis(), null,
-                    pendingCalls, simulatedToolCallId, ex.getToolName()));
-
-            AiSession latest = sessionRepo.get(sessionUuid);
-            if (latest == null) latest = session;
-            sessionRepo.save(new AiSession(
-                    latest.uuid(), latest.provider(), originMode,
-                    latest.username(), latest.name(), latest.createdAt(),
-                    latest.currentRoundCount(), List.copyOf(suspendedMessages),
-                    latest.environmentVariables(), AiSessionStatus.AWAITING_INPUT,
-                    latest.agentTemplateStack()));
-            messaging.convertAndSend("/topic/chat/" + sessionUuid, promptEvent);
-            log.info("Supervisor suspended on tool during continuation [tool={}, session={}]",
-                    ex.getToolName(), sessionUuid);
-            ToolExecutionContext.clear();
-            return;
-        }
-
-        if (finalText == null) {
-            finalText = "Processing required too many steps and was interrupted. Please try again.";
-        }
-
-        // Build and save the final message list: accumulated + transitions + final ASSISTANT message
-        AiChatMessage aiMsg = new AiChatMessage(UUID.randomUUID().toString(), "ASSISTANT",
-                finalText, System.currentTimeMillis(), null);
-
-        List<AiChatMessage> finalMessages = new ArrayList<>(accumulated);
-        finalMessages.addAll(transitionMsgs);
-        finalMessages.add(aiMsg);
-
-        AiSessionStatus persistedStatus = resolveStatusForReplyPersistence(sessionUuid, AiSessionStatus.RUNNING);
-        AiSession latest = sessionRepo.get(sessionUuid);
-        if (latest == null) latest = session;
-        sessionRepo.save(new AiSession(
-                latest.uuid(), latest.provider(), originMode,
-                latest.username(), latest.name(), latest.createdAt(),
-                latest.currentRoundCount(), List.copyOf(finalMessages),
-                latest.environmentVariables(), persistedStatus,
-                latest.agentTemplateStack()));
-
-        UiEventFrame textEvent = new UiEventFrame(UUID.randomUUID().toString(),
-                "TEXT_RESPONSE", "CHAT_OUTPUT", finalText, null);
-        messaging.convertAndSend("/topic/chat/" + sessionUuid, textEvent);
-        maybeGenerateSessionName(sessionUuid);
-        log.info("Supervisor continuation completed [session={}, finalTextLength={}]",
-                sessionUuid, finalText.length());
-        ToolExecutionContext.clear();
+        sessionRepo.save(new AiSession(session.uuid(), session.provider(), session.originMode(),
+                session.username(), session.name(), session.createdAt(), session.currentRoundCount(),
+                session.messages(), session.environmentVariables(), session.status(), agentTemplateId));
+        UiEventFrame switchEvent = new UiEventFrame(UUID.randomUUID().toString(),
+                "AGENT_SWITCH", "AGENT_SWITCH", agentTemplateId, null);
+        messaging.convertAndSend("/topic/chat/" + sessionUuid, switchEvent);
+        log.info("Active agent switched [session={}, newAgentId={}]", sessionUuid, agentTemplateId);
+        return agentTemplateId;
     }
 
     /**
@@ -1019,7 +862,7 @@ public class ChatService {
                 List.copyOf(updated),
                 session.environmentVariables(),
                 persistedStatus,
-                session.agentTemplateStack()));
+                session.activeAgentTemplateId()));
 
         maybeGenerateSessionName(session.uuid());
     }
@@ -1150,7 +993,7 @@ public class ChatService {
                     latest.messages(),
                     latest.environmentVariables(),
                     latest.status(),
-                    latest.agentTemplateStack()));
+                    latest.activeAgentTemplateId()));
             log.info("Session title generated [session={}, title={}]", sessionUuid, sanitized);
         } catch (Exception ex) {
             log.warn("Failed to auto-name session [session={}]: {}", sessionUuid, ex.getMessage());

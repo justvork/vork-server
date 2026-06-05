@@ -242,6 +242,11 @@ body.sidebar-collapsed .sidebar-top {
     width: auto;
 }
 
+.agent-select {
+    width: auto;
+    max-width: 14rem;
+}
+
 /* ── Messages ─────────────────────────────────────────────────────────────── */
 
 .chat-messages {

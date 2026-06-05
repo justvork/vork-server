@@ -367,7 +367,7 @@ public class AiConfig {
                             session.messages(),
                             session.environmentVariables(),
                             AiSessionStatus.COMPLETED,
-                            session.agentTemplateStack()));
+                            session.activeAgentTemplateId()));
 
                     backgroundExecutionContext.markExecutionComplete();
                     return "{\"status\":\"shutdown_initiated\"}";

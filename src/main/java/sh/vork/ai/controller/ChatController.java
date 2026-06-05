@@ -1,6 +1,7 @@
 package sh.vork.ai.controller;
 
 import sh.vork.ai.AiProvider;
+import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.protocol.UiEventFrame;
@@ -10,6 +11,7 @@ import jakarta.servlet.http.HttpSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -69,14 +71,16 @@ public class ChatController {
         AiSession session = (sessionUuid == null || sessionUuid.isBlank())
                 ? chatService.getOrCreateSession(httpSession.getId(), provider)
                 : chatService.getSessionForCurrentUser(sessionUuid);
-        return new SessionResponse(session.uuid(), session.name(), session.provider(), session.messages());
+        return new SessionResponse(session.uuid(), session.name(), session.provider(),
+                session.activeAgentTemplateId(), session.messages());
     }
 
     @GetMapping("/session/new")
     public SessionResponse createSession(
             @RequestParam(defaultValue = "GEMINI") AiProvider provider) {
         AiSession session = chatService.createNewSession(provider);
-        return new SessionResponse(session.uuid(), session.name(), session.provider(), session.messages());
+        return new SessionResponse(session.uuid(), session.name(), session.provider(),
+                session.activeAgentTemplateId(), session.messages());
     }
 
     @GetMapping("/sessions")
@@ -105,6 +109,38 @@ public class ChatController {
                 session.createdAt(),
                 session.messages() == null ? 0 : session.messages().size());
             }
+
+    @PostMapping("/session/{sessionUuid}/agent")
+    public ResponseEntity<?> switchAgent(@PathVariable String sessionUuid,
+                                          @RequestBody Map<String, String> body) {
+        String agentTemplateId = body == null ? null : body.get("agentTemplateId");
+        if (agentTemplateId == null || agentTemplateId.isBlank()) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("status", "ERROR", "message", "agentTemplateId required"));
+        }
+        try {
+            AiSession session = chatService.getSessionForCurrentUser(sessionUuid);
+            String newId = chatService.switchActiveAgentById(sessionUuid, agentTemplateId);
+            if (newId == null) {
+                return ResponseEntity.status(404)
+                        .body(Map.of("status", "ERROR", "message", "Agent template not found"));
+            }
+            log.info("Agent switched via API [session={}, agentTemplateId={}]", sessionUuid, newId);
+            return ResponseEntity.ok(Map.of("status", "OK", "agentTemplateId", newId));
+        } catch (IllegalStateException ex) {
+            log.warn("switchAgent denied [session={}, reason={}]", sessionUuid, ex.getMessage());
+            return ResponseEntity.status(403)
+                    .body(Map.of("status", "ERROR", "message", "Access denied"));
+        }
+    }
+
+    @GetMapping("/agents")
+    public List<AgentTemplateSummary> listAgents() {
+        return chatService.listAgentTemplates()
+                .stream()
+                .map(t -> new AgentTemplateSummary(t.uuid(), t.name()))
+                .toList();
+    }
 
     @GetMapping("/welcome")
     public Map<String, String> getWelcomeMessage(
@@ -164,7 +200,8 @@ public class ChatController {
 
     // ── DTOs ──────────────────────────────────────────────────────────────────
 
-    record SessionResponse(String sessionUuid, String sessionName, String provider, List<AiChatMessage> messages) {}
+    record SessionResponse(String sessionUuid, String sessionName, String provider,
+                            String activeAgentTemplateId, List<AiChatMessage> messages) {}
 
     record SessionSummaryResponse(String sessionUuid, String sessionName, String provider,
                                   long createdAt, int messageCount) {}
@@ -172,4 +209,6 @@ public class ChatController {
     record RenameSessionRequest(String name) {}
 
     record ChatRequest(String sessionUuid, String content, String provider, List<String> attachmentUuids) {}
+
+    record AgentTemplateSummary(String uuid, String name) {}
 }

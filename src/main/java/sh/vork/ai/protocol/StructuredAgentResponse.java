@@ -11,26 +11,28 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  * state machine:
  *
  * <ul>
- *   <li>{@code "FINISHED_TURN"} — the agent has completed its goal.  If the stack
- *       depth is&nbsp;&gt;&nbsp;1 the orchestrator pops the agent and feeds
- *       {@code textResponse} back to the supervisor; otherwise {@code textResponse}
- *       is returned to the user as the final reply.</li>
- *   <li>{@code "DELEGATE_TURN"} — the agent needs to hand off work to a
- *       sub-agent.  The orchestrator resolves {@code targetAgent} by name,
- *       pushes the template onto the session stack, broadcasts {@code textResponse}
- *       to the user, and starts a new generation pass using
- *       {@code delegationInstructions} as the prompt.</li>
+ *   <li>{@code "FINISHED_TURN"} — the agent has completed its goal.  The
+ *       {@code textResponse} is returned to the user as the final reply.  The
+ *       session's active agent remains unchanged.</li>
+ *   <li>{@code "DELEGATE_TURN"} — the agent wants to switch control to a
+ *       different agent.  The orchestrator resolves {@code targetAgent} by name,
+ *       updates the session's {@code activeAgentTemplateId}, broadcasts an
+ *       {@code AGENT_TRANSITION} event, and starts a new generation pass using
+ *       {@code delegationInstructions} as the prompt.  The agent stays active
+ *       until the user or the AI explicitly switches again.</li>
+ *   <li>{@code "CONTINUE_TURN"} — the agent is making progress.  {@code textResponse}
+ *       is broadcast as an interim update and the loop continues.</li>
  * </ul>
  *
- * @param status                 {@code "FINISHED_TURN"} or {@code "DELEGATE_TURN"}
+ * @param status                 {@code "FINISHED_TURN"}, {@code "DELEGATE_TURN"}, or {@code "CONTINUE_TURN"}
  * @param textResponse           human-readable progress or result message; surfaced
- *                               to the user on handoff and returned as the final
- *                               reply when the root agent finishes
+ *                               to the user on agent switch and returned as the final
+ *                               reply when the agent finishes
  * @param targetAgent            exact display name of the
- *                               {@link sh.vork.ai.agent.AgentTemplate} to delegate
- *                               to; {@code null} when {@code FINISHED_TURN}
- * @param delegationInstructions self-contained task parameters for the sub-agent;
- *                               {@code null} when {@code FINISHED_TURN}
+ *                               {@link sh.vork.ai.agent.AgentTemplate} to switch to;
+ *                               {@code null} when {@code FINISHED_TURN} or {@code CONTINUE_TURN}
+ * @param delegationInstructions self-contained task parameters for the target agent;
+ *                               {@code null} when {@code FINISHED_TURN} or {@code CONTINUE_TURN}
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record StructuredAgentResponse(

@@ -3,7 +3,6 @@ package sh.vork.ai.entity;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.jadaptive.orm.DatabaseEntity;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -26,8 +25,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * @param messages  ordered list of conversation turns
  * @param environmentVariables live session environment variables for the active session
  * @param status    lifecycle state enum for autonomous/background execution tracking
- * @param agentTemplateStack ordered stack of {@link sh.vork.ai.agent.AgentTemplate} UUIDs;
- *                           the last element is the currently active agent persona
+ * @param activeAgentTemplateId UUID of the currently active {@link sh.vork.ai.agent.AgentTemplate},
+ *                              or {@code null} to use the default Concierge persona
  */
 public record AiSession(
         String              uuid,
@@ -40,7 +39,7 @@ public record AiSession(
         List<AiChatMessage> messages,
         Map<String, String> environmentVariables,
     AiSessionStatus     status,
-    List<String>        agentTemplateStack
+    String              activeAgentTemplateId
 ) implements DatabaseEntity {
 
     public AiSession {
@@ -64,42 +63,15 @@ public record AiSession(
         if (status == null) {
             status = AiSessionStatus.RUNNING;
         }
-        if (agentTemplateStack == null) {
-            agentTemplateStack = new ArrayList<>();
-        } else {
-            agentTemplateStack = new ArrayList<>(agentTemplateStack);
-        }
     }
 
     /**
      * Returns the UUID of the currently active {@link sh.vork.ai.agent.AgentTemplate},
-     * i.e. the last element on the stack, or {@code null} if the stack is empty.
+     * or {@code null} if no specific agent has been selected (falls back to Concierge).
      */
     @JsonIgnore
     public String getActiveAgentTemplateId() {
-        if (agentTemplateStack.isEmpty()) {
-            return null;
-        }
-        return agentTemplateStack.get(agentTemplateStack.size() - 1);
-    }
-
-    /**
-     * Pushes {@code templateUuid} onto the agent-template stack, making it the
-     * active agent for this session.
-     */
-    public void pushAgent(String templateUuid) {
-        agentTemplateStack.add(templateUuid);
-    }
-
-    /**
-     * Pops the top entry from the agent-template stack, reverting to the
-     * previous persona.  A pop that would empty the stack below one entry is
-     * silently ignored to protect the root concierge persona.
-     */
-    public void popAgent() {
-        if (agentTemplateStack.size() > 1) {
-            agentTemplateStack.remove(agentTemplateStack.size() - 1);
-        }
+        return activeAgentTemplateId;
     }
 
     public static ConcurrentHashMap<String, String> defaultEnvironmentVariables() {

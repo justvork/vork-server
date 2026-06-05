@@ -68,7 +68,7 @@ public class BackgroundOrchestrationEngine {
                             List.copyOf(updated),
                             session.environmentVariables(),
                             AiSessionStatus.FAILED_MAX_ROUNDS,
-                            session.agentTemplateStack()));
+                            session.activeAgentTemplateId()));
                     log.warn("Background loop stopped at max rounds [session={}]", sessionUuid);
                     return;
                 }
@@ -84,7 +84,7 @@ public class BackgroundOrchestrationEngine {
                         session.messages(),
                         session.environmentVariables(),
                         AiSessionStatus.RUNNING,
-                        session.agentTemplateStack()));
+                        session.activeAgentTemplateId()));
 
                 executionContext.clear();
                     ToolExecutionContext.bindSessionUuid(sessionUuid);

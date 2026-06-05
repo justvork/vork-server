@@ -232,7 +232,7 @@ public class ChatAuthorizationController {
                     List.copyOf(suspendedMessages),
                     session.environmentVariables(),
                     AiSessionStatus.AWAITING_INPUT,
-                    session.agentTemplateStack()));
+                    session.activeAgentTemplateId()));
 
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, suspendedPromptEvent);
                 log.info("Tool execution suspended for additional input [tool={}, session={}]",
@@ -335,7 +335,7 @@ public class ChatAuthorizationController {
                         List.copyOf(updated),
                         session.environmentVariables(),
                         AiSessionStatus.RUNNING,
-                        session.agentTemplateStack()));
+                        session.activeAgentTemplateId()));
             }
 
             if (originMode == SessionOriginMode.BACKGROUND) {
@@ -350,7 +350,7 @@ public class ChatAuthorizationController {
                         List.copyOf(updated),
                     session.environmentVariables(),
                     AiSessionStatus.RUNNING,
-                    session.agentTemplateStack()));
+                    session.activeAgentTemplateId()));
 
                 aiBackgroundExecutor.execute(() -> {
                     ToolExecutionContext.bindSessionUuid(sessionUuid);
@@ -380,8 +380,11 @@ public class ChatAuthorizationController {
             ToolExecutionContext.bindSessionUuid(sessionUuid);
             ToolExecutionContext.hydrate(session.environmentVariables());
             try {
-                String continuationPrompt = "The tool result is already available in the conversation history."
-                        + " Summarize the result for the user and provide any concise next-step guidance.";
+                String continuationPrompt = "DENIED".equals(action)
+                        ? "The tool call was denied by the user. Do not call tools again for this request."
+                            + " Explain to the user why you cannot proceed and suggest alternatives if any."
+                        : "The tool result is already available in the conversation history."
+                            + " Summarize the result for the user and provide any concise next-step guidance.";
                 final int MAX_RESUME_ITERATIONS = 10;
                 for (int resumeIter = 0; resumeIter < MAX_RESUME_ITERATIONS; resumeIter++) {
                     String rawResponse = aiService.generateWithHistory(
@@ -400,6 +403,30 @@ public class ChatAuthorizationController {
                         history.add(new AssistantMessage(progressText.isBlank() ? rawResponse : progressText));
                         continuationPrompt = "Continue executing the task. Use available tools as needed.";
                         log.debug("Resume CONTINUE_TURN [session={}, iter={}]", sessionUuid, resumeIter);
+                    } else if ("DELEGATE_TURN".equals(structured.status()) && chatService != null) {
+                        String targetId = chatService.switchActiveAgentByName(sessionUuid, structured.targetAgent());
+                        if (targetId != null) {
+                            UiEventFrame transitionEvent = new UiEventFrame(UUID.randomUUID().toString(),
+                                    "AGENT_TRANSITION", "AGENT_TRANSITION",
+                                    "Switched to " + structured.targetAgent(), null);
+                            messaging.convertAndSend("/topic/chat/" + sessionUuid, transitionEvent);
+                            updated.add(new AiChatMessage(UUID.randomUUID().toString(), "AGENT_TRANSITION",
+                                    "Switched to " + structured.targetAgent(),
+                                    System.currentTimeMillis(), null, null, null, null));
+                            String handoffText = structured.textResponse() != null && !structured.textResponse().isBlank()
+                                    ? structured.textResponse() : rawResponse;
+                            history.add(new AssistantMessage(handoffText));
+                            continuationPrompt = structured.delegationInstructions() != null
+                                    ? structured.delegationInstructions() : "Proceed with the assigned task.";
+                            log.info("Resume DELEGATE_TURN: agent switched [session={}, target={}]",
+                                    sessionUuid, structured.targetAgent());
+                            continue;
+                        }
+                        log.warn("Resume DELEGATE_TURN: agent not found, treating as FINISHED_TURN [target={}, session={}]",
+                                structured.targetAgent(), sessionUuid);
+                        finalText = structured.textResponse() != null && !structured.textResponse().isBlank()
+                                ? structured.textResponse() : rawResponse;
+                        break;
                     } else {
                         finalText = structured.textResponse() != null && !structured.textResponse().isBlank()
                                 ? structured.textResponse() : rawResponse;
@@ -447,7 +474,7 @@ public class ChatAuthorizationController {
                     List.copyOf(updated),
                     session.environmentVariables(),
                     AiSessionStatus.AWAITING_INPUT,
-                    session.agentTemplateStack()));
+                    session.activeAgentTemplateId()));
 
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, suspendedPromptEvent);
                 log.info("Resumed call suspended again [tool={}, session={}]", ex.getToolName(), sessionUuid);
@@ -491,7 +518,7 @@ public class ChatAuthorizationController {
                     List.copyOf(updated),
                     session.environmentVariables(),
                     AiSessionStatus.RUNNING,
-                    session.agentTemplateStack()));
+                    session.activeAgentTemplateId()));
 
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, errorEvent);
                 ToolExecutionContext.clear();
@@ -502,32 +529,8 @@ public class ChatAuthorizationController {
                 ));
             }
 
-            // If the sub-agent (e.g. Computer Administrator) returned FINISHED_TURN but
-            // the session still has a parent on the stack (stackDepth > 1), we must pop
-            // it and let the parent agent (e.g. Concierge) synthesize the final response.
-            // Without this the parent never runs and the session ends prematurely.
-            int resumeStackDepth = session.agentTemplateStack().size();
-            if (resumeStackDepth > 1 && chatService != null) {
-                log.info("Sub-agent FINISHED_TURN at stackDepth={}, delegating to parent agent [session={}]",
-                        resumeStackDepth, sessionUuid);
-                // Do NOT clear ToolExecutionContext here — continueLoopFromSubAgentReturn
-                // needs the session UUID bound so AiOrchestrationService can apply the
-                // parent agent's system prompt and tool-filtering restrictions.
-                //
-                // Remove any leftover 'pending-id' use-once rule before the parent agent
-                // runs. That wildcard is only valid for tool calls made during the
-                // immediate Spring AI resume above; if it was not consumed there it must
-                // not auto-approve tool calls in the parent agent's continuation loop.
-                authorizationRuleEngine.removeUseOnceRule("pending-id");
-                chatService.continueLoopFromSubAgentReturn(
-                        sessionUuid, List.copyOf(updated), finalText, originMode,
-                        resolveProvider(session.provider()));
-                return ResponseEntity.ok(Map.of(
-                        "status", "WEB_RESUMED",
-                        "eventType", "TEXT_RESPONSE",
-                        "eventId", UUID.randomUUID().toString()
-                ));
-            }
+            // Clean up any leftover pending-id use-once rule before returning
+            authorizationRuleEngine.removeUseOnceRule("pending-id");
 
             UiEventFrame textEvent = new UiEventFrame(
                     UUID.randomUUID().toString(),
@@ -557,7 +560,7 @@ public class ChatAuthorizationController {
                     List.copyOf(updated),
                     session.environmentVariables(),
                     AiSessionStatus.RUNNING,
-                    session.agentTemplateStack()));
+                    session.activeAgentTemplateId()));
 
             if (chatService != null) {
                 chatService.maybeGenerateSessionName(session.uuid());

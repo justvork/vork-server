@@ -108,7 +108,7 @@ class AiJobRunnerLifecycleTest {
                     withSyntheticAssistantMessage(current.messages()),
                     AiSession.defaultEnvironmentVariables(),
                     targetStatus,
-                    current.agentTemplateStack()));
+                    current.activeAgentTemplateId()));
         }
 
         private static List<AiChatMessage> withSyntheticAssistantMessage(List<AiChatMessage> existing) {

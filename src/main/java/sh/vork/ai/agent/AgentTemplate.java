@@ -7,11 +7,11 @@ import java.util.List;
 /**
  * A named AI agent configuration stored in MongoDB.
  *
- * <p>An {@code AgentTemplate} defines the persona and capability boundary for a
- * sub-agent that can be activated within an {@link sh.vork.ai.entity.AiSession}.
- * When a session's agent-template stack is non-empty the orchestration layer
- * injects the top-most template's {@code systemPrompt} into every request and
- * restricts available tools to the {@code allowedTools} list.
+ * <p>An {@code AgentTemplate} defines the persona and capability boundary for an
+ * agent that can be activated within an {@link sh.vork.ai.entity.AiSession}.
+ * When a session has an active agent template the orchestration layer injects the
+ * template's {@code systemPrompt} into every request and restricts available tools
+ * to the {@code allowedTools} list.
  *
  * @param uuid         unique document ID (MongoDB {@code _id})
  * @param name         human-friendly label shown in management UIs

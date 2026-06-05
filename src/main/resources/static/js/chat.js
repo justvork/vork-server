@@ -10,6 +10,7 @@ const messageInput   = document.getElementById('message-input');
 const sendBtn        = document.getElementById('send-btn');
 const chatForm       = document.getElementById('chat-form');
 const providerSel    = document.getElementById('provider-select');
+const agentSel       = document.getElementById('agent-select');
 const statusDot      = document.getElementById('status-dot');
 const sessionDisplay = document.getElementById('session-display');
 const attachStrip    = document.getElementById('attachment-strip');
@@ -1155,6 +1156,13 @@ function handleIncomingUiFrame(frame) {
             renderAgentTransition(frame.textResponse || '');
             return;
 
+        case 'AGENT_SWITCH':
+            // Active agent was changed server-side — update the dropdown
+            if (agentSel && frame.textResponse) {
+                agentSel.value = frame.textResponse;
+            }
+            return;
+
         case 'ERROR':
             setAwaitingPostTerminalResponse(false);
             renderMessage({
@@ -1656,6 +1664,41 @@ function loadSessionList() {
         });
 }
 
+function loadAgents(activeAgentTemplateId) {
+    fetch('/api/chat/agents')
+        .then(function (resp) { return resp.ok ? resp.json() : Promise.resolve([]); })
+        .then(function (agents) {
+            // Preserve the default option and repopulate the rest
+            agentSel.innerHTML = '<option value="">Default (Concierge)</option>';
+            agents.forEach(function (agent) {
+                const opt = document.createElement('option');
+                opt.value = agent.uuid;
+                opt.textContent = agent.name;
+                agentSel.appendChild(opt);
+            });
+            agentSel.value = activeAgentTemplateId || '';
+        })
+        .catch(function () { /* non-critical */ });
+}
+
+agentSel.addEventListener('change', function () {
+    if (!sessionUuid) return;
+    const agentTemplateId = agentSel.value;
+    fetch('/api/chat/session/' + encodeURIComponent(sessionUuid) + '/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentTemplateId: agentTemplateId || '' })
+    })
+        .then(function (resp) {
+            if (!resp.ok) {
+                console.warn('Agent switch failed: HTTP ' + resp.status);
+                // Revert dropdown to avoid misleading state
+                loadAgents(null);
+            }
+        })
+        .catch(function (err) { console.warn('Agent switch error:', err); });
+});
+
 function loadSession(targetSessionUuid) {
     let url = '/api/chat/session?provider=' + encodeURIComponent(providerSel.value);
     if (targetSessionUuid) {
@@ -1670,6 +1713,7 @@ function loadSession(targetSessionUuid) {
         .then(async function (data) {
             sessionUuid = data.sessionUuid;
             sessionDisplay.textContent = (data.sessionName || 'Untitled') + ' · ' + sessionUuid.substring(0, 8) + '…';
+            loadAgents(data.activeAgentTemplateId);
             clearConversationUi();
             const messages = data.messages || [];
             const lastPromptIndex = findLastUnansweredPromptIndex(messages);
