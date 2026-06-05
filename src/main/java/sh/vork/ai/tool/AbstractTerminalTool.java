@@ -4,6 +4,7 @@ import org.slf4j.MDC;
 
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.SessionOriginMode;
+import sh.vork.ai.terminal.AbortedTerminalCommandException;
 import sh.vork.ai.terminal.TerminalStreamRouter;
 import com.jadaptive.orm.DatabaseRepository;
 
@@ -33,7 +34,11 @@ public abstract class AbstractTerminalTool {
                 ? SessionOriginMode.BACKGROUND
                 : session.originMode();
 
-        return terminalStreamRouter.executeStreamedCommand(sessionUuid, host, command, originMode);
+        try {
+            return terminalStreamRouter.executeStreamedCommand(sessionUuid, host, command, originMode);
+        } catch (AbortedTerminalCommandException ex) {
+            return "{\"status\":\"aborted\",\"message\":\"Command was terminated by the user\"}";
+        }
     }
 
     protected String resolveSessionUuid() {

@@ -9,28 +9,20 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.function.FunctionToolCallback;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.util.ClassUtils;
 import org.slf4j.MDC;
 
@@ -58,9 +50,6 @@ import sh.vork.ai.function.SaveTypeInstanceRequest;
 import sh.vork.ai.function.SearchTypeInstancesRequest;
 import com.jadaptive.orm.DatabaseRepository;
 import com.jadaptive.orm.SortOrder;
-import sh.vork.scheduling.domain.DurationType;
-import sh.vork.scheduling.domain.ScheduledJob;
-import sh.vork.scheduling.service.AiSchedulerService;
 import sh.vork.scheduling.service.BackgroundExecutionContext;
 import sh.vork.typegen.JavaType;
 import sh.vork.typegen.JavaTypeClassLoader;
@@ -84,7 +73,6 @@ import sh.vork.ai.tool.DisconnectSshTool;
 import sh.vork.ai.tool.DownloadFileTool;
 import sh.vork.ai.tool.ExecuteTerminalCommandTool;
 import sh.vork.ai.tool.ListSshConnectionsTool;
-import sh.vork.ai.tool.ScheduleTaskRequest;
 import sh.vork.ai.tool.SetSshAliasTool;
 import sh.vork.ai.tool.SshConnectTool;
 import sh.vork.ai.tool.UploadFileTool;
@@ -123,13 +111,6 @@ public class AiConfig {
         - Provide concise supervisor-facing reasoning that can be shown in authorization review.
         - Keep it user-friendly plain language, avoid internal API/tool names, and explain why the action is needed.
 
-                SCHEDULING PROTOCOL:
-                - When a user asks for background, later, delayed, or recurring execution, invoke scheduleBackgroundTask.
-                - You must provide a non-empty jobName for every scheduleBackgroundTask call.
-                - startIsoTime may be either an absolute ISO-8601 instant (recommended) or a relative value like 'in 1 minute'.
-                - Because background execution is detached and runs later, backgroundPrompt must contain all required parameters,
-                    assumptions, and schema details needed to complete the task without chat-history access.
-
         REASONING_HINT rule:
         - A tool description may include a line starting with 'REASONING_HINT:'.
         - This hint only affects wording of authorization reasoning text.
@@ -139,10 +120,6 @@ public class AiConfig {
         - For any type implementing com.jadaptive.orm.DatabaseEntity, uuid is always String (method signature: String uuid()).
         - Do not generate java.util.UUID as the record field type for uuid.
                                 """.stripIndent();
-    private static final Pattern RELATIVE_START_PATTERN = Pattern.compile(
-            "^\\s*in\\s+([a-zA-Z0-9-]+)\\s+(second|seconds|minute|minutes|hour|hours|day|days|week|weeks|month|months)\\s*$",
-            Pattern.CASE_INSENSITIVE);
-
     private final JavaTypeClassLoader typeClassLoader;
     private final TypeDatabaseService typeDatabaseService;
     private final ObjectMapper objectMapper;
@@ -485,74 +462,6 @@ public class AiConfig {
                     Invoke when the user says 'disconnect <host>', 'close ssh <alias>', or 'exit <host>'."""
                         .stripIndent())
                 .inputType(DisconnectSshRequest.class)
-                .build();
-    }
-
-    /**
-     * {@code scheduleBackgroundTask} tool — persists and schedules a background AI
-     * job for one-time or recurring execution.
-     */
-    @Bean
-    @ToolCategory("Scheduling")
-    public ToolCallback scheduleBackgroundTask(ObjectProvider<AiSchedulerService> schedulerServiceProvider) {
-        return FunctionToolCallback
-                .builder("scheduleBackgroundTask", (ScheduleTaskRequest req) -> {
-                    String jobName = req == null ? null : req.jobName();
-                    String backgroundPrompt = req == null ? null : req.backgroundPrompt();
-                    String startIsoTime = req == null ? null : req.startIsoTime();
-                    String durationTypeRaw = req == null ? null : req.durationType();
-
-                    if (jobName == null || jobName.isBlank()) {
-                        return "{\"status\":\"error\",\"message\":\"jobName is required\"}";
-                    }
-                    if (backgroundPrompt == null || backgroundPrompt.isBlank()) {
-                        return "{\"status\":\"error\",\"message\":\"backgroundPrompt is required\"}";
-                    }
-
-                    DurationType durationType;
-                    try {
-                        String normalizedType = durationTypeRaw == null
-                                ? DurationType.SECONDS.name()
-                                : durationTypeRaw.trim().toUpperCase(Locale.ROOT);
-                        durationType = DurationType.valueOf(normalizedType);
-                    } catch (Exception ex) {
-                        return "{\"status\":\"error\",\"message\":\"durationType must be one of: SECONDS, MINUTES, HOURS, DAYS, WEEKS, MONTHS\"}";
-                    }
-
-                    Instant startTime;
-                    try {
-                        startTime = resolveStartTime(startIsoTime);
-                    } catch (IllegalArgumentException ex) {
-                        return "{\"status\":\"error\",\"message\":\"startIsoTime must be an ISO-8601 instant or a relative value like 'in 1 minute'\"}";
-                    }
-
-                    String username = resolveUsername();
-                    String sessionUuid = resolveSessionUuid();
-
-                    ScheduledJob job = new ScheduledJob(
-                            null,
-                            jobName.trim(),
-                            backgroundPrompt,
-                            sessionUuid,
-                            username,
-                            startTime,
-                            req.repeatInterval(),
-                            durationType,
-                            null);
-
-                    try {
-                        ScheduledJob scheduled = schedulerServiceProvider.getObject().scheduleJob(job);
-                        return objectMapper.writeValueAsString(Map.of(
-                                "status", "scheduled",
-                                "jobId", scheduled.id(),
-                                "jobName", scheduled.name()
-                        ));
-                    } catch (Exception ex) {
-                        return "{\"status\":\"error\",\"message\":\"" + ex.getMessage().replace("\"", "'") + "\"}";
-                    }
-                })
-                .description("Schedules an instructional command prompt pass to execute asynchronously in a background runner process according to a specified calendar interval delay.")
-                .inputType(ScheduleTaskRequest.class)
                 .build();
     }
 
@@ -979,14 +888,6 @@ REASONING_HINT: Authorization is required to compile {{type_name}}.
         return buildSchema(type);
     }
 
-    private static String resolveUsername() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || auth.getName() == null || auth.getName().isBlank()) {
-            return "anonymous";
-        }
-        return auth.getName();
-    }
-
     private static String resolveSessionUuid() {
         String sessionUuid = MDC.get("sessionUuid");
         if (sessionUuid == null || sessionUuid.isBlank() || "<null>".equals(sessionUuid)) {
@@ -995,63 +896,4 @@ REASONING_HINT: Authorization is required to compile {{type_name}}.
         return sessionUuid;
     }
 
-    private static Instant resolveStartTime(String startIsoTime) {
-        if (startIsoTime == null || startIsoTime.isBlank()) {
-            return Instant.now();
-        }
-
-        String raw = startIsoTime.trim();
-        if ("now".equalsIgnoreCase(raw)) {
-            return Instant.now();
-        }
-
-        try {
-            return Instant.parse(raw);
-        } catch (Exception ignored) {
-            // Fall through to relative parser.
-        }
-
-        Matcher matcher = RELATIVE_START_PATTERN.matcher(raw);
-        if (!matcher.matches()) {
-            throw new IllegalArgumentException("Unsupported startIsoTime format");
-        }
-
-        long amount = parseAmountToken(matcher.group(1));
-        String unit = matcher.group(2).toLowerCase(Locale.ROOT);
-
-        return switch (unit) {
-            case "second", "seconds" -> Instant.now().plus(amount, ChronoUnit.SECONDS);
-            case "minute", "minutes" -> Instant.now().plus(amount, ChronoUnit.MINUTES);
-            case "hour", "hours" -> Instant.now().plus(amount, ChronoUnit.HOURS);
-            case "day", "days" -> Instant.now().plus(amount, ChronoUnit.DAYS);
-            case "week", "weeks" -> Instant.now().plus(amount * 7, ChronoUnit.DAYS);
-            case "month", "months" -> Instant.now().plus(amount * 30, ChronoUnit.DAYS);
-            default -> throw new IllegalArgumentException("Unsupported relative unit");
-        };
-    }
-
-    private static long parseAmountToken(String amountToken) {
-        String normalized = amountToken == null ? "" : amountToken.trim().toLowerCase(Locale.ROOT);
-        if (normalized.isEmpty()) {
-            throw new IllegalArgumentException("Missing amount");
-        }
-
-        if (normalized.matches("\\d+")) {
-            return Long.parseLong(normalized);
-        }
-
-        return switch (normalized) {
-            case "a", "an", "one" -> 1;
-            case "two" -> 2;
-            case "three" -> 3;
-            case "four" -> 4;
-            case "five" -> 5;
-            case "six" -> 6;
-            case "seven" -> 7;
-            case "eight" -> 8;
-            case "nine" -> 9;
-            case "ten" -> 10;
-            default -> throw new IllegalArgumentException("Unsupported relative amount");
-        };
-    }
 }

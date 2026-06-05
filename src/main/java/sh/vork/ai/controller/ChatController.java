@@ -26,6 +26,7 @@ import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
+import sh.vork.ai.terminal.TerminalStreamRouter;
 
 /**
  * Handles both HTTP session initialisation and WebSocket chat messages.
@@ -47,6 +48,7 @@ public class ChatController {
     private final ChatService            chatService;
     private final SimpMessagingTemplate  messaging;
     private final AiOrchestrationService aiOrchestrationService;
+    private final TerminalStreamRouter   terminalStreamRouter;
 
     private static final String WELCOME_PROMPT =
             "You are Vork the Concierge, an intelligent assistant that can perform tasks for the user " +
@@ -55,10 +57,12 @@ public class ChatController {
             "provide a short introduction to introduce yourself to the user and your capabilities.";
 
     public ChatController(ChatService chatService, SimpMessagingTemplate messaging,
-                          AiOrchestrationService aiOrchestrationService) {
+                          AiOrchestrationService aiOrchestrationService,
+                          TerminalStreamRouter terminalStreamRouter) {
         this.chatService = chatService;
         this.messaging   = messaging;
         this.aiOrchestrationService = aiOrchestrationService;
+        this.terminalStreamRouter = terminalStreamRouter;
     }
 
     // ── HTTP ──────────────────────────────────────────────────────────────────
@@ -132,6 +136,21 @@ public class ChatController {
             return ResponseEntity.status(403)
                     .body(Map.of("status", "ERROR", "message", "Access denied"));
         }
+    }
+
+    @PostMapping("/session/{sessionUuid}/terminal/{terminalId}/terminate")
+    public ResponseEntity<?> terminateCommand(@PathVariable String sessionUuid,
+                                              @PathVariable String terminalId) {
+        log.debug("ENTER terminateCommand: [session={}, terminal={}]", sessionUuid, terminalId);
+        boolean sent = terminalStreamRouter.terminateActiveCommand(sessionUuid, terminalId);
+        if (sent) {
+            log.info("Terminal abort requested [session={}, terminal={}]", sessionUuid, terminalId);
+            return ResponseEntity.ok(Map.of("status", "OK"));
+        }
+        log.warn("terminateCommand: no active command found [session={}, terminal={}]",
+                sessionUuid, terminalId);
+        return ResponseEntity.status(404)
+                .body(Map.of("status", "NOT_FOUND", "message", "No active command for that terminal"));
     }
 
     @GetMapping("/agents")

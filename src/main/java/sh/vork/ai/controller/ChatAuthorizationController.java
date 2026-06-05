@@ -843,41 +843,42 @@ public class ChatAuthorizationController {
     }
 
     private String buildTerminalToolResponse(String argumentsJson, String toolResult) {
-        String command = extractTerminalCommand(argumentsJson);
-        String rawOutput = unwrapTerminalToolResult(toolResult);
+        // Parse the tool result directly — it already contains status, terminalId,
+        // outputFileUuid, etc. We just need to add command and normalise the outputs.
         Map<String, Object> payload = new HashMap<>();
-        payload.put("status", "COMPLETED");
-        payload.put("command", command);
-        String terminalId = null;
         String outputFileUuid = null;
-        
-        // Extract file UUID from tool result if present
         try {
             Map<String, Object> toolResultObj = objectMapper.readValue(toolResult, new TypeReference<Map<String, Object>>() {});
-            Object terminalIdObj = toolResultObj.get("terminalId");
-            if (terminalIdObj != null) {
-                terminalId = String.valueOf(terminalIdObj);
-                payload.put("terminalId", terminalId);
-            }
+            payload.putAll(toolResultObj);
             Object fileUuid = toolResultObj.get("outputFileUuid");
             if (fileUuid != null) {
                 outputFileUuid = String.valueOf(fileUuid);
-                payload.put("outputFileUuid", outputFileUuid);
             }
         } catch (Exception ignored) {
-            // Not a JSON object or doesn't have file UUID, continue
+            payload.put("status", "COMPLETED");
         }
 
-        // If the tool output was routed to a stored file, load it into history payload
-        // so the model can reason over real command output on resumed calls.
-        if ((rawOutput == null || rawOutput.isBlank()) && outputFileUuid != null && fileStorageService != null) {
-            rawOutput = readTerminalOutputFile(outputFileUuid);
+        String command = extractTerminalCommand(argumentsJson);
+        payload.put("command", command);
+
+        // Only compute output fields when the response carries terminal output.
+        if (!payload.containsKey("rawOutput") && !payload.containsKey("displayOutput")) {
+            payload.put("rawOutput", "");
+            payload.put("displayOutput", "");
+        } else {
+            String rawOutput = payload.get("rawOutput") instanceof String s ? s : unwrapTerminalToolResult(toolResult);
+
+            // If the tool output was routed to a stored file, load it into history
+            // so the model can reason over real command output on resumed calls.
+            if ((rawOutput == null || rawOutput.isBlank()) && outputFileUuid != null && fileStorageService != null) {
+                rawOutput = readTerminalOutputFile(outputFileUuid);
+            }
+
+            String displayOutput = normalizeTerminalTranscript(command, rawOutput);
+            payload.put("rawOutput", compactTerminalHistoryOutput(rawOutput, outputFileUuid));
+            payload.put("displayOutput", compactTerminalHistoryOutput(displayOutput, outputFileUuid));
         }
 
-        String displayOutput = normalizeTerminalTranscript(command, rawOutput);
-        payload.put("rawOutput", compactTerminalHistoryOutput(rawOutput, outputFileUuid));
-        payload.put("displayOutput", compactTerminalHistoryOutput(displayOutput, outputFileUuid));
-        
         return toJson(payload);
     }
 

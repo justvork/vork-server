@@ -339,7 +339,8 @@ function isTerminalEventFrame(obj) {
         && typeof obj === 'object'
         && obj.type === 'EVENT'
         && typeof obj.terminalId === 'string'
-        && (obj.status === 'TERMINAL_START' || obj.status === 'TERMINAL_END' || obj.status === 'TERMINAL_DATA');
+        && (obj.status === 'TERMINAL_START' || obj.status === 'TERMINAL_END'
+        || obj.status === 'TERMINAL_DATA' || obj.status === 'TERMINAL_ABORTED');
 }
 
 function getTerminalViewId(terminalId) {
@@ -357,6 +358,9 @@ function createTerminalInlineRow(terminalId, command, options) {
         '      <span class="terminal-status-icon terminal-status-running" title="Running" aria-label="Running">' +
         '        <i class="fa-solid fa-circle-notch fa-spin" aria-hidden="true"></i>' +
         '      </span>' +
+        '      <button type="button" class="terminal-stop-btn" title="Terminate command" aria-label="Terminate command">' +
+        '        <i class="fa-solid fa-stop" aria-hidden="true"></i>' +
+        '      </button>' +
         '    </div>' +
         '    <button type="button" class="terminal-stream-toggle" aria-label="Collapse output" title="Collapse output">' +
         '      <i class="fa-solid fa-chevron-up" aria-hidden="true"></i>' +
@@ -387,12 +391,14 @@ function createTerminalInlineRow(terminalId, command, options) {
         pendingWriteScheduled: false,
         endReceived: false,
         endReceivedAt: 0,
+        aborted: false,
         live: false,
         completed: false,
         expanded: expanded,
         command: command || 'Live Terminal Stream',
         attachmentUuid: null,
         statusIcon: row.querySelector('.terminal-status-icon'),
+        stopBtn: row.querySelector('.terminal-stop-btn'),
         socketConnected: false,
         finalizeTimer: null
     };
@@ -400,6 +406,19 @@ function createTerminalInlineRow(terminalId, command, options) {
     view.toggleBtn.addEventListener('click', function () {
         setTerminalExpanded(view, !view.expanded);
     });
+
+    if (view.stopBtn) {
+        view.stopBtn.addEventListener('click', function () {
+            if (!sessionUuid || view.completed) return;
+            view.stopBtn.disabled = true;
+            fetch('/api/chat/session/' + sessionUuid + '/terminal/' + encodeURIComponent(view.terminalId) + '/terminate', {
+                method: 'POST'
+            }).catch(function (err) {
+                console.warn('Failed to terminate command:', err);
+                view.stopBtn.disabled = false;
+            });
+        });
+    }
 
     terminalState.views.set(getTerminalViewId(terminalId), view);
     setTerminalExpanded(view, expanded);
@@ -411,7 +430,8 @@ function getPendingTerminalState(terminalId) {
     if (!pending) {
         pending = {
             chunks: [],
-            endReceived: false
+            endReceived: false,
+            aborted: false
         };
         terminalState.pendingByTerminal.set(terminalId, pending);
     }
@@ -432,6 +452,9 @@ function applyPendingTerminalState(view) {
     });
     if (pending.endReceived) {
         view.endReceived = true;
+    }
+    if (pending.aborted) {
+        view.aborted = true;
     }
 
     terminalState.pendingByTerminal.delete(view.terminalId);
@@ -516,7 +539,11 @@ function maybeFinalizeTerminalView(view) {
         clearTimeout(view.finalizeTimer);
         view.finalizeTimer = null;
     }
-    markTerminalCompleted(view);
+    if (view.aborted) {
+        markTerminalAborted(view);
+    } else {
+        markTerminalCompleted(view);
+    }
 
     view.passivePre.textContent = buildPassiveTranscript(view);
     view.passivePre.classList.remove('d-none');
@@ -585,6 +612,9 @@ function markTerminalCompleted(view) {
     }
     view.completed = true;
     view.live = false;
+    if (view.stopBtn) {
+        view.stopBtn.style.display = 'none';
+    }
     if (view.toggleBtn) {
         view.toggleBtn.disabled = false;
     }
@@ -593,6 +623,26 @@ function markTerminalCompleted(view) {
         view.statusIcon.title = 'Completed';
         view.statusIcon.setAttribute('aria-label', 'Completed');
         view.statusIcon.innerHTML = '<i class="fa-solid fa-square-check" aria-hidden="true"></i>';
+    }
+}
+
+function markTerminalAborted(view) {
+    if (!view) {
+        return;
+    }
+    view.completed = true;
+    view.live = false;
+    if (view.stopBtn) {
+        view.stopBtn.style.display = 'none';
+    }
+    if (view.toggleBtn) {
+        view.toggleBtn.disabled = false;
+    }
+    if (view.statusIcon) {
+        view.statusIcon.className = 'terminal-status-icon terminal-status-aborted';
+        view.statusIcon.title = 'Terminated';
+        view.statusIcon.setAttribute('aria-label', 'Terminated');
+        view.statusIcon.innerHTML = '<i class="fa-solid fa-circle-stop" aria-hidden="true"></i>';
     }
 }
 
@@ -749,6 +799,31 @@ function handleTerminalEnd(frame) {
         return;
     }
 
+    view.endReceived = true;
+    view.endReceivedAt = Date.now();
+    flushTerminalChunks(view);
+    scheduleTerminalFinalize(view, TERMINAL_END_GRACE_MS);
+
+}
+
+function handleTerminalAborted(frame) {
+    const terminalId = frame && typeof frame.terminalId === 'string' ? frame.terminalId : null;
+    setAwaitingPostTerminalResponse(true);
+
+    if (!terminalId) {
+        return;
+    }
+
+    const view = findTerminalView(terminalId);
+
+    if (!view) {
+        const pending = getPendingTerminalState(terminalId);
+        pending.endReceived = true;
+        pending.aborted = true;
+        return;
+    }
+
+    view.aborted = true;
     view.endReceived = true;
     view.endReceivedAt = Date.now();
     flushTerminalChunks(view);
@@ -1121,6 +1196,8 @@ function handleIncomingUiFrame(frame) {
             handleTerminalStart(frame);
         } else if (frame.status === 'TERMINAL_DATA') {
             handleTerminalData(frame);
+        } else if (frame.status === 'TERMINAL_ABORTED') {
+            handleTerminalAborted(frame);
         } else {
             handleTerminalEnd(frame);
         }
