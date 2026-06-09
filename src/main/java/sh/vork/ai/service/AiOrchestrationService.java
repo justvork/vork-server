@@ -54,7 +54,7 @@ public class AiOrchestrationService {
 
     private static final Logger log = LoggerFactory.getLogger(AiOrchestrationService.class);
         private static final String BACKGROUND_OPERATIONAL_PROTOCOL = """
-BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated background thread. You must perform all necessary analysis and tool calls across multiple message rounds without expecting further human input. Once you have validated that the requested objective is entirely satisfied (e.g., your types compile successfully and records are saved), you MUST invoke the completeBackgroundTask tool to cleanly finalize the run. Do not exit without invoking this tool.
+BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated background thread. You must perform all necessary analysis and tool calls across multiple message rounds without expecting further human input. Once you have validated that the requested objective is entirely satisfied (e.g., your types compile successfully and records are saved), you MUST invoke the completeBackgroundTask tool to cleanly finalize the run. You MUST provide a boolean 'success' value and a 'report' string summarising what was done and produced. Do not exit without invoking this tool.
                         """.stripIndent();
 
         private static final String STRUCTURED_RESPONSE_MANDATE = """
@@ -244,6 +244,15 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         StringBuilder envBlock = new StringBuilder("\n### ACTIVE SESSION ENVIRONMENT VARIABLES\n");
                         envMap.forEach((k, v) -> envBlock.append(k).append("=").append(v).append("\n"));
                         prompt.append(envBlock);
+
+                        // Append expected output as a hard protocol rule if defined for this job
+                        String expectedOutput = envMap.get("JOB_EXPECTED_OUTPUT");
+                        if (expectedOutput != null && !expectedOutput.isBlank()) {
+                                prompt.append("\n### HARD REQUIREMENT — EXPECTED OUTPUT\n")
+                                        .append(expectedOutput).append("\n")
+                                        .append("You MUST produce this output before invoking completeBackgroundTask. ")
+                                        .append("Your report field MUST explicitly confirm whether this requirement was met.\n");
+                        }
                 }
 
                 // Mandate structured output for interactive (non-background) sessions

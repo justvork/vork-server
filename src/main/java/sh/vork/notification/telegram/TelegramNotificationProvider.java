@@ -92,6 +92,34 @@ public class TelegramNotificationProvider implements NotificationProvider {
     }
 
     @Override
+    public boolean supportsGlobalAddresses() {
+        return true;
+    }
+
+    @Override
+    public String getGlobalAddressSetupInstructions() {
+        return "To add a Telegram group or channel as a shared notification target:\n"
+                + "1. Add this bot to your Telegram group or channel.\n"
+                + "2. Click \"Add Telegram Group\" below — you will receive a one-time registration code.\n"
+                + "3. Inside the group, type: /register <code>\n"
+                + "The group will be registered automatically once the bot receives the command.";
+    }
+
+    @Override
+    public String validateAddress(NotificationMediaType mediaType, String address) {
+        if (address == null || address.isBlank()) {
+            return "Telegram chat ID is required.";
+        }
+        String trimmed = address.trim();
+        // Accept numeric chat IDs (positive for users/channels, negative for groups)
+        if (!trimmed.matches("^-?\\d+$") && !trimmed.matches("^@[A-Za-z][A-Za-z0-9_]{4,31}$")) {
+            return "Telegram address must be a numeric chat ID (e.g. -1001234567890) "
+                    + "or a @username handle.";
+        }
+        return null;
+    }
+
+    @Override
     public void send(Notification notification, Map<String, String> settings) throws NotificationException {
         String botToken = settings.getOrDefault("botToken", "").trim();
         String url      = String.format(TELEGRAM_API_BASE, botToken);

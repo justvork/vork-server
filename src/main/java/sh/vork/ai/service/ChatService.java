@@ -178,6 +178,23 @@ public class ChatService {
         return session;
     }
 
+    public AiSession createSlackSession(String username, String configId,
+                                         String channelId, String botToken, String providerName) {
+        String uuid = UUID.randomUUID().toString();
+        Map<String, String> env = new java.util.HashMap<>(AiSession.defaultEnvironmentVariables());
+        env.put("SLACK_CONFIG_ID",  configId);
+        env.put("SLACK_CHANNEL_ID", channelId);
+        env.put("SLACK_BOT_TOKEN",  botToken);
+        AiSession session = new AiSession(uuid, providerName,
+                SessionOriginMode.SLACK, username, DEFAULT_SESSION_NAME,
+                System.currentTimeMillis(), 0, List.of(),
+                java.util.Collections.unmodifiableMap(env),
+                AiSessionStatus.RUNNING, AgentTemplateSeeder.UUID_CONCIERGE, null);
+        sessionRepo.save(session);
+        log.info("Created Slack session [id={}, user={}, channelId={}]", uuid, username, channelId);
+        return session;
+    }
+
     public AiSession getSessionForCurrentUser(String sessionUuid) {
         AiSession session = sessionRepo.get(sessionUuid);
         if (session == null) {

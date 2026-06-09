@@ -15,6 +15,8 @@ public interface TelegramMessageConsumer {
      * @param configId        UUID of the {@code NotificationProviderConfig} whose bot received the message
      * @param botToken        bot API token (used to send replies)
      * @param chatId          Telegram chat / user ID as a string
+     * @param chatTitle       title of the group/channel (empty string for private chats)
+     * @param chatType        Telegram chat type: {@code "private"}, {@code "group"}, {@code "supergroup"}, or {@code "channel"}
      * @param firstName       sender's first name (may be empty)
      * @param username        sender's {@literal @}username (may be empty)
      * @param text            message text (may be {@code null} for non-text messages and callbacks)
@@ -26,6 +28,8 @@ public interface TelegramMessageConsumer {
             String configId,
             String botToken,
             String chatId,
+            String chatTitle,
+            String chatType,
             String firstName,
             String username,
             String text,
@@ -36,6 +40,11 @@ public interface TelegramMessageConsumer {
         /** Returns {@code true} when this update is a callback query (inline keyboard button press). */
         public boolean isCallback() {
             return callbackQueryId != null;
+        }
+
+        /** Returns {@code true} when the message originated from a group or supergroup chat. */
+        public boolean isGroupChat() {
+            return "group".equals(chatType) || "supergroup".equals(chatType);
         }
     }
 

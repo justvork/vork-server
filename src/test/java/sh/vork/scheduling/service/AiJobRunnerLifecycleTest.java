@@ -43,6 +43,7 @@ class AiJobRunnerLifecycleTest {
                 DurationType.MINUTES,
                 0L, 0L, null, null, null,
                 0,
+                null,
                 ScheduledJobStatus.WAITING);
 
         jobRepo.save(job);
@@ -73,6 +74,7 @@ class AiJobRunnerLifecycleTest {
                 DurationType.MINUTES,
                 0L, 0L, null, null, null,
                 0,
+                null,
                 ScheduledJobStatus.WAITING);
 
         jobRepo.save(job);

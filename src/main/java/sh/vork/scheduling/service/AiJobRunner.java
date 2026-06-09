@@ -180,13 +180,18 @@ public class AiJobRunner implements Runnable {
                 job.provider(),
                 job.modelId(),
                 job.oobTimeoutMinutes(),
+                job.expectedOutput(),
                 newStatus));
     }
 
     private static java.util.concurrent.ConcurrentHashMap<String, String> buildEnvVars(ScheduledJob job) {
         java.util.concurrent.ConcurrentHashMap<String, String> env = AiSession.defaultEnvironmentVariables();
+        env.put("JOB_ID", job.id());
         if (job.oobTimeoutMinutes() > 0) {
             env.put("vork.oob.timeout.minutes", String.valueOf(job.oobTimeoutMinutes()));
+        }
+        if (job.expectedOutput() != null && !job.expectedOutput().isBlank()) {
+            env.put("JOB_EXPECTED_OUTPUT", job.expectedOutput());
         }
         return env;
     }

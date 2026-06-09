@@ -14,5 +14,8 @@ public enum NotificationMediaType {
     PHONE_NUMBER,
 
     /** Telegram chat identifier (numeric ID or {@code @username} handle). */
-    TELEGRAM
+    TELEGRAM,
+
+    /** Slack member ID (e.g. {@code U01ABCDE}) or channel ID (e.g. {@code D01ABCDE}). */
+    SLACK
 }

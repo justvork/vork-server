@@ -89,4 +89,38 @@ public interface NotificationProvider {
     default String formatDirectNotification(String address, String title, String body) {
         return "To: " + address + "\nSubject: " + title + "\n\n" + body;
     }
+
+    // ── Global addresses ──────────────────────────────────────────────────────
+
+    /**
+     * Whether this provider supports system-level {@link GlobalAddress} entries.
+     *
+     * <p>All providers support global addresses by default.  Override to return
+     * {@code false} for providers where the concept makes no sense.
+     */
+    default boolean supportsGlobalAddresses() {
+        return true;
+    }
+
+    /**
+     * Returns a human-readable description of how to add a global address for
+     * this provider.  Shown in the admin UI next to the "Add Address" button.
+     *
+     * <p>The default message is suitable for providers where the admin simply
+     * types in an address (e.g. email).  Providers with a more involved
+     * registration flow (e.g. Telegram group bot invite) should override this.
+     */
+    default String getGlobalAddressSetupInstructions() {
+        return "Enter the address you want to use as a shared notification target.";
+    }
+
+    /**
+     * Validates a single address value for use as a {@link GlobalAddress}.
+     *
+     * @param mediaType the media type the address is claimed to be
+     * @param address   the raw address string to validate
+     * @return {@code null} if the address is valid; otherwise a human-readable
+     *         error message explaining why it is invalid
+     */
+    String validateAddress(NotificationMediaType mediaType, String address);
 }

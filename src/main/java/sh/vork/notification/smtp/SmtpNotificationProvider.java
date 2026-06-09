@@ -90,6 +90,17 @@ public class SmtpNotificationProvider implements NotificationProvider {
     }
 
     @Override
+    public String validateAddress(NotificationMediaType mediaType, String address) {
+        if (address == null || address.isBlank()) {
+            return "Email address is required.";
+        }
+        if (!address.trim().matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
+            return "Must be a valid email address.";
+        }
+        return null;
+    }
+
+    @Override
     public void send(Notification notification, Map<String, String> settings) throws NotificationException {
         String host      = settings.getOrDefault("host",      "").trim();
         String portStr   = settings.getOrDefault("port",      "587").trim();

@@ -300,6 +300,64 @@
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>`;
     }
+
+    // ── Transcription provider checkboxes ─────────────────────────────────────
+
+    async function initTranscription() {
+        try {
+            const [tpList, cfg] = await Promise.all([
+                fetch('/api/transcription/providers').then(r => r.json()),
+                fetch('/api/transcription/config').then(r => r.ok ? r.json() : {configured: false})
+            ]);
+            const currentKey = cfg.configured ? cfg.providerKey : null;
+            tpList.forEach(tp => {
+                if (!tp.backedByAiProvider) return;
+                const card = document.getElementById('card-' + tp.backedByAiProvider);
+                if (!card) return;
+                const footer = card.querySelector('.card-footer');
+                if (!footer) return;
+                const wrap = document.createElement('div');
+                wrap.className = 'px-3 pb-2';
+                wrap.innerHTML = `<div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch"
+                           id="transcription-${tp.backedByAiProvider}"
+                           data-provider-key="${tp.providerKey}"
+                           ${currentKey === tp.providerKey ? 'checked' : ''}
+                           onchange="toggleTranscriptionProvider(this)">
+                    <label class="form-check-label small" for="transcription-${tp.backedByAiProvider}">
+                        Use ${tp.displayName} to transcribe audio messages
+                    </label>
+                </div>`;
+                footer.before(wrap);
+            });
+        } catch (e) {
+            // Non-critical — transcription checkboxes are optional UI
+        }
+    }
+
+    async function toggleTranscriptionProvider(checkbox) {
+        if (checkbox.checked) {
+            document.querySelectorAll('[id^="transcription-"]').forEach(cb => {
+                if (cb !== checkbox) cb.checked = false;
+            });
+            const resp = await fetch('/api/transcription/config', {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({providerKey: checkbox.dataset.providerKey, settings: {}})
+            }).then(r => r.json());
+            if (resp.status === 'OK') {
+                showAlert('Transcription provider set to ' + checkbox.dataset.providerKey + '.', 'success');
+            } else {
+                checkbox.checked = false;
+                showAlert('Error: ' + (resp.message || 'Could not save transcription config'), 'danger');
+            }
+        } else {
+            await fetch('/api/transcription/config', {method: 'DELETE'});
+            showAlert('Transcription provider cleared.', 'warning');
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', initTranscription);
 </script>
 <script src="/packages/npm/bootstrap/current/dist/js/bootstrap.bundle.min.js"></script>
 <script src="/js/settings.js"></script>

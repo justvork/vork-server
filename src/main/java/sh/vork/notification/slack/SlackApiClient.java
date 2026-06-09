@@ -1,0 +1,143 @@
+package sh.vork.notification.slack;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.Map;
+
+/**
+ * Thin HTTP client for the Slack Web API.
+ *
+ * <p>Handles {@code chat.postMessage}, {@code apps.connections.open},
+ * and {@code conversations.info}.  All methods throw a {@link SlackApiException}
+ * when Slack returns {@code "ok": false} or when the HTTP call itself fails.
+ */
+@Component
+public class SlackApiClient {
+
+    private static final Logger log = LoggerFactory.getLogger(SlackApiClient.class);
+
+    private static final String SLACK_API = "https://slack.com/api/";
+
+    private final HttpClient    httpClient;
+    private final ObjectMapper  objectMapper;
+
+    public SlackApiClient(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+        this.httpClient   = HttpClient.newHttpClient();
+    }
+
+    // ── Public API ────────────────────────────────────────────────────────────
+
+    /**
+     * Posts a plain-text message to a Slack channel or DM.
+     *
+     * @param botToken  {@code xoxb-…} bot token
+     * @param channelId Slack channel / conversation ID
+     * @param text      message body
+     */
+    public void sendMessage(String botToken, String channelId, String text) {
+        log.debug("ENTER sendMessage: [channel={}]", channelId);
+        String body;
+        try {
+            body = objectMapper.writeValueAsString(Map.of(
+                    "channel", channelId,
+                    "text",    text));
+        } catch (Exception e) {
+            throw new SlackApiException("Failed to serialise sendMessage payload", e);
+        }
+
+        Map<String, Object> response = postJson(botToken, "chat.postMessage", body);
+        requireOk(response, "chat.postMessage");
+        log.debug("EXIT sendMessage: [channel={}, ts={}]", channelId, response.get("ts"));
+    }
+
+    /**
+     * Opens a Socket Mode WebSocket connection and returns the one-time WSS URL.
+     *
+     * @param appToken {@code xapp-…} app-level token
+     * @return WSS URL (valid for approximately 30 minutes)
+     */
+    public String openSocketModeConnection(String appToken) {
+        log.debug("ENTER openSocketModeConnection");
+        String body = ""; // apps.connections.open requires no body
+        Map<String, Object> response = postJson(appToken, "apps.connections.open", body);
+        requireOk(response, "apps.connections.open");
+
+        String url = (String) response.get("url");
+        if (url == null || url.isBlank()) {
+            throw new SlackApiException("apps.connections.open returned no URL");
+        }
+        log.debug("EXIT openSocketModeConnection: URL obtained");
+        return url;
+    }
+
+    /**
+     * Retrieves the display name of a channel or DM conversation.
+     *
+     * @param botToken  {@code xoxb-…} bot token
+     * @param channelId Slack conversation ID
+     * @return channel name (or empty string if unavailable)
+     */
+    public String getChannelName(String botToken, String channelId) {
+        log.debug("ENTER getChannelName: [channel={}]", channelId);
+        try {
+            URI uri = URI.create(SLACK_API + "conversations.info?channel=" + channelId);
+            HttpRequest req = HttpRequest.newBuilder(uri)
+                    .header("Authorization", "Bearer " + botToken)
+                    .GET()
+                    .build();
+            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            Map<String, Object> result = objectMapper.readValue(
+                    resp.body(), new TypeReference<>() {});
+            if (Boolean.TRUE.equals(result.get("ok"))) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> channel = (Map<String, Object>) result.get("channel");
+                if (channel != null) {
+                    String name = (String) channel.get("name");
+                    if (name != null) return name;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("getChannelName failed [channel={}]: {}", channelId, e.getMessage());
+        }
+        return channelId; // fallback to ID
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private Map<String, Object> postJson(String token, String method, String jsonBody) {
+        try {
+            URI uri = URI.create(SLACK_API + method);
+            HttpRequest req = HttpRequest.newBuilder(uri)
+                    .header("Authorization", "Bearer " + token)
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                    .build();
+            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() != 200) {
+                throw new SlackApiException(
+                        "Slack API " + method + " returned HTTP " + resp.statusCode());
+            }
+            return objectMapper.readValue(resp.body(), new TypeReference<>() {});
+        } catch (SlackApiException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new SlackApiException("Slack API call failed: " + method, e);
+        }
+    }
+
+    private static void requireOk(Map<String, Object> response, String method) {
+        if (!Boolean.TRUE.equals(response.get("ok"))) {
+            String error = (String) response.getOrDefault("error", "unknown_error");
+            throw new SlackApiException("Slack " + method + " error: " + error);
+        }
+    }
+}

@@ -1,0 +1,292 @@
+package sh.vork.notification.slack;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jadaptive.orm.DatabaseRepository;
+import com.jadaptive.orm.SearchQuery;
+import com.jadaptive.orm.SortOrder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.annotation.Order;
+import org.springframework.stereotype.Component;
+
+import sh.vork.ai.entity.AiChatMessage;
+import sh.vork.ai.entity.AiSession;
+import sh.vork.ai.entity.AiSessionStatus;
+import sh.vork.ai.exception.ToolSuspensionException;
+import sh.vork.ai.protocol.UiEventFrame;
+import sh.vork.ai.protocol.interaction.FormAction;
+import sh.vork.ai.protocol.interaction.InteractionFormSchema;
+import sh.vork.ai.service.ChatService;
+import sh.vork.ai.slack.SlackSessionRegistry;
+import sh.vork.ai.slack.SlackSuspensionRenderer;
+import sh.vork.ai.telegram.TelegramChatResumptionService;
+import sh.vork.notification.NotificationMediaType;
+import sh.vork.notification.user.UserNotificationMedia;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * {@link SlackMessageConsumer} that handles AI chat sessions in Slack DMs.
+ *
+ * <p>Only DM messages are processed ({@link SlackMessageConsumer.IncomingSlackMessage#isDirectMessage()}).
+ * Channel messages are silently ignored so notifications-only channels remain quiet.
+ *
+ * <p>Runs at {@link Order#value() order=10} — after all registration consumers.
+ *
+ * <h3>Suspension handling</h3>
+ * <ul>
+ *   <li><b>SIMPLE</b> — the renderer sends a numbered action list; the next digit reply
+ *       is looked up in the {@code pendingActions} map and dispatched as the action name.</li>
+ *   <li><b>SINGLE_TEXT</b> — the renderer sends a plain prompt; the next message is
+ *       stored in {@code pendingCaptures} and forwarded as the field value.</li>
+ *   <li><b>WEB_FORM</b> — the renderer sends a URL (self-hosted or relay); a relay
+ *       poll thread handles the response asynchronously.</li>
+ * </ul>
+ */
+@Component
+@Order(10)
+public class SlackChatConsumer implements SlackMessageConsumer {
+
+    private static final Logger log = LoggerFactory.getLogger(SlackChatConsumer.class);
+
+    private final ChatService                              chatService;
+    private final DatabaseRepository<AiSession>           sessionRepo;
+    private final DatabaseRepository<UserNotificationMedia> mediaRepo;
+    private final SlackSessionRegistry                    sessionRegistry;
+    private final TelegramChatResumptionService           resumptionService;
+    private final SlackSuspensionRenderer                 suspensionRenderer;
+    private final SlackApiClient                          slackApiClient;
+    private final ObjectMapper                            objectMapper;
+
+    /** DM channelId → pending single-field capture */
+    private final ConcurrentHashMap<String, PendingCapture>       pendingCaptures = new ConcurrentHashMap<>();
+    /** DM channelId → pending action choice */
+    private final ConcurrentHashMap<String, PendingActionChoice>  pendingActions  = new ConcurrentHashMap<>();
+
+    public SlackChatConsumer(ChatService chatService,
+                              DatabaseRepository<AiSession> sessionRepo,
+                              DatabaseRepository<UserNotificationMedia> mediaRepo,
+                              SlackSessionRegistry sessionRegistry,
+                              TelegramChatResumptionService resumptionService,
+                              SlackSuspensionRenderer suspensionRenderer,
+                              SlackApiClient slackApiClient,
+                              ObjectMapper objectMapper) {
+        this.chatService        = chatService;
+        this.sessionRepo        = sessionRepo;
+        this.mediaRepo          = mediaRepo;
+        this.sessionRegistry    = sessionRegistry;
+        this.resumptionService  = resumptionService;
+        this.suspensionRenderer = suspensionRenderer;
+        this.slackApiClient     = slackApiClient;
+        this.objectMapper       = objectMapper;
+    }
+
+    // ── SlackMessageConsumer ──────────────────────────────────────────────────
+
+    @Override
+    public boolean accepts(IncomingSlackMessage message) {
+        return message.isDirectMessage();
+    }
+
+    @Override
+    public boolean process(IncomingSlackMessage message) {
+        String channelId = message.channelId();
+        String botToken  = message.botToken();
+        String configId  = message.configId();
+        String text      = message.text();
+
+        log.debug("ENTER SlackChatConsumer.process: [channel={}, userId={}]",
+                channelId, message.userId());
+
+        try {
+            if (text == null || text.isBlank()) {
+                log.debug("Ignoring empty text from channel={}", channelId);
+                return true;
+            }
+
+            // /new — reset session
+            if ("/new".equalsIgnoreCase(text.trim())) {
+                sessionRegistry.reset(channelId);
+                pendingCaptures.remove(channelId);
+                pendingActions.remove(channelId);
+                slackApiClient.sendMessage(botToken, channelId,
+                        "New session started. How can I help?");
+                return true;
+            }
+
+            // Pending action choice (numeric reply for SIMPLE form)?
+            PendingActionChoice actionChoice = pendingActions.get(channelId);
+            if (actionChoice != null && text.trim().matches("\\d+")) {
+                pendingActions.remove(channelId);
+                handleActionChoice(actionChoice, text.trim(), channelId, botToken);
+                return true;
+            }
+
+            // Pending single-field capture?
+            PendingCapture capture = pendingCaptures.remove(channelId);
+            if (capture != null) {
+                handleFieldCapture(capture, text, channelId, botToken);
+                return true;
+            }
+
+            // Normal message — look up user by Slack member ID
+            String username = resolveUsername(message.userId(), channelId, botToken);
+            if (username == null) return true; // not registered — message sent
+
+            String sessionUuid = sessionRegistry.getOrCreate(username, configId, channelId, botToken);
+            log.debug("Sending Slack message to session [sessionUuid={}, user={}]",
+                    sessionUuid, username);
+
+            AiChatMessage response = chatService.sendMessageAsUser(
+                    username, sessionUuid, text, List.of(), null);
+
+            if (response == null) {
+                renderLatestSuspension(sessionUuid, channelId, botToken);
+            } else {
+                String reply = response.content();
+                if (reply != null && !reply.isBlank()) {
+                    slackApiClient.sendMessage(botToken, channelId, reply);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Error processing Slack message [channel={}]: {}", channelId, e.getMessage(), e);
+            slackApiClient.sendMessage(botToken, channelId,
+                    "Sorry, an error occurred. Please try again.");
+        }
+        return true;
+    }
+
+    // ── Private: field capture ────────────────────────────────────────────────
+
+    private void handleFieldCapture(PendingCapture capture, String fieldValue,
+                                     String channelId, String botToken) {
+        log.debug("Field capture [session={}, event={}, field={}]",
+                capture.sessionUuid(), capture.eventId(), capture.fieldName());
+        try {
+            String result = resumptionService.resumeAndRun(
+                    capture.username(), capture.sessionUuid(), capture.eventId(),
+                    "ONCE", Map.of(capture.fieldName(), fieldValue));
+            if (result != null && !result.isBlank()) {
+                slackApiClient.sendMessage(botToken, channelId, result);
+            }
+        } catch (ToolSuspensionException ex) {
+            renderLatestSuspension(capture.sessionUuid(), channelId, botToken);
+        }
+    }
+
+    // ── Private: action choice ────────────────────────────────────────────────
+
+    private void handleActionChoice(PendingActionChoice choice, String numberStr,
+                                     String channelId, String botToken) {
+        log.debug("Action choice [session={}, event={}, choice={}]",
+                choice.sessionUuid(), choice.eventId(), numberStr);
+        try {
+            int idx = Integer.parseInt(numberStr) - 1;
+            if (idx < 0 || idx >= choice.actions().size()) {
+                slackApiClient.sendMessage(botToken, channelId,
+                        "Please enter a number between 1 and " + choice.actions().size() + ".");
+                // Re-store the pending choice
+                pendingActions.put(channelId, choice);
+                return;
+            }
+            String actionName = choice.actions().get(idx).name();
+            String result = resumptionService.resumeAndRun(
+                    choice.username(), choice.sessionUuid(), choice.eventId(),
+                    actionName, Map.of());
+            if (result != null && !result.isBlank()) {
+                slackApiClient.sendMessage(botToken, channelId, result);
+            }
+        } catch (ToolSuspensionException ex) {
+            renderLatestSuspension(choice.sessionUuid(), channelId, botToken);
+        } catch (Exception e) {
+            log.warn("Action choice error [session={}]: {}", choice.sessionUuid(), e.getMessage(), e);
+            slackApiClient.sendMessage(botToken, channelId,
+                    "An error occurred. Please try again.");
+        }
+    }
+
+    // ── Private: suspension rendering ────────────────────────────────────────
+
+    private void renderLatestSuspension(String sessionUuid, String channelId, String botToken) {
+        AiSession session = sessionRepo.get(sessionUuid);
+        if (session == null) return;
+
+        UiEventFrame promptEvent = suspensionRenderer.findLatestPromptEvent(session);
+        if (promptEvent == null) {
+            log.warn("No PROMPT_REQUIRED message in suspended session [session={}]", sessionUuid);
+            slackApiClient.sendMessage(botToken, channelId,
+                    "An action is required. Please use the Vork web app.");
+            return;
+        }
+
+        SlackSuspensionRenderer.FormClass formClass =
+                suspensionRenderer.render(channelId, botToken, session, promptEvent);
+
+        switch (formClass) {
+            case SINGLE_TEXT -> {
+                String fieldName = findSingleVisibleFieldName(promptEvent);
+                pendingCaptures.put(channelId,
+                        new PendingCapture(session.username(), sessionUuid,
+                                promptEvent.eventId(), fieldName));
+            }
+            case SIMPLE -> {
+                List<FormAction> actions = suspensionRenderer.getActions(promptEvent.formSchema());
+                if (!actions.isEmpty()) {
+                    pendingActions.put(channelId,
+                            new PendingActionChoice(session.username(), sessionUuid,
+                                    promptEvent.eventId(), actions));
+                }
+            }
+            case WEB_FORM -> { /* relay/self-hosted link sent; relay poll handles response */ }
+        }
+    }
+
+    // ── Private: helpers ──────────────────────────────────────────────────────
+
+    /**
+     * Resolves the Vork username for a Slack {@code userId} by looking up
+     * {@link UserNotificationMedia} records with {@code address=userId} and
+     * {@code mediaType=SLACK}.
+     *
+     * @return username, or {@code null} if not found (sends a friendly DM to the user)
+     */
+    private String resolveUsername(String userId, String channelId, String botToken) {
+        try (var stream = mediaRepo.search(0, 10, "createdAt", SortOrder.ASC,
+                SearchQuery.eq("address", userId),
+                SearchQuery.eq("mediaType", NotificationMediaType.SLACK.name()))) {
+
+            return stream.map(UserNotificationMedia::userId).findFirst().orElseGet(() -> {
+                log.warn("Slack userId {} not linked to any Vork account", userId);
+                slackApiClient.sendMessage(botToken, channelId,
+                        "Your Slack account isn't linked to Vork yet. "
+                        + "Please register it from your Vork profile settings.");
+                return null;
+            });
+        }
+    }
+
+    private String findSingleVisibleFieldName(UiEventFrame promptEvent) {
+        if (promptEvent.formSchema() == null) return "value";
+        if (promptEvent.formSchema().fields() == null) return "value";
+        return promptEvent.formSchema().fields().stream()
+                .filter(f -> f != null && !isInvisibleType(f.type()))
+                .map(sh.vork.ai.protocol.interaction.FormField::name)
+                .findFirst().orElse("value");
+    }
+
+    private static boolean isInvisibleType(String type) {
+        if (type == null) return false;
+        String t = type.toUpperCase();
+        return "HIDDEN".equals(t) || "MARKDOWN".equals(t);
+    }
+
+    // ── Value types ───────────────────────────────────────────────────────────
+
+    private record PendingCapture(String username, String sessionUuid,
+                                   String eventId, String fieldName) {}
+
+    private record PendingActionChoice(String username, String sessionUuid,
+                                        String eventId, List<FormAction> actions) {}
+}

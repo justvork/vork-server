@@ -94,6 +94,17 @@ public class TwilioSmsNotificationProvider implements NotificationProvider {
     }
 
     @Override
+    public String validateAddress(NotificationMediaType mediaType, String address) {
+        if (address == null || address.isBlank()) {
+            return "Phone number is required.";
+        }
+        if (!address.trim().matches("^\\+[1-9]\\d{6,14}$")) {
+            return "Must be a valid E.164 phone number (e.g. +14155552671).";
+        }
+        return null;
+    }
+
+    @Override
     public void send(Notification notification, Map<String, String> settings) throws NotificationException {
         String accountSid = settings.getOrDefault("accountSid", "").trim();
         String authToken  = settings.getOrDefault("authToken",  "").trim();

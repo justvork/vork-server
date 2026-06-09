@@ -28,6 +28,7 @@ public record ScheduledJob(
         String provider,               // optional — AiProvider name override
         String modelId,                // optional — model ID override
         int oobTimeoutMinutes,         // minutes before the OOB relay auth link expires; 0 = use system default
+        String expectedOutput,         // optional — describes the required output/result; enforced via protocol
         ScheduledJobStatus status
 ) implements DatabaseEntity {
 

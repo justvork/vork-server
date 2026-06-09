@@ -14,6 +14,7 @@ public enum AiProvider {
     GEMINI,
     OPENAI,
     OLLAMA,
+    GROQ,
     ANTHROPIC,
     BACKGROUND_SCHEDULER
 }

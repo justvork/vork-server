@@ -40,6 +40,7 @@ class AiSchedulerServiceResumeCompletionTest {
                 0L,
                 null, null, null,
                 0,
+                null,
                 ScheduledJobStatus.AWAITING_INPUT));
 
         sessionRepo.save(new AiSession(

@@ -92,6 +92,7 @@ public class JobsController {
                 req.provider(),
                 req.modelId(),
                 req.oobTimeoutMinutes() > 0 ? req.oobTimeoutMinutes() : 240,
+                req.expectedOutput(),
                 ScheduledJobStatus.WAITING);
 
         ScheduledJob saved = schedulerService.scheduleJob(job);
@@ -131,6 +132,7 @@ public class JobsController {
                 req.provider(),
                 req.modelId(),
                 req.oobTimeoutMinutes() > 0 ? req.oobTimeoutMinutes() : existing.oobTimeoutMinutes(),
+                req.expectedOutput(),
                 existing.status());
 
         ScheduledJob saved = schedulerService.scheduleJob(updated);
@@ -235,6 +237,7 @@ public class JobsController {
             String agentTemplateId,
             String provider,
             String modelId,
-            int oobTimeoutMinutes      // minutes before OOB relay auth link expires; 0 = default 240 (4 hrs)
+            int oobTimeoutMinutes,     // minutes before OOB relay auth link expires; 0 = default 240 (4 hrs)
+            String expectedOutput      // optional — describes required output; enforced via background protocol
     ) {}
 }

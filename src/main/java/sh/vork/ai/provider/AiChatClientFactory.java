@@ -60,7 +60,8 @@ public class AiChatClientFactory {
             case GEMINI, BACKGROUND_SCHEDULER -> baseRegistry.get(provider);
             case OPENAI  -> cachedClient(provider, this::buildOpenAiClient);
             case OLLAMA  -> cachedClient(provider, this::buildOllamaClient);
-            default -> null;
+            case GROQ    -> cachedClient(provider, this::buildGroqClient);
+            default      -> null;
         };
     }
 
@@ -111,6 +112,33 @@ public class AiChatClientFactory {
                     .build();
         } catch (Exception ex) {
             log.error("Failed to build OpenAI ChatClient: {}", ex.getMessage(), ex);
+            return null;
+        }
+    }
+
+    private ChatClient buildGroqClient(AiProviderConfig config) {
+        try {
+            String apiKey = configService.decryptApiKey(config.apiKey());
+            if (apiKey == null || apiKey.isBlank()) {
+                log.warn("Groq API key is blank — cannot build client");
+                return null;
+            }
+            OpenAiApi api = OpenAiApi.builder()
+                    .apiKey(apiKey)
+                    .baseUrl("https://api.groq.com/openai/v1")
+                    .build();
+            OpenAiChatOptions opts = OpenAiChatOptions.builder()
+                    .model(defaultModel(config, "llama-3.3-70b-versatile"))
+                    .build();
+            OpenAiChatModel model = OpenAiChatModel.builder()
+                    .openAiApi(api)
+                    .defaultOptions(opts)
+                    .build();
+            return ChatClient.builder(model)
+                    .defaultSystem(AiConfig.BASE_SYSTEM_PROMPT)
+                    .build();
+        } catch (Exception ex) {
+            log.error("Failed to build Groq ChatClient: {}", ex.getMessage(), ex);
             return null;
         }
     }

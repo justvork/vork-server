@@ -78,6 +78,7 @@ import sh.vork.ai.tool.SetSshAliasTool;
 import sh.vork.ai.tool.SshConnectTool;
 import sh.vork.ai.tool.UploadFileTool;
 import sh.vork.ai.function.ListNotificationProvidersRequest;
+import sh.vork.scheduling.domain.JobResult;
 import sh.vork.ai.function.SendNotificationRequest;
 import sh.vork.notification.service.DirectNotificationService;
 
@@ -332,6 +333,7 @@ public class AiConfig {
     @Hidden
     @ToolCategory("Scheduling")
     public ToolCallback completeBackgroundTask(DatabaseRepository<AiSession> aiSessionRepository,
+                                               DatabaseRepository<JobResult> jobResultRepository,
                                                BackgroundExecutionContext backgroundExecutionContext) {
         return FunctionToolCallback
                 .builder("completeBackgroundTask", (CompleteBackgroundTaskRequest req) -> {
@@ -348,6 +350,21 @@ public class AiConfig {
                     AiSession session = aiSessionRepository.get(sessionUuid);
                     if (session == null || session.originMode() != SessionOriginMode.BACKGROUND) {
                         return "{\"error\":\"This tool is only available for out-of-band background tasks.\"}";
+                    }
+
+                    // Persist the job result before marking the session complete
+                    String jobId = session.environmentVariables() != null
+                            ? session.environmentVariables().get("JOB_ID")
+                            : null;
+                    if (jobId != null && !jobId.isBlank()) {
+                        JobResult result = new JobResult(
+                                java.util.UUID.randomUUID().toString(),
+                                jobId,
+                                sessionUuid,
+                                req.success(),
+                                req.report(),
+                                System.currentTimeMillis());
+                        jobResultRepository.save(result);
                     }
 
                     aiSessionRepository.save(new AiSession(
@@ -367,7 +384,7 @@ public class AiConfig {
                     backgroundExecutionContext.markExecutionComplete();
                     return "{\"status\":\"shutdown_initiated\"}";
                 })
-                .description("Signals that the background task has entirely fulfilled its operational objectives and that the background processing loop should now gracefully terminate.")
+                .description("Signals that the background task has entirely fulfilled its operational objectives and that the background processing loop should now gracefully terminate. You MUST supply a boolean 'success' value and a 'report' string summarising what was done and produced.")
                 .inputType(CompleteBackgroundTaskRequest.class)
                 .build();
     }

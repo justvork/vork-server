@@ -131,7 +131,32 @@
                         </label>
                     </div>
                 </div>
-            </div>
+
+                <!-- Step 2c: Slack DM registration -->
+                <div id="add-step-slack" style="display:none;">
+                    <div id="slack-loading" class="text-center py-2">
+                        <span class="spinner-border spinner-border-sm text-primary me-2"></span>
+                        <span class="small text-muted">Starting registration&hellip;</span>
+                    </div>
+                    <div id="slack-instructions-wrap" class="d-none">
+                        <p class="small text-muted mb-1">Open a Slack DM with the Vork bot and send:</p>
+                        <div class="position-relative">
+                            <pre id="slack-code-box" class="p-2 rounded text-center fw-bold fs-6 mb-2 pe-5" style="background:var(--bs-tertiary-bg);"></pre>
+                            <button type="button" onclick="copySlackCode(this)" title="Copy"
+                                    class="btn btn-sm btn-outline-secondary position-absolute top-0 end-0 mt-1 me-1 py-0 px-1">
+                                <i class="fa-regular fa-copy"></i>
+                            </button>
+                        </div>
+                        <div id="slack-status-msg" class="small text-center"></div>
+                    </div>
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" id="slack-default" checked>
+                        <label class="form-check-label small" for="slack-default">
+                            Set as my default notification address
+                        </label>
+                    </div>
+                </div>
+            </div><!-- /.modal-body -->
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" id="btn-add-save" class="btn btn-primary" style="display:none;"
@@ -149,8 +174,10 @@
     let addModal;
     let allMedia     = [];
     let allProviders = [];   // ProviderView from server
-    let activeTgRegistrationId = null;
-    let tgPollTimer = null;
+    let activeTgRegistrationId   = null;
+    let tgPollTimer              = null;
+    let activeSlackRegistrationId = null;
+    let slackPollTimer           = null;
 
     document.addEventListener('DOMContentLoaded', function () {
         addModal = new bootstrap.Modal(document.getElementById('addModal'));
@@ -232,7 +259,8 @@
         const badges = {
             'EMAIL_ADDRESS': '<span class="badge bg-info text-dark"><i class="fa-solid fa-envelope me-1"></i>Email</span>',
             'PHONE_NUMBER':  '<span class="badge bg-success"><i class="fa-solid fa-phone me-1"></i>Phone</span>',
-            'TELEGRAM':      '<span class="badge bg-primary"><i class="fa-brands fa-telegram me-1"></i>Telegram</span>'
+            'TELEGRAM':      '<span class="badge bg-primary"><i class="fa-brands fa-telegram me-1"></i>Telegram</span>',
+            'SLACK':         '<span class="badge bg-warning text-dark"><i class="fa-brands fa-slack me-1"></i>Slack</span>'
         };
         return badges[mediaType] || '<span class="badge bg-secondary">' + escapeHtml(mediaType) + '</span>';
     }
@@ -255,25 +283,35 @@
     function onProviderChange() {
         const sel     = document.getElementById('add-provider-select');
         const configId = sel.value;
-        const stepAddr = document.getElementById('add-step-address');
-        const stepTg   = document.getElementById('add-step-telegram');
-        const saveBtn  = document.getElementById('btn-add-save');
+        const stepAddr  = document.getElementById('add-step-address');
+        const stepTg    = document.getElementById('add-step-telegram');
+        const stepSlack = document.getElementById('add-step-slack');
+        const saveBtn   = document.getElementById('btn-add-save');
         if (!configId) {
-            stepAddr.style.display = 'none';
-            stepTg.style.display   = 'none';
-            saveBtn.style.display  = 'none';
+            stepAddr.style.display  = 'none';
+            stepTg.style.display    = 'none';
+            stepSlack.style.display = 'none';
+            saveBtn.style.display   = 'none';
             return;
         }
         const pv = allProviders.find(function (p) { return p.configId === configId; });
         if (!pv) return;
 
         if (pv.mediaType === 'TELEGRAM') {
-            stepAddr.style.display = 'none';
-            saveBtn.style.display  = 'none';
-            stepTg.style.display   = '';
+            stepAddr.style.display  = 'none';
+            stepSlack.style.display = 'none';
+            saveBtn.style.display   = 'none';
+            stepTg.style.display    = '';
             startTelegramRegistration(pv.configId);
-        } else {
+        } else if (pv.mediaType === 'SLACK') {
+            stepAddr.style.display = 'none';
             stepTg.style.display   = 'none';
+            saveBtn.style.display  = 'none';
+            stepSlack.style.display = '';
+            startSlackRegistration(pv.configId);
+        } else {
+            stepTg.style.display    = 'none';
+            stepSlack.style.display = 'none';
             document.getElementById('add-address-label').textContent = mediaTypeLabel(pv.mediaType) + ' *';
             document.getElementById('add-address').placeholder       = pv.addressPlaceholder;
             document.getElementById('add-address-hint').textContent  = pv.addressHint;
@@ -287,6 +325,7 @@
         if (t === 'EMAIL_ADDRESS') return 'Email address';
         if (t === 'PHONE_NUMBER')  return 'Phone number';
         if (t === 'TELEGRAM')      return 'Telegram handle / chat ID';
+        if (t === 'SLACK')         return 'Slack member ID';
         return 'Address';
     }
 
@@ -360,12 +399,92 @@
         if (tgPollTimer) { clearInterval(tgPollTimer); tgPollTimer = null; }
     }
 
+    // ── Slack registration ────────────────────────────────────────────────
+    async function startSlackRegistration(configId) {
+        stopSlackPoll();
+        activeSlackRegistrationId = null;
+
+        const loadingEl  = document.getElementById('slack-loading');
+        const instrWrap  = document.getElementById('slack-instructions-wrap');
+        const codeBox    = document.getElementById('slack-code-box');
+        const statusEl   = document.getElementById('slack-status-msg');
+
+        loadingEl.style.display = '';
+        instrWrap.classList.add('d-none');
+        statusEl.textContent = '';
+
+        const isDefault = document.getElementById('slack-default').checked;
+        try {
+            const res = await fetch('/api/user/notification-media/slack/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ providerConfigId: configId, isDefault: isDefault })
+            });
+            const data = await res.json();
+            if (!res.ok) { loadingEl.style.display = 'none'; statusEl.textContent = data.error || 'Failed to start registration.'; instrWrap.classList.remove('d-none'); return; }
+
+            activeSlackRegistrationId = data.registrationId;
+
+            // Extract and display just the "register CODE" part
+            const match = (data.instructions || '').match(/register ([A-Z0-9]{16})/);
+            codeBox.textContent = match ? 'register ' + match[1] : data.instructions;
+
+            loadingEl.style.display = 'none';
+            instrWrap.classList.remove('d-none');
+            statusEl.innerHTML = '<span class="text-muted"><span class="spinner-grow spinner-grow-sm me-1"></span>Waiting for confirmation&hellip;</span>';
+
+            slackPollTimer = setInterval(pollSlackStatus, 2000);
+        } catch (e) {
+            loadingEl.style.display = 'none';
+            instrWrap.classList.remove('d-none');
+            statusEl.textContent = 'Network error. Please try again.';
+        }
+    }
+
+    async function pollSlackStatus() {
+        if (!activeSlackRegistrationId) return;
+        try {
+            const res  = await fetch('/api/user/notification-media/slack/register/' + activeSlackRegistrationId);
+            const data = await res.json();
+            if (data.status === 'complete') {
+                stopSlackPoll();
+                addModal.hide();
+                await loadAll();
+                showAlert('Slack account linked successfully!', 'success');
+            } else if (data.status === 'expired') {
+                stopSlackPoll();
+                document.getElementById('slack-status-msg').innerHTML =
+                    '<span class="text-danger">Registration expired. Please try again.</span>';
+                activeSlackRegistrationId = null;
+            }
+        } catch (e) { /* ignore transient errors */ }
+    }
+
+    function stopSlackPoll() {
+        if (slackPollTimer) { clearInterval(slackPollTimer); slackPollTimer = null; }
+    }
+
+    function copySlackCode(btn) {
+        const text = document.getElementById('slack-code-box').textContent.trim();
+        navigator.clipboard.writeText(text).then(function () {
+            const icon = btn.querySelector('i');
+            icon.className = 'fa-solid fa-check text-success';
+            setTimeout(function () { icon.className = 'fa-regular fa-copy'; }, 1500);
+        });
+    }
+
     function onModalHidden() {
         stopTgPoll();
+        stopSlackPoll();
         if (activeTgRegistrationId) {
             fetch('/api/user/notification-media/telegram/register/' + activeTgRegistrationId,
                   { method: 'DELETE' }).catch(function() {});
             activeTgRegistrationId = null;
+        }
+        if (activeSlackRegistrationId) {
+            fetch('/api/user/notification-media/slack/register/' + activeSlackRegistrationId,
+                  { method: 'DELETE' }).catch(function() {});
+            activeSlackRegistrationId = null;
         }
         resetAddModal();
     }
@@ -379,12 +498,18 @@
         document.getElementById('add-default').checked           = true;
         document.getElementById('add-step-address').style.display  = 'none';
         document.getElementById('add-step-telegram').style.display = 'none';
+        document.getElementById('add-step-slack').style.display    = 'none';
         document.getElementById('btn-add-save').style.display       = 'none';
         // reset telegram panel state
         document.getElementById('tg-loading').style.display = '';
         document.getElementById('tg-qr-canvas').classList.add('d-none');
         document.getElementById('tg-link-wrap').classList.add('d-none');
         document.getElementById('tg-status-msg').textContent = '';
+        // reset slack panel state
+        document.getElementById('slack-loading').style.display = '';
+        document.getElementById('slack-instructions-wrap').classList.add('d-none');
+        document.getElementById('slack-code-box').textContent = '';
+        document.getElementById('slack-status-msg').textContent = '';
     }
 
     async function saveMedia() {

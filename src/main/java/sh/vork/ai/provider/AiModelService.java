@@ -26,6 +26,7 @@ public class AiModelService {
             AiProvider.GEMINI,               "gemini-2.5-flash",
             AiProvider.OPENAI,               "gpt-4o",
             AiProvider.OLLAMA,               "llama3.2",
+            AiProvider.GROQ,                 "llama-3.3-70b-versatile",
             AiProvider.BACKGROUND_SCHEDULER, "gemini-2.5-flash"
     );
 
@@ -58,7 +59,8 @@ public class AiModelService {
         return List.of(
                 buildGroup(AiProvider.GEMINI,  "Gemini"),
                 buildGroup(AiProvider.OPENAI,  "ChatGPT"),
-                buildGroup(AiProvider.OLLAMA,  "Ollama")
+                buildGroup(AiProvider.OLLAMA,  "Ollama"),
+                buildGroup(AiProvider.GROQ,    "Groq")
         );
     }
 

@@ -31,6 +31,7 @@ import com.jadaptive.orm.SortOrder;
 import sh.vork.notification.NotificationMediaType;
 import sh.vork.notification.NotificationProvider;
 import sh.vork.notification.NotificationProviderConfig;
+import sh.vork.notification.slack.SlackRegistrationService;
 import sh.vork.notification.telegram.TelegramRegistrationService;
 
 /**
@@ -63,21 +64,26 @@ public class UserNotificationController {
             Pattern.compile("^@[A-Za-z][A-Za-z0-9_]{4,31}$");
     private static final Pattern TELEGRAM_CHATID_RE =
             Pattern.compile("^-?\\d+$");
+    private static final Pattern SLACK_ID_RE =
+            Pattern.compile("^[UCWDG][A-Z0-9]{6,}$");
 
     private final ApplicationContext                           appContext;
     private final DatabaseRepository<UserNotificationMedia>   mediaRepo;
     private final DatabaseRepository<NotificationProviderConfig> configRepo;
     private final TelegramRegistrationService telegramRegistrationService;
+    private final SlackRegistrationService    slackRegistrationService;
 
     public UserNotificationController(
             ApplicationContext appContext,
             DatabaseRepository<UserNotificationMedia> mediaRepo,
             DatabaseRepository<NotificationProviderConfig> configRepo,
-            TelegramRegistrationService telegramRegistrationService) {
+            TelegramRegistrationService telegramRegistrationService,
+            SlackRegistrationService slackRegistrationService) {
         this.appContext  = appContext;
         this.mediaRepo   = mediaRepo;
         this.configRepo  = configRepo;
         this.telegramRegistrationService = telegramRegistrationService;
+        this.slackRegistrationService    = slackRegistrationService;
     }
 
     // ── Page endpoints ────────────────────────────────────────────────────────
@@ -152,7 +158,52 @@ public class UserNotificationController {
         telegramRegistrationService.cancel(registrationId);
         return ResponseEntity.ok(Map.of("ok", true));
     }
+    // ── REST: Slack DM registration ─────────────────────────────────────────
 
+    /** Starts a Slack DM registration and returns the one-time code + instructions. */
+    @PostMapping("/api/user/notification-media/slack/register")
+    @ResponseBody
+    public ResponseEntity<?> startSlackRegistration(
+            @RequestBody SlackRegisterRequest req) {
+        String userId = currentUserId();
+        log.debug("ENTER startSlackRegistration: [userId={}, configId={}]",
+                userId, req.providerConfigId());
+        try {
+            SlackRegistrationService.RegistrationInfo info =
+                    slackRegistrationService.startRegistration(
+                            userId, req.providerConfigId(), req.isDefault());
+            return ResponseEntity.ok(Map.of(
+                    "registrationId", info.registrationId(),
+                    "instructions",  info.instructions()));
+        } catch (Exception e) {
+            log.warn("Failed to start Slack registration [userId={}, error={}]",
+                    userId, e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /** Polls for completion of a pending Slack registration. */
+    @GetMapping("/api/user/notification-media/slack/register/{registrationId}")
+    @ResponseBody
+    public ResponseEntity<?> pollSlackRegistration(
+            @PathVariable String registrationId) {
+        log.debug("ENTER pollSlackRegistration: [regId={}]", registrationId);
+        SlackRegistrationService.RegistrationStatus status =
+                slackRegistrationService.checkStatus(registrationId);
+        return ResponseEntity.ok(Map.of(
+                "status",  status.status(),
+                "mediaId", status.mediaId() != null ? status.mediaId() : ""));
+    }
+
+    /** Cancels a pending Slack registration. */
+    @DeleteMapping("/api/user/notification-media/slack/register/{registrationId}")
+    @ResponseBody
+    public ResponseEntity<?> cancelSlackRegistration(
+            @PathVariable String registrationId) {
+        log.debug("ENTER cancelSlackRegistration: [regId={}]", registrationId);
+        slackRegistrationService.cancel(registrationId);
+        return ResponseEntity.ok(Map.of("ok", true));
+    }
     // ── REST: user media ──────────────────────────────────────────────────────
 
     @GetMapping("/api/user/notification-media")
@@ -328,6 +379,8 @@ public class UserNotificationController {
             case TELEGRAM      -> (TELEGRAM_USERNAME_RE.matcher(trimmed).matches()
                                 || TELEGRAM_CHATID_RE.matcher(trimmed).matches())
                     ? null : "Enter a Telegram username (@handle) or numeric chat ID.";
+            case SLACK         -> SLACK_ID_RE.matcher(trimmed).matches()
+                    ? null : "Enter a valid Slack member or channel ID (e.g. U01ABCDE or D01ABCDE).";
         };
     }
 
@@ -357,6 +410,7 @@ public class UserNotificationController {
             case EMAIL_ADDRESS -> "user@example.com";
             case PHONE_NUMBER  -> "+14155552671";
             case TELEGRAM      -> "@yourusername or 123456789";
+            case SLACK         -> "U01ABCDE (Slack member ID)";
         };
     }
 
@@ -365,6 +419,7 @@ public class UserNotificationController {
             case EMAIL_ADDRESS -> "Email address";
             case PHONE_NUMBER  -> "Phone number in international format (e.g. +14155552671)";
             case TELEGRAM      -> "Telegram @username or numeric chat ID";
+            case SLACK         -> "Slack member ID (e.g. U01ABCDE) — or register automatically via DM";
         };
     }
 
@@ -404,4 +459,6 @@ public class UserNotificationController {
     ) {}
 
     record TelegramRegisterRequest(String providerConfigId, boolean isDefault) {}
+
+    record SlackRegisterRequest(String providerConfigId, boolean isDefault) {}
 }

@@ -171,7 +171,7 @@ public class TelegramPollingService {
 
                     TelegramMessageConsumer.IncomingMessage msg =
                             new TelegramMessageConsumer.IncomingMessage(
-                                    configId, botToken, chatId, firstName, username,
+                                    configId, botToken, chatId, "", "private", firstName, username,
                                     null, updateId, callbackQueryId, callbackData);
                     dispatch(msg);
                     offset.accumulateAndGet(updateId + 1, Math::max);
@@ -189,6 +189,8 @@ public class TelegramPollingService {
                 JsonNode chatNode = msgNode.path("chat");
 
                 String chatId    = chatNode.path("id").asText();
+                String chatTitle = chatNode.path("title").asText("");
+                String chatType  = chatNode.path("type").asText("private");
                 String text      = msgNode.path("text").asText(null);
                 String firstName = (!fromNode.isMissingNode()
                         ? fromNode : chatNode).path("first_name").asText("");
@@ -197,7 +199,7 @@ public class TelegramPollingService {
 
                 TelegramMessageConsumer.IncomingMessage msg =
                         new TelegramMessageConsumer.IncomingMessage(
-                                configId, botToken, chatId, firstName, username,
+                                configId, botToken, chatId, chatTitle, chatType, firstName, username,
                                 text, updateId, null, null);
                 dispatch(msg);
                 offset.accumulateAndGet(updateId + 1, Math::max);

@@ -95,6 +95,17 @@ public class SendGridNotificationProvider implements NotificationProvider {
     }
 
     @Override
+    public String validateAddress(NotificationMediaType mediaType, String address) {
+        if (address == null || address.isBlank()) {
+            return "Email address is required.";
+        }
+        if (!address.trim().matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
+            return "Must be a valid email address.";
+        }
+        return null;
+    }
+
+    @Override
     public void send(Notification notification, Map<String, String> settings) throws NotificationException {
         String apiKey    = settings.getOrDefault("apiKey",    "").trim();
         String fromEmail = settings.getOrDefault("fromEmail", "").trim();
