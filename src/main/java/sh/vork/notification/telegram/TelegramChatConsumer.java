@@ -24,6 +24,7 @@ import sh.vork.ai.telegram.TelegramSessionRegistry;
 import sh.vork.ai.telegram.TelegramSuspensionRenderer;
 import sh.vork.notification.NotificationMediaType;
 import sh.vork.notification.user.UserNotificationMedia;
+import sh.vork.transcription.AudioTranscriptionService;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -62,6 +63,7 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
     private final TelegramSuspensionRenderer               suspensionRenderer;
     private final TelegramApiClient                        telegramApiClient;
     private final ObjectMapper                             objectMapper;
+    private final AudioTranscriptionService                audioTranscriptionService;
 
     public TelegramChatConsumer(ChatService chatService,
                                  DatabaseRepository<AiSession> sessionRepo,
@@ -70,15 +72,17 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
                                  TelegramChatResumptionService resumptionService,
                                  TelegramSuspensionRenderer suspensionRenderer,
                                  TelegramApiClient telegramApiClient,
-                                 ObjectMapper objectMapper) {
-        this.chatService        = chatService;
-        this.sessionRepo        = sessionRepo;
-        this.mediaRepo          = mediaRepo;
-        this.sessionRegistry    = sessionRegistry;
-        this.resumptionService  = resumptionService;
-        this.suspensionRenderer = suspensionRenderer;
-        this.telegramApiClient  = telegramApiClient;
-        this.objectMapper       = objectMapper;
+                                 ObjectMapper objectMapper,
+                                 AudioTranscriptionService audioTranscriptionService) {
+        this.chatService              = chatService;
+        this.sessionRepo              = sessionRepo;
+        this.mediaRepo                = mediaRepo;
+        this.sessionRegistry          = sessionRegistry;
+        this.resumptionService        = resumptionService;
+        this.suspensionRenderer       = suspensionRenderer;
+        this.telegramApiClient        = telegramApiClient;
+        this.objectMapper             = objectMapper;
+        this.audioTranscriptionService = audioTranscriptionService;
     }
 
     // ── TelegramMessageConsumer ───────────────────────────────────────────────
@@ -116,6 +120,11 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
         String chatId   = message.chatId();
         String botToken = message.botToken();
         String text     = message.text();
+
+        // Voice note: transcribe to text before routing
+        if ((text == null || text.isBlank()) && message.isVoice()) {
+            text = transcribeVoice(message);
+        }
 
         if (text == null || text.isBlank()) {
             log.debug("Ignoring empty text from chatId={}", chatId);
@@ -157,6 +166,50 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
             if (reply != null && !reply.isBlank()) {
                 telegramApiClient.sendText(botToken, chatId, reply);
             }
+        }
+    }
+
+    /**
+     * Downloads and transcribes the voice note in {@code message}.
+     *
+     * @return transcript text, or {@code null} if transcription could not be completed
+     *         (an appropriate error message will have already been sent to the user)
+     */
+    private String transcribeVoice(TelegramMessageConsumer.IncomingMessage message) {
+        String chatId    = message.chatId();
+        String botToken  = message.botToken();
+        String fileId    = message.voiceFileId();
+        String mimeType  = message.voiceMimeType() != null ? message.voiceMimeType() : "audio/ogg";
+
+        log.debug("ENTER transcribeVoice: [chatId={}, fileId={}, mimeType={}]", chatId, fileId, mimeType);
+
+        if (!audioTranscriptionService.isConfigured()) {
+            log.warn("Voice note received but no transcription provider configured [chatId={}]", chatId);
+            telegramApiClient.sendText(botToken, chatId,
+                    "I received a voice note but no transcription provider is configured. Please send text instead.");
+            return null;
+        }
+
+        byte[] audioBytes = telegramApiClient.downloadFile(botToken, fileId);
+        if (audioBytes == null || audioBytes.length == 0) {
+            log.warn("Failed to download voice note [chatId={}, fileId={}]", chatId, fileId);
+            telegramApiClient.sendText(botToken, chatId,
+                    "Sorry, I could not download your voice note. Please try again or send text.");
+            return null;
+        }
+
+        try {
+            AudioTranscriptionService.TranscriptionResult result =
+                    audioTranscriptionService.transcribe(audioBytes, mimeType, "voice.ogg");
+            String transcript = result.transcript();
+            log.debug("EXIT transcribeVoice: [chatId={}, transcriptLength={}]",
+                    chatId, transcript == null ? 0 : transcript.length());
+            return transcript;
+        } catch (Exception e) {
+            log.warn("Voice transcription failed [chatId={}, error={}]", chatId, e.getMessage(), e);
+            telegramApiClient.sendText(botToken, chatId,
+                    "Sorry, transcription failed. Please try again or send text instead.");
+            return null;
         }
     }
 

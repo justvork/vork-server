@@ -106,17 +106,19 @@ public class SlackRegistrationService {
 
         PendingRegistration pending = byCode.get(code);
         if (pending == null) {
-            log.debug("No pending registration for code");
+            log.warn("Slack registration complete: no pending registration found for code [code={}, configId={}]",
+                    code, configId);
             return false;
         }
         if (!pending.providerConfigId.equals(configId)) {
-            log.debug("Code belongs to a different configId — ignoring");
+            log.warn("Slack registration complete: configId mismatch [pendingConfigId={}, receivingConfigId={}, code={}]",
+                    pending.providerConfigId, configId, code);
             return false;
         }
         if (Instant.now().isAfter(pending.createdAt.plus(EXPIRY))) {
             byCode.remove(code);
             byId.remove(pending.registrationId);
-            log.debug("Slack DM registration code expired [code={}]", code);
+            log.warn("Slack registration complete: code expired [code={}, configId={}]", code, configId);
             return false;
         }
         if (pending.complete) return true; // idempotent

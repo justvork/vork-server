@@ -64,6 +64,8 @@ public class SlackDmRegistrationConsumer implements SlackMessageConsumer {
             slackApiClient.sendMessage(botToken, channelId,
                     "❌ The registration code is invalid or has expired. "
                     + "Please start a new registration from your Vork profile.");
+            log.warn("Slack DM registration failed [code={}, userId={}, configId={}]",
+                    code, userId, configId);
         }
         return true;
     }

@@ -172,7 +172,7 @@ public class TelegramPollingService {
                     TelegramMessageConsumer.IncomingMessage msg =
                             new TelegramMessageConsumer.IncomingMessage(
                                     configId, botToken, chatId, "", "private", firstName, username,
-                                    null, updateId, callbackQueryId, callbackData);
+                                    null, updateId, callbackQueryId, callbackData, null, null);
                     dispatch(msg);
                     offset.accumulateAndGet(updateId + 1, Math::max);
                     continue;
@@ -197,10 +197,16 @@ public class TelegramPollingService {
                 String username  = (!fromNode.isMissingNode()
                         ? fromNode : chatNode).path("username").asText("");
 
+                // Voice note (Telegram sends voice or audio nodes instead of text)
+                JsonNode voiceNode   = msgNode.path("voice").isMissingNode()
+                        ? msgNode.path("audio") : msgNode.path("voice");
+                String voiceFileId   = voiceNode.isMissingNode() ? null : voiceNode.path("file_id").asText(null);
+                String voiceMimeType = voiceNode.isMissingNode() ? null : voiceNode.path("mime_type").asText("audio/ogg");
+
                 TelegramMessageConsumer.IncomingMessage msg =
                         new TelegramMessageConsumer.IncomingMessage(
                                 configId, botToken, chatId, chatTitle, chatType, firstName, username,
-                                text, updateId, null, null);
+                                text, updateId, null, null, voiceFileId, voiceMimeType);
                 dispatch(msg);
                 offset.accumulateAndGet(updateId + 1, Math::max);
             }

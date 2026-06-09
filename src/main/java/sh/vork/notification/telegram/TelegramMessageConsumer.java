@@ -23,6 +23,8 @@ public interface TelegramMessageConsumer {
      * @param updateId        Telegram update ID
      * @param callbackQueryId non-null when this update is a callback query (button press)
      * @param callbackData    callback_data payload sent by the pressed button (non-null when isCallback())
+     * @param voiceFileId     Telegram file_id of an attached voice note (non-null when message contains audio)
+     * @param voiceMimeType   MIME type of the voice note (e.g. {@code "audio/ogg"}); non-null when voiceFileId is non-null
      */
     record IncomingMessage(
             String configId,
@@ -35,7 +37,9 @@ public interface TelegramMessageConsumer {
             String text,
             int    updateId,
             String callbackQueryId,
-            String callbackData) {
+            String callbackData,
+            String voiceFileId,
+            String voiceMimeType) {
 
         /** Returns {@code true} when this update is a callback query (inline keyboard button press). */
         public boolean isCallback() {
@@ -45,6 +49,11 @@ public interface TelegramMessageConsumer {
         /** Returns {@code true} when the message originated from a group or supergroup chat. */
         public boolean isGroupChat() {
             return "group".equals(chatType) || "supergroup".equals(chatType);
+        }
+
+        /** Returns {@code true} when this message contains a voice note to be transcribed. */
+        public boolean isVoice() {
+            return voiceFileId != null;
         }
     }
 

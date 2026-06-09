@@ -11,17 +11,16 @@ import org.springframework.stereotype.Component;
 
 import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
-import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.exception.ToolSuspensionException;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.protocol.interaction.FormAction;
-import sh.vork.ai.protocol.interaction.InteractionFormSchema;
 import sh.vork.ai.service.ChatService;
 import sh.vork.ai.slack.SlackSessionRegistry;
 import sh.vork.ai.slack.SlackSuspensionRenderer;
 import sh.vork.ai.telegram.TelegramChatResumptionService;
 import sh.vork.notification.NotificationMediaType;
 import sh.vork.notification.user.UserNotificationMedia;
+import sh.vork.transcription.AudioTranscriptionService;
 
 import java.util.List;
 import java.util.Map;
@@ -58,7 +57,7 @@ public class SlackChatConsumer implements SlackMessageConsumer {
     private final TelegramChatResumptionService           resumptionService;
     private final SlackSuspensionRenderer                 suspensionRenderer;
     private final SlackApiClient                          slackApiClient;
-    private final ObjectMapper                            objectMapper;
+    private final AudioTranscriptionService               audioTranscriptionService;
 
     /** DM channelId → pending single-field capture */
     private final ConcurrentHashMap<String, PendingCapture>       pendingCaptures = new ConcurrentHashMap<>();
@@ -72,15 +71,16 @@ public class SlackChatConsumer implements SlackMessageConsumer {
                               TelegramChatResumptionService resumptionService,
                               SlackSuspensionRenderer suspensionRenderer,
                               SlackApiClient slackApiClient,
-                              ObjectMapper objectMapper) {
-        this.chatService        = chatService;
-        this.sessionRepo        = sessionRepo;
-        this.mediaRepo          = mediaRepo;
-        this.sessionRegistry    = sessionRegistry;
-        this.resumptionService  = resumptionService;
-        this.suspensionRenderer = suspensionRenderer;
-        this.slackApiClient     = slackApiClient;
-        this.objectMapper       = objectMapper;
+                              ObjectMapper objectMapper,
+                              AudioTranscriptionService audioTranscriptionService) {
+        this.chatService              = chatService;
+        this.sessionRepo              = sessionRepo;
+        this.mediaRepo                = mediaRepo;
+        this.sessionRegistry          = sessionRegistry;
+        this.resumptionService        = resumptionService;
+        this.suspensionRenderer       = suspensionRenderer;
+        this.slackApiClient           = slackApiClient;
+        this.audioTranscriptionService = audioTranscriptionService;
     }
 
     // ── SlackMessageConsumer ──────────────────────────────────────────────────
@@ -101,6 +101,11 @@ public class SlackChatConsumer implements SlackMessageConsumer {
                 channelId, message.userId());
 
         try {
+            // Voice note: transcribe to text before routing
+            if ((text == null || text.isBlank()) && message.isVoice()) {
+                text = transcribeVoice(message);
+            }
+
             if (text == null || text.isBlank()) {
                 log.debug("Ignoring empty text from channel={}", channelId);
                 return true;
@@ -156,6 +161,50 @@ public class SlackChatConsumer implements SlackMessageConsumer {
                     "Sorry, an error occurred. Please try again.");
         }
         return true;
+    }
+
+    /**
+     * Downloads and transcribes the audio file attached to {@code message}.
+     *
+     * @return transcript text, or {@code null} if transcription could not be completed
+     *         (an appropriate error message will have already been sent to the user)
+     */
+    private String transcribeVoice(IncomingSlackMessage message) {
+        String channelId = message.channelId();
+        String botToken  = message.botToken();
+        String fileUrl   = message.voiceFileUrl();
+        String mimeType  = message.voiceMimeType() != null ? message.voiceMimeType() : "audio/ogg";
+
+        log.debug("ENTER transcribeVoice: [channel={}, mimeType={}]", channelId, mimeType);
+
+        if (!audioTranscriptionService.isConfigured()) {
+            log.warn("Voice note received but no transcription provider configured [channel={}]", channelId);
+            slackApiClient.sendMessage(botToken, channelId,
+                    "I received a voice note but no transcription provider is configured. Please send text instead.");
+            return null;
+        }
+
+        byte[] audioBytes = slackApiClient.downloadFile(botToken, fileUrl);
+        if (audioBytes == null || audioBytes.length == 0) {
+            log.warn("Failed to download Slack audio file [channel={}, url={}]", channelId, fileUrl);
+            slackApiClient.sendMessage(botToken, channelId,
+                    "Sorry, I could not download your voice note. Please try again or send text.");
+            return null;
+        }
+
+        try {
+            AudioTranscriptionService.TranscriptionResult result =
+                    audioTranscriptionService.transcribe(audioBytes, mimeType, "voice.ogg");
+            String transcript = result.transcript();
+            log.debug("EXIT transcribeVoice: [channel={}, transcriptLength={}]",
+                    channelId, transcript == null ? 0 : transcript.length());
+            return transcript;
+        } catch (Exception e) {
+            log.warn("Voice transcription failed [channel={}, error={}]", channelId, e.getMessage(), e);
+            slackApiClient.sendMessage(botToken, channelId,
+                    "Sorry, transcription failed. Please try again or send text instead.");
+            return null;
+        }
     }
 
     // ── Private: field capture ────────────────────────────────────────────────

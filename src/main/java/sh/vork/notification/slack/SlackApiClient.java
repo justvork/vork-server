@@ -111,6 +111,36 @@ public class SlackApiClient {
         return channelId; // fallback to ID
     }
 
+    /**
+     * Downloads a private Slack file and returns the raw bytes.
+     *
+     * <p>Slack private file URLs require an {@code Authorization: Bearer} header;
+     * cookies or query-string tokens are not accepted.
+     *
+     * @param botToken {@code xoxb-…} bot token
+     * @param fileUrl  {@code url_private} value from a Slack file object
+     * @return raw file bytes, or {@code null} if the download failed
+     */
+    public byte[] downloadFile(String botToken, String fileUrl) {
+        log.debug("ENTER downloadFile: [url={}]", fileUrl);
+        try {
+            HttpRequest req = HttpRequest.newBuilder(URI.create(fileUrl))
+                    .header("Authorization", "Bearer " + botToken)
+                    .GET()
+                    .build();
+            HttpResponse<byte[]> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofByteArray());
+            if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
+                log.warn("Slack file download failed [status={}, url={}]", resp.statusCode(), fileUrl);
+                return null;
+            }
+            log.debug("EXIT downloadFile: [bytes={}]", resp.body().length);
+            return resp.body();
+        } catch (Exception e) {
+            log.warn("Slack downloadFile failed [url={}, error={}]", fileUrl, e.getMessage());
+            return null;
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private Map<String, Object> postJson(String token, String method, String jsonBody) {

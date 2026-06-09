@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
@@ -94,6 +95,52 @@ public class TelegramApiClient {
         payload.put("parse_mode",   "MarkdownV2");
         payload.put("reply_markup", Map.of("inline_keyboard", tgKeyboard));
         post(botToken, "sendMessage", payload);
+    }
+
+    /**    /**
+     * Downloads a Telegram file by its {@code file_id} and returns the raw bytes.
+     *
+     * <p>Performs two requests: {@code getFile} to resolve the server-side path, then
+     * a direct download from {@code https://api.telegram.org/file/bot{token}/{path}}.
+     *
+     * @param botToken bot API token
+     * @param fileId   the Telegram {@code file_id}
+     * @return raw file bytes, or {@code null} if the download failed
+     */
+    public byte[] downloadFile(String botToken, String fileId) {
+        log.debug("ENTER downloadFile: [fileId={}]", fileId);
+        try {
+            // Step 1: resolve file_path
+            String getFileUrl = API_BASE + botToken + "/getFile?file_id=" + fileId;
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create(getFileUrl))
+                    .timeout(Duration.ofSeconds(10))
+                    .GET().build();
+            HttpResponse<String> metaResp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            JsonNode root = objectMapper.readTree(metaResp.body());
+            String filePath = root.path("result").path("file_path").asText(null);
+            if (filePath == null || filePath.isBlank()) {
+                log.warn("Telegram getFile returned no file_path [fileId={}]", fileId);
+                return null;
+            }
+
+            // Step 2: download content
+            String downloadUrl = "https://api.telegram.org/file/bot" + botToken + "/" + filePath;
+            HttpRequest dlReq = HttpRequest.newBuilder()
+                    .uri(URI.create(downloadUrl))
+                    .timeout(Duration.ofSeconds(30))
+                    .GET().build();
+            HttpResponse<byte[]> dlResp = httpClient.send(dlReq, HttpResponse.BodyHandlers.ofByteArray());
+            if (dlResp.statusCode() < 200 || dlResp.statusCode() >= 300) {
+                log.warn("Telegram file download failed [status={}, fileId={}]", dlResp.statusCode(), fileId);
+                return null;
+            }
+            log.debug("EXIT downloadFile: [fileId={}, bytes={}]", fileId, dlResp.body().length);
+            return dlResp.body();
+        } catch (Exception e) {
+            log.warn("Telegram downloadFile failed [fileId={}, error={}]", fileId, e.getMessage());
+            return null;
+        }
     }
 
     /**

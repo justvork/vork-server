@@ -38,6 +38,7 @@ integration supports two use cases:
    | `groups:read` | Resolve private channel names |
    | `im:read` | Read direct-message metadata |
    | `mpim:read` | Read group-DM metadata (optional) |
+   | `files:read` | Download voice notes and audio attachments sent to the bot |
 
 3. Click **Install to Workspace** (or **Reinstall** if updating scopes).
 4. Copy the **Bot User OAuth Token** — it starts with `xoxb-`.  This is your **Bot Token**.
@@ -236,6 +237,7 @@ addresses automatically — no additional configuration is required.
 |---|---|
 | "Sending messages to this app has been turned off." | In your app settings at api.slack.com/apps → **App Home → Messages Tab**, enable *Allow users to send Slash commands and messages from the messages tab* |
 | Bot not responding to DMs | Confirm `message.im` event subscription is enabled and the user is registered (step 6) |
+| Voice notes are ignored or download fails | Ensure the `files:read` Bot Token Scope is added (step 3) and the app has been reinstalled to the workspace to apply the new scope |
 | Socket Mode not connecting | Verify the `xapp-` token has `connections:write` scope; check application logs for `SlackSocketModeService` |
 | "Registration code is invalid or has expired" | Codes expire after 15 minutes — start a new registration |
 | Bot posts to the wrong channel | Each `NotificationProviderConfig` has its own bot token; confirm the bot is a member of the target channel |

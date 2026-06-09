@@ -61,7 +61,8 @@ public class SecurityConfig {
             .csrf(csrf -> csrf
                 .ignoringRequestMatchers("/api/authorization/**", "/api/chat/**", "/ws/**", "/logout",
                         "/api/setup/**", "/api/system/**", "/api/ai/**", "/api/agents/**",
-                        "/api/notifications/**", "/api/user/**", "/api/types/**")
+                        "/api/notifications/**", "/api/user/**", "/api/types/**",
+                        "/api/transcription/**")
             )
             .sessionManagement(session -> session
                 .sessionConcurrency(concurrency -> concurrency

@@ -243,7 +243,8 @@ public class SlackSocketModeService {
             // Ignore bot's own messages (subtype = bot_message, or bot_id present)
             if (event.get("bot_id") != null) return;
             String subtype = (String) event.get("subtype");
-            if (subtype != null && !subtype.isBlank()) return;
+            // Allow file_share (voice/audio notes) through; filter everything else
+            if (subtype != null && !subtype.isBlank() && !"file_share".equals(subtype)) return;
 
             String channelId   = (String) event.get("channel");
             String channelType = (String) event.getOrDefault("channel_type", "");
@@ -253,10 +254,27 @@ public class SlackSocketModeService {
 
             if (channelId == null || userId == null) return;
 
+            // Extract first audio file attachment if present
+            String voiceFileUrl  = null;
+            String voiceMimeType = null;
+            Object filesObj = event.get("files");
+            if (filesObj instanceof List<?> filesList) {
+                for (Object f : filesList) {
+                    if (!(f instanceof Map<?, ?> rawMap)) continue;
+                    Map<String, Object> fileMap = (Map<String, Object>) rawMap;
+                    String mime = String.valueOf(fileMap.getOrDefault("mimetype", ""));
+                    if (mime.startsWith("audio/")) {
+                        voiceFileUrl  = String.valueOf(fileMap.getOrDefault("url_private", ""));
+                        voiceMimeType = mime.contains(";") ? mime.substring(0, mime.indexOf(';')).trim() : mime;
+                        break;
+                    }
+                }
+            }
+
             SlackMessageConsumer.IncomingSlackMessage msg =
                     new SlackMessageConsumer.IncomingSlackMessage(
                             configId, botToken, channelId, channelType,
-                            userId, text, eventTs);
+                            userId, text, eventTs, voiceFileUrl, voiceMimeType);
 
             log.debug("Dispatching Slack message [configId={}, channel={}, type={}, from={}]",
                     configId, channelId, channelType, userId);
