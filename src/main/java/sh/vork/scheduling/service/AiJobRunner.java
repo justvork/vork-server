@@ -93,7 +93,8 @@ public class AiJobRunner implements Runnable {
                     buildEnvVars(job),
                     AiSessionStatus.RUNNING,
                     job.agentTemplateId(),
-                    job.modelId());
+                    job.modelId(),
+                    null);
             sessionRepository.save(trackingSession);
 
             SecurityContextHolder.getContext()

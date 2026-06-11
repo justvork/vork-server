@@ -16,12 +16,17 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.definition.DefaultToolDefinition;
+import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.function.FunctionToolCallback;
+import org.springframework.ai.util.json.schema.JsonSchemaGenerator;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.util.ClassUtils;
 import org.slf4j.MDC;
 
@@ -57,6 +62,7 @@ import sh.vork.typegen.SqlParseException;
 import sh.vork.typegen.TypeDatabaseService;
 import sh.vork.typegen.TypeGenerationException;
 import sh.vork.typegen.TypeGeneratorService;
+import sh.vork.ai.function.DeleteSshConnectionRequest;
 import sh.vork.ai.function.DisconnectSshRequest;
 import sh.vork.ai.function.DownloadFileRequest;
 import sh.vork.ai.function.ListSshConnectionsRequest;
@@ -65,13 +71,20 @@ import sh.vork.ai.function.SshConnectRequest;
 import sh.vork.ai.function.SshCreateConnectionRequest;
 import sh.vork.ai.tool.SshCreateConnectionTool;
 import sh.vork.ai.function.UploadFileRequest;
+import sh.vork.ai.function.UploadTextFileRequest;
+import sh.vork.ai.tool.UploadTextFileTool;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.registry.ToolRegistry;
 import sh.vork.ai.function.ListAgentTemplatesRequest;
+import sh.vork.ai.function.ListSkillsRequest;
 import sh.vork.ai.function.ListAvailableToolsRequest;
 import java.util.LinkedHashMap;
 import sh.vork.ai.tool.CompleteBackgroundTaskRequest;
+import sh.vork.ai.tool.CompleteSkillExecutionRequest;
+import sh.vork.ai.function.ExecuteSkillRequest;
+import sh.vork.ai.tool.DeleteSshConnectionTool;
 import sh.vork.ai.tool.DisconnectSshTool;
+import sh.vork.skill.SkillService;
 import sh.vork.ai.tool.DownloadFileTool;
 import sh.vork.ai.tool.ExecuteTerminalCommandTool;
 import sh.vork.ai.tool.ListSshConnectionsTool;
@@ -229,6 +242,7 @@ public class AiConfig {
      * {@code listAgentTemplates} tool — returns all configured {@link AgentTemplate} records.
      */
     @Bean
+    @Hidden
     @ToolCategory("Agent Orchestration")
     public ToolCallback listAgentTemplates(DatabaseRepository<AgentTemplate> agentTemplateRepository) {
         return FunctionToolCallback
@@ -260,6 +274,7 @@ public class AiConfig {
      * {@link sh.vork.ai.registry.ToolRegistry}.
      */
     @Bean
+    @Hidden
     @ToolCategory("Agent Orchestration")
     public ToolCallback listAvailableTools(ToolRegistry toolRegistry) {
         return FunctionToolCallback
@@ -338,13 +353,151 @@ public class AiConfig {
                             session.environmentVariables(),
                             AiSessionStatus.COMPLETED,
                             session.activeAgentTemplateId(),
-                            session.modelId()));
+                            session.modelId(),
+                            session.skillStack()));
 
                     backgroundExecutionContext.markExecutionComplete();
                     return "{\"status\":\"shutdown_initiated\"}";
                 })
                 .description("Signals that the background task has entirely fulfilled its operational objectives and that the background processing loop should now gracefully terminate. You MUST supply a boolean 'success' value and a 'report' string summarising what was done and produced.")
                 .inputType(CompleteBackgroundTaskRequest.class)
+                .build();
+    }
+
+    /**
+     * Hidden tool available only to sessions with an active skill frame on their stack.
+     * The skill AI calls this once when its objective is fully met.  It pops the
+     * top {@link sh.vork.skill.SkillFrame} from the session's {@code skillStack},
+     * persists the output into {@link sh.vork.ai.ToolExecutionContext} so the
+     * parent loop can retrieve it, and returns normally so Spring AI calls the
+     * model one final time (which should emit FINISHED_TURN per the skill protocol).
+     */
+    @Bean("completeSkillExecution")
+    @Hidden
+    @ToolCategory("Skills")
+    public ToolCallback completeSkillExecution(DatabaseRepository<AiSession> aiSessionRepository) {
+        return FunctionToolCallback
+                .builder("completeSkillExecution", (CompleteSkillExecutionRequest req) -> {
+                    String sessionUuid = resolveSessionUuid();
+                    if (sessionUuid == null || sessionUuid.isBlank()) {
+                        return "{\"error\":\"This tool is only available inside a skill session.\"}";
+                    }
+                    AiSession session = aiSessionRepository.get(sessionUuid);
+                    if (session == null || session.skillStack() == null || session.skillStack().isEmpty()) {
+                        return "{\"error\":\"This tool is only available inside a skill session.\"}";
+                    }
+
+                    // Store output so executeSkillSubLoop can retrieve it after this turn ends
+                    String output = req.output() != null ? req.output() : "";
+                    sh.vork.ai.context.ToolExecutionContext.put("__skill_output__", output);
+
+                    // Pop the top skill frame from the stack and save
+                    java.util.List<sh.vork.skill.SkillFrame> newStack =
+                            session.skillStack().subList(0, session.skillStack().size() - 1);
+                    aiSessionRepository.save(new AiSession(
+                            session.uuid(),
+                            session.provider(),
+                            session.originMode(),
+                            session.username(),
+                            session.name(),
+                            session.createdAt(),
+                            session.currentRoundCount(),
+                            session.messages(),
+                            session.environmentVariables(),
+                            AiSessionStatus.RUNNING,
+                            session.activeAgentTemplateId(),
+                            session.modelId(),
+                            java.util.List.copyOf(newStack)));
+
+                    log.debug("Skill frame popped [session={}, remainingFrames={}]",
+                            sessionUuid, newStack.size());
+                    String escapedOutput = output
+                            .replace("\\", "\\\\").replace("\"", "\\\"")
+                            .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
+                    return "{\"status\":\"skill_complete\",\"output\":\"" + escapedOutput + "\"}";
+                })
+                .description("Signals that the skill has fully completed its objective. Call this exactly once with the skill output when all required work is done.")
+                .inputType(CompleteSkillExecutionRequest.class)
+                .build();
+    }
+
+    /**
+     * Restricted tool that lets an agent invoke a named {@link sh.vork.skill.Skill}.
+     * The skill runs in a sandboxed child session and may be resumed from the
+     * pending-sessions UI if it suspends for authorization or input.
+     */
+    @Bean("executeSkill")
+    @ToolCategory("Skills")
+    public ToolCallback executeSkill(@Lazy SkillService skillService) {
+        ToolDefinition toolDefinition = DefaultToolDefinition.builder()
+                .name("executeSkill")
+                .description("Execute a Skill by UUID, passing the required parameter values. Returns {status,output} on success, {status,missing,message} when parameters are absent, or {status,sessionUuid,message} when suspended for authorization/input.")
+                .inputSchema(JsonSchemaGenerator.generateForType(ExecuteSkillRequest.class))
+                .build();
+        return new ToolCallback() {
+            @Override
+            public ToolDefinition getToolDefinition() {
+                return toolDefinition;
+            }
+
+            @Override
+            public String call(String toolInput) {
+                return call(toolInput, null);
+            }
+
+            @Override
+            public String call(String toolInput, ToolContext toolContext) {
+                ExecuteSkillRequest req;
+                try {
+                    req = objectMapper.readValue(toolInput, ExecuteSkillRequest.class);
+                } catch (Exception e) {
+                    return "{\"status\":\"error\",\"message\":\"Failed to parse executeSkill input: "
+                            + e.getMessage().replace("\"", "'") + "\"}";
+                }
+                // SkillActivatedException is a plain RuntimeException — not a ToolExecutionException.
+                // DefaultToolCallingManager only catches ToolExecutionException, so this propagates
+                // freely up to ChatService.executeAgentLoop where it is caught and handled.
+                return skillService.executeSkill(req.skillUuid(), req.parameters());
+            }
+        };
+    }
+
+    /**
+     * {@code listSkills} tool — returns all configured {@link sh.vork.skill.Skill} records.
+     * Hidden so it does not appear in the tool-assignment UI; injected automatically
+     * into every session by {@link sh.vork.ai.service.AiOrchestrationService}.
+     */
+    @Bean("listSkills")
+    @Hidden
+    @ToolCategory("Skills")
+    public ToolCallback listSkills(DatabaseRepository<sh.vork.skill.Skill> skillRepository) {
+        return FunctionToolCallback
+                .builder("listSkills", (ListSkillsRequest req) -> {
+                    List<Object> entries = new ArrayList<>();
+                    try (var stream = skillRepository.list(0, Integer.MAX_VALUE)) {
+                        stream.forEach(s -> {
+                            List<Object> params = s.parameters().stream()
+                                    .map(p -> java.util.Map.of(
+                                            "name",        p.name(),
+                                            "type",        p.type(),
+                                            "description", p.description()))
+                                    .collect(java.util.stream.Collectors.toList());
+                            entries.add(java.util.Map.of(
+                                    "uuid",           s.uuid(),
+                                    "name",           s.name(),
+                                    "description",    s.description(),
+                                    "parameters",     params,
+                                    "outputTemplate", s.outputTemplate()));
+                        });
+                    }
+                    try {
+                        return objectMapper.writeValueAsString(entries);
+                    } catch (Exception e) {
+                        return "{\"status\":\"error\",\"message\":\"" + e.getMessage().replace("\"", "'") + "\"}";
+                    }
+                })
+                .description("List all configured Skills with their UUIDs, names, descriptions, parameters, and output templates. Use this to discover available skills before calling executeSkill.")
+                .inputType(ListSkillsRequest.class)
                 .build();
     }
 
@@ -433,6 +586,24 @@ public class AiConfig {
     }
 
     @Bean
+    @Restricted
+    @ToolCategory("SSH & File Transfer")
+    public ToolCallback sshUploadTextFile(UploadTextFileTool uploadTextFileTool) {
+        return FunctionToolCallback
+                .builder("sshUploadTextFile", uploadTextFileTool::execute)
+                .description("""
+                    Write text content directly to a file on a remote SSH host via SFTP. \
+                    The content is provided as a string and written as UTF-8. \
+                    Use this instead of sshUploadFile when the content is already available as text \
+                    (e.g. a generated script, config file, or document) rather than a stored file. \
+                    REASONING_HINT: Include the remote destination path and a brief summary of the content in the authorization reasoning. \
+                    Requires an active SSH connection established with connectSsh."""
+                        .stripIndent())
+                .inputType(UploadTextFileRequest.class)
+                .build();
+    }
+
+    @Bean
     @ToolCategory("SSH & File Transfer")
     public ToolCallback listSshConnections(ListSshConnectionsTool listSshConnectionsTool) {
         return FunctionToolCallback
@@ -474,6 +645,25 @@ public class AiConfig {
                         .stripIndent())
                 .inputType(DisconnectSshRequest.class)
                 .build();
+    }
+
+    @Bean
+    @Restricted
+    @ToolCategory("SSH & File Transfer")
+    public ToolCallback deleteSshConnection(DeleteSshConnectionTool deleteSshConnectionTool) {
+        ToolCallback delegate = FunctionToolCallback
+                .builder("deleteSshConnection", deleteSshConnectionTool::execute)
+                .description("""
+                    Permanently delete a saved SSH connection (VorkNode) from Vork storage, \
+                    and disconnect any active session to that host. This removes the stored \
+                    host key, username, and credentials — the connection cannot be restored \
+                    without reconnecting and re-verifying the host key. \
+                    REASONING_HINT: Include the host or alias being deleted in the authorization reasoning. \
+                    Invoke when the user says 'remove ssh <host>', 'forget <alias>', or 'delete connection <x>'."""
+                        .stripIndent())
+                .inputType(DeleteSshConnectionRequest.class)
+                .build();
+        return new VisualizableToolCallback(delegate, deleteSshConnectionTool::formatAuthorizationDetails);
     }
 
     /**

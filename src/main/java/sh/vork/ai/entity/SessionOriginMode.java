@@ -4,5 +4,7 @@ public enum SessionOriginMode {
     WEB,
     BACKGROUND,
     TELEGRAM,
-    SLACK
+    SLACK,
+    /** Sandboxed skill execution — resumable via pending-sessions UI. */
+    SKILL
 }

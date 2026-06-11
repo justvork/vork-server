@@ -59,7 +59,7 @@ class AiJobRunnerTest {
         when(sessionRepo.get(anyString())).thenReturn(new AiSession(
                 "sid", "BACKGROUND_SCHEDULER", SessionOriginMode.BACKGROUND, "alice", "Untitled",
                 System.currentTimeMillis(), 0, List.of(), AiSession.defaultEnvironmentVariables(),
-                AiSessionStatus.COMPLETED, null, null));
+                AiSessionStatus.COMPLETED, null, null, null));
 
         new AiJobRunner(job, engine, repo, sessionRepo).run();
 

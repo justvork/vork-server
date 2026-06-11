@@ -1,0 +1,123 @@
+/* skills.css — Vork Skills management page */
+
+.skill-version-badge {
+    font-size: 0.65rem;
+    padding: 2px 6px;
+    border-radius: 50rem;
+    background: #2d3748;
+    border: 1px solid #4a5568;
+    color: #a0aec0;
+    white-space: nowrap;
+}
+
+.skill-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 50rem;
+    background: #1a2744;
+    border: 1px solid #2563eb;
+    color: #93c5fd;
+    white-space: nowrap;
+}
+
+.skill-pill .remove-skill {
+    cursor: pointer;
+    opacity: 0.7;
+    font-size: 0.65rem;
+}
+
+.skill-pill .remove-skill:hover {
+    opacity: 1;
+}
+
+.skill-list-item {
+    cursor: pointer;
+}
+
+.skill-list-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.tool-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 50rem;
+    background: #1d3557;
+    border: 1px solid #457b9d;
+    color: #a8dadc;
+    white-space: nowrap;
+}
+
+.tool-pill .remove-tool {
+    cursor: pointer;
+    opacity: 0.7;
+    font-size: 0.65rem;
+}
+
+.tool-pill .remove-tool:hover {
+    opacity: 1;
+}
+
+.tool-list-item {
+    cursor: pointer;
+}
+
+.tool-list-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.truncate-desc {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    max-width: 300px;
+    font-size: 0.8rem;
+    color: #adb5bd;
+}
+
+/* Parameter row in skill modal */
+.param-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.param-row .param-name {
+    flex: 2;
+    min-width: 0;
+}
+
+.param-row .param-type {
+    flex: 1;
+    min-width: 100px;
+}
+
+.param-row .param-desc {
+    flex: 3;
+    min-width: 0;
+}
+
+.param-row .btn-remove-param {
+    flex: none;
+}
+
+@media (max-width: 575.98px) {
+    .truncate-desc { max-width: 100%; }
+
+    .param-row {
+        flex-wrap: wrap;
+    }
+    .param-row .param-name,
+    .param-row .param-type,
+    .param-row .param-desc {
+        flex: 1 1 100%;
+    }
+}

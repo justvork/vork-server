@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.ResponseBody;
 
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.ai.agent.AgentTemplate;
+import sh.vork.skill.Skill;
 
 /**
  * Page and REST API controller for the Agents management UI.
@@ -34,9 +35,12 @@ public class AgentController {
     private static final Logger log = LoggerFactory.getLogger(AgentController.class);
 
     private final DatabaseRepository<AgentTemplate> agentRepository;
+    private final DatabaseRepository<Skill> skillRepository;
 
-    public AgentController(DatabaseRepository<AgentTemplate> agentRepository) {
+    public AgentController(DatabaseRepository<AgentTemplate> agentRepository,
+                           DatabaseRepository<Skill> skillRepository) {
         this.agentRepository = agentRepository;
+        this.skillRepository = skillRepository;
     }
 
     // ── Page ──────────────────────────────────────────────────────────────────
@@ -48,7 +52,13 @@ public class AgentController {
         try (var stream = agentRepository.list(0, Integer.MAX_VALUE)) {
             agents = stream.collect(Collectors.toList());
         }
+        // Build uuid→name map so the template can display skill names in pills
+        Map<String, String> skillNames = new java.util.HashMap<>();
+        try (var stream = skillRepository.list(0, Integer.MAX_VALUE)) {
+            stream.forEach(s -> skillNames.put(s.uuid(), s.name()));
+        }
         model.addAttribute("agents", agents);
+        model.addAttribute("skillNames", skillNames);
         return "agents";
     }
 
@@ -77,7 +87,8 @@ public class AgentController {
                 req.name(),
                 req.systemPrompt() != null ? req.systemPrompt() : "",
                 req.allowedTools() != null ? List.copyOf(req.allowedTools()) : List.of(),
-                false);
+                false,
+                req.skillUuids() != null ? List.copyOf(req.skillUuids()) : List.of());
         agentRepository.save(agent);
         log.info("Agent created [id={}, name={}]", agent.uuid(), agent.name());
         return ResponseEntity.ok(agent);
@@ -114,7 +125,8 @@ public class AgentController {
                 req.name(),
                 req.systemPrompt() != null ? req.systemPrompt() : "",
                 req.allowedTools() != null ? List.copyOf(req.allowedTools()) : List.of(),
-                existing.systemAgent()); // preserve system flag
+                existing.systemAgent(), // preserve system flag
+                req.skillUuids() != null ? List.copyOf(req.skillUuids()) : existing.skillUuids());
         agentRepository.save(updated);
         log.info("Agent updated [id={}, name={}]", id, req.name());
         return ResponseEntity.ok(updated);
@@ -151,6 +163,7 @@ public class AgentController {
     record AgentRequest(
             String       name,
             String       systemPrompt,
-            List<String> allowedTools
+            List<String> allowedTools,
+            List<String> skillUuids
     ) {}
 }

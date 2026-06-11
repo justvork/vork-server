@@ -20,13 +20,17 @@ import java.util.List;
  *                     agent may invoke; an empty list means no tool restriction
  *                     is applied (all tools available)
  * @param systemAgent  {@code true} for built-in agents that must not be deleted
+ * @param skillUuids   UUIDs of {@link sh.vork.skill.Skill} records this agent
+ *                     is permitted to invoke; triggers auto-injection of the
+ *                     {@code executeSkill} tool into the allowed-tools list
  */
 public record AgentTemplate(
         String       uuid,
         String       name,
         String       systemPrompt,
         List<String> allowedTools,
-        boolean      systemAgent
+        boolean      systemAgent,
+        List<String> skillUuids
 ) implements DatabaseEntity {
 
     public AgentTemplate {
@@ -38,6 +42,9 @@ public record AgentTemplate(
         }
         if (allowedTools == null) {
             allowedTools = List.of();
+        }
+        if (skillUuids == null) {
+            skillUuids = List.of();
         }
     }
 }

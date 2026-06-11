@@ -1,19 +1,6 @@
 package sh.vork.orm.nitrite;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.dizitart.no2.Nitrite;
-import org.dizitart.no2.collection.Document;
-import org.dizitart.no2.collection.DocumentCursor;
-import org.dizitart.no2.collection.NitriteCollection;
-import org.dizitart.no2.filters.Filter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import sh.vork.orm.DatabaseEntity;
-import sh.vork.orm.DatabaseException;
-import sh.vork.orm.DatabaseRepository;
-import sh.vork.orm.SearchQuery;
-import sh.vork.orm.SortOrder;
+import static org.dizitart.no2.filters.FluentFilter.where;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -22,7 +9,20 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Stream;
 
-import static org.dizitart.no2.filters.FluentFilter.where;
+import org.dizitart.no2.Nitrite;
+import org.dizitart.no2.collection.Document;
+import org.dizitart.no2.collection.NitriteCollection;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import sh.vork.orm.DatabaseEntity;
+import sh.vork.orm.DatabaseException;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.SearchQuery;
+import sh.vork.orm.SortOrder;
 
 /**
  * Nitrite-backed implementation of {@link DatabaseRepository}.
@@ -216,7 +216,7 @@ public class NitriteRepository<T extends DatabaseEntity> implements DatabaseRepo
         return true;
     }
 
-    @SuppressWarnings({"unchecked", "rawtypes"})
+    @SuppressWarnings({"unchecked"})
     private static Comparator<Map<String, Object>> mapComparator(String field, SortOrder order) {
         Comparator<Map<String, Object>> cmp = (a, b) -> {
             Object va = getNestedValue(a, field);

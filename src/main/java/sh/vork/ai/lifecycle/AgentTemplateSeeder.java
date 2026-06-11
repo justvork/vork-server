@@ -63,12 +63,11 @@ and a retry with different instructions would help.
 - Maintain a professional, efficient tone.
             """,
             List.of(
-                    "listAgentTemplates",
-                    "listAvailableTools",
                     "listNotificationProviders",
                     "sendNotification"
             ),
-            true
+            true,
+            List.of()
     );
 
     private static final String COMPUTER_ADMIN_PROMPT = """
@@ -127,14 +126,18 @@ and a retry with different instructions would help.
             COMPUTER_ADMIN_PROMPT,
             List.of(
                     "executeTerminalCommand",
+                    "createSshConnection",
                     "connectSsh",
                     "sshDownloadFile",
                     "sshUploadFile",
+                    "sshUploadTextFile",
                     "listSshConnections",
                     "setSshAlias",
-                    "disconnectSsh"
+                    "disconnectSsh",
+                    "deleteSshConnection"
             ),
-            true
+            true,
+            List.of()
     );
 
     private static final AgentTemplate VORK_DEVELOPER = new AgentTemplate(
@@ -176,10 +179,10 @@ FINISHED_TURN, CONTINUE_TURN, and SWITCH_AGENT.
                     "listTypeInstances",
                     "searchTypeInstances",
                     "deleteTypeInstance",
-                    "listEnumValues",
-                    "listAvailableTools"
+                    "listEnumValues"
             ),
-            true
+            true,
+            List.of()
     );
 
     // -------------------------------------------------------------------------

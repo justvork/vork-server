@@ -2,6 +2,7 @@ package sh.vork.ai.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import sh.vork.orm.DatabaseEntity;
+import sh.vork.skill.SkillFrame;
 
 import java.util.List;
 import java.util.Map;
@@ -29,6 +30,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *                              or {@code null} to use the default Concierge persona
  * @param modelId               the AI model ID in use (e.g. {@code "gemini-2.5-flash"}),
  *                              or {@code null} to use the provider default
+ * @param skillStack            ordered stack of {@link SkillFrame} frames pushed by {@code executeSkill};
+ *                              empty when no skill is currently executing
  */
 public record AiSession(
         String              uuid,
@@ -42,7 +45,8 @@ public record AiSession(
         Map<String, String> environmentVariables,
     AiSessionStatus     status,
     String              activeAgentTemplateId,
-    String              modelId
+    String              modelId,
+    List<SkillFrame>    skillStack
 ) implements DatabaseEntity {
 
     public AiSession {
@@ -65,6 +69,9 @@ public record AiSession(
         }
         if (status == null) {
             status = AiSessionStatus.RUNNING;
+        }
+        if (skillStack == null) {
+            skillStack = List.of();
         }
     }
 

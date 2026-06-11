@@ -69,7 +69,7 @@ public class SecurityConfig {
                 .ignoringRequestMatchers("/api/authorization/**", "/api/chat/**", "/ws/**", "/logout",
                         "/api/setup/**", "/api/system/**", "/api/ai/**", "/api/agents/**",
                         "/api/notifications/**", "/api/user/**", "/api/types/**",
-                        "/api/transcription/**", "/api/ssl/**",
+                        "/api/transcription/**", "/api/ssl/**", "/api/skills/**",
                         "/api/v1/relay/**")
             )
             .sessionManagement(session -> session

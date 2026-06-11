@@ -234,6 +234,45 @@ public class VirtualSshService extends AbstractSshServer {
                 try { client.close(); } catch (Exception ignored) {}
         }
 
+	/**
+	 * Permanently removes all persisted {@link VorkNode} records matching the given host
+	 * or alias for the currently authenticated user, and silently disconnects any active
+	 * in-memory session connection to the same target.
+	 *
+	 * @param sessionId  the current WebSocket / HTTP session UUID
+	 * @param hostOrAlias the alias or canonical host string of the connection to delete
+	 * @return the number of node records deleted from the database
+	 */
+	public int deleteSshConnection(String sessionId, String hostOrAlias) {
+		log.debug("ENTER deleteSshConnection: sessionId={}, hostOrAlias={}", sessionId, hostOrAlias);
+
+		// Resolve alias → canonical host if the connection is currently active
+		String canonicalHost = resolveAliasToCanonicalHost(sessionId, hostOrAlias);
+		if (canonicalHost == null) {
+			// Not an active alias — treat the supplied value as the hostname directly
+			canonicalHost = normalizeHost(hostOrAlias);
+		}
+
+		// Silently close the live session connection if one exists
+		try {
+			disconnect(sessionId, hostOrAlias);
+			log.debug("Step 1: disconnected active session for [hostOrAlias={}]", hostOrAlias);
+		} catch (Exception ignored) {
+			log.debug("Step 1: no active session to disconnect for [hostOrAlias={}]", hostOrAlias);
+		}
+
+		// Delete all matching persisted nodes for the current user
+		VorkUser principal = currentPrincipalUser();
+		List<VorkNode> nodes = listNodesForHost(principal, canonicalHost);
+		for (VorkNode node : nodes) {
+			nodeRepository.delete(node.uuid());
+		}
+
+		log.info("Deleted {} node(s) [host={}, user={}]", nodes.size(), canonicalHost, principal.uuid());
+		log.debug("EXIT deleteSshConnection: deleted={}", nodes.size());
+		return nodes.size();
+	}
+
 	private void cleanupConnection(SshConnection con) {
 		ConnectionKey key = connectionRegistry.remove(con.getUUID());
 		if (key == null) return;

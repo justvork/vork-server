@@ -82,7 +82,8 @@ public class BackgroundOrchestrationEngine {
                             session.environmentVariables(),
                             AiSessionStatus.FAILED_MAX_ROUNDS,
                             session.activeAgentTemplateId(),
-                            session.modelId()));
+                            session.modelId(),
+                            session.skillStack()));
                     log.warn("Background loop stopped at max rounds [session={}]", sessionUuid);
                     return;
                 }
@@ -99,7 +100,8 @@ public class BackgroundOrchestrationEngine {
                         session.environmentVariables(),
                         AiSessionStatus.RUNNING,
                         session.activeAgentTemplateId(),
-                        session.modelId()));
+                        session.modelId(),
+                        session.skillStack()));
 
                 executionContext.clear();
                     ToolExecutionContext.bindSessionUuid(sessionUuid);
@@ -137,6 +139,102 @@ public class BackgroundOrchestrationEngine {
                 }
                 if (executionContext.isExecutionComplete()) {
                     log.info("Background loop completion flag detected [session={}]", sessionUuid);
+                    return;
+                }
+            }
+        } finally {
+            sessionToolStore.clearSession(sessionUuid);
+            executionContext.clear();
+            ToolExecutionContext.clear();
+        }
+    }
+
+    /**
+     * Runs the orchestration loop for a skill session.
+     *
+     * <p>The {@code completeSkillExecution} tool must be registered in
+     * {@link sh.vork.ai.session.SessionToolStore} by the caller <em>before</em>
+     * invoking this method (typically done by {@link sh.vork.skill.SkillService}).
+     *
+     * @param sessionUuid   UUID of the {@code SKILL}-origin session
+     * @param initialPrompt first user message (built from the skill input)
+     */
+    public void executeSkillTurn(String sessionUuid, String initialPrompt) {
+        final String SKILL_CONTINUE_PROMPT =
+                "Continue executing the skill toward completion. "
+                + "When the objective is fully satisfied, invoke completeSkillExecution.";
+        String prompt = (initialPrompt == null || initialPrompt.isBlank())
+                ? SKILL_CONTINUE_PROMPT : initialPrompt;
+        boolean firstRound = true;
+
+        // completeSkillExecution is already registered by SkillService
+        try {
+            while (true) {
+                AiSession session = sessionRepository.get(sessionUuid);
+                if (session == null) {
+                    log.warn("Skill loop aborted: session not found [session={}]", sessionUuid);
+                    return;
+                }
+
+                if (session.currentRoundCount() >= MAX_ROUNDS) {
+                    List<AiChatMessage> updated = new ArrayList<>(session.messages());
+                    updated.add(new AiChatMessage(
+                            java.util.UUID.randomUUID().toString(),
+                            "ASSISTANT",
+                            "Skill execution stopped after reaching max rounds (10).",
+                            System.currentTimeMillis(),
+                            null));
+                    sessionRepository.save(new AiSession(
+                            session.uuid(), session.provider(), session.originMode(),
+                            session.username(), session.name(), session.createdAt(),
+                            session.currentRoundCount(), List.copyOf(updated),
+                            session.environmentVariables(), AiSessionStatus.FAILED_MAX_ROUNDS,
+                            session.activeAgentTemplateId(), session.modelId(),
+                            session.skillStack()));
+                    log.warn("Skill loop stopped at max rounds [session={}]", sessionUuid);
+                    return;
+                }
+
+                sessionRepository.save(new AiSession(
+                        session.uuid(), session.provider(), session.originMode(),
+                        session.username(), session.name(), session.createdAt(),
+                        session.currentRoundCount() + 1, session.messages(),
+                        session.environmentVariables(), AiSessionStatus.RUNNING,
+                        session.activeAgentTemplateId(), session.modelId(),
+                        session.skillStack()));
+
+                executionContext.clear();
+                ToolExecutionContext.bindSessionUuid(sessionUuid);
+                ToolExecutionContext.hydrate(session.environmentVariables());
+
+                try (MDC.MDCCloseable _ = MDC.putCloseable("sessionUuid", sessionUuid)) {
+                    AiProvider provider = AiProvider.BACKGROUND_SCHEDULER;
+                    try {
+                        if (session.provider() != null && !session.provider().isBlank()) {
+                            provider = AiProvider.valueOf(session.provider());
+                        }
+                    } catch (IllegalArgumentException ignored) {}
+                    chatService.sendMessage(
+                            sessionUuid,
+                            firstRound ? prompt : SKILL_CONTINUE_PROMPT,
+                            List.of(),
+                            provider);
+                } catch (ToolSuspensionException ex) {
+                    log.info("Skill loop paused by authorization fence [session={}, tool={}]",
+                            sessionUuid, ex.getToolName());
+                    return;
+                }
+
+                firstRound = false;
+
+                AiSession afterTurn = sessionRepository.get(sessionUuid);
+                if (afterTurn == null) return;
+                if (afterTurn.status() == AiSessionStatus.AWAITING_INPUT) {
+                    log.info("Skill loop awaiting authorization [session={}]", sessionUuid);
+                    return;
+                }
+                if (executionContext.isExecutionComplete()) {
+                    log.info("Skill loop completion flag detected [session={}]", sessionUuid);
                     return;
                 }
             }

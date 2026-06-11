@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.UUID;
+import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -18,8 +19,8 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.content.Media;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.ByteArrayResource;
@@ -28,7 +29,6 @@ import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.MimeType;
-import sh.vork.scheduling.service.SystemBackgroundAuthentication;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -37,24 +37,23 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import sh.vork.ai.AiProvider;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.context.ToolExecutionContext;
-import sh.vork.ai.lifecycle.AgentTemplateSeeder;
 import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiChatMessage.AttachmentRef;
 import sh.vork.ai.entity.AiChatMessage.ToolCallRef;
 import sh.vork.ai.entity.AiSession;
-import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.entity.AiSessionStatus;
+import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.exception.ToolSuspensionException;
+import sh.vork.ai.lifecycle.AgentTemplateSeeder;
 import sh.vork.ai.protocol.StructuredAgentResponse;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.SearchQuery;
 import sh.vork.orm.SortOrder;
+import sh.vork.scheduling.service.SystemBackgroundAuthentication;
 import sh.vork.scheduling.service.SystemNotificationService;
 import sh.vork.storage.FileStorageService;
 import sh.vork.storage.StoredFile;
-
-import java.util.concurrent.Executor;
 
 /**
  * Manages AI chat sessions and conversation history.
@@ -125,7 +124,7 @@ public class ChatService {
         AiSession session = new AiSession(httpSessionId, provider.name(), SessionOriginMode.WEB,
             username, DEFAULT_SESSION_NAME, System.currentTimeMillis(), 0, List.of(),
             AiSession.defaultEnvironmentVariables(), AiSessionStatus.RUNNING,
-            AgentTemplateSeeder.UUID_CONCIERGE, modelId);
+            AgentTemplateSeeder.UUID_CONCIERGE, modelId, null);
         sessionRepo.save(session);
         log.info("Created HTTP session-bound AI session [id={}, provider={}, model={}, user={}]",
             httpSessionId, provider, modelId, username);
@@ -142,7 +141,7 @@ public class ChatService {
         AiSession session = new AiSession(uuid, provider.name(), SessionOriginMode.WEB,
             username, DEFAULT_SESSION_NAME, System.currentTimeMillis(), 0, List.of(),
             AiSession.defaultEnvironmentVariables(), AiSessionStatus.RUNNING,
-            AgentTemplateSeeder.UUID_CONCIERGE, modelId);
+            AgentTemplateSeeder.UUID_CONCIERGE, modelId, null);
         sessionRepo.save(session);
         log.info("Created AI session [id={}, provider={}, model={}, user={}]", uuid, provider, modelId, username);
         return session;
@@ -172,7 +171,7 @@ public class ChatService {
                 SessionOriginMode.TELEGRAM, username, DEFAULT_SESSION_NAME,
                 System.currentTimeMillis(), 0, List.of(),
                 java.util.Collections.unmodifiableMap(env),
-                AiSessionStatus.RUNNING, AgentTemplateSeeder.UUID_CONCIERGE, null);
+                AiSessionStatus.RUNNING, AgentTemplateSeeder.UUID_CONCIERGE, null, null);
         sessionRepo.save(session);
         log.info("Created Telegram session [id={}, user={}, chatId={}]", uuid, username, chatId);
         return session;
@@ -189,7 +188,7 @@ public class ChatService {
                 SessionOriginMode.SLACK, username, DEFAULT_SESSION_NAME,
                 System.currentTimeMillis(), 0, List.of(),
                 java.util.Collections.unmodifiableMap(env),
-                AiSessionStatus.RUNNING, AgentTemplateSeeder.UUID_CONCIERGE, null);
+                AiSessionStatus.RUNNING, AgentTemplateSeeder.UUID_CONCIERGE, null, null);
         sessionRepo.save(session);
         log.info("Created Slack session [id={}, user={}, channelId={}]", uuid, username, channelId);
         return session;
@@ -238,7 +237,8 @@ public class ChatService {
             AiSession.defaultEnvironmentVariables(),
                 session.status(),
                 session.activeAgentTemplateId(),
-                session.modelId());
+                session.modelId(),
+                session.skillStack());
         sessionRepo.save(renamed);
         return renamed;
     }
@@ -391,7 +391,7 @@ public class ChatService {
                 sessionRepo.save(new AiSession(frozenSession.uuid(), frozenSession.provider(), frozenSession.originMode(), frozenSession.username(),
                     frozenSession.name(), frozenSession.createdAt(), frozenSession.currentRoundCount(), List.copyOf(updated),
                     frozenSession.environmentVariables(), AiSessionStatus.AWAITING_INPUT, frozenSession.activeAgentTemplateId(),
-                    frozenSession.modelId()));
+                    frozenSession.modelId(), frozenSession.skillStack()));
 
                 if (provider == AiProvider.BACKGROUND_SCHEDULER) {
                 systemNotificationService.notifyOfflineOperator(ex.getToolName(), ex.getArguments(), sessionUuid, eventId);
@@ -580,7 +580,8 @@ public class ChatService {
                         frozenSession.environmentVariables(),
                         AiSessionStatus.AWAITING_INPUT,
                         frozenSession.activeAgentTemplateId(),
-                        frozenSession.modelId()));
+                        frozenSession.modelId(),
+                        frozenSession.skillStack()));
 
                 if (provider == AiProvider.BACKGROUND_SCHEDULER) {
                     systemNotificationService.notifyOfflineOperator(ex.getToolName(), ex.getArguments(), sessionUuid, eventId);
@@ -630,9 +631,22 @@ public class ChatService {
             log.debug("Agent loop iteration {} [session={}, agent={}]",
                     i, sessionUuid, currentSession.getActiveAgentTemplateId());
 
-            String rawResponse = (i == 0 && !media.isEmpty())
-                    ? safeGenerateWithHistoryAndMedia(history, currentPrompt, media, provider)
-                    : safeGenerateWithHistory(history, currentPrompt, provider);
+            String rawResponse;
+            try {
+                rawResponse = (i == 0 && !media.isEmpty())
+                        ? safeGenerateWithHistoryAndMedia(history, currentPrompt, media, provider)
+                        : safeGenerateWithHistory(history, currentPrompt, provider);
+            } catch (sh.vork.skill.SkillActivatedException ex) {
+                log.info("Skill activated in agent loop [session={}, skill={}, uuid={}]",
+                        sessionUuid, ex.getSkillName(), ex.getSkillUuid());
+                String skillOutput = executeSkillSubLoop(sessionUuid, history, ex, provider);
+                String skillResultMsg = "Skill '" + ex.getSkillName() + "' completed. Output: " + skillOutput;
+                history.add(new AssistantMessage(skillResultMsg));
+                transitionMsgs.add(new AiChatMessage(UUID.randomUUID().toString(), "ASSISTANT",
+                        skillResultMsg, System.currentTimeMillis(), null));
+                currentPrompt = "The skill completed successfully. Continue based on the output above.";
+                continue;
+            }
 
             StructuredAgentResponse structured = parseStructuredResponse(rawResponse);
             log.debug("Agent loop response [session={}, status={}, iteration={}]",
@@ -662,7 +676,7 @@ public class ChatService {
                     sessionRepo.save(new AiSession(current.uuid(), current.provider(), current.originMode(),
                             current.username(), current.name(), current.createdAt(), current.currentRoundCount(),
                             current.messages(), current.environmentVariables(), current.status(), targetId,
-                            current.modelId()));
+                            current.modelId(), current.skillStack()));
                     log.info("Agent switched [session={}, target={}, newAgent={}]",
                             sessionUuid, structured.targetAgent(), targetId);
 
@@ -694,7 +708,7 @@ public class ChatService {
                     sessionRepo.save(new AiSession(current.uuid(), current.provider(), current.originMode(),
                             current.username(), current.name(), current.createdAt(), current.currentRoundCount(),
                             current.messages(), current.environmentVariables(), current.status(), targetId,
-                            current.modelId()));
+                            current.modelId(), current.skillStack()));
                     String agentDisplayName = resolveAgentNameById(targetId);
                     broadcastAndAccumulateTransition(sessionUuid,
                             "Changed to " + agentDisplayName, transitionMsgs);
@@ -735,7 +749,8 @@ public class ChatService {
                     latest.username(), latest.name(), latest.createdAt(),
                     latest.currentRoundCount(), List.copyOf(updated),
                     latest.environmentVariables(), persistedStatus,
-                    latest.activeAgentTemplateId(), latest.modelId()));
+                    latest.activeAgentTemplateId(), latest.modelId(),
+                    latest.skillStack()));
 
             maybeGenerateSessionName(sessionUuid);
             log.info("Agent loop completed [session={}, iterations={}]", sessionUuid, i + 1);
@@ -760,7 +775,8 @@ public class ChatService {
                 latest.username(), latest.name(), latest.createdAt(),
                 latest.currentRoundCount(), List.copyOf(updated),
                 latest.environmentVariables(), AiSessionStatus.RUNNING,
-                latest.activeAgentTemplateId(), latest.modelId()));
+                latest.activeAgentTemplateId(), latest.modelId(),
+                latest.skillStack()));
         return aiMsg;
     }
 
@@ -808,7 +824,7 @@ public class ChatService {
                 session.originMode(), session.username(), session.name(),
                 session.createdAt(), session.currentRoundCount(), session.messages(),
                 session.environmentVariables(), session.status(),
-                session.activeAgentTemplateId(), modelId);
+                session.activeAgentTemplateId(), modelId, session.skillStack());
         sessionRepo.save(updated);
         log.info("Session model updated [session={}, provider={}, model={}]", sessionUuid, provider, modelId);
         return updated;
@@ -823,6 +839,81 @@ public class ChatService {
         }
     }
 
+    /**
+     * Runs an inline skill sub-loop for a {@link sh.vork.skill.SkillActivatedException}.
+     *
+     * <p>The skill's context (tools + system prompt) is stored in the top
+     * {@link sh.vork.skill.SkillFrame} on the session's {@code skillStack}.
+     * The sub-loop calls the model in a loop until either:
+     * <ul>
+     *   <li>The skill's stack frame is popped (i.e. {@code completeSkillExecution} was called), or</li>
+     *   <li>The model returns {@code FINISHED_TURN}, or</li>
+     *   <li>A {@link ToolSuspensionException} is thrown (propagates to parent session freeze), or</li>
+     *   <li>Maximum iterations are exhausted.</li>
+     * </ul>
+     */
+    public String executeSkillSubLoop(String sessionUuid, List<Message> history,
+                                       sh.vork.skill.SkillActivatedException ex,
+                                       AiProvider provider) {
+        final int MAX_SKILL_ITERATIONS = 20;
+        String currentPrompt = ex.getInitialPrompt();
+
+        for (int i = 0; i < MAX_SKILL_ITERATIONS; i++) {
+            log.debug("Skill sub-loop iteration {} [session={}, skill={}]", i, sessionUuid, ex.getSkillName());
+
+            // safeGenerateWithHistory reads the session and applies the skill frame's tools/prompt
+            String rawResponse = safeGenerateWithHistory(history, currentPrompt, provider);
+
+            // Check if the skill frame was popped by completeSkillExecution during this turn
+            AiSession afterTurn = sessionRepo.get(sessionUuid);
+            boolean skillComplete = afterTurn == null
+                    || afterTurn.skillStack() == null
+                    || afterTurn.skillStack().isEmpty();
+
+            if (skillComplete) {
+                // Retrieve the output stored by completeSkillExecution
+                Object storedOutput = sh.vork.ai.context.ToolExecutionContext.get("__skill_output__");
+                String output = storedOutput != null ? storedOutput.toString() : rawResponse;
+                log.info("Skill sub-loop complete via completeSkillExecution [session={}, skill={}, iterations={}]",
+                        sessionUuid, ex.getSkillName(), i + 1);
+                return output;
+            }
+
+            StructuredAgentResponse structured = parseStructuredResponse(rawResponse);
+            if ("FINISHED_TURN".equals(structured.status())) {
+                String result = structured.textResponse() != null && !structured.textResponse().isBlank()
+                        ? structured.textResponse() : rawResponse;
+                log.info("Skill sub-loop FINISHED_TURN [session={}, skill={}, iterations={}]",
+                        sessionUuid, ex.getSkillName(), i + 1);
+                return result;
+            }
+
+            if ("CONTINUE_TURN".equals(structured.status())) {
+                String progressText = structured.textResponse() != null && !structured.textResponse().isBlank()
+                        ? structured.textResponse() : rawResponse;
+                UiEventFrame progressEvent = new UiEventFrame(UUID.randomUUID().toString(),
+                        "TEXT_RESPONSE", "CHAT_OUTPUT", progressText, null);
+                messaging.convertAndSend("/topic/chat/" + sessionUuid, progressEvent);
+                history.add(new AssistantMessage(progressText));
+                currentPrompt = "Continue executing the skill. When the objective is fully satisfied, invoke completeSkillExecution.";
+                log.debug("Skill sub-loop CONTINUE_TURN [session={}, skill={}, iteration={}]",
+                        sessionUuid, ex.getSkillName(), i);
+                continue;
+            }
+
+            // Anything else: treat as finished
+            String result = structured.textResponse() != null && !structured.textResponse().isBlank()
+                    ? structured.textResponse() : rawResponse;
+            log.info("Skill sub-loop finished (unrecognised status={}) [session={}, skill={}, iterations={}]",
+                    structured.status(), sessionUuid, ex.getSkillName(), i + 1);
+            return result;
+        }
+
+        log.warn("Skill sub-loop exhausted max iterations [session={}, skill={}, max={}]",
+                sessionUuid, ex.getSkillName(), MAX_SKILL_ITERATIONS);
+        return "Skill '" + ex.getSkillName() + "' execution timed out.";
+    }
+
     private String applyAgentSwitch(String sessionUuid, String agentTemplateId) {
         AiSession session = sessionRepo.get(sessionUuid);
         if (session == null) {
@@ -832,7 +923,7 @@ public class ChatService {
         sessionRepo.save(new AiSession(session.uuid(), session.provider(), session.originMode(),
                 session.username(), session.name(), session.createdAt(), session.currentRoundCount(),
                 session.messages(), session.environmentVariables(), session.status(), agentTemplateId,
-                session.modelId()));
+                session.modelId(), session.skillStack()));
         UiEventFrame switchEvent = new UiEventFrame(UUID.randomUUID().toString(),
                 "AGENT_SWITCH", "AGENT_SWITCH", agentTemplateId, null);
         messaging.convertAndSend("/topic/chat/" + sessionUuid, switchEvent);
@@ -997,7 +1088,8 @@ public class ChatService {
                 session.environmentVariables(),
                 persistedStatus,
                 session.activeAgentTemplateId(),
-                session.modelId()));
+                session.modelId(),
+                session.skillStack()));
 
         maybeGenerateSessionName(session.uuid());
     }
@@ -1129,7 +1221,8 @@ public class ChatService {
                     latest.environmentVariables(),
                     latest.status(),
                     latest.activeAgentTemplateId(),
-                    latest.modelId()));
+                    latest.modelId(),
+                    latest.skillStack()));
             log.info("Session title generated [session={}, title={}]", sessionUuid, sanitized);
         } catch (Exception ex) {
             log.warn("Failed to auto-name session [session={}]: {}", sessionUuid, ex.getMessage());

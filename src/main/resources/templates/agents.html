@@ -53,6 +53,7 @@
                         <th>Type</th>
                         <th>System Prompt</th>
                         <th>Tools</th>
+                        <th>Skills</th>
                         <th class="text-end">Actions</th>
                     </tr>
                 </thead>
@@ -70,11 +71,21 @@
                             <div class="truncate-prompt" th:text="${agent.systemPrompt()}"></div>
                         </td>
                         <td>
-                            <div th:if="${#lists.isEmpty(agent.allowedTools())}" class="text-muted small">— all tools —</div>
+                            <div th:if="${#lists.isEmpty(agent.allowedTools())}" class="text-muted small">— no tools —</div>
                             <div th:unless="${#lists.isEmpty(agent.allowedTools())}" class="d-flex flex-wrap gap-1">
                                 <span th:each="t : ${agent.allowedTools()}" class="tool-pill">
                                     <i class="fa-solid fa-screwdriver-wrench"></i>
                                     <span th:text="${t}"></span>
+                                </span>
+                            </div>
+                        </td>
+                        <td>
+                            <span th:if="${#lists.isEmpty(agent.skillUuids())}"
+                                  class="text-muted small">—</span>
+                            <div th:unless="${#lists.isEmpty(agent.skillUuids())}" class="d-flex flex-wrap gap-1">
+                                <span th:each="sid : ${agent.skillUuids()}" class="tool-pill">
+                                    <i class="fa-solid fa-bolt"></i>
+                                    <span th:text="${skillNames.getOrDefault(sid, sid)}"></span>
                                 </span>
                             </div>
                         </td>
@@ -125,7 +136,7 @@
                 </div>
 
                 <!-- Allowed Tools ─────────────────────────────────────────── -->
-                <div>
+                <div class="mb-3">
                     <label class="form-label">Allowed Tools
                         <span class="text-muted small">(empty = all tools available)</span>
                     </label>
@@ -140,6 +151,21 @@
                     </div>
                     <div id="tool-dropdown" class="card" style="max-height: 200px; overflow-y: auto; display: none;">
                         <ul id="tool-list" class="list-group list-group-flush"></ul>
+                    </div>
+                </div>
+
+                <!-- Assigned Skills ─────────────────────────────────────── -->
+                <div>
+                    <label class="form-label">Assigned Skills
+                        <span class="text-muted small">(enables the <code>executeSkill</code> tool for this agent)</span>
+                    </label>
+                    <div id="skill-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary" style="min-height: 40px;"></div>
+                    <div class="input-group mb-1">
+                        <span class="input-group-text"><i class="fa-solid fa-bolt"></i></span>
+                        <input type="text" id="skill-search" class="form-control" placeholder="Search skills to assign…" oninput="filterSkills()">
+                    </div>
+                    <div id="skill-dropdown" class="card" style="max-height: 200px; overflow-y: auto; display: none;">
+                        <ul id="skill-list" class="list-group list-group-flush"></ul>
                     </div>
                 </div>
             </div>
@@ -158,7 +184,9 @@
     let agentModal;
     let allAgents  = [];
     let allTools   = [];
+    let allSkills  = [];
     let modalTools = []; // tool IDs currently assigned in the open modal
+    let modalSkills = []; // skill UUIDs currently assigned in the open modal
 
     // ── Init ──────────────────────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', function () {
@@ -167,23 +195,30 @@
 
         document.getElementById('agentModal').addEventListener('hidden.bs.modal', function () {
             document.getElementById('tool-search').value = '';
+            document.getElementById('skill-search').value = '';
             document.getElementById('tool-dropdown').style.display = 'none';
+            document.getElementById('skill-dropdown').style.display = 'none';
         });
         document.addEventListener('click', function (e) {
             if (!e.target.closest('#tool-search') && !e.target.closest('#tool-dropdown')) {
                 document.getElementById('tool-dropdown').style.display = 'none';
+            }
+            if (!e.target.closest('#skill-search') && !e.target.closest('#skill-dropdown')) {
+                document.getElementById('skill-dropdown').style.display = 'none';
             }
         });
     });
 
     async function loadData() {
         try {
-            const [agentsRes, toolsRes] = await Promise.all([
+            const [agentsRes, toolsRes, skillsRes] = await Promise.all([
                 fetch('/api/agents'),
-                fetch('/api/management/tools')
+                fetch('/api/management/tools'),
+                fetch('/api/skills')
             ]);
             allAgents = agentsRes.ok ? await agentsRes.json() : [];
             allTools  = toolsRes.ok  ? await toolsRes.json()  : [];
+            allSkills = skillsRes.ok ? await skillsRes.json() : [];
         } catch (e) {
             showAlert('Failed to load data.', 'warning');
         }
@@ -195,8 +230,10 @@
         document.getElementById('agent-id').value      = '';
         document.getElementById('agent-name').value    = '';
         document.getElementById('agent-prompt').value  = '';
-        modalTools = [];
+        modalTools  = [];
+        modalSkills = [];
         renderToolPills();
+        renderSkillPills();
         agentModal.show();
     }
 
@@ -208,8 +245,10 @@
         document.getElementById('agent-id').value      = agent.uuid;
         document.getElementById('agent-name').value    = agent.name;
         document.getElementById('agent-prompt').value  = agent.systemPrompt || '';
-        modalTools = agent.allowedTools ? agent.allowedTools.slice() : [];
+        modalTools  = agent.allowedTools ? agent.allowedTools.slice() : [];
+        modalSkills = agent.skillUuids   ? agent.skillUuids.slice()   : [];
         renderToolPills();
+        renderSkillPills();
         agentModal.show();
     }
 
@@ -285,6 +324,79 @@
         }
     }
 
+    // ── Skill pills ───────────────────────────────────────────────────────────
+    function renderSkillPills() {
+        const container = document.getElementById('skill-pill-container');
+        container.innerHTML = '';
+        if (modalSkills.length === 0) {
+            container.innerHTML = '<span class="text-muted small">No skills assigned.</span>';
+            return;
+        }
+        modalSkills.forEach(function (uuid) {
+            const skill = allSkills.find(function (s) { return s.uuid === uuid; });
+            const label = skill ? skill.name : uuid;
+            const pill  = document.createElement('span');
+            pill.className = 'tool-pill';
+            pill.style.background = '#1a2744';
+            pill.style.borderColor = '#2563eb';
+            pill.style.color = '#93c5fd';
+            pill.innerHTML =
+                '<i class="fa-solid fa-bolt"></i>' +
+                '<span>' + escapeHtml(label) + '</span>' +
+                '<span class="remove-tool" title="Remove skill" style="cursor:pointer;opacity:0.7;font-size:0.65rem">✕</span>';
+            pill.querySelector('.remove-tool').addEventListener('click', function () {
+                removeSkill(uuid);
+            });
+            container.appendChild(pill);
+        });
+    }
+
+    function removeSkill(uuid) {
+        modalSkills = modalSkills.filter(function (s) { return s !== uuid; });
+        renderSkillPills();
+        filterSkills();
+    }
+
+    function filterSkills() {
+        const query    = document.getElementById('skill-search').value.toLowerCase().trim();
+        const dropdown = document.getElementById('skill-dropdown');
+        const list     = document.getElementById('skill-list');
+
+        const matches = allSkills.filter(function (s) {
+            if (modalSkills.includes(s.uuid)) return false;
+            if (!query) return true;
+            return ((s.name || '') + ' ' + (s.description || '')).toLowerCase().includes(query);
+        });
+
+        list.innerHTML = '';
+        if (matches.length === 0) { dropdown.style.display = 'none'; return; }
+        matches.forEach(function (s) {
+            const li = document.createElement('li');
+            li.className = 'list-group-item list-group-item-action tool-list-item py-1 px-2';
+            li.innerHTML =
+                '<div class="d-flex align-items-center gap-2">' +
+                '  <i class="fa-solid fa-bolt fa-xs text-secondary"></i>' +
+                '  <span class="fw-semibold small">' + escapeHtml(s.name) + '</span>' +
+                '  <span class="badge bg-dark border border-secondary text-secondary" style="font-size:0.65rem">v' + (s.version || 1) + '</span>' +
+                '</div>' +
+                (s.description ? '<div class="text-muted" style="font-size:0.7rem">' + escapeHtml(s.description) + '</div>' : '');
+            li.addEventListener('click', function () {
+                addSkill(s.uuid);
+                document.getElementById('skill-search').value = '';
+                dropdown.style.display = 'none';
+            });
+            list.appendChild(li);
+        });
+        dropdown.style.display = '';
+    }
+
+    function addSkill(uuid) {
+        if (!modalSkills.includes(uuid)) {
+            modalSkills.push(uuid);
+            renderSkillPills();
+        }
+    }
+
     // ── Save ──────────────────────────────────────────────────────────────────
     async function saveAgent() {
         const id   = document.getElementById('agent-id').value.trim();
@@ -294,7 +406,8 @@
         const body = {
             name:         name,
             systemPrompt: document.getElementById('agent-prompt').value,
-            allowedTools: modalTools.slice()
+            allowedTools: modalTools.slice(),
+            skillUuids:   modalSkills.slice()
         };
 
         const btn = document.getElementById('btn-save-agent');

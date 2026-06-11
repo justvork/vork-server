@@ -42,6 +42,7 @@ import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.exception.ToolSuspensionException;
+import sh.vork.skill.SkillActivatedException;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.protocol.StructuredAgentResponse;
 import sh.vork.ai.protocol.interaction.FieldSource;
@@ -233,7 +234,8 @@ public class ChatAuthorizationController {
                     session.environmentVariables(),
                     AiSessionStatus.AWAITING_INPUT,
                     session.activeAgentTemplateId(),
-                    session.modelId()));
+                    session.modelId(),
+                    session.skillStack()));
 
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, suspendedPromptEvent);
                 log.info("Tool execution suspended for additional input [tool={}, session={}]",
@@ -337,7 +339,8 @@ public class ChatAuthorizationController {
                         session.environmentVariables(),
                         AiSessionStatus.RUNNING,
                         session.activeAgentTemplateId(),
-                        session.modelId()));
+                        session.modelId(),
+                        session.skillStack()));
             }
 
             if (originMode == SessionOriginMode.BACKGROUND) {
@@ -353,7 +356,8 @@ public class ChatAuthorizationController {
                     session.environmentVariables(),
                     AiSessionStatus.RUNNING,
                     session.activeAgentTemplateId(),
-                    session.modelId()));
+                    session.modelId(),
+                    session.skillStack()));
 
                 aiBackgroundExecutor.execute(() -> {
                     ToolExecutionContext.bindSessionUuid(sessionUuid);
@@ -390,8 +394,24 @@ public class ChatAuthorizationController {
                             + " Summarize the result for the user and provide any concise next-step guidance.";
                 final int MAX_RESUME_ITERATIONS = 10;
                 for (int resumeIter = 0; resumeIter < MAX_RESUME_ITERATIONS; resumeIter++) {
-                    String rawResponse = aiService.generateWithHistory(
-                            history, continuationPrompt, resolveProvider(session.provider()));
+                    String rawResponse;
+                    try {
+                        rawResponse = aiService.generateWithHistory(
+                                history, continuationPrompt, resolveProvider(session.provider()));
+                    } catch (SkillActivatedException skillEx) {
+                        log.info("Skill activated during resume [session={}, skill={}]",
+                                sessionUuid, skillEx.getSkillName());
+                        if (chatService == null) {
+                            throw skillEx;
+                        }
+                        String skillOutput = chatService.executeSkillSubLoop(
+                                sessionUuid, history, skillEx, resolveProvider(session.provider()));
+                        String skillResultMsg = "Skill '" + skillEx.getSkillName()
+                                + "' completed. Output: " + skillOutput;
+                        history.add(new AssistantMessage(skillResultMsg));
+                        continuationPrompt = "The skill completed successfully. Continue based on the output above.";
+                        continue;
+                    }
                     StructuredAgentResponse structured = extractStructured(rawResponse);
                     if ("CONTINUE_TURN".equals(structured.status())) {
                         String progressText = structured.textResponse() != null && !structured.textResponse().isBlank()
@@ -499,7 +519,8 @@ public class ChatAuthorizationController {
                     session.environmentVariables(),
                     AiSessionStatus.AWAITING_INPUT,
                     session.activeAgentTemplateId(),
-                    session.modelId()));
+                    session.modelId(),
+                    session.skillStack()));
 
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, suspendedPromptEvent);
                 log.info("Resumed call suspended again [tool={}, session={}]", ex.getToolName(), sessionUuid);
@@ -544,7 +565,8 @@ public class ChatAuthorizationController {
                     session.environmentVariables(),
                     AiSessionStatus.RUNNING,
                     session.activeAgentTemplateId(),
-                    session.modelId()));
+                    session.modelId(),
+                    session.skillStack()));
 
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, errorEvent);
                 ToolExecutionContext.clear();
@@ -587,7 +609,8 @@ public class ChatAuthorizationController {
                     session.environmentVariables(),
                     AiSessionStatus.RUNNING,
                     session.activeAgentTemplateId(),
-                    session.modelId()));
+                    session.modelId(),
+                    session.skillStack()));
 
             if (chatService != null) {
                 chatService.maybeGenerateSessionName(session.uuid());

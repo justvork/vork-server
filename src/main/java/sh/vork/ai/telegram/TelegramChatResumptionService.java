@@ -443,7 +443,8 @@ public class TelegramChatResumptionService {
                 s.originMode() == null ? SessionOriginMode.TELEGRAM : s.originMode(),
                 s.username(), s.name(), s.createdAt(), s.currentRoundCount(),
                 List.copyOf(msgs), s.environmentVariables(), status,
-                s.activeAgentTemplateId(), s.modelId());
+                s.activeAgentTemplateId(), s.modelId(),
+                s.skillStack());
     }
 
     private void applyAuthorizationAction(String action, String username,
