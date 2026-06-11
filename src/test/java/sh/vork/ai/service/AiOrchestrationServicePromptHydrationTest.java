@@ -13,7 +13,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
 
-import com.jadaptive.orm.DatabaseRepository;
+import sh.vork.orm.DatabaseRepository;
 
 import sh.vork.ai.AiProvider;
 import sh.vork.ai.config.AiConfig;

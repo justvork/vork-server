@@ -2,7 +2,7 @@ package sh.vork.ssh.command;
 
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
-import com.jadaptive.orm.SearchQuery;
+import sh.vork.orm.SearchQuery;
 
 import static org.junit.jupiter.api.Assertions.*;
 

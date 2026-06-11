@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jadaptive.orm.DatabaseRepository;
+import sh.vork.orm.DatabaseRepository;
 
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.entity.AiSession;

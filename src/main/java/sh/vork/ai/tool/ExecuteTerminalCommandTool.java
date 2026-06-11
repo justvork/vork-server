@@ -8,7 +8,7 @@ import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.function.ExecuteTerminalCommandRequest;
 import sh.vork.ai.security.VisualizableTool;
 import sh.vork.ai.terminal.TerminalStreamRouter;
-import com.jadaptive.orm.DatabaseRepository;
+import sh.vork.orm.DatabaseRepository;
 
 @Component
 public class ExecuteTerminalCommandTool extends AbstractTerminalTool implements VisualizableTool {

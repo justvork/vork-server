@@ -1,6 +1,6 @@
 package sh.vork.ssh.command;
 
-import com.jadaptive.orm.DatabaseEntity;
+import sh.vork.orm.DatabaseEntity;
 
 /**
  * Minimal entity used in command tests.

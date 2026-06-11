@@ -1,7 +1,7 @@
 package sh.vork.ai.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.jadaptive.orm.DatabaseEntity;
+import sh.vork.orm.DatabaseEntity;
 
 import java.util.List;
 import java.util.Map;

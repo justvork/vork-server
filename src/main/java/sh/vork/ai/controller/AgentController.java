@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.ResponseBody;
 
-import com.jadaptive.orm.DatabaseRepository;
+import sh.vork.orm.DatabaseRepository;
 import sh.vork.ai.agent.AgentTemplate;
 
 /**

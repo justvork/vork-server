@@ -14,7 +14,7 @@ import org.springframework.boot.web.servlet.context.ServletWebServerApplicationC
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 
-import com.jadaptive.orm.DatabaseRepository;
+import sh.vork.orm.DatabaseRepository;
 
 import jakarta.annotation.PostConstruct;
 

@@ -1,6 +1,6 @@
 package sh.vork.ai.provider;
 
-import com.jadaptive.orm.DatabaseEntity;
+import sh.vork.orm.DatabaseEntity;
 
 /**
  * Persisted configuration for a single AI provider (API key, base URL, default model).

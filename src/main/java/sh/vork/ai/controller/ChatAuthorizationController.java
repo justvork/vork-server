@@ -55,7 +55,7 @@ import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
 import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.scheduling.service.AiSchedulerService;
-import com.jadaptive.orm.DatabaseRepository;
+import sh.vork.orm.DatabaseRepository;
 import sh.vork.scheduling.service.SystemBackgroundAuthentication;
 
 import java.util.concurrent.Executor;

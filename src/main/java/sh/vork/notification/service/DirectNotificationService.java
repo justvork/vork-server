@@ -11,7 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 
-import com.jadaptive.orm.DatabaseRepository;
+import sh.vork.orm.DatabaseRepository;
 
 import sh.vork.notification.Notification;
 import sh.vork.notification.NotificationMediaType;

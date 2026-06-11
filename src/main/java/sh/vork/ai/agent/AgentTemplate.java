@@ -1,6 +1,6 @@
 package sh.vork.ai.agent;
 
-import com.jadaptive.orm.DatabaseEntity;
+import sh.vork.orm.DatabaseEntity;
 
 import java.util.List;
 

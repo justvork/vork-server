@@ -1,6 +1,6 @@
 package sh.vork.notification.user;
 
-import com.jadaptive.orm.DatabaseEntity;
+import sh.vork.orm.DatabaseEntity;
 import sh.vork.notification.NotificationMediaType;
 
 /**

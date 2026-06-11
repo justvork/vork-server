@@ -42,7 +42,7 @@ import sh.vork.ai.security.AuthorizationRuleEngine;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
 import sh.vork.scheduling.service.SystemBackgroundAuthentication;
-import com.jadaptive.orm.DatabaseRepository;
+import sh.vork.orm.DatabaseRepository;
 import sh.vork.security.SecureCredentialStore;
 import sh.vork.security.VorkUser;
 

@@ -1,7 +1,7 @@
 package sh.vork.storage;
 
-import com.jadaptive.orm.DatabaseRepository;
-import com.jadaptive.orm.RepositoryFactory;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.RepositoryFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 

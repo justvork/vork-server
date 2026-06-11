@@ -4,6 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.bson.Document;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import com.mongodb.client.MongoCollection;
@@ -12,6 +13,7 @@ import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.Updates;
 
 @Service
+@ConditionalOnProperty(name = "db.backend", havingValue = "mongo", matchIfMissing = true)
 public class MongoSessionEnvironmentService implements SessionEnvironmentService {
 
     private static final String SESSION_COLLECTION = "ai_session";

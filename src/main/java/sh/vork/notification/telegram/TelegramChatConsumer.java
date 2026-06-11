@@ -9,9 +9,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
-import com.jadaptive.orm.DatabaseRepository;
-import com.jadaptive.orm.SearchQuery;
-import com.jadaptive.orm.SortOrder;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.SearchQuery;
+import sh.vork.orm.SortOrder;
 
 import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;

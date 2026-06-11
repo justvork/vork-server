@@ -23,9 +23,9 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
-import com.jadaptive.orm.DatabaseRepository;
-import com.jadaptive.orm.SearchQuery;
-import com.jadaptive.orm.SortOrder;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.SearchQuery;
+import sh.vork.orm.SortOrder;
 import com.sshtools.client.ClientAuthenticator;
 import com.sshtools.client.KeyPairAuthenticator;
 import com.sshtools.client.PasswordAuthenticator;

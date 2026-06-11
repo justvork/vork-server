@@ -93,18 +93,25 @@
             <version>1.0.0-SNAPSHOT</version>
         </dependency>
 
-        <!-- jadaptive-orm: database abstraction layer -->
+        <!-- Jedis — Redis client; required to compile the orm/redis sources -->
         <dependency>
-            <groupId>com.jadaptive</groupId>
-            <artifactId>jadaptive-orm</artifactId>
-            <version>1.0.0-SNAPSHOT</version>
+            <groupId>redis.clients</groupId>
+            <artifactId>jedis</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Nitrite — embedded NoSQL document store -->
+        <dependency>
+            <groupId>org.dizitart</groupId>
+            <artifactId>nitrite</artifactId>
+            <version>4.3.0</version>
+            <optional>true</optional>
         </dependency>
         <dependency>
-            <groupId>com.jadaptive</groupId>
-            <artifactId>jadaptive-orm</artifactId>
-            <version>1.0.0-SNAPSHOT</version>
-            <type>test-jar</type>
-            <scope>test</scope>
+            <groupId>org.dizitart</groupId>
+            <artifactId>nitrite-mvstore-adapter</artifactId>
+            <version>4.3.0</version>
+            <optional>true</optional>
         </dependency>
 
         <!-- MongoDB Java driver (version managed by Spring Boot BOM) -->

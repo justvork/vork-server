@@ -4,7 +4,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication(
-    scanBasePackages = {"sh.vork", "com.jadaptive.orm.mongo"},
+    scanBasePackages = {"sh.vork"},
     excludeName = {
         // Excluded so the app starts without credentials configured.
         // The Gemini client is built programmatically by AiChatClientFactory

@@ -5,7 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import com.jadaptive.orm.DatabaseRepository;
+import sh.vork.orm.DatabaseRepository;
 
 import sh.vork.security.VorkUser;
 
@@ -23,28 +23,56 @@ public class SetupService {
 
     private final DatabaseRepository<VorkUser> userRepo;
     private final PasswordEncoder passwordEncoder;
+    private final DatabaseSetupService databaseSetupService;
 
     /** Cached flag — flipped to {@code true} once setup is confirmed complete. */
     private volatile boolean setupComplete = false;
 
-    public SetupService(DatabaseRepository<VorkUser> userRepo, PasswordEncoder passwordEncoder) {
+    public SetupService(DatabaseRepository<VorkUser> userRepo,
+                        PasswordEncoder passwordEncoder,
+                        DatabaseSetupService databaseSetupService) {
         this.userRepo = userRepo;
         this.passwordEncoder = passwordEncoder;
+        this.databaseSetupService = databaseSetupService;
     }
 
     /**
-     * Returns {@code true} when no admin accounts exist and setup must be run.
-     * The result is cached after setup completes so subsequent checks are free.
+     * Returns {@code true} when setup must be run.
+     *
+     * <p>Setup is required when:
+     * <ol>
+     *   <li>The database backend has not been configured yet
+     *       ({@code conf.d/database.properties} is absent), <em>and</em></li>
+     *   <li>No admin users exist (a count of zero rules out legacy installs that
+     *       pre-date the database-setup step).</li>
+     * </ol>
+     *
+     * <p>If the properties file exists, the ordinary user-count check is used.
+     * The result is cached once setup is confirmed complete.
      */
     public boolean isSetupRequired() {
         if (setupComplete) return false;
+        if (!databaseSetupService.isDatabaseConfigured()) {
+            // No conf.d/database.properties — could be a fresh install or a legacy
+            // install that predates the setup wizard's database step.
+            // If users already exist it's a legacy install — skip setup.
+            try {
+                if (userRepo.count() > 0) {
+                    setupComplete = true;
+                    return false;
+                }
+            } catch (Exception ignored) {
+                // DB unreachable on a fresh install — setup is definitely required.
+            }
+            return true;
+        }
         try {
             boolean required = userRepo.count() == 0;
-            if (!required) setupComplete = true; // cache once at least one user exists
+            if (!required) setupComplete = true;
             return required;
         } catch (Exception e) {
             log.warn("Setup check failed, assuming complete: {}", e.getMessage());
-            return false; // don't block startup if DB is briefly unavailable
+            return false;
         }
     }
 

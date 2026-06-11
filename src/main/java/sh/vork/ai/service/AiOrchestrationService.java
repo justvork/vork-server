@@ -16,7 +16,7 @@ import org.springframework.ai.content.Media;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Service;
 
-import com.jadaptive.orm.DatabaseRepository;
+import sh.vork.orm.DatabaseRepository;
 
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.config.AiConfig;

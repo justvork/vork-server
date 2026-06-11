@@ -2,8 +2,8 @@ package sh.vork.security;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import com.jadaptive.orm.DatabaseRepository;
-import com.jadaptive.orm.RepositoryFactory;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.RepositoryFactory;
 
 /**
  * Configuration for security-related repositories.

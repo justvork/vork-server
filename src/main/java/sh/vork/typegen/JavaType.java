@@ -1,6 +1,6 @@
 package sh.vork.typegen;
 
-import com.jadaptive.orm.DatabaseEntity;
+import sh.vork.orm.DatabaseEntity;
 
 import java.util.Map;
 

@@ -14,7 +14,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
-import com.jadaptive.orm.DatabaseRepository;
+import sh.vork.orm.DatabaseRepository;
 import sh.vork.scheduling.domain.DurationType;
 import sh.vork.scheduling.domain.InvocationType;
 import sh.vork.scheduling.domain.ScheduledJob;

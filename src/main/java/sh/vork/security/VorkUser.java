@@ -1,6 +1,6 @@
 package sh.vork.security;
 
-import com.jadaptive.orm.DatabaseEntity;
+import sh.vork.orm.DatabaseEntity;
 
 /**
  * User entity for persistent credential storage.

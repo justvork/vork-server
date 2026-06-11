@@ -2,7 +2,7 @@ package sh.vork.scheduling.domain;
 
 import java.time.Instant;
 
-import com.jadaptive.orm.DatabaseEntity;
+import sh.vork.orm.DatabaseEntity;
 
 /**
  * Persistent scheduled background AI job definition.

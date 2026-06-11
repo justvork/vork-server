@@ -1,6 +1,6 @@
 package sh.vork.scheduling.domain;
 
-import com.jadaptive.orm.DatabaseEntity;
+import sh.vork.orm.DatabaseEntity;
 
 /**
  * Immutable record of a background job's completion outcome.

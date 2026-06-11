@@ -18,7 +18,7 @@ import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.exception.ToolSuspensionException;
 import sh.vork.ai.service.ChatService;
 import sh.vork.ai.session.SessionToolStore;
-import com.jadaptive.orm.DatabaseRepository;
+import sh.vork.orm.DatabaseRepository;
 
 @Service
 public class BackgroundOrchestrationEngine {

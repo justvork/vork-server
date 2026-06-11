@@ -1,7 +1,7 @@
 package sh.vork.typegen.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jadaptive.orm.DatabaseRepository;
+import sh.vork.orm.DatabaseRepository;
 import sh.vork.typegen.DisplayField;
 import sh.vork.typegen.FormConversionException;
 import sh.vork.typegen.FormToObjectConverter;
@@ -113,7 +113,7 @@ public class TypeDatabaseController {
     /**
      * Returns a summary of every custom Java type compiled and persisted to
      * MongoDB that is a top-level entity (i.e. implements
-     * {@link com.jadaptive.orm.DatabaseEntity}).
+     * {@link sh.vork.orm.DatabaseEntity}).
      *
      * <p>Embedded value-object types (e.g. {@code Address}, {@code LineItem})
      * intentionally do <em>not</em> implement {@code DatabaseEntity} and are
@@ -132,7 +132,7 @@ public class TypeDatabaseController {
                     log.debug("Skipping type not yet loaded in classloader: {}", jt.uuid());
                     return;
                 }
-                if (!com.jadaptive.orm.DatabaseEntity.class.isAssignableFrom(clazz)) {
+                if (!sh.vork.orm.DatabaseEntity.class.isAssignableFrom(clazz)) {
                     return;
                 }
                 Map<String, Object> entry = new LinkedHashMap<>();

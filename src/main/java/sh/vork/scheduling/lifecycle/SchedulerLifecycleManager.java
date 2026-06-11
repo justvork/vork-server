@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 
-import com.jadaptive.orm.DatabaseRepository;
+import sh.vork.orm.DatabaseRepository;
 import sh.vork.scheduling.domain.ScheduledJob;
 import sh.vork.scheduling.domain.ScheduledJobStatus;
 import sh.vork.scheduling.service.AiSchedulerService;

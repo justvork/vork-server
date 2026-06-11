@@ -24,9 +24,9 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.ResponseBody;
 
-import com.jadaptive.orm.DatabaseRepository;
-import com.jadaptive.orm.SearchQuery;
-import com.jadaptive.orm.SortOrder;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.SearchQuery;
+import sh.vork.orm.SortOrder;
 
 import sh.vork.notification.NotificationMediaType;
 import sh.vork.notification.NotificationProvider;

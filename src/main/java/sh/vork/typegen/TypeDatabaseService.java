@@ -1,10 +1,10 @@
 package sh.vork.typegen;
 
-import com.jadaptive.orm.DatabaseEntity;
-import com.jadaptive.orm.DatabaseRepository;
-import com.jadaptive.orm.RepositoryFactory;
-import com.jadaptive.orm.SearchQuery;
-import com.jadaptive.orm.SortOrder;
+import sh.vork.orm.DatabaseEntity;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.RepositoryFactory;
+import sh.vork.orm.SearchQuery;
+import sh.vork.orm.SortOrder;
 import org.springframework.stereotype.Service;
 
 import java.util.concurrent.ConcurrentHashMap;

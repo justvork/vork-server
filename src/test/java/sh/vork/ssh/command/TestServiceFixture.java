@@ -1,9 +1,9 @@
 package sh.vork.ssh.command;
 
-import com.jadaptive.orm.DatabaseEntity;
-import com.jadaptive.orm.DatabaseRepository;
-import com.jadaptive.orm.RepositoryFactory;
-import com.jadaptive.orm.mock.MapDatabaseRepository;
+import sh.vork.orm.DatabaseEntity;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.RepositoryFactory;
+import sh.vork.orm.mock.MapDatabaseRepository;
 import sh.vork.typegen.JavaTypeClassLoader;
 import sh.vork.typegen.TypeDatabaseService;
 

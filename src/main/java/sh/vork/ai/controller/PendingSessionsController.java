@@ -11,9 +11,9 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ResponseBody;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jadaptive.orm.DatabaseRepository;
-import com.jadaptive.orm.SearchQuery;
-import com.jadaptive.orm.SortOrder;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.SearchQuery;
+import sh.vork.orm.SortOrder;
 
 import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;

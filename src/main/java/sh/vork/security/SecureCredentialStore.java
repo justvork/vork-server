@@ -5,9 +5,9 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 
 import sh.vork.ai.security.encrypt.EncryptionService;
-import com.jadaptive.orm.DatabaseRepository;
-import com.jadaptive.orm.RepositoryFactory;
-import com.jadaptive.orm.SearchQuery;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.RepositoryFactory;
+import sh.vork.orm.SearchQuery;
 
 /**
  * Placeholder credential store.

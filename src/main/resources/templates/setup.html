@@ -81,13 +81,108 @@
             <div class="step-line mx-2"></div>
             <div class="step-dot" id="dot-4">4</div>
             <div class="step-line mx-2"></div>
-            <div class="step-dot" id="dot-5"><i class="fa-solid fa-check fa-xs"></i></div>
+            <div class="step-dot" id="dot-5">5</div>
+            <div class="step-line mx-2"></div>
+            <div class="step-dot" id="dot-6"><i class="fa-solid fa-check fa-xs"></i></div>
         </div>
 
         <div id="alert-area" class="mb-3"></div>
 
-        <!-- ─── Step 1: Account ─────────────────────────────────────────── -->
-        <div id="step-account" class="step-panel active">
+        <!-- ─── Step 1: Database ────────────────────────────────────────── -->
+        <div id="step-database" class="step-panel active">
+            <div class="card">
+                <div class="card-body p-4">
+                    <h5 class="card-title mb-1">
+                        <i class="fa-solid fa-database me-2 text-primary"></i>Database
+                    </h5>
+                    <p class="text-muted small mb-4">
+                        Choose where Vork stores its data. Defaults connect to a local, open database.
+                    </p>
+
+                    <!-- Backend selection -->
+                    <label class="form-label">Backend</label>
+                    <div class="provider-grid mb-3">
+                        <div class="card provider-btn text-center p-2 rounded selected" id="db-btn-mongo" onclick="selectDbBackend('mongo')">
+                            <i class="fa-solid fa-leaf fa-lg mb-1 text-success"></i>
+                            <div class="fw-semibold small">MongoDB</div>
+                        </div>
+                        <div class="card provider-btn text-center p-2 rounded" id="db-btn-redis" onclick="selectDbBackend('redis')">
+                            <i class="fa-solid fa-server fa-lg mb-1 text-danger"></i>
+                            <div class="fw-semibold small">Redis</div>
+                        </div>
+                        <div class="card provider-btn text-center p-2 rounded" id="db-btn-nitrite" onclick="selectDbBackend('nitrite')">
+                            <i class="fa-solid fa-hard-drive fa-lg mb-1 text-warning"></i>
+                            <div class="fw-semibold small">Nitrite</div>
+                            <div class="text-muted" style="font-size:0.7rem">Embedded</div>
+                        </div>
+                    </div>
+
+                    <!-- MongoDB fields -->
+                    <div id="db-mongo-fields">
+                        <div class="row g-2 mb-2">
+                            <div class="col-8">
+                                <label class="form-label small" for="db-mongo-host">Host</label>
+                                <input type="text" id="db-mongo-host" class="form-control form-control-sm" value="localhost">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small" for="db-mongo-port">Port</label>
+                                <input type="number" id="db-mongo-port" class="form-control form-control-sm" value="27017">
+                            </div>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small" for="db-mongo-database">Database</label>
+                            <input type="text" id="db-mongo-database" class="form-control form-control-sm" value="vork">
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col">
+                                <label class="form-label small" for="db-mongo-username">Username <span class="text-muted">(optional)</span></label>
+                                <input type="text" id="db-mongo-username" class="form-control form-control-sm" autocomplete="off">
+                            </div>
+                            <div class="col">
+                                <label class="form-label small" for="db-mongo-password">Password <span class="text-muted">(optional)</span></label>
+                                <input type="password" id="db-mongo-password" class="form-control form-control-sm" autocomplete="new-password">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Redis fields -->
+                    <div id="db-redis-fields" class="d-none">
+                        <div class="row g-2 mb-2">
+                            <div class="col-8">
+                                <label class="form-label small" for="db-redis-host">Host</label>
+                                <input type="text" id="db-redis-host" class="form-control form-control-sm" value="localhost">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small" for="db-redis-port">Port</label>
+                                <input type="number" id="db-redis-port" class="form-control form-control-sm" value="6379">
+                            </div>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small" for="db-redis-password">Password <span class="text-muted">(optional)</span></label>
+                            <input type="password" id="db-redis-password" class="form-control form-control-sm" autocomplete="new-password">
+                        </div>
+                    </div>
+
+                    <!-- Nitrite (embedded) fields -->
+                    <div id="db-nitrite-fields" class="d-none">
+                        <div class="mb-2">
+                            <label class="form-label small" for="db-nitrite-path">Database File</label>
+                            <input type="text" id="db-nitrite-path" class="form-control form-control-sm" value="conf.d/vork.db">
+                            <div class="form-text small">Path to the Nitrite database file. Created automatically if absent. No external server required.</div>
+                        </div>
+                    </div>
+
+                    <div id="db-alert" class="mt-2"></div>
+
+                    <button id="btn-configure-db" class="btn btn-primary w-100 mt-3" onclick="configureDatabase()">
+                        <i class="fa-solid fa-plug me-2"></i>Connect &amp; Continue
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ─── Step 2: Account ─────────────────────────────────────────── -->
+        <div id="step-account" class="step-panel">
             <div class="card">
                 <div class="card-body p-4">
                     <h5 class="card-title mb-1">
@@ -117,7 +212,7 @@
             </div>
         </div>
 
-        <!-- ─── Step 2: AI Provider ─────────────────────────────────────── -->
+        <!-- ─── Step 3: AI Provider ─────────────────────────────────────── -->
         <div id="step-ai" class="step-panel">
             <div class="card">
                 <div class="card-body p-4">
@@ -223,7 +318,7 @@
             </div>
         </div>
 
-        <!-- ─── Step 3: Notification Provider ─────────────────────────────── -->
+        <!-- ─── Step 4: Notification Provider ─────────────────────────────── -->
         <div id="step-notif-provider" class="step-panel">
             <div class="card">
                 <div class="card-body p-4">
@@ -264,7 +359,7 @@
             </div>
         </div>
 
-        <!-- ─── Step 4: Notification Addresses ────────────────────────── -->
+        <!-- ─── Step 5: Notification Addresses ────────────────────────── -->
         <div id="step-notifications" class="step-panel">
             <div class="card">
                 <div class="card-body p-4">
@@ -338,7 +433,7 @@
             </div>
         </div>
 
-        <!-- ─── Step 5: Welcome ────────────────────────────────────── -->
+        <!-- ─── Step 6: Welcome ────────────────────────────────────── -->
         <div id="step-welcome" class="step-panel">
             <div class="card">
                 <div class="card-body p-4">
@@ -408,17 +503,17 @@
     }
 
     function setStep(n) {
-        ['step-account', 'step-ai', 'step-notif-provider', 'step-notifications', 'step-welcome'].forEach(function(id, i) {
+        ['step-database', 'step-account', 'step-ai', 'step-notif-provider', 'step-notifications', 'step-welcome'].forEach(function(id, i) {
             document.getElementById(id).classList.toggle('active', i + 1 === n);
         });
-        for (let i = 1; i <= 5; i++) {
+        for (let i = 1; i <= 6; i++) {
             const dot = document.getElementById('dot-' + i);
             dot.classList.remove('active', 'done');
             if (i < n)        dot.classList.add('done');
             else if (i === n) dot.classList.add('active');
         }
-        if (n === 3) loadNotifProviderTypes();
-        if (n === 4) loadNotifProviders();
+        if (n === 4) loadNotifProviderTypes();
+        if (n === 5) loadNotifProviders();
         clearAlert();
     }
 
@@ -457,7 +552,7 @@
         }
         document.getElementById('na-loading').style.display = 'none';
         if (notifProviders.length === 0) {
-            setStep(5);
+            setStep(6);
         } else if (notifProviders.length === 1) {
             showNotifAddressSetup(notifProviders[0]);
         } else {
@@ -547,7 +642,7 @@
             });
             const data = await res.json();
             if (res.ok) {
-                setStep(5);
+                setStep(6);
             } else {
                 if (data.addressError) {
                     addrEl.classList.add('is-invalid');
@@ -612,7 +707,7 @@
             const data = await res.json();
             if (data.status === 'complete') {
                 stopNaPoll();
-                setStep(5);
+                setStep(6);
             } else if (data.status === 'expired') {
                 stopNaPoll();
                 document.getElementById('na-tg-status').innerHTML =
@@ -626,7 +721,7 @@
         if (naPollTimer) { clearInterval(naPollTimer); naPollTimer = null; }
     }
 
-    function skipNotifications() { setStep(5); }
+    function skipNotifications() { setStep(6); }
 
     // ── Notification provider step ────────────────────────────────────────────
 
@@ -734,7 +829,7 @@
                 }
                 return;
             }
-            setStep(4);
+            setStep(5);
         } catch (e) {
             showAlert('Request failed \u2014 please try again.', 'danger');
         } finally {
@@ -743,7 +838,7 @@
         }
     }
 
-    function skipNotifProvider() { setStep(4); }
+    function skipNotifProvider() { setStep(5); }
 
     function escapeHtml(s) {
         if (!s) return '';
@@ -774,7 +869,7 @@
             });
             const data = await res.json();
             if (data.error) { showAlert(data.error, 'danger'); return; }
-            setStep(2);
+            setStep(3);
         } catch (e) {
             showAlert('Request failed — please try again.', 'danger');
         } finally {
@@ -874,7 +969,7 @@
                 }).catch(function() {});
             }
 
-            setStep(3);
+            setStep(4);
         } catch (e) {
             showAlert('Save failed — please try again.', 'danger');
         } finally {
@@ -883,9 +978,143 @@
         }
     }
 
-    // On load: fetch transcription providers so the toggle is ready when models are discovered
-    loadTranscriptionProviders();
-    fetch('/api/setup/status').catch(function() {});
+    // ── Database step ─────────────────────────────────────────────────────────
+
+    let selectedDbBackend = 'mongo';
+
+    function selectDbBackend(backend) {
+        selectedDbBackend = backend;
+        document.getElementById('db-btn-mongo').classList.toggle('selected', backend === 'mongo');
+        document.getElementById('db-btn-redis').classList.toggle('selected', backend === 'redis');
+        document.getElementById('db-btn-nitrite').classList.toggle('selected', backend === 'nitrite');
+        document.getElementById('db-mongo-fields').classList.toggle('d-none', backend !== 'mongo');
+        document.getElementById('db-redis-fields').classList.toggle('d-none', backend !== 'redis');
+        document.getElementById('db-nitrite-fields').classList.toggle('d-none', backend !== 'nitrite');
+    }
+
+    function showDbAlert(msg, type) {
+        document.getElementById('db-alert').innerHTML =
+            '<div class="alert alert-' + type + ' py-2 small mb-0">' + msg + '</div>';
+    }
+
+    function clearDbAlert() {
+        document.getElementById('db-alert').innerHTML = '';
+    }
+
+    async function configureDatabase() {
+        const settings = selectedDbBackend === 'redis' ? {
+            backend:  'redis',
+            host:     document.getElementById('db-redis-host').value.trim(),
+            port:     parseInt(document.getElementById('db-redis-port').value, 10) || 6379,
+            password: document.getElementById('db-redis-password').value
+        } : selectedDbBackend === 'nitrite' ? {
+            backend:  'nitrite',
+            database: document.getElementById('db-nitrite-path').value.trim() || 'conf.d/vork.db'
+        } : {
+            backend:   'mongo',
+            host:      document.getElementById('db-mongo-host').value.trim(),
+            port:      parseInt(document.getElementById('db-mongo-port').value, 10) || 27017,
+            database:  document.getElementById('db-mongo-database').value.trim() || 'vork',
+            username:  document.getElementById('db-mongo-username').value.trim(),
+            password:  document.getElementById('db-mongo-password').value
+        };
+
+        const btn = document.getElementById('btn-configure-db');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Connecting\u2026';
+        clearDbAlert();
+
+        try {
+            const res = await fetch('/api/setup/database', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(settings)
+            });
+            const data = await res.json();
+            if (data.error) {
+                showDbAlert('<i class="fa-solid fa-circle-xmark me-1"></i>' + escapeHtml(data.error), 'danger');
+                return;
+            }
+            if (data.restartRequired) {
+                showDbAlert('<i class="fa-solid fa-arrows-rotate me-1"></i>Restarting to apply database settings\u2026', 'info');
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Waiting for restart\u2026';
+                await pollAfterRestart();
+                showDbAlert('<i class="fa-solid fa-circle-check me-1"></i>Server restarted. Continuing setup.', 'success');
+            }
+            setStep(2);
+        } catch (e) {
+            showDbAlert('Request failed \u2014 please try again.', 'danger');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-plug me-2"></i>Connect &amp; Continue';
+        }
+    }
+
+    async function pollAfterRestart() {
+        // Wait for the server to begin its shutdown
+        await new Promise(function(r) { setTimeout(r, 2000); });
+        // Poll until the server responds again (up to 60 s)
+        for (let i = 0; i < 60; i++) {
+            try {
+                const r = await fetch('/api/setup/status');
+                if (r.ok) return;
+            } catch (e) { /* server still restarting */ }
+            await new Promise(function(r) { setTimeout(r, 1000); });
+        }
+    }
+
+    async function loadInitialState() {
+        try {
+            const [statusRes, dbRes] = await Promise.all([
+                fetch('/api/setup/status'),
+                fetch('/api/setup/database')
+            ]);
+            const status = statusRes.ok ? await statusRes.json() : {};
+            const dbData = dbRes.ok   ? await dbRes.json()   : {};
+
+            // Pre-fill the DB form with current / default settings
+            if (dbData.settings) {
+                prefillDbForm(dbData.settings);
+            }
+
+            // Skip the database step when already configured
+            if (status.databaseConfigured || dbData.configured) {
+                setStep(2);
+            }
+        } catch (e) { /* ignore — DB step shows by default */ }
+
+        // Prefetch transcription providers in the background
+        loadTranscriptionProviders();
+    }
+
+    function prefillDbForm(s) {
+        if (s.backend) selectDbBackend(s.backend);
+        const isRedis   = s.backend === 'redis';
+        const isNitrite = s.backend === 'nitrite';
+        if (isNitrite) {
+            if (s.database) document.getElementById('db-nitrite-path').value = s.database;
+            return;
+        }
+        if (s.host) {
+            const el = document.getElementById(isRedis ? 'db-redis-host' : 'db-mongo-host');
+            if (el) el.value = s.host;
+        }
+        if (s.port) {
+            const el = document.getElementById(isRedis ? 'db-redis-port' : 'db-mongo-port');
+            if (el) el.value = s.port;
+        }
+        if (!isRedis && s.database) {
+            const el = document.getElementById('db-mongo-database');
+            if (el) el.value = s.database;
+        }
+        if (!isRedis && s.username) {
+            const el = document.getElementById('db-mongo-username');
+            if (el) el.value = s.username;
+        }
+    }
+
+    // On load: determine starting step and pre-fill database form
+    loadInitialState();
 </script>
 <script src="/js/vork-modal.js"></script>
 </body>

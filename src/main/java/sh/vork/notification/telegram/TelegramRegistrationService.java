@@ -15,9 +15,9 @@ import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jadaptive.orm.DatabaseRepository;
-import com.jadaptive.orm.SearchQuery;
-import com.jadaptive.orm.SortOrder;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.SearchQuery;
+import sh.vork.orm.SortOrder;
 
 import sh.vork.notification.NotificationMediaType;
 import sh.vork.notification.NotificationProviderConfig;

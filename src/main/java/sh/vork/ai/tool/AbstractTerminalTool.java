@@ -6,7 +6,7 @@ import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.terminal.AbortedTerminalCommandException;
 import sh.vork.ai.terminal.TerminalStreamRouter;
-import com.jadaptive.orm.DatabaseRepository;
+import sh.vork.orm.DatabaseRepository;
 
 /**
  * Base helper for tools that execute streamed terminal commands and need to route

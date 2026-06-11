@@ -2,7 +2,7 @@ package sh.vork.transcription;
 
 import java.util.Map;
 
-import com.jadaptive.orm.DatabaseEntity;
+import sh.vork.orm.DatabaseEntity;
 
 /**
  * Singleton configuration for the active audio transcription provider.

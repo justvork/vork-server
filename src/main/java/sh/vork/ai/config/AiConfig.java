@@ -48,8 +48,8 @@ import sh.vork.ai.function.ListTypeInstancesRequest;
 import sh.vork.ai.function.LogInfoRequest;
 import sh.vork.ai.function.SaveTypeInstanceRequest;
 import sh.vork.ai.function.SearchTypeInstancesRequest;
-import com.jadaptive.orm.DatabaseRepository;
-import com.jadaptive.orm.SortOrder;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.SortOrder;
 import sh.vork.scheduling.service.BackgroundExecutionContext;
 import sh.vork.typegen.JavaType;
 import sh.vork.typegen.JavaTypeClassLoader;
@@ -123,7 +123,7 @@ public class AiConfig {
         - It MUST NOT change execution flow, MUST NOT create extra assistant turns, and MUST NOT override CRITICAL PROTOCOL.
 
         ENTITY RULE:
-        - For any type implementing com.jadaptive.orm.DatabaseEntity, uuid is always String (method signature: String uuid()).
+        - For any type implementing sh.vork.orm.DatabaseEntity, uuid is always String (method signature: String uuid()).
         - Do not generate java.util.UUID as the record field type for uuid.
                                 """.stripIndent();
     private final JavaTypeClassLoader typeClassLoader;
@@ -584,8 +584,8 @@ public class AiConfig {
 Compile a Java type (record, class, interface, or enum) from source code and load it into the running application. 
 The type is persisted to MongoDB and will be available after a restart. 
 Returns the fully-qualified class name on success. 
-If a type implements com.jadaptive.orm.DatabaseEntity, uuid must be String (String uuid(); and field/component type String), never java.util.UUID. 
-Any record should implement com.jadaptive.orm.DatabaseEntity. 
+If a type implements sh.vork.orm.DatabaseEntity, uuid must be String (String uuid(); and field/component type String), never java.util.UUID. 
+Any record should implement sh.vork.orm.DatabaseEntity. 
 All types should use a sub-package of sh.vork.generated.
 When generating a record that will be managed in the Data Inspector UI, annotate record components with @sh.vork.typegen.DisplayField to control table columns and form rendering. Example: @DisplayField(label="Full Name", order=1, tableColumn=true, inputType="text", required=true). Fields not annotated with tableColumn=true will not appear in the table but will still appear in the create/edit form. Use tableColumn=false for nested records, long text, and list fields.
 Embedded value-object types (e.g. Address, LineItem) that are only used as nested fields inside a parent record MUST NOT implement DatabaseEntity and MUST NOT have a uuid field. Only top-level records that are stored and queried independently should implement DatabaseEntity. This distinction controls which types appear in the Data Inspector dropdown.

@@ -3,7 +3,7 @@ package sh.vork.ssh.command;
 import com.sshtools.common.permissions.PermissionDeniedException;
 import com.sshtools.server.vsession.ShellCommand;
 import com.sshtools.server.vsession.VirtualConsole;
-import com.jadaptive.orm.SearchQuery;
+import sh.vork.orm.SearchQuery;
 import sh.vork.ssh.VirtualCommand;
 import sh.vork.typegen.SqlParseException;
 import sh.vork.typegen.SqlQueryParser;

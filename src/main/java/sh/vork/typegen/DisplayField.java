@@ -18,7 +18,7 @@ import java.lang.annotation.Target;
  * package sh.vork.generated;
  *
  * import sh.vork.typegen.DisplayField;
- * import com.jadaptive.orm.DatabaseEntity;
+ * import sh.vork.orm.DatabaseEntity;
  *
  * public record Customer(
  *     @DisplayField(label = "ID", order = 0, tableColumn = true, inputType = "text")

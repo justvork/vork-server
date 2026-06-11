@@ -1,6 +1,6 @@
 package sh.vork.ssl;
 
-import com.jadaptive.orm.DatabaseEntity;
+import sh.vork.orm.DatabaseEntity;
 
 /**
  * Persisted metadata for the active SSL certificate.

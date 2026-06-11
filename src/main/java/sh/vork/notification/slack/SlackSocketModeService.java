@@ -9,9 +9,9 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import sh.vork.notification.NotificationProviderConfig;
-import com.jadaptive.orm.DatabaseRepository;
-import com.jadaptive.orm.SearchQuery;
-import com.jadaptive.orm.SortOrder;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.SearchQuery;
+import sh.vork.orm.SortOrder;
 
 import java.net.URI;
 import java.net.http.HttpClient;

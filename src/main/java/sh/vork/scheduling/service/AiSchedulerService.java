@@ -16,7 +16,7 @@ import org.springframework.stereotype.Service;
 
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
-import com.jadaptive.orm.DatabaseRepository;
+import sh.vork.orm.DatabaseRepository;
 import sh.vork.scheduling.domain.DurationType;
 import sh.vork.scheduling.domain.InvocationType;
 import sh.vork.scheduling.domain.ScheduledJob;

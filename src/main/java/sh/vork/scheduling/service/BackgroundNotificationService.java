@@ -30,9 +30,9 @@ import sh.vork.relay.RelayHttpClient;
 import sh.vork.relay.lib.model.RelaySubmission;
 import sh.vork.setup.SystemSettings;
 import sh.vork.setup.SystemSettingsService;
-import com.jadaptive.orm.DatabaseRepository;
-import com.jadaptive.orm.SearchQuery;
-import com.jadaptive.orm.SortOrder;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.SearchQuery;
+import sh.vork.orm.SortOrder;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;

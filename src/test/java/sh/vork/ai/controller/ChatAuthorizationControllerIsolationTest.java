@@ -35,7 +35,7 @@ import sh.vork.ai.protocol.interaction.FormField;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
 import sh.vork.ai.security.AuthorizationRuleEngine;
 import sh.vork.ai.service.AiOrchestrationService;
-import com.jadaptive.orm.mock.MapDatabaseRepository;
+import sh.vork.orm.mock.MapDatabaseRepository;
 import sh.vork.scheduling.service.AiSchedulerService;
 import sh.vork.security.SecureCredentialStore;
 

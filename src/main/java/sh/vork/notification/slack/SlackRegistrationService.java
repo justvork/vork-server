@@ -1,7 +1,7 @@
 package sh.vork.notification.slack;
 
-import com.jadaptive.orm.DatabaseRepository;
-import com.jadaptive.orm.SearchQuery;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.SearchQuery;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -185,7 +185,7 @@ public class SlackRegistrationService {
 
     private void clearDefaults(String userId) {
         try (var stream = mediaRepo.search(0, Integer.MAX_VALUE, "createdAt",
-                com.jadaptive.orm.SortOrder.ASC,
+                sh.vork.orm.SortOrder.ASC,
                 SearchQuery.eq("userId", userId),
                 SearchQuery.eq("isDefault", true))) {
             stream.forEach(m -> mediaRepo.save(new UserNotificationMedia(

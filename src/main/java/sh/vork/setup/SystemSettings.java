@@ -1,6 +1,6 @@
 package sh.vork.setup;
 
-import com.jadaptive.orm.DatabaseEntity;
+import sh.vork.orm.DatabaseEntity;
 
 /**
  * Global system settings persisted to MongoDB.

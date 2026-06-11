@@ -41,6 +41,7 @@ public class SetupController {
     private static final Logger log = LoggerFactory.getLogger(SetupController.class);
 
     private final SetupService              setupService;
+    private final DatabaseSetupService      databaseSetupService;
     private final AiProviderConfigService   configService;
     private final AiChatClientFactory       clientFactory;
     private final ModelDiscoveryOrchestrator orchestrator;
@@ -48,12 +49,14 @@ public class SetupController {
     private final AuthenticationManager     authenticationManager;
 
     public SetupController(SetupService setupService,
+                           DatabaseSetupService databaseSetupService,
                            AiProviderConfigService configService,
                            AiChatClientFactory clientFactory,
                            ModelDiscoveryOrchestrator orchestrator,
                            SystemSettingsService systemSettingsService,
                            AuthenticationManager authenticationManager) {
         this.setupService          = setupService;
+        this.databaseSetupService  = databaseSetupService;
         this.configService         = configService;
         this.clientFactory         = clientFactory;
         this.orchestrator          = orchestrator;
@@ -80,8 +83,104 @@ public class SetupController {
     public Map<String, Object> status() {
         return Map.of(
                 "setupRequired",          setupService.isSetupRequired(),
+                "databaseConfigured",     databaseSetupService.isDatabaseConfigured(),
                 "geminiApiKeyConfigured",  configService.getConfig(AiProvider.GEMINI) != null
         );
+    }
+
+    /** Returns the current or default database settings (password omitted). */
+    @GetMapping("/api/setup/database")
+    @ResponseBody
+    public Map<String, Object> getDatabaseSettings() {
+        log.debug("ENTER getDatabaseSettings");
+        boolean configured = databaseSetupService.isDatabaseConfigured();
+        DatabaseSettings s = databaseSetupService.getCurrentSettings();
+        Map<String, Object> settingsMap = switch (s.backend()) {
+            case "nitrite" -> Map.of(
+                    "backend",  s.backend(),
+                    "database", s.database() != null ? s.database() : "");
+            case "redis" -> Map.of(
+                    "backend",  s.backend(),
+                    "host",     s.host(),
+                    "port",     s.port());
+            default -> Map.of(
+                    "backend",  s.backend(),
+                    "host",     s.host(),
+                    "port",     s.port(),
+                    "database", s.database() != null ? s.database() : "",
+                    "username", s.username() != null ? s.username() : "");
+        };
+        return Map.of("configured", configured, "settings", settingsMap);
+    }
+
+    /** Tests connectivity without saving anything. */
+    @PostMapping("/api/setup/database/test")
+    @ResponseBody
+    public Map<String, Object> testDatabase(@RequestBody DatabaseRequest req) {
+        log.debug("ENTER testDatabase: backend={}, host={}, port={}",
+                req.backend(), req.host(), req.port());
+        DatabaseSettings settings = new DatabaseSettings(
+                req.backend(), req.host(), req.port(),
+                req.database(), req.username(), req.password());
+        DatabaseSetupService.TestResult result = databaseSetupService.testConnection(settings);
+        if (!result.ok()) {
+            return Map.of("error", result.error());
+        }
+        log.info("Database connection test OK [backend={}, host={}, port={}]",
+                req.backend(), req.host(), req.port());
+        return Map.of("ok", true);
+    }
+
+    /**
+     * Tests, saves, and optionally triggers a restart when the backend changes.
+     *
+     * <p>A restart is required only when the active backend (as loaded by Spring)
+     * differs from the requested one — the new {@code @ConditionalOnProperty}
+     * beans cannot be swapped without a JVM restart.
+     */
+    @PostMapping("/api/setup/database")
+    @ResponseBody
+    public Map<String, Object> configureDatabase(@RequestBody DatabaseRequest req) {
+        log.debug("ENTER configureDatabase: backend={}, host={}, port={}",
+                req.backend(), req.host(), req.port());
+        DatabaseSettings settings = new DatabaseSettings(
+                req.backend(), req.host(), req.port(),
+                req.database(), req.username(), req.password());
+
+        // Test the connection before persisting anything
+        DatabaseSetupService.TestResult test = databaseSetupService.testConnection(settings);
+        if (!test.ok()) {
+            return Map.of("error", test.error());
+        }
+
+        try {
+            boolean previouslyConfigured = databaseSetupService.isDatabaseConfigured();
+            String previousBackend = databaseSetupService.getCurrentBackend();
+            DatabaseSettings previousSettings = databaseSetupService.getCurrentSettings();
+            databaseSetupService.saveConfig(settings);
+
+            boolean restartRequired;
+            if (!previouslyConfigured) {
+                // Fresh install: MongoConfig loaded via matchIfMissing=true with defaults.
+                // Restart only if the user's settings differ from those defaults.
+                restartRequired = !"mongo".equals(req.backend())
+                        || !req.host().equals(previousSettings.host())
+                        || req.port() != previousSettings.port();
+            } else {
+                // Re-configure: restart only when the active backend is changing.
+                restartRequired = !previousBackend.equals(req.backend());
+            }
+
+            if (restartRequired) {
+                databaseSetupService.scheduleRestart();
+            }
+            log.info("Database configured [backend={}, restartRequired={}]",
+                    req.backend(), restartRequired);
+            return Map.of("ok", true, "restartRequired", restartRequired);
+        } catch (Exception e) {
+            log.warn("Failed to save database configuration: {}", e.getMessage());
+            return Map.of("error", "Failed to save configuration: " + e.getMessage());
+        }
     }
 
     /**
@@ -192,6 +291,9 @@ public class SetupController {
     // ── Request DTOs ─────────────────────────────────────────────────────────
 
     record AccountRequest(String username, String password, String confirmPassword) {}
+
+    record DatabaseRequest(String backend, String host, int port,
+                           String database, String username, String password) {}
 
     record ProviderValidateRequest(String provider, String apiKey, String baseUrl) {}
 

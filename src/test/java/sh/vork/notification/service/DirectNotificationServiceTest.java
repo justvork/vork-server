@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationContext;
 
-import com.jadaptive.orm.mock.MapDatabaseRepository;
+import sh.vork.orm.mock.MapDatabaseRepository;
 
 import sh.vork.notification.Notification;
 import sh.vork.notification.NotificationException;

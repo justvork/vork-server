@@ -1,6 +1,6 @@
 package sh.vork.notification;
 
-import com.jadaptive.orm.DatabaseEntity;
+import sh.vork.orm.DatabaseEntity;
 
 /**
  * A system-level (admin-configured) notification destination shared across all users.
