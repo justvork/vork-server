@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.ai.tool.ToolCallback;
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.entity.AiSession;
+import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.ai.session.SessionToolStore;
 import sh.vork.typegen.JavaType;
@@ -40,6 +41,10 @@ public class SkillService {
     private final DatabaseRepository<Skill>     skillRepo;
     private final DatabaseRepository<AiSession> aiSessionRepo;
     private final SessionToolStore              sessionToolStore;
+
+    @Lazy
+    @Autowired
+    private DatabaseRepository<AgentTemplate> agentTemplateRepo;
 
     /** completeSkillExecution is @Hidden and produced by AiConfig;
      *  it does NOT depend on SkillService, so no circular dep here. */
@@ -188,9 +193,26 @@ public class SkillService {
             return "{\"status\":\"error\",\"message\":\"Caller session not found: " + callerSessionUuid + "\"}";
         }
 
-        // Build and push the skill context frame
+        // Authorization: when an agent template is active and has skills assigned,
+        // only skills in that agent's skillUuids list may be executed.
+        String agentId = callerSession.getActiveAgentTemplateId();
+        if (agentId != null && !agentId.isBlank()) {
+            AgentTemplate template = agentTemplateRepo.get(agentId);
+            if (template != null && template.skillUuids() != null && !template.skillUuids().isEmpty()) {
+                if (!template.skillUuids().contains(skillUuid)) {
+                    log.warn("Skill access denied — skill not assigned to agent [session={}, agent={}, skill={}]",
+                            callerSessionUuid, agentId, skillUuid);
+                    return "{\"status\":\"error\",\"message\":\"Skill '" + skill.name()
+                            + "' is not assigned to this agent. Only skills configured for your agent may be executed.\"}";
+                }
+            }
+        }
+
+        // Build and push the skill context frame.
+        // Substitute non-secret {{paramName}} tokens so the model sees resolved values in the system prompt.
+        String resolvedInstructions = substituteNonSecretParams(skill.instructions(), skill.parameters(), params);
         SkillFrame frame = new SkillFrame(
-                skillUuid, skill.name(), skill.instructions(), skill.outputTemplate(),
+                skillUuid, skill.name(), resolvedInstructions, skill.outputTemplate(),
                 skill.allowedTools(), skill.allowedTypes(), params);
 
         List<SkillFrame> newStack = new ArrayList<>(callerSession.skillStack());
@@ -217,6 +239,24 @@ public class SkillService {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Replaces {@code {{paramName}}} tokens in {@code template} with the corresponding
+     * parameter values, skipping parameters marked as secret to avoid leaking credentials
+     * into the AI system prompt.
+     */
+    private static String substituteNonSecretParams(String template,
+                                                    List<SkillParameter> paramDefs,
+                                                    Map<String, String> params) {
+        String result = template;
+        for (SkillParameter p : paramDefs) {
+            if (!p.isSecret()) {
+                String value = params.getOrDefault(p.name(), "");
+                result = result.replace("{{" + p.name() + "}}", value);
+            }
+        }
+        return result;
+    }
 
     private static String buildInitialPrompt(Skill skill, Map<String, String> params) {
         StringBuilder sb = new StringBuilder();

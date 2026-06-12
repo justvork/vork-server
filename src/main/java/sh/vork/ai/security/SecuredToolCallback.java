@@ -2,6 +2,7 @@ package sh.vork.ai.security;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
@@ -60,6 +61,7 @@ public class SecuredToolCallback implements ToolCallback {
         if (ruleEngine.requiresAuthorization(toolName, username, "pending-id")) {
             String reasoning = extractReasoning(toolContext);
             String displayArguments = formatForDisplay(effectiveArguments);
+            String toolDisplayName = formatToolDisplayName(toolName);
             InteractionFormSchema formSchema = new InteractionFormSchema(
                     "AUTHORIZE_TOOL",
                     "Authorization Required",
@@ -67,7 +69,7 @@ public class SecuredToolCallback implements ToolCallback {
                     List.of(new FormField(
                             "arguments",
                             "markdown",
-                            "Tool input preview",
+                            toolDisplayName,
                             displayArguments,
                             false,
                             FieldSource.CONTEXT,
@@ -178,6 +180,24 @@ public class SecuredToolCallback implements ToolCallback {
             }
         }
         return null;
+    }
+
+    private static final Set<String> ACRONYMS = Set.of(
+            "ssh", "sftp", "ftp", "http", "https", "url", "api", "id", "uuid", "json", "xml");
+
+    static String formatToolDisplayName(String camelCaseName) {
+        if (camelCaseName == null || camelCaseName.isBlank()) return "Tool";
+        String[] words = camelCaseName.split("(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])");
+        StringBuilder sb = new StringBuilder();
+        for (String word : words) {
+            if (sb.length() > 0) sb.append(' ');
+            if (ACRONYMS.contains(word.toLowerCase())) {
+                sb.append(word.toUpperCase());
+            } else {
+                sb.append(Character.toUpperCase(word.charAt(0))).append(word.substring(1));
+            }
+        }
+        return sb.toString();
     }
 
     private static String toJsonLike(Map<?, ?> map) {

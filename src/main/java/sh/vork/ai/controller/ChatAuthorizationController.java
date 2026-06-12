@@ -580,6 +580,25 @@ public class ChatAuthorizationController {
             // Clean up any leftover pending-id use-once rule before returning
             authorizationRuleEngine.removeUseOnceRule("pending-id");
 
+            // Detect skill frames that were popped during the resume loop (e.g. by completeSkillExecution)
+            // and broadcast the corresponding "Skill completed" UI events.
+            AiSession freshSession = sessionRepo.get(sessionUuid);
+            List<sh.vork.skill.SkillFrame> originalStack = session.skillStack() != null
+                    ? session.skillStack() : List.of();
+            List<sh.vork.skill.SkillFrame> currentStack = (freshSession != null && freshSession.skillStack() != null)
+                    ? freshSession.skillStack() : List.of();
+            for (int p = originalStack.size() - 1; p >= currentStack.size(); p--) {
+                String skName = originalStack.get(p).skillName();
+                UiEventFrame skillDoneEvent = new UiEventFrame(
+                        UUID.randomUUID().toString(), "SKILL_TRANSITION", "SKILL_TRANSITION",
+                        "Skill completed: " + skName, null);
+                messaging.convertAndSend("/topic/chat/" + sessionUuid, skillDoneEvent);
+                updated.add(new AiChatMessage(UUID.randomUUID().toString(), "SKILL_TRANSITION",
+                        "Skill completed: " + skName, System.currentTimeMillis(),
+                        null, null, null, null));
+                log.debug("Skill completion event broadcast during resume [session={}, skill={}]", sessionUuid, skName);
+            }
+
             UiEventFrame textEvent = new UiEventFrame(
                     UUID.randomUUID().toString(),
                     "TEXT_RESPONSE",
@@ -610,7 +629,7 @@ public class ChatAuthorizationController {
                     AiSessionStatus.RUNNING,
                     session.activeAgentTemplateId(),
                     session.modelId(),
-                    session.skillStack()));
+                    currentStack));
 
             if (chatService != null) {
                 chatService.maybeGenerateSessionName(session.uuid());

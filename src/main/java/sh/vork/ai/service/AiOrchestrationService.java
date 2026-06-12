@@ -434,18 +434,45 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         .map(t -> t.getToolDefinition().name())
                         .collect(Collectors.toCollection(java.util.HashSet::new));
 
-                // Always inject always-on tools by direct bean reference so they are available
-                // regardless of allowedTools configuration.
-                if (presentNames.add("listSkills"))          merged.add(listSkillsCallback);
-                if (presentNames.add("executeSkill"))        merged.add(executeSkillCallback);
-                if (presentNames.add("listAvailableTools"))  merged.add(listAvailableToolsCallback);
-                if (isConciergeSession() && presentNames.add("listAgentTemplates"))
-                        merged.add(listAgentTemplatesCallback);
+                // Determine whether we are inside an active skill frame.
+                // If so, the always-on tools (executeSkill, listSkills, etc.) must NOT be
+                // injected — calling executeSkill recursively from within a skill sub-loop
+                // causes a SkillActivatedException that escapes the sub-loop and crashes the session.
+                AiSession sessionForSkillCheck = (sessionUuid != null && !sessionUuid.isBlank())
+                        ? sessionRepo.get(sessionUuid) : null;
+                boolean inSkillFrame = sessionForSkillCheck != null
+                        && sessionForSkillCheck.skillStack() != null
+                        && !sessionForSkillCheck.skillStack().isEmpty();
+
+                if (!inSkillFrame) {
+                        // listSkills and executeSkill are only injected when the active agent has at least
+                        // one skill UUID configured. An agent with no skillUuids assigned is not skills-capable.
+                        // Sessions with no active agent (Concierge mode) are unrestricted.
+                        boolean agentHasSkills = sessionForSkillCheck == null
+                                || sessionForSkillCheck.getActiveAgentTemplateId() == null
+                                || sessionForSkillCheck.getActiveAgentTemplateId().isBlank()
+                                || agentHasSkillsAssigned(sessionForSkillCheck.getActiveAgentTemplateId());
+                        if (agentHasSkills) {
+                                if (presentNames.add("listSkills"))   merged.add(listSkillsCallback);
+                                if (presentNames.add("executeSkill")) merged.add(executeSkillCallback);
+                        }
+                        if (presentNames.add("listAvailableTools"))  merged.add(listAvailableToolsCallback);
+                        if (isConciergeSession() && presentNames.add("listAgentTemplates"))
+                                merged.add(listAgentTemplatesCallback);
+                }
                 if (!sessionTools.isEmpty()) {
                         merged.addAll(sessionTools);
                         log.debug("Merged {} session-scoped tool(s) [session={}]", sessionTools.size(), sessionUuid);
                 }
                 tools = merged.toArray(ToolCallback[]::new);
+
+                if (log.isDebugEnabled()) {
+                        String toolNames = merged.stream()
+                                .map(t -> t.getToolDefinition().name())
+                                .collect(Collectors.joining(", "));
+                        log.debug("Tools available for AI invocation [session={}, count={}, tools=[{}]]",
+                                sessionUuid, merged.size(), toolNames);
+                }
 
                 ChatClient.Builder builder = base.mutate()
                         .defaultSystem(composeSystemPrompt())
@@ -556,6 +583,14 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 .toArray(ToolCallback[]::new);
                         log.debug("Skill frame tool filtering [session={}, allowed={}, resolved={}]",
                                 sessionUuid, skillToolNames.size(), result.length);
+                        if (result.length < skillToolNames.size()) {
+                                List<String> unresolved = skillToolNames.stream()
+                                        .filter(name -> securedToolCallbackMap.get(name) == null)
+                                        .toList();
+                                log.warn("Skill frame has unresolved tools — skill may not function correctly " +
+                                        "[session={}, skill={}, unresolved={}]",
+                                        sessionUuid, topFrame.skillName(), unresolved);
+                        }
                         return result;
                 }
 
@@ -612,6 +647,31 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 if (agentId == null) return false;
                 AgentTemplate template = agentTemplateRepo.get(agentId);
                 return template != null && "Concierge".equalsIgnoreCase(template.name());
+        }
+
+        /**
+         * Returns {@code true} when the agent template identified by {@code agentTemplateId}
+         * has at least one skill UUID configured in its {@code skillUuids} list.
+         */
+        private boolean agentHasSkillsAssigned(String agentTemplateId) {
+                if (agentTemplateId == null || agentTemplateId.isBlank()) return true;
+                AgentTemplate template = agentTemplateRepo.get(agentTemplateId);
+                return template != null
+                        && template.skillUuids() != null
+                        && !template.skillUuids().isEmpty();
+        }
+
+        /**
+         * Returns the names of tools in {@code toolNames} that are not present in the
+         * secured tool callback map.  {@code completeSkillExecution} is excluded because
+         * it is always injected as a session-scoped tool, not via the secured map.
+         */
+        public List<String> findUnresolvableTools(List<String> toolNames) {
+                if (toolNames == null || toolNames.isEmpty()) return List.of();
+                return toolNames.stream()
+                        .filter(name -> !name.equals("completeSkillExecution"))
+                        .filter(name -> !securedToolCallbackMap.containsKey(name))
+                        .toList();
         }
 
 }

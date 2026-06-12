@@ -364,6 +364,14 @@ function renderAgentTransition(text) {
     scrollBottom();
 }
 
+function renderSkillEvent(text) {
+    const row = document.createElement('div');
+    row.className = 'agent-transition-row';
+    row.innerHTML = '<i class="fa-solid fa-bolt" aria-hidden="true"></i><span>' + escapeHtml(text) + '</span>';
+    messagesArea.insertBefore(row, typingEl);
+    scrollBottom();
+}
+
 function renderModelSwitch(text) {
     const row = document.createElement('div');
     row.className = 'agent-transition-row';
@@ -1313,6 +1321,10 @@ function handleIncomingUiFrame(frame) {
             renderAgentTransition(frame.textResponse || '');
             return;
 
+        case 'SKILL_TRANSITION':
+            renderSkillEvent(frame.textResponse || '');
+            return;
+
         case 'AGENT_SWITCH':
             // Active agent was changed server-side — update the dropdown
             // Visual notification is handled by the accompanying AGENT_TRANSITION event
@@ -1371,6 +1383,11 @@ async function renderSessionRecord(msg, index, messages, lastPromptIndex) {
 
     if (msg.role === 'AGENT_TRANSITION') {
         renderAgentTransition(msg.content || '');
+        return;
+    }
+
+    if (msg.role === 'SKILL_TRANSITION') {
+        renderSkillEvent(msg.content || '');
         return;
     }
 
@@ -1844,6 +1861,11 @@ function loadAgents(activeAgentTemplateId) {
 agentSel.addEventListener('change', function () {
     if (!sessionUuid) return;
     const agentTemplateId = agentSel.value;
+    const selectedLabel = agentSel.options[agentSel.selectedIndex].text;
+    // Derive the display name: strip the "Default (...)" wrapper if present
+    const agentDisplayName = agentTemplateId
+        ? selectedLabel
+        : 'Concierge';
     fetch('/api/chat/session/' + encodeURIComponent(sessionUuid) + '/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1854,6 +1876,8 @@ agentSel.addEventListener('change', function () {
                 console.warn('Agent switch failed: HTTP ' + resp.status);
                 // Revert dropdown to avoid misleading state
                 loadAgents(null);
+            } else {
+                renderAgentTransition('Changed to ' + agentDisplayName);
             }
         })
         .catch(function (err) { console.warn('Agent switch error:', err); });

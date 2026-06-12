@@ -19,6 +19,6 @@ public record ExecuteSkillRequest(
         String skillUuid,
 
         @JsonProperty(required = true, value = "parameters")
-        @JsonPropertyDescription("Parameter values as an object mapping each parameter name to its value. All declared skill parameters must be supplied.")
-        Map<String, String> parameters
+        @JsonPropertyDescription("Parameter values as a flat object mapping each parameter name to its string value. All declared skill parameters must be supplied as top-level keys — do not nest under a 'parameters' key.")
+        Map<String, Object> parameters
 ) {}

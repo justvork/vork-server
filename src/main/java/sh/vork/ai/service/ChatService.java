@@ -858,11 +858,68 @@ public class ChatService {
         final int MAX_SKILL_ITERATIONS = 20;
         String currentPrompt = ex.getInitialPrompt();
 
+        broadcastAndPersistSkillEvent(sessionUuid, "Running skill: " + ex.getSkillName());
+
+        // Hard-reject before starting the sub-loop if any tools the skill requires are not registered.
+        // Without this check the model would be handed only completeSkillExecution, hallucinate a result,
+        // and the caller would get garbage back with no indication of what went wrong.
+        AiSession sessionAtStart = sessionRepo.get(sessionUuid);
+        if (sessionAtStart != null && sessionAtStart.skillStack() != null && !sessionAtStart.skillStack().isEmpty()) {
+            sh.vork.skill.SkillFrame frame = sessionAtStart.skillStack().getLast();
+            List<String> unresolvable = aiService.findUnresolvableTools(
+                    frame.allowedTools() != null ? frame.allowedTools() : List.of());
+            if (!unresolvable.isEmpty()) {
+                List<sh.vork.skill.SkillFrame> poppedStack = new ArrayList<>(sessionAtStart.skillStack());
+                poppedStack.removeLast();
+                sessionRepo.save(new AiSession(
+                        sessionAtStart.uuid(), sessionAtStart.provider(), sessionAtStart.originMode(),
+                        sessionAtStart.username(), sessionAtStart.name(), sessionAtStart.createdAt(),
+                        sessionAtStart.currentRoundCount(), sessionAtStart.messages(),
+                        sessionAtStart.environmentVariables(), sessionAtStart.status(),
+                        sessionAtStart.getActiveAgentTemplateId(), sessionAtStart.modelId(),
+                        List.copyOf(poppedStack)));
+                broadcastAndPersistSkillEvent(sessionUuid, "Skill failed: " + ex.getSkillName());
+                log.warn("Skill aborted — required tools not available [session={}, skill={}, missing={}]",
+                        sessionUuid, ex.getSkillName(), unresolvable);
+                return "I cannot execute the skill '" + ex.getSkillName() + "' because it requires tools "
+                        + "that are not configured: " + unresolvable + ". "
+                        + "Please ensure these tools are available and try again.";
+            }
+        }
+
+        // Skills are sandboxed executions. Use an empty history so prior conversation turns
+        // (including results from previous skill runs on the same targets) cannot bleed into
+        // the skill sub-loop and cause the model to recycle stale data instead of running
+        // the skill's actual commands.
+        List<Message> skillHistory = new ArrayList<>();
+
         for (int i = 0; i < MAX_SKILL_ITERATIONS; i++) {
             log.debug("Skill sub-loop iteration {} [session={}, skill={}]", i, sessionUuid, ex.getSkillName());
 
             // safeGenerateWithHistory reads the session and applies the skill frame's tools/prompt
-            String rawResponse = safeGenerateWithHistory(history, currentPrompt, provider);
+            String rawResponse;
+            try {
+                rawResponse = safeGenerateWithHistory(skillHistory, currentPrompt, provider);
+            } catch (sh.vork.skill.SkillActivatedException nestedEx) {
+                // Guard: the model called executeSkill from inside a skill sub-loop.
+                // Pop the spuriously pushed frame and abort this sub-loop with an error.
+                log.error("Recursive skill activation in sub-loop — aborting [session={}, outer={}, inner={}]",
+                        sessionUuid, ex.getSkillName(), nestedEx.getSkillName());
+                AiSession current = sessionRepo.get(sessionUuid);
+                if (current != null && current.skillStack() != null && current.skillStack().size() > 1) {
+                    List<sh.vork.skill.SkillFrame> poppedStack = new ArrayList<>(current.skillStack());
+                    poppedStack.removeLast();
+                    sessionRepo.save(new AiSession(
+                            current.uuid(), current.provider(), current.originMode(),
+                            current.username(), current.name(), current.createdAt(),
+                            current.currentRoundCount(), current.messages(),
+                            current.environmentVariables(), current.status(),
+                            current.activeAgentTemplateId(), current.modelId(),
+                            List.copyOf(poppedStack)));
+                }
+                broadcastAndPersistSkillEvent(sessionUuid, "Skill error: " + ex.getSkillName());
+                return "Error: executeSkill was called recursively inside the skill sub-loop. Skill aborted.";
+            }
 
             // Check if the skill frame was popped by completeSkillExecution during this turn
             AiSession afterTurn = sessionRepo.get(sessionUuid);
@@ -876,6 +933,7 @@ public class ChatService {
                 String output = storedOutput != null ? storedOutput.toString() : rawResponse;
                 log.info("Skill sub-loop complete via completeSkillExecution [session={}, skill={}, iterations={}]",
                         sessionUuid, ex.getSkillName(), i + 1);
+                broadcastAndPersistSkillEvent(sessionUuid, "Skill completed: " + ex.getSkillName());
                 return output;
             }
 
@@ -885,6 +943,7 @@ public class ChatService {
                         ? structured.textResponse() : rawResponse;
                 log.info("Skill sub-loop FINISHED_TURN [session={}, skill={}, iterations={}]",
                         sessionUuid, ex.getSkillName(), i + 1);
+                broadcastAndPersistSkillEvent(sessionUuid, "Skill completed: " + ex.getSkillName());
                 return result;
             }
 
@@ -894,7 +953,7 @@ public class ChatService {
                 UiEventFrame progressEvent = new UiEventFrame(UUID.randomUUID().toString(),
                         "TEXT_RESPONSE", "CHAT_OUTPUT", progressText, null);
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, progressEvent);
-                history.add(new AssistantMessage(progressText));
+                skillHistory.add(new AssistantMessage(progressText));
                 currentPrompt = "Continue executing the skill. When the objective is fully satisfied, invoke completeSkillExecution.";
                 log.debug("Skill sub-loop CONTINUE_TURN [session={}, skill={}, iteration={}]",
                         sessionUuid, ex.getSkillName(), i);
@@ -906,11 +965,13 @@ public class ChatService {
                     ? structured.textResponse() : rawResponse;
             log.info("Skill sub-loop finished (unrecognised status={}) [session={}, skill={}, iterations={}]",
                     structured.status(), sessionUuid, ex.getSkillName(), i + 1);
+            broadcastAndPersistSkillEvent(sessionUuid, "Skill completed: " + ex.getSkillName());
             return result;
         }
 
         log.warn("Skill sub-loop exhausted max iterations [session={}, skill={}, max={}]",
                 sessionUuid, ex.getSkillName(), MAX_SKILL_ITERATIONS);
+        broadcastAndPersistSkillEvent(sessionUuid, "Skill timed out: " + ex.getSkillName());
         return "Skill '" + ex.getSkillName() + "' execution timed out.";
     }
 
@@ -945,6 +1006,26 @@ public class ChatService {
                 UUID.randomUUID().toString(), "AGENT_TRANSITION",
                 text, System.currentTimeMillis(), null));
         log.debug("Agent transition [session={}, text={}]", sessionUuid, text);
+    }
+
+    private void broadcastAndPersistSkillEvent(String sessionUuid, String text) {
+        UiEventFrame event = new UiEventFrame(
+                UUID.randomUUID().toString(), "SKILL_TRANSITION", "SKILL_TRANSITION", text, null);
+        messaging.convertAndSend("/topic/chat/" + sessionUuid, event);
+        AiSession session = sessionRepo.get(sessionUuid);
+        if (session != null) {
+            List<AiChatMessage> updated = new ArrayList<>(session.messages());
+            updated.add(new AiChatMessage(
+                    UUID.randomUUID().toString(), "SKILL_TRANSITION",
+                    text, System.currentTimeMillis(), null));
+            sessionRepo.save(new AiSession(
+                    session.uuid(), session.provider(), session.originMode(),
+                    session.username(), session.name(), session.createdAt(),
+                    session.currentRoundCount(), List.copyOf(updated),
+                    session.environmentVariables(), session.status(),
+                    session.activeAgentTemplateId(), session.modelId(), session.skillStack()));
+        }
+        log.debug("Skill transition [session={}, text={}]", sessionUuid, text);
     }
 
     /**

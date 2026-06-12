@@ -209,12 +209,28 @@ FINISHED_TURN, CONTINUE_TURN, and SWITCH_AGENT.
     // -------------------------------------------------------------------------
 
     private void seedOrUpdate(AgentTemplate template) {
-        boolean exists = agentTemplateRepository.get(template.uuid()) != null;
-        agentTemplateRepository.save(template);
-        if (exists) {
-            log.info("Step update: refreshed built-in agent template [uuid={}, name={}]",
-                    template.uuid(), template.name());
+        AgentTemplate existing = agentTemplateRepository.get(template.uuid());
+        if (existing != null) {
+            // Merge allowedTools: seed list first, then any operator-added extras not already present.
+            java.util.LinkedHashSet<String> mergedTools = new java.util.LinkedHashSet<>(template.allowedTools());
+            if (existing.allowedTools() != null) {
+                mergedTools.addAll(existing.allowedTools());
+            }
+            // Preserve operator-assigned skillUuids — never overwrite them on reseed.
+            List<String> preservedSkills = existing.skillUuids() != null
+                    ? existing.skillUuids() : List.of();
+            AgentTemplate updated = new AgentTemplate(
+                    template.uuid(),
+                    template.name(),
+                    template.systemPrompt(),
+                    List.copyOf(mergedTools),
+                    template.systemAgent(),
+                    preservedSkills);
+            agentTemplateRepository.save(updated);
+            log.info("Step update: refreshed built-in agent template [uuid={}, name={}, tools={}, preservedSkills={}]",
+                    template.uuid(), template.name(), mergedTools.size(), preservedSkills.size());
         } else {
+            agentTemplateRepository.save(template);
             log.info("Step create: seeded agent template [uuid={}, name={}]",
                     template.uuid(), template.name());
         }
