@@ -66,7 +66,7 @@
                         </td>
                         <td>
                             <span th:if="${#lists.isEmpty(skill.allowedTools())}"
-                                  class="text-muted small">— all —</span>
+                                  class="text-muted small">None</span>
                             <span th:unless="${#lists.isEmpty(skill.allowedTools())}"
                                   class="badge bg-dark border border-secondary text-secondary"
                                   th:text="${#lists.size(skill.allowedTools())} + ' tool(s)'"></span>
@@ -153,14 +153,6 @@
                     </button>
                 </div>
 
-                <!-- Output Template ─────────────────────────────────────── -->
-                <div class="mb-3">
-                    <label class="form-label" for="skill-output-template">Output Template</label>
-                    <textarea id="skill-output-template" class="form-control font-monospace" rows="5"
-                              placeholder="Free-text example of the expected output — JSON, plain text, or any format…"></textarea>
-                    <div class="form-text">Shows the calling agent what to expect. The skill AI will conform its output to this template.</div>
-                </div>
-
                 <div class="mb-3">
                     <label class="form-label" for="skill-instructions">Instructions</label>
                     <textarea id="skill-instructions" class="form-control font-monospace" rows="8"
@@ -169,9 +161,7 @@
 
                 <!-- Allowed Tools ─────────────────────────────────────────── -->
                 <div class="mb-3">
-                    <label class="form-label">Allowed Tools
-                        <span class="text-muted small">(empty = all tools available)</span>
-                    </label>
+                    <label class="form-label">Allowed Tools</label>
                     <div id="tool-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary" style="min-height: 40px;"></div>
                     <div class="input-group mb-1">
                         <span class="input-group-text"><i class="fa-solid fa-magnifying-glass"></i></span>
@@ -183,7 +173,7 @@
                 </div>
 
                 <!-- Allowed Types ─────────────────────────────────────────── -->
-                <div>
+                <div class="mb-3">
                     <label class="form-label">Allowed Types
                         <span class="text-muted small">(custom Java record types the skill may use)</span>
                     </label>
@@ -194,6 +184,21 @@
                     </div>
                     <div id="type-dropdown" class="card" style="max-height: 200px; overflow-y: auto; display: none;">
                         <ul id="type-list" class="list-group list-group-flush"></ul>
+                    </div>
+                </div>
+
+                <!-- Sub-skills ──────────────────────────────────────────────── -->
+                <div>
+                    <label class="form-label">Sub-skills
+                        <span class="text-muted small">(skills this skill may invoke — presented to the AI as tools during execution)</span>
+                    </label>
+                    <div id="subskill-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary" style="min-height: 40px;"></div>
+                    <div class="input-group mb-1">
+                        <span class="input-group-text"><i class="fa-solid fa-bolt"></i></span>
+                        <input type="text" id="subskill-search" class="form-control" placeholder="Search sub-skills to add…" oninput="filterSubSkills()">
+                    </div>
+                    <div id="subskill-dropdown" class="card" style="max-height: 200px; overflow-y: auto; display: none;">
+                        <ul id="subskill-list" class="list-group list-group-flush"></ul>
                     </div>
                 </div>
             </div>

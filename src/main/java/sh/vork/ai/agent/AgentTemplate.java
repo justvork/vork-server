@@ -23,6 +23,8 @@ import java.util.List;
  * @param skillUuids   UUIDs of {@link sh.vork.skill.Skill} records this agent
  *                     is permitted to invoke; triggers auto-injection of the
  *                     {@code executeSkill} tool into the allowed-tools list
+ * @param agentType    operational context: {@link AgentType#INTERACTIVE} for chat agents,
+ *                     {@link AgentType#BACKGROUND} for scheduled-job automation agents
  */
 public record AgentTemplate(
         String       uuid,
@@ -30,7 +32,8 @@ public record AgentTemplate(
         String       systemPrompt,
         List<String> allowedTools,
         boolean      systemAgent,
-        List<String> skillUuids
+        List<String> skillUuids,
+        AgentType    agentType
 ) implements DatabaseEntity {
 
     public AgentTemplate {
@@ -45,6 +48,9 @@ public record AgentTemplate(
         }
         if (skillUuids == null) {
             skillUuids = List.of();
+        }
+        if (agentType == null) {
+            agentType = AgentType.INTERACTIVE;
         }
     }
 }

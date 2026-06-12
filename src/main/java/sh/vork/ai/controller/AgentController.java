@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.ResponseBody;
 
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.ai.agent.AgentTemplate;
+import sh.vork.ai.agent.AgentType;
 import sh.vork.skill.Skill;
 
 /**
@@ -88,7 +89,8 @@ public class AgentController {
                 req.systemPrompt() != null ? req.systemPrompt() : "",
                 req.allowedTools() != null ? List.copyOf(req.allowedTools()) : List.of(),
                 false,
-                req.skillUuids() != null ? List.copyOf(req.skillUuids()) : List.of());
+                req.skillUuids() != null ? List.copyOf(req.skillUuids()) : List.of(),
+                req.agentType() != null ? req.agentType() : AgentType.INTERACTIVE);
         agentRepository.save(agent);
         log.info("Agent created [id={}, name={}]", agent.uuid(), agent.name());
         return ResponseEntity.ok(agent);
@@ -126,7 +128,8 @@ public class AgentController {
                 req.systemPrompt() != null ? req.systemPrompt() : "",
                 req.allowedTools() != null ? List.copyOf(req.allowedTools()) : List.of(),
                 existing.systemAgent(), // preserve system flag
-                req.skillUuids() != null ? List.copyOf(req.skillUuids()) : existing.skillUuids());
+                req.skillUuids() != null ? List.copyOf(req.skillUuids()) : existing.skillUuids(),
+                req.agentType() != null ? req.agentType() : existing.agentType());
         agentRepository.save(updated);
         log.info("Agent updated [id={}, name={}]", id, req.name());
         return ResponseEntity.ok(updated);
@@ -164,6 +167,7 @@ public class AgentController {
             String       name,
             String       systemPrompt,
             List<String> allowedTools,
-            List<String> skillUuids
+            List<String> skillUuids,
+            AgentType    agentType
     ) {}
 }

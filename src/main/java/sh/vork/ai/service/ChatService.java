@@ -856,6 +856,7 @@ public class ChatService {
                                        sh.vork.skill.SkillActivatedException ex,
                                        AiProvider provider) {
         final int MAX_SKILL_ITERATIONS = 20;
+        final int MAX_SKILL_DEPTH = 5;
         String currentPrompt = ex.getInitialPrompt();
 
         broadcastAndPersistSkillEvent(sessionUuid, "Running skill: " + ex.getSkillName());
@@ -887,6 +888,14 @@ public class ChatService {
             }
         }
 
+        // Compute the stack depth at which THIS skill's frame has been popped, so that the
+        // skillComplete check works correctly for nested skills. At sub-loop entry the frame is
+        // already on the stack (pushed by SkillService.executeSkill). The skill is done when the
+        // stack shrinks back to (initialDepth - 1). Using isEmpty() is wrong for nested skills
+        // because the parent frame(s) keep the stack non-empty.
+        int skillCompleteDepth = (sessionAtStart != null && sessionAtStart.skillStack() != null)
+                ? sessionAtStart.skillStack().size() - 1 : 0;
+
         // Skills are sandboxed executions. Use an empty history so prior conversation turns
         // (including results from previous skill runs on the same targets) cannot bleed into
         // the skill sub-loop and cause the model to recycle stale data instead of running
@@ -894,6 +903,12 @@ public class ChatService {
         List<Message> skillHistory = new ArrayList<>();
 
         for (int i = 0; i < MAX_SKILL_ITERATIONS; i++) {
+            // Re-bind the session context at the top of every iteration. SecuredToolCallback
+            // previously cleared ToolExecutionContext in its finally block after each tool
+            // execution; without this rebind the second+ iterations would see sessionUuid=null
+            // and bypass all skill-frame restrictions. With SecuredToolCallback now preserving
+            // the context when it was already bound, this serves as an additional safety net.
+            ToolExecutionContext.bindSessionUuid(sessionUuid);
             log.debug("Skill sub-loop iteration {} [session={}, skill={}]", i, sessionUuid, ex.getSkillName());
 
             // safeGenerateWithHistory reads the session and applies the skill frame's tools/prompt
@@ -901,31 +916,49 @@ public class ChatService {
             try {
                 rawResponse = safeGenerateWithHistory(skillHistory, currentPrompt, provider);
             } catch (sh.vork.skill.SkillActivatedException nestedEx) {
-                // Guard: the model called executeSkill from inside a skill sub-loop.
-                // Pop the spuriously pushed frame and abort this sub-loop with an error.
-                log.error("Recursive skill activation in sub-loop — aborting [session={}, outer={}, inner={}]",
-                        sessionUuid, ex.getSkillName(), nestedEx.getSkillName());
-                AiSession current = sessionRepo.get(sessionUuid);
-                if (current != null && current.skillStack() != null && current.skillStack().size() > 1) {
-                    List<sh.vork.skill.SkillFrame> poppedStack = new ArrayList<>(current.skillStack());
-                    poppedStack.removeLast();
-                    sessionRepo.save(new AiSession(
-                            current.uuid(), current.provider(), current.originMode(),
-                            current.username(), current.name(), current.createdAt(),
-                            current.currentRoundCount(), current.messages(),
-                            current.environmentVariables(), current.status(),
-                            current.activeAgentTemplateId(), current.modelId(),
-                            List.copyOf(poppedStack)));
+                // A sub-skill was invoked from within this skill sub-loop.
+                // Check depth before recursing so we can't blow the call stack.
+                AiSession depthCheck = sessionRepo.get(sessionUuid);
+                int currentDepth = (depthCheck != null && depthCheck.skillStack() != null)
+                        ? depthCheck.skillStack().size() : 0;
+                if (currentDepth >= MAX_SKILL_DEPTH) {
+                    log.error("Max skill depth ({}) reached — aborting nested skill [session={}, outer={}, inner={}]",
+                            MAX_SKILL_DEPTH, sessionUuid, ex.getSkillName(), nestedEx.getSkillName());
+                    // Pop the spurious frame
+                    AiSession current = sessionRepo.get(sessionUuid);
+                    if (current != null && current.skillStack() != null && current.skillStack().size() > 1) {
+                        List<sh.vork.skill.SkillFrame> poppedStack = new ArrayList<>(current.skillStack());
+                        poppedStack.removeLast();
+                        sessionRepo.save(new AiSession(
+                                current.uuid(), current.provider(), current.originMode(),
+                                current.username(), current.name(), current.createdAt(),
+                                current.currentRoundCount(), current.messages(),
+                                current.environmentVariables(), current.status(),
+                                current.activeAgentTemplateId(), current.modelId(),
+                                List.copyOf(poppedStack)));
+                    }
+                    broadcastAndPersistSkillEvent(sessionUuid, "Skill error: " + nestedEx.getSkillName());
+                    String errMsg = "Error: maximum skill nesting depth (" + MAX_SKILL_DEPTH + ") reached. Sub-skill aborted.";
+                    skillHistory.add(new AssistantMessage(errMsg));
+                    currentPrompt = "The nested skill could not run (max depth). Continue without it.";
+                    continue;
                 }
-                broadcastAndPersistSkillEvent(sessionUuid, "Skill error: " + ex.getSkillName());
-                return "Error: executeSkill was called recursively inside the skill sub-loop. Skill aborted.";
+                log.debug("Nested skill activated — entering recursive sub-loop [session={}, outer={}, inner={}, depth={}]",
+                        sessionUuid, ex.getSkillName(), nestedEx.getSkillName(), currentDepth);
+                String nestedResult = executeSkillSubLoop(sessionUuid, skillHistory, nestedEx, provider);
+                skillHistory.add(new AssistantMessage(
+                        "Skill '" + nestedEx.getSkillName() + "' result: " + nestedResult));
+                currentPrompt = "The nested skill completed. Continue with your task.";
+                continue;
             }
 
-            // Check if the skill frame was popped by completeSkillExecution during this turn
+            // Check if the skill frame was popped by completeSkillExecution during this turn.
+            // Compare against skillCompleteDepth rather than isEmpty() so that nested skills
+            // (where parent frames keep the stack non-empty) are also detected correctly.
             AiSession afterTurn = sessionRepo.get(sessionUuid);
             boolean skillComplete = afterTurn == null
                     || afterTurn.skillStack() == null
-                    || afterTurn.skillStack().isEmpty();
+                    || afterTurn.skillStack().size() <= skillCompleteDepth;
 
             if (skillComplete) {
                 // Retrieve the output stored by completeSkillExecution

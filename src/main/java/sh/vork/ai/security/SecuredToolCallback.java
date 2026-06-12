@@ -88,6 +88,11 @@ public class SecuredToolCallback implements ToolCallback {
         if (sessionUuid == null || sessionUuid.isBlank()) {
             sessionUuid = resolveSessionUuid();
         }
+        // Track whether the context was already bound by an outer frame (e.g. sendMessage /
+        // executeSkillSubLoop). If it was, the outer frame owns cleanup — we must NOT call
+        // complete() / clear() or we will destroy its session UUID and break any subsequent
+        // tool calls or AI iterations in the same chain.
+        boolean wasAlreadyBound = ToolExecutionContext.isBound();
         boolean suspended = false;
 
         if (sessionUuid != null && !sessionUuid.isBlank()) {
@@ -101,7 +106,10 @@ public class SecuredToolCallback implements ToolCallback {
             suspended = true;
             throw ex;
         } finally {
-            if (!suspended) {
+            if (!suspended && !wasAlreadyBound) {
+                // Only clean up the context when we established it. If it was already bound
+                // by an outer frame, leave it intact so that subsequent iterations can still
+                // read the session UUID and skill-frame restrictions.
                 if (ToolExecutionContext.isBound()) {
                     ToolExecutionContext.complete(sessionUuid);
                 } else {

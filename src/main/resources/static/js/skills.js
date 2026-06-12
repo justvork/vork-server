@@ -8,9 +8,10 @@ let allSkills     = [];
 let allTools      = [];
 let allTypes      = [];
 let allCategories = [];
-let modalTools = [];
-let modalTypes = [];
-let modalParams = []; // [{name, type, description}]
+let modalTools      = [];
+let modalTypes      = [];
+let modalSubSkills  = [];
+let modalParams     = []; // [{name, type, description}]
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function () {
@@ -18,10 +19,12 @@ document.addEventListener('DOMContentLoaded', function () {
     loadData();
 
     document.getElementById('skillModal').addEventListener('hidden.bs.modal', function () {
-        document.getElementById('tool-search').value  = '';
-        document.getElementById('type-search').value  = '';
-        document.getElementById('tool-dropdown').style.display = 'none';
-        document.getElementById('type-dropdown').style.display = 'none';
+        document.getElementById('tool-search').value        = '';
+        document.getElementById('type-search').value        = '';
+        document.getElementById('subskill-search').value    = '';
+        document.getElementById('tool-dropdown').style.display     = 'none';
+        document.getElementById('type-dropdown').style.display     = 'none';
+        document.getElementById('subskill-dropdown').style.display = 'none';
     });
     document.addEventListener('click', function (e) {
         if (!e.target.closest('#tool-search') && !e.target.closest('#tool-dropdown')) {
@@ -29,6 +32,9 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         if (!e.target.closest('#type-search') && !e.target.closest('#type-dropdown')) {
             document.getElementById('type-dropdown').style.display = 'none';
+        }
+        if (!e.target.closest('#subskill-search') && !e.target.closest('#subskill-dropdown')) {
+            document.getElementById('subskill-dropdown').style.display = 'none';
         }
     });
 });
@@ -78,14 +84,15 @@ function openCreate() {
     document.getElementById('skill-name').value                 = '';
     document.getElementById('skill-author').value               = '';
     document.getElementById('skill-description').value          = '';
-    document.getElementById('skill-output-template').value      = '';
     document.getElementById('skill-instructions').value         = '';
     populateCategorySelect('');
-    modalTools  = [];
-    modalTypes  = [];
-    modalParams = [];
+    modalTools      = [];
+    modalTypes      = [];
+    modalSubSkills  = [];
+    modalParams     = [];
     renderToolPills();
     renderTypePills();
+    renderSubSkillPills();
     renderParams();
     skillModal.show();
 }
@@ -99,16 +106,17 @@ function openEdit(id) {
     document.getElementById('skill-name').value                 = skill.name;
     document.getElementById('skill-author').value               = skill.author || '';
     document.getElementById('skill-description').value          = skill.description || '';
-    document.getElementById('skill-output-template').value      = skill.outputTemplate || '';
     document.getElementById('skill-instructions').value         = skill.instructions || '';
     populateCategorySelect(skill.category || '');
-    modalTools  = skill.allowedTools  ? skill.allowedTools.slice()  : [];
-    modalTypes  = skill.allowedTypes  ? skill.allowedTypes.slice()  : [];
-    modalParams = skill.parameters    ? skill.parameters.map(function (p) {
+    modalTools      = skill.allowedTools  ? skill.allowedTools.slice()  : [];
+    modalTypes      = skill.allowedTypes  ? skill.allowedTypes.slice()  : [];
+    modalSubSkills  = skill.subSkillUuids ? skill.subSkillUuids.slice() : [];
+    modalParams     = skill.parameters    ? skill.parameters.map(function (p) {
         return { name: p.name || '', type: p.type || 'string', description: p.description || '' };
     }) : [];
     renderToolPills();
     renderTypePills();
+    renderSubSkillPills();
     renderParams();
     skillModal.show();
 }
@@ -309,6 +317,73 @@ function addType(fqn) {
     if (!modalTypes.includes(fqn)) { modalTypes.push(fqn); renderTypePills(); }
 }
 
+// ── Sub-skill pills ───────────────────────────────────────────────────────────
+function renderSubSkillPills() {
+    const container = document.getElementById('subskill-pill-container');
+    container.innerHTML = '';
+    if (modalSubSkills.length === 0) {
+        container.innerHTML = '<span class="text-muted small">No sub-skills assigned.</span>';
+        return;
+    }
+    modalSubSkills.forEach(function (uuid) {
+        const skill = allSkills.find(function (s) { return s.uuid === uuid; });
+        const label = skill ? skill.name : uuid;
+        const pill  = document.createElement('span');
+        pill.className = 'tool-pill';
+        pill.innerHTML =
+            '<i class="fa-solid fa-bolt"></i>' +
+            '<span>' + escapeHtml(label) + '</span>' +
+            '<span class="remove-tool" title="Remove sub-skill">✕</span>';
+        pill.querySelector('.remove-tool').addEventListener('click', function () { removeSubSkill(uuid); });
+        container.appendChild(pill);
+    });
+}
+
+function removeSubSkill(uuid) {
+    modalSubSkills = modalSubSkills.filter(function (s) { return s !== uuid; });
+    renderSubSkillPills();
+    filterSubSkills();
+}
+
+function filterSubSkills() {
+    const currentId = document.getElementById('skill-id').value.trim();
+    const query     = document.getElementById('subskill-search').value.toLowerCase().trim();
+    const dropdown  = document.getElementById('subskill-dropdown');
+    const list      = document.getElementById('subskill-list');
+
+    const matches = allSkills.filter(function (s) {
+        if (s.uuid === currentId) return false;          // exclude self
+        if (modalSubSkills.includes(s.uuid)) return false;
+        if (!query) return true;
+        return (s.name + ' ' + (s.description || '') + ' ' + (s.category || '')).toLowerCase().includes(query);
+    });
+
+    list.innerHTML = '';
+    if (matches.length === 0) { dropdown.style.display = 'none'; return; }
+    matches.forEach(function (s) {
+        const li = document.createElement('li');
+        li.className = 'list-group-item list-group-item-action skill-list-item py-1 px-2';
+        li.innerHTML =
+            '<div class="d-flex align-items-center gap-2">' +
+            '  <i class="fa-solid fa-bolt fa-xs text-secondary"></i>' +
+            '  <span class="fw-semibold small">' + escapeHtml(s.name) + '</span>' +
+            (s.category ? '  <span class="badge bg-dark border border-secondary text-secondary" style="font-size:0.65rem">' + escapeHtml(s.category) + '</span>' : '') +
+            '</div>' +
+            (s.description ? '<div class="text-muted" style="font-size:0.7rem">' + escapeHtml(s.description) + '</div>' : '');
+        li.addEventListener('click', function () {
+            addSubSkill(s.uuid);
+            document.getElementById('subskill-search').value = '';
+            dropdown.style.display = 'none';
+        });
+        list.appendChild(li);
+    });
+    dropdown.style.display = '';
+}
+
+function addSubSkill(uuid) {
+    if (!modalSubSkills.includes(uuid)) { modalSubSkills.push(uuid); renderSubSkillPills(); }
+}
+
 // ── Save ──────────────────────────────────────────────────────────────────────
 async function saveSkill() {
     const id             = document.getElementById('skill-id').value.trim();
@@ -316,7 +391,6 @@ async function saveSkill() {
     const author         = document.getElementById('skill-author').value.trim();
     const category       = document.getElementById('skill-category').value;
     const description    = document.getElementById('skill-description').value;
-    const outputTemplate = document.getElementById('skill-output-template').value;
     const instructions   = document.getElementById('skill-instructions').value;
 
     if (!name) { showAlert('Name is required.', 'warning'); return; }
@@ -338,10 +412,10 @@ async function saveSkill() {
         parameters:     modalParams.map(function (p) {
             return { name: p.name.trim(), type: p.type, description: p.description };
         }),
-        outputTemplate: outputTemplate,
         instructions:   instructions,
         allowedTools:   modalTools.slice(),
-        allowedTypes:   modalTypes.slice()
+        allowedTypes:   modalTypes.slice(),
+        subSkillUuids:  modalSubSkills.slice()
     };
 
     const btn = document.getElementById('btn-save-skill');

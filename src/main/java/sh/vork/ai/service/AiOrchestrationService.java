@@ -101,8 +101,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         private final DatabaseRepository<sh.vork.skill.Skill> skillRepo;
         private final Map<String, ToolCallback> securedToolCallbackMap;
         private final SessionToolStore sessionToolStore;
-        private final ToolCallback listSkillsCallback;
-        private final ToolCallback executeSkillCallback;
+        private final sh.vork.skill.SkillToolCallbackFactory skillToolCallbackFactory;
         private final ToolCallback listAvailableToolsCallback;
         private final ToolCallback listAgentTemplatesCallback;
 
@@ -114,8 +113,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                                                   DatabaseRepository<sh.vork.skill.Skill> skillRepository,
                                                                   Map<String, ToolCallback> securedToolCallbackMap,
                                                                   SessionToolStore sessionToolStore,
-                                                                  @org.springframework.beans.factory.annotation.Qualifier("listSkills") ToolCallback listSkillsCallback,
-                                                                  @org.springframework.beans.factory.annotation.Qualifier("executeSkill") ToolCallback executeSkillCallback,
+                                                                  sh.vork.skill.SkillToolCallbackFactory skillToolCallbackFactory,
                                                                   @org.springframework.beans.factory.annotation.Qualifier("listAvailableTools") ToolCallback listAvailableToolsCallback,
                                                                   @org.springframework.beans.factory.annotation.Qualifier("listAgentTemplates") ToolCallback listAgentTemplatesCallback) {
                 this.registry = chatClientRegistry;
@@ -126,8 +124,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 this.skillRepo = skillRepository;
                 this.securedToolCallbackMap = securedToolCallbackMap;
                 this.sessionToolStore = sessionToolStore;
-                this.listSkillsCallback = listSkillsCallback;
-                this.executeSkillCallback = executeSkillCallback;
+                this.skillToolCallbackFactory = skillToolCallbackFactory;
                 this.listAvailableToolsCallback = listAvailableToolsCallback;
                 this.listAgentTemplatesCallback = listAgentTemplatesCallback;
     }
@@ -264,6 +261,34 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                         prompt.append("\n\n### SKILL DIRECTIVES\n").append(skillPrompt);
                                 }
                                 prompt.append("\n\n").append(SKILL_OPERATIONAL_PROTOCOL);
+
+                                // List sub-skill tools explicitly so the model knows the exact names to call.
+                                // Without this, lite models don't discover sub-skills from function declarations alone.
+                                sh.vork.skill.Skill frameSkill = skillRepo.get(topFrame.skillUuid());
+                                if (frameSkill != null && !frameSkill.subSkillUuids().isEmpty()) {
+                                        List<sh.vork.skill.Skill> subSkills = frameSkill.subSkillUuids().stream()
+                                                .map(skillRepo::get)
+                                                .filter(Objects::nonNull)
+                                                .toList();
+                                        if (!subSkills.isEmpty()) {
+                                                prompt.append("\n\n### AVAILABLE SUB-SKILLS\n");
+                                                prompt.append("The following sub-skills are available as tools. ");
+                                                prompt.append("Call them by their tool name — do NOT use executeSkill.\n\n");
+                                                for (sh.vork.skill.Skill sub : subSkills) {
+                                                        prompt.append("- `").append(sub.toolName()).append("`");
+                                                        if (!sub.description().isBlank())
+                                                                prompt.append(": ").append(sub.description());
+                                                        if (!sub.parameters().isEmpty()) {
+                                                                prompt.append(" | Parameters: ");
+                                                                prompt.append(sub.parameters().stream()
+                                                                        .map(p -> p.name() + "(" + p.type() + ")")
+                                                                        .collect(Collectors.joining(", ")));
+                                                        }
+                                                        prompt.append("\n");
+                                                }
+                                        }
+                                }
+
                                 return logAndReturn(prompt, sessionUuid, "SKILL"); // skip env-var block and structured mandate
                         }
 
@@ -274,11 +299,23 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                         prompt.append("\n\n### ACTIVE AGENT DIRECTIVES\n").append(template.systemPrompt());
                                 }
 
-                                // Inject available skills only when explicitly assigned
-                                if (template != null
-                                        && template.skillUuids() != null
-                                        && !template.skillUuids().isEmpty()) {
-                                        appendAvailableSkillsSection(prompt, template.skillUuids());
+                                // Skills are injected as tools at runtime; list them so the model knows the exact tool names.
+                                if (template != null && template.skillUuids() != null && !template.skillUuids().isEmpty()) {
+                                        List<sh.vork.skill.Skill> skills = template.skillUuids().stream()
+                                                .map(skillRepo::get)
+                                                .filter(Objects::nonNull)
+                                                .toList();
+                                        if (!skills.isEmpty()) {
+                                                prompt.append("\n\n### AVAILABLE SKILLS\n");
+                                                prompt.append("The following skills are available to you as tools. ");
+                                                prompt.append("Call them by their tool name:\n\n");
+                                                for (sh.vork.skill.Skill s : skills) {
+                                                        prompt.append("- `").append(s.toolName()).append("`");
+                                                        if (!s.description().isBlank())
+                                                                prompt.append(": ").append(s.description());
+                                                        prompt.append("\n");
+                                                }
+                                        }
                                 }
                         }
                 }
@@ -315,55 +352,6 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 log.debug("System prompt composed [session={}, origin={}, chars={}]:\n{}",
                         sessionUuid, originLabel, result.length(), result);
                 return result;
-        }
-
-        /**
-         * Appends a "AVAILABLE SKILLS" section to {@code prompt} listing each skill's
-         * name, parameters, and output template so the agent knows exactly how to call
-         * {@code executeSkill}.
-         */
-        private void appendAvailableSkillsSection(StringBuilder prompt, List<String> skillUuids) {
-                List<sh.vork.skill.Skill> skills = skillUuids.stream()
-                        .map(skillRepo::get)
-                        .filter(Objects::nonNull)
-                        .toList();
-                if (skills.isEmpty()) return;
-                appendSkillsToPrompt(prompt, skills);
-        }
-
-        private void appendSkillsToPrompt(StringBuilder prompt, List<sh.vork.skill.Skill> skills) {
-                prompt.append("\n\n### AVAILABLE SKILLS\n");
-                prompt.append("Use the `executeSkill` tool to invoke any skill listed below. ");
-                prompt.append("Supply ALL declared parameters — if a value is missing, ");
-                prompt.append("ask the user before calling the tool.\n\n");
-
-                for (sh.vork.skill.Skill skill : skills) {
-                        prompt.append("**").append(skill.name()).append("**")
-                              .append(" (skillUuid: `").append(skill.uuid()).append("`)\n");
-                        if (!skill.description().isBlank()) {
-                                prompt.append("  Description: ").append(skill.description()).append("\n");
-                        }
-                        if (!skill.parameters().isEmpty()) {
-                                prompt.append("  Parameters:\n");
-                                for (sh.vork.skill.SkillParameter p : skill.parameters()) {
-                                        prompt.append("    - `").append(p.name())
-                                              .append("` (").append(p.type()).append(")");
-                                        if (!p.description().isBlank()) {
-                                                prompt.append(": ").append(p.description());
-                                        }
-                                        prompt.append("\n");
-                                }
-                        } else {
-                                prompt.append("  Parameters: none\n");
-                        }
-                        if (!skill.outputTemplate().isBlank()) {
-                                prompt.append("  Output Template:\n");
-                                for (String line : skill.outputTemplate().split("\n", -1)) {
-                                        prompt.append("    ").append(line).append("\n");
-                                }
-                        }
-                        prompt.append("\n");
-                }
         }
 
         /**
@@ -435,9 +423,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         .collect(Collectors.toCollection(java.util.HashSet::new));
 
                 // Determine whether we are inside an active skill frame.
-                // If so, the always-on tools (executeSkill, listSkills, etc.) must NOT be
-                // injected — calling executeSkill recursively from within a skill sub-loop
-                // causes a SkillActivatedException that escapes the sub-loop and crashes the session.
+                // If so, skill tools and concierge-only tools must NOT be injected.
                 AiSession sessionForSkillCheck = (sessionUuid != null && !sessionUuid.isBlank())
                         ? sessionRepo.get(sessionUuid) : null;
                 boolean inSkillFrame = sessionForSkillCheck != null
@@ -445,16 +431,39 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         && !sessionForSkillCheck.skillStack().isEmpty();
 
                 if (!inSkillFrame) {
-                        // listSkills and executeSkill are only injected when the active agent has at least
-                        // one skill UUID configured. An agent with no skillUuids assigned is not skills-capable.
-                        // Sessions with no active agent (Concierge mode) are unrestricted.
-                        boolean agentHasSkills = sessionForSkillCheck == null
-                                || sessionForSkillCheck.getActiveAgentTemplateId() == null
-                                || sessionForSkillCheck.getActiveAgentTemplateId().isBlank()
-                                || agentHasSkillsAssigned(sessionForSkillCheck.getActiveAgentTemplateId());
-                        if (agentHasSkills) {
-                                if (presentNames.add("listSkills"))   merged.add(listSkillsCallback);
-                                if (presentNames.add("executeSkill")) merged.add(executeSkillCallback);
+                        // Inject each assigned skill as its own ToolCallback so the AI sees
+                        // skills as direct tools rather than going through the generic executeSkill.
+                        if (sessionForSkillCheck != null
+                                && sessionForSkillCheck.getActiveAgentTemplateId() != null
+                                && !sessionForSkillCheck.getActiveAgentTemplateId().isBlank()) {
+                                AgentTemplate tpl = agentTemplateRepo.get(
+                                        sessionForSkillCheck.getActiveAgentTemplateId());
+                                if (tpl != null && tpl.skillUuids() != null && !tpl.skillUuids().isEmpty()) {
+                                        int injected = 0;
+                                        for (String skillUuid : tpl.skillUuids()) {
+                                                sh.vork.skill.Skill skill = skillRepo.get(skillUuid);
+                                                if (skill == null) {
+                                                        log.warn("Agent skill UUID not found in DB — skipping [skillUuid={}]", skillUuid);
+                                                        continue;
+                                                }
+                                                ToolCallback skillTool = skillToolCallbackFactory.create(skill);
+                                                String toolName = skillTool.getToolDefinition().name();
+                                                if (presentNames.add(toolName)) {
+                                                        merged.add(skillTool);
+                                                        injected++;
+                                                } else {
+                                                        log.warn("Skill tool name collision — skipping [toolName={}, skillUuid={}]",
+                                                                toolName, skillUuid);
+                                                }
+                                        }
+                                        log.debug("Agent skill tools injected [session={}, agent={}, count={}]",
+                                                sessionUuid, sessionForSkillCheck.getActiveAgentTemplateId(), injected);
+                                } else {
+                                        log.debug("Agent has no skills assigned — none injected [session={}, agent={}]",
+                                                sessionUuid, sessionForSkillCheck.getActiveAgentTemplateId());
+                                }
+                        } else {
+                                log.debug("No active agent template — skill injection skipped [session={}]", sessionUuid);
                         }
                         if (presentNames.add("listAvailableTools"))  merged.add(listAvailableToolsCallback);
                         if (isConciergeSession() && presentNames.add("listAgentTemplates"))
@@ -567,31 +576,56 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 if (session.skillStack() != null && !session.skillStack().isEmpty()) {
                         sh.vork.skill.SkillFrame topFrame = session.skillStack().getLast();
                         List<String> allowedToolNames = topFrame.allowedTools();
-                        if (allowedToolNames == null || allowedToolNames.isEmpty()) {
-                                log.debug("Skill frame has no allowedTools — exposing only completeSkillExecution [session={}]", sessionUuid);
-                                ToolCallback completeSkillTool = securedToolCallbackMap.get("completeSkillExecution");
-                                return completeSkillTool != null ? new ToolCallback[]{completeSkillTool} : new ToolCallback[0];
-                        }
+
                         // Always include completeSkillExecution so the skill can terminate
-                        List<String> skillToolNames = new ArrayList<>(allowedToolNames);
+                        List<String> skillToolNames = new ArrayList<>(
+                                allowedToolNames != null ? allowedToolNames : List.of());
                         if (!skillToolNames.contains("completeSkillExecution")) {
                                 skillToolNames.add("completeSkillExecution");
                         }
-                        ToolCallback[] result = skillToolNames.stream()
-                                .map(securedToolCallbackMap::get)
-                                .filter(Objects::nonNull)
-                                .toArray(ToolCallback[]::new);
-                        log.debug("Skill frame tool filtering [session={}, allowed={}, resolved={}]",
-                                sessionUuid, skillToolNames.size(), result.length);
-                        if (result.length < skillToolNames.size()) {
-                                List<String> unresolved = skillToolNames.stream()
-                                        .filter(name -> securedToolCallbackMap.get(name) == null)
-                                        .toList();
-                                log.warn("Skill frame has unresolved tools — skill may not function correctly " +
-                                        "[session={}, skill={}, unresolved={}]",
+                        // Resolve hard tools from the secured map
+                        List<ToolCallback> frameTools = new ArrayList<>();
+                        List<String> unresolved = new ArrayList<>();
+                        for (String name : skillToolNames) {
+                                ToolCallback cb = securedToolCallbackMap.get(name);
+                                if (cb != null) {
+                                        frameTools.add(cb);
+                                } else if (!"completeSkillExecution".equals(name)) {
+                                        unresolved.add(name);
+                                }
+                        }
+                        // Inject sub-skill tools from the skill's subSkillUuids
+                        sh.vork.skill.Skill frameSkill = skillRepo.get(topFrame.skillUuid());
+                        if (frameSkill != null && !frameSkill.subSkillUuids().isEmpty()) {
+                                java.util.Set<String> frameNames = frameTools.stream()
+                                        .map(t -> t.getToolDefinition().name())
+                                        .collect(Collectors.toCollection(java.util.HashSet::new));
+                                int subInjected = 0;
+                                for (String subUuid : frameSkill.subSkillUuids()) {
+                                        sh.vork.skill.Skill subSkill = skillRepo.get(subUuid);
+                                        if (subSkill == null) {
+                                                log.warn("Sub-skill UUID not found in DB — skipping [subUuid={}]", subUuid);
+                                                continue;
+                                        }
+                                        ToolCallback subTool = skillToolCallbackFactory.create(subSkill);
+                                        if (frameNames.add(subTool.getToolDefinition().name())) {
+                                                frameTools.add(subTool);
+                                                subInjected++;
+                                        }
+                                }
+                                log.debug("Sub-skill tools injected [session={}, skill={}, count={}]",
+                                        sessionUuid, topFrame.skillName(), subInjected);
+                        } else {
+                                log.debug("No sub-skills configured for skill frame [session={}, skill={}]",
+                                        sessionUuid, topFrame.skillName());
+                        }
+                        if (!unresolved.isEmpty()) {
+                                log.warn("Skill frame has unresolved hard tools [session={}, skill={}, unresolved={}]",
                                         sessionUuid, topFrame.skillName(), unresolved);
                         }
-                        return result;
+                        log.debug("Skill frame tool filtering [session={}, allowed={}, resolved={}]",
+                                sessionUuid, skillToolNames.size(), frameTools.size());
+                        return frameTools.toArray(ToolCallback[]::new);
                 }
 
                 String agentId = session.getActiveAgentTemplateId();
@@ -606,16 +640,6 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
 
                 List<String> toolNames = new ArrayList<>(
                         template.allowedTools() != null ? template.allowedTools() : List.of());
-
-                // Auto-inject executeSkill when the agent has skills assigned —
-                // NOTE: executeSkill is also injected directly in buildMutatedClientInternal
-                // via bean reference. The toolNames injection here keeps it in the filtered
-                // list for agents that explicitly include it in allowedTools.
-                if (template.skillUuids() != null && !template.skillUuids().isEmpty()) {
-                        if (!toolNames.contains("executeSkill")) {
-                                toolNames.add("executeSkill");
-                        }
-                }
 
                 if (toolNames.isEmpty()) {
                         log.debug("Agent has no allowedTools assigned — exposing no tools [agent={}]", agentId);
@@ -647,18 +671,6 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 if (agentId == null) return false;
                 AgentTemplate template = agentTemplateRepo.get(agentId);
                 return template != null && "Concierge".equalsIgnoreCase(template.name());
-        }
-
-        /**
-         * Returns {@code true} when the agent template identified by {@code agentTemplateId}
-         * has at least one skill UUID configured in its {@code skillUuids} list.
-         */
-        private boolean agentHasSkillsAssigned(String agentTemplateId) {
-                if (agentTemplateId == null || agentTemplateId.isBlank()) return true;
-                AgentTemplate template = agentTemplateRepo.get(agentTemplateId);
-                return template != null
-                        && template.skillUuids() != null
-                        && !template.skillUuids().isEmpty();
         }
 
         /**

@@ -99,6 +99,7 @@ public class SkillService {
                 req.instructions(),
                 req.allowedTools() != null ? List.copyOf(req.allowedTools()) : List.of(),
                 req.allowedTypes() != null ? List.copyOf(req.allowedTypes()) : List.of(),
+                req.subSkillUuids() != null ? List.copyOf(req.subSkillUuids()) : List.of(),
                 1L,
                 now,
                 now);
@@ -122,6 +123,7 @@ public class SkillService {
                 req.instructions(),
                 req.allowedTools() != null ? List.copyOf(req.allowedTools()) : List.of(),
                 req.allowedTypes() != null ? List.copyOf(req.allowedTypes()) : List.of(),
+                req.subSkillUuids() != null ? List.copyOf(req.subSkillUuids()) : List.of(),
                 existing.version() + 1,
                 existing.createdAt(),
                 System.currentTimeMillis());
@@ -412,6 +414,7 @@ public class SkillService {
             String                outputTemplate,
             String                instructions,
             List<String>          allowedTools,
-            List<String>          allowedTypes
+            List<String>          allowedTypes,
+            List<String>          subSkillUuids
     ) {}
 }

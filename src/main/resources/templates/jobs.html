@@ -280,7 +280,7 @@
     });
 
     function loadAgents() {
-        fetch('/api/chat/agents')
+        fetch('/api/chat/agents?type=BACKGROUND')
             .then(function (r) { return r.ok ? r.json() : []; })
             .then(function (agents) {
                 var sel = document.getElementById('job-agent');
@@ -290,6 +290,10 @@
                     opt.textContent = a.name;
                     sel.appendChild(opt);
                 });
+                // Default new jobs to the Automation Reporter
+                if (!sel.value) {
+                    sel.value = 'agent-tpl-automation-reporter-001';
+                }
             })
             .catch(function () {});
     }
@@ -328,7 +332,7 @@
         document.getElementById('job-start-time').value = '';
         document.getElementById('job-repeat-duration').value = 1;
         document.getElementById('job-duration-type').value = 'HOURS';
-        document.getElementById('job-agent').value = '';
+        document.getElementById('job-agent').value = 'agent-tpl-automation-reporter-001';
         document.getElementById('job-model').value = '';
         document.getElementById('job-oob-timeout').value = 240;
         document.querySelectorAll('input[name="invocationType"]').forEach(function (r) { r.checked = false; });

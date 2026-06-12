@@ -134,7 +134,7 @@ class BackgroundOrchestrationEngineTest {
             super(
                     sessionRepo,
                     null,
-                    new AiOrchestrationService(Map.of(), null, null, null, null, null, Map.of(), null, null, null, null, null),
+                    new AiOrchestrationService(Map.of(), null, null, null, null, null, Map.of(), null, null, null, null),
                     null,
                     new SimpMessagingTemplate(new NoOpMessageChannel()),
                     new ObjectMapper().findAndRegisterModules(),

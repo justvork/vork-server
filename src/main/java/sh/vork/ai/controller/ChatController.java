@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import jakarta.servlet.http.HttpSession;
 import sh.vork.ai.AiProvider;
+import sh.vork.ai.agent.AgentType;
 import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.protocol.UiEventFrame;
@@ -190,10 +191,19 @@ public class ChatController {
     }
 
     @GetMapping("/agents")
-    public List<AgentTemplateSummary> listAgents() {
-        return chatService.listAgentTemplates()
-                .stream()
-                .map(t -> new AgentTemplateSummary(t.uuid(), t.name()))
+    public List<AgentTemplateSummary> listAgents(
+            @RequestParam(required = false) String type) {
+        var stream = chatService.listAgentTemplates().stream();
+        if (type != null && !type.isBlank()) {
+            try {
+                AgentType agentType = AgentType.valueOf(type.toUpperCase());
+                stream = stream.filter(t -> t.agentType() == agentType);
+            } catch (IllegalArgumentException ignored) {
+                log.warn("listAgents: unknown type filter ignored [type={}]", type);
+            }
+        }
+        return stream
+                .map(t -> new AgentTemplateSummary(t.uuid(), t.name(), t.agentType().name()))
                 .toList();
     }
 
@@ -267,5 +277,5 @@ public class ChatController {
 
     record ModelSelectionRequest(String provider, String modelId) {}
 
-    record AgentTemplateSummary(String uuid, String name) {}
+    record AgentTemplateSummary(String uuid, String name, String agentType) {}
 }

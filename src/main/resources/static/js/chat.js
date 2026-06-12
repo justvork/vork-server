@@ -1842,7 +1842,7 @@ function loadSessionList() {
 }
 
 function loadAgents(activeAgentTemplateId) {
-    fetch('/api/chat/agents')
+    fetch('/api/chat/agents?type=INTERACTIVE')
         .then(function (resp) { return resp.ok ? resp.json() : Promise.resolve([]); })
         .then(function (agents) {
             // Preserve the default option and repopulate the rest

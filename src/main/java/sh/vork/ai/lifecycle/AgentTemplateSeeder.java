@@ -7,6 +7,7 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import sh.vork.ai.agent.AgentTemplate;
+import sh.vork.ai.agent.AgentType;
 
 import java.util.List;
 
@@ -26,9 +27,10 @@ public class AgentTemplateSeeder {
     // session-creation code can push the root persona without hard-coding the UUID)
     // -------------------------------------------------------------------------
 
-    public static final String UUID_CONCIERGE       = "agent-tpl-concierge-001";
-    public static final String UUID_COMPUTER_ADMIN  = "agent-tpl-computer-admin-001";
-    public static final String UUID_VORK_DEVELOPER  = "agent-tpl-vork-developer-001";
+    public static final String UUID_CONCIERGE            = "agent-tpl-concierge-001";
+    public static final String UUID_COMPUTER_ADMIN        = "agent-tpl-computer-admin-001";
+    public static final String UUID_VORK_DEVELOPER        = "agent-tpl-vork-developer-001";
+    public static final String UUID_AUTOMATION_REPORTER   = "agent-tpl-automation-reporter-001";
 
     // -------------------------------------------------------------------------
 
@@ -67,7 +69,8 @@ and a retry with different instructions would help.
                     "sendNotification"
             ),
             true,
-            List.of()
+            List.of(),
+            AgentType.INTERACTIVE
     );
 
     private static final String COMPUTER_ADMIN_PROMPT = """
@@ -137,7 +140,8 @@ and a retry with different instructions would help.
                     "deleteSshConnection"
             ),
             true,
-            List.of()
+            List.of(),
+            AgentType.INTERACTIVE
     );
 
     private static final AgentTemplate VORK_DEVELOPER = new AgentTemplate(
@@ -182,7 +186,61 @@ FINISHED_TURN, CONTINUE_TURN, and SWITCH_AGENT.
                     "listEnumValues"
             ),
             true,
-            List.of()
+            List.of(),
+            AgentType.INTERACTIVE
+    );
+
+    private static final String AUTOMATION_REPORTER_PROMPT = """
+            You are the Vork Automation Reporter, an advanced orchestration and data processing \
+            agent. Your objective is to fulfill the explicit requirements of scheduled background \
+            tasks, automated pipelines, and batch workflows by executing assigned Skills, managing \
+            data arrays, and compiling final reports.
+
+            ### OPERATIONAL CORE PRINCIPLES:
+            1. STRICT CONTRACT COMPLIANCE: You operate purely within the boundaries of the assigned \
+            task and its active instructions. You must never execute autonomous, exploratory actions \
+            or utilise tools outside the immediate scope of the task. Stick strictly to invoking \
+            your assigned Skills to manipulate data.
+            2. DISCRETION & RECORD KEEPING: Do not stream internal step-by-step progress, raw \
+            working logs, or verbose intermediate processing steps to the user thread unless \
+            explicitly requested. Keep your primary focus on executing the workflow and preserving \
+            the final structured outcomes.
+            3. TRANSACTION INTEGRITY: Ensure that any Skill configured to save, update, or persist \
+            data types into the Vork ecosystem completes its transactional lifecycle successfully \
+            for every item processed.
+
+            ### DATA FLOW & LOOP PIPELINES:
+            - You are a pipeline manager. If an initial Skill or input provides a collection of \
+            items (e.g., a list of network targets, a batch of unread messages, or a queue of \
+            files), you must systematically iterate through that collection.
+            - For each discrete item in the array, extract the necessary fields and feed them \
+            precisely into the input parameters of the next sequence-appropriate Skill.
+            - Process the entire dataset thoroughly. If an individual item throws an error or fails \
+            a validation step, log the exception internally to include in your final ledger, adapt \
+            your execution flow to bypass the single blocker, and immediately move to the next item \
+            in the collection without abandoning the overall task.
+
+            ### EXECUTION & TURN TERMINATION:
+            - When your automated technical objective is entirely met, all loop iterations have \
+            concluded, and all state changes are cleanly finalized, aggregate your findings.
+            - Compile a comprehensive, high-fidelity summary or structured data ledger of the \
+            processed workload as defined by the task layout.
+            - Invoke the `completeBackgroundTask` tool with `success=true/false` and a full \
+            `report` of your completed operations, results, and any errors encountered. This \
+            persists your output and cleanly terminates the background run.
+            - You MUST always call `completeBackgroundTask` before your final response, even if \
+            processing partially failed — report partial completion with `success=false`.
+            - You must never use DELEGATE_TURN; you are a leaf agent handling a direct execution line.
+            """;
+
+    private static final AgentTemplate AUTOMATION_REPORTER = new AgentTemplate(
+            UUID_AUTOMATION_REPORTER,
+            "Automation Reporter",
+            AUTOMATION_REPORTER_PROMPT,
+            List.of(),
+            true,
+            List.of(),
+            AgentType.BACKGROUND
     );
 
     // -------------------------------------------------------------------------
@@ -200,6 +258,7 @@ FINISHED_TURN, CONTINUE_TURN, and SWITCH_AGENT.
         seedOrUpdate(CONCIERGE);
         seedOrUpdate(COMPUTER_ADMIN);
         seedOrUpdate(VORK_DEVELOPER);
+        seedOrUpdate(AUTOMATION_REPORTER);
 
         log.info("EXIT AgentTemplateSeeder.onReady: built-in agent template seed complete");
     }
@@ -225,7 +284,8 @@ FINISHED_TURN, CONTINUE_TURN, and SWITCH_AGENT.
                     template.systemPrompt(),
                     List.copyOf(mergedTools),
                     template.systemAgent(),
-                    preservedSkills);
+                    preservedSkills,
+                    template.agentType());
             agentTemplateRepository.save(updated);
             log.info("Step update: refreshed built-in agent template [uuid={}, name={}, tools={}, preservedSkills={}]",
                     template.uuid(), template.name(), mergedTools.size(), preservedSkills.size());

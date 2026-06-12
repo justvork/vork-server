@@ -13,23 +13,17 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.tool.definition.DefaultToolDefinition;
-import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.function.FunctionToolCallback;
-import org.springframework.ai.util.json.schema.JsonSchemaGenerator;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.util.ClassUtils;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -44,7 +38,6 @@ import sh.vork.ai.function.DeleteSshConnectionRequest;
 import sh.vork.ai.function.DeleteTypeInstanceRequest;
 import sh.vork.ai.function.DisconnectSshRequest;
 import sh.vork.ai.function.DownloadFileRequest;
-import sh.vork.ai.function.ExecuteSkillRequest;
 import sh.vork.ai.function.ExecuteTerminalCommandRequest;
 import sh.vork.ai.function.GetTypeSchemaRequest;
 import sh.vork.ai.function.GetURLContentsRequest;
@@ -53,7 +46,6 @@ import sh.vork.ai.function.ListAvailableToolsRequest;
 import sh.vork.ai.function.ListEnumValuesRequest;
 import sh.vork.ai.function.ListJavaTypesRequest;
 import sh.vork.ai.function.ListNotificationProvidersRequest;
-import sh.vork.ai.function.ListSkillsRequest;
 import sh.vork.ai.function.ListSshConnectionsRequest;
 import sh.vork.ai.function.ListTypeInstancesRequest;
 import sh.vork.ai.function.LogInfoRequest;
@@ -89,7 +81,6 @@ import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.SortOrder;
 import sh.vork.scheduling.domain.JobResult;
 import sh.vork.scheduling.service.BackgroundExecutionContext;
-import sh.vork.skill.SkillService;
 import sh.vork.typegen.JavaType;
 import sh.vork.typegen.JavaTypeClassLoader;
 import sh.vork.typegen.SqlParseException;
@@ -253,6 +244,7 @@ public class AiConfig {
                         stream.forEach(t -> entries.add(java.util.Map.of(
                                 "uuid",         t.uuid(),
                                 "name",         t.name(),
+                                "agentType",    t.agentType().name(),
                                 "systemPrompt", t.systemPrompt(),
                                 "allowedTools", t.allowedTools())));
                     }
@@ -419,135 +411,6 @@ public class AiConfig {
                 })
                 .description("Signals that the skill has fully completed its objective. Call this exactly once with the skill output when all required work is done.")
                 .inputType(CompleteSkillExecutionRequest.class)
-                .build();
-    }
-
-    /**
-     * Restricted tool that lets an agent invoke a named {@link sh.vork.skill.Skill}.
-     * The skill runs in a sandboxed child session and may be resumed from the
-     * pending-sessions UI if it suspends for authorization or input.
-     */
-    @Bean("executeSkill")
-    @ToolCategory("Skills")
-    public ToolCallback executeSkill(@Lazy SkillService skillService) {
-        ToolDefinition toolDefinition = DefaultToolDefinition.builder()
-                .name("executeSkill")
-                .description("Execute a Skill by UUID, passing the required parameter values. Returns {status,output} on success, {status,missing,message} when parameters are absent, or {status,sessionUuid,message} when suspended for authorization/input.")
-                .inputSchema(JsonSchemaGenerator.generateForType(ExecuteSkillRequest.class))
-                .build();
-        return new ToolCallback() {
-            @Override
-            public ToolDefinition getToolDefinition() {
-                return toolDefinition;
-            }
-
-            @Override
-            public String call(String toolInput) {
-                return call(toolInput, null);
-            }
-
-            @Override
-            public String call(String toolInput, ToolContext toolContext) {
-                log.debug("executeSkill: raw tool input: {}", toolInput);
-                ExecuteSkillRequest req;
-                try {
-                    req = objectMapper.readValue(toolInput, ExecuteSkillRequest.class);
-                } catch (Exception e) {
-                    log.warn("executeSkill: failed to parse tool input [input={}]", toolInput, e);
-                    String firstLine = e.getMessage() == null ? "parse error"
-                            : e.getMessage().split("\\R", 2)[0];
-                    try {
-                        return objectMapper.writeValueAsString(Map.of(
-                                "status", "error",
-                                "message", "Failed to parse executeSkill input: " + firstLine));
-                    } catch (Exception ex2) {
-                        return "{\"status\":\"error\",\"message\":\"Failed to parse executeSkill input\"}";
-                    }
-                }
-                // Stringify parameter values — the AI may send nested objects instead of plain strings.
-                Map<String, String> stringParams = new LinkedHashMap<>();
-                if (req.parameters() != null) {
-                    for (Map.Entry<String, Object> entry : req.parameters().entrySet()) {
-                        Object v = entry.getValue();
-                        String s;
-                        if (v == null) {
-                            s = "";
-                        } else if (v instanceof String str) {
-                            s = str;
-                        } else {
-                            try { s = objectMapper.writeValueAsString(v); } catch (Exception ex) { s = String.valueOf(v); }
-                        }
-                        stringParams.put(entry.getKey(), s);
-                    }
-                }
-                log.debug("executeSkill: resolved params [skillUuid={}, paramKeys={}]",
-                        req.skillUuid(), stringParams.keySet());
-                // SkillActivatedException is a plain RuntimeException — not a ToolExecutionException.
-                // DefaultToolCallingManager only catches ToolExecutionException, so this propagates
-                // freely up to ChatService.executeAgentLoop where it is caught and handled.
-                return skillService.executeSkill(req.skillUuid(), stringParams);
-            }
-        };
-    }
-
-    /**
-     * {@code listSkills} tool — returns {@link sh.vork.skill.Skill} records visible to the
-     * current agent.  When an agent template is active and has skills assigned, only those
-     * skills are returned; otherwise all skills are listed.
-     * Hidden so it does not appear in the tool-assignment UI; injected automatically
-     * into every session by {@link sh.vork.ai.service.AiOrchestrationService}.
-     */
-    @Bean("listSkills")
-    @Hidden
-    @ToolCategory("Skills")
-    public ToolCallback listSkills(DatabaseRepository<sh.vork.skill.Skill> skillRepository,
-                                   DatabaseRepository<AiSession> aiSessionRepository,
-                                   DatabaseRepository<sh.vork.ai.agent.AgentTemplate> agentTemplateRepository) {
-        return FunctionToolCallback
-                .builder("listSkills", (ListSkillsRequest req) -> {
-                    // Determine which skills the current agent is allowed to see.
-                    Set<String> allowedUuids = null;
-                    String sessionUuid = sh.vork.ai.context.ToolExecutionContext.getSessionUuid();
-                    if (sessionUuid != null && !sessionUuid.isBlank()) {
-                        AiSession session = aiSessionRepository.get(sessionUuid);
-                        if (session != null && session.getActiveAgentTemplateId() != null) {
-                            sh.vork.ai.agent.AgentTemplate template =
-                                    agentTemplateRepository.get(session.getActiveAgentTemplateId());
-                            if (template != null && template.skillUuids() != null && !template.skillUuids().isEmpty()) {
-                                allowedUuids = new java.util.HashSet<>(template.skillUuids());
-                            }
-                        }
-                    }
-                    final Set<String> filter = allowedUuids;
-                    List<Object> entries = new ArrayList<>();
-                    try (var stream = skillRepository.list(0, Integer.MAX_VALUE)) {
-                        stream
-                            .filter(s -> filter == null || filter.contains(s.uuid()))
-                            .forEach(s -> {
-                                List<Object> params = s.parameters().stream()
-                                        .map(p -> java.util.Map.of(
-                                                "name",        p.name(),
-                                                "type",        p.type(),
-                                                "description", p.description()))
-                                        .collect(java.util.stream.Collectors.toList());
-                                entries.add(java.util.Map.of(
-                                        "name",           s.name(),
-                                        "description",    s.description(),
-                                        "parameters",     params,
-                                        "outputTemplate", s.outputTemplate()));
-                            });
-                    }
-                    try {
-                        return objectMapper.writeValueAsString(entries);
-                    } catch (Exception e) {
-                        return "{\"status\":\"error\",\"message\":\"" + e.getMessage().replace("\"", "'") + "\"}";
-                    }
-                })
-                .description("""
-                    List all Skills available to this agent with their names, descriptions, 
-                    parameters, and output templates. Use this to discover available skills 
-                    before calling executeSkill.""")
-                .inputType(ListSkillsRequest.class)
                 .build();
     }
 
