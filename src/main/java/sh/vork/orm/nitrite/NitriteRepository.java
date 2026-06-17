@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import sh.vork.orm.DatabaseEntity;
 import sh.vork.orm.DatabaseException;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.MongoLikeFilterEvaluator;
 import sh.vork.orm.SearchQuery;
 import sh.vork.orm.SortOrder;
 
@@ -171,6 +172,48 @@ public class NitriteRepository<T extends DatabaseEntity> implements DatabaseRepo
             if (map != null && matchesAll(map, queries)) count++;
         }
         log.debug("EXIT searchCount: {}", count);
+        return count;
+    }
+
+    @Override
+    public Stream<T> searchRaw(int page, int pageSize, String sortField, SortOrder sortOrder,
+                               String filterJson) {
+        log.debug("ENTER searchRaw: page={}, pageSize={}, sortField={}, sortOrder={}",
+                page, pageSize, sortField, sortOrder);
+
+        Map<String, Object> filter = MongoLikeFilterEvaluator.parseFilter(objectMapper, filterJson);
+        List<Map<String, Object>> matched = new ArrayList<>();
+        for (Document doc : collection.find()) {
+            Map<String, Object> map = toMap(doc);
+            if (map != null && MongoLikeFilterEvaluator.matches(map, filter)) {
+                matched.add(map);
+            }
+        }
+        matched.sort(mapComparator(sortField, sortOrder));
+
+        List<T> results = matched.stream()
+                .skip((long) page * pageSize)
+                .limit(pageSize)
+                .map(this::fromMap)
+                .filter(Objects::nonNull)
+                .toList();
+
+        log.debug("EXIT searchRaw: returned={}", results.size());
+        return results.stream();
+    }
+
+    @Override
+    public long searchCountRaw(String filterJson) {
+        log.debug("ENTER searchCountRaw");
+        Map<String, Object> filter = MongoLikeFilterEvaluator.parseFilter(objectMapper, filterJson);
+        long count = 0;
+        for (Document doc : collection.find()) {
+            Map<String, Object> map = toMap(doc);
+            if (map != null && MongoLikeFilterEvaluator.matches(map, filter)) {
+                count++;
+            }
+        }
+        log.debug("EXIT searchCountRaw: {}", count);
         return count;
     }
 

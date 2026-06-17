@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import sh.vork.orm.DatabaseEntity;
 import sh.vork.orm.DatabaseException;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.MongoLikeFilterEvaluator;
 import sh.vork.orm.SearchQuery;
 import sh.vork.orm.SortOrder;
 import redis.clients.jedis.Jedis;
@@ -137,6 +138,31 @@ public class RedisRepository<T extends DatabaseEntity> implements DatabaseReposi
         return scanAllJson().stream()
                 .map(this::toMap)
                 .filter(doc -> matchesAll(doc, queries))
+                .count();
+    }
+
+    @Override
+    public Stream<T> searchRaw(int page, int pageSize, String sortField, SortOrder sortOrder,
+                               String filterJson) {
+        Map<String, Object> filter = MongoLikeFilterEvaluator.parseFilter(mapper, filterJson);
+        Comparator<Map<String, Object>> cmp = mapComparator(sortField, sortOrder);
+        List<T> results = scanAllJson().stream()
+                .map(this::toMap)
+                .filter(doc -> MongoLikeFilterEvaluator.matches(doc, filter))
+                .sorted(cmp)
+                .skip((long) page * pageSize)
+                .limit(pageSize)
+                .map(this::fromMap)
+                .toList();
+        return results.stream();
+    }
+
+    @Override
+    public long searchCountRaw(String filterJson) {
+        Map<String, Object> filter = MongoLikeFilterEvaluator.parseFilter(mapper, filterJson);
+        return scanAllJson().stream()
+                .map(this::toMap)
+                .filter(doc -> MongoLikeFilterEvaluator.matches(doc, filter))
                 .count();
     }
 

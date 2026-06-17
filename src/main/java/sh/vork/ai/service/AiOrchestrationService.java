@@ -7,6 +7,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -149,6 +150,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         private final sh.vork.skill.SkillToolCallbackFactory skillToolCallbackFactory;
         private final ToolCallback listAvailableToolsCallback;
         private final ToolCallback listAgentTemplatesCallback;
+        private final ToolCallback recordProgressCallback;
         private final ToolCallback thinkCallback;
         private final sh.vork.ai.security.SkillSecretSubstitutor skillSecretSubstitutor;
         private final ConfigurableListableBeanFactory beanFactory;
@@ -166,6 +168,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                                                   sh.vork.skill.SkillToolCallbackFactory skillToolCallbackFactory,
                                                                   @org.springframework.beans.factory.annotation.Qualifier("listAvailableTools") ToolCallback listAvailableToolsCallback,
                                                                   @org.springframework.beans.factory.annotation.Qualifier("listAgentTemplates") ToolCallback listAgentTemplatesCallback,
+                                                                  @org.springframework.beans.factory.annotation.Qualifier("recordProgress") ToolCallback recordProgressCallback,
                                                                   @org.springframework.beans.factory.annotation.Qualifier("think") ToolCallback thinkCallback,
                                                                   sh.vork.ai.security.SkillSecretSubstitutor skillSecretSubstitutor,
                                                                   ConfigurableListableBeanFactory beanFactory,
@@ -181,6 +184,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 this.skillToolCallbackFactory = skillToolCallbackFactory;
                 this.listAvailableToolsCallback = listAvailableToolsCallback;
                 this.listAgentTemplatesCallback = listAgentTemplatesCallback;
+                this.recordProgressCallback = recordProgressCallback;
                 this.thinkCallback = thinkCallback;
                 this.skillSecretSubstitutor = skillSecretSubstitutor;
                 this.beanFactory = beanFactory;
@@ -198,6 +202,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                                                   sh.vork.skill.SkillToolCallbackFactory skillToolCallbackFactory,
                                                                   ToolCallback listAvailableToolsCallback,
                                                                   ToolCallback listAgentTemplatesCallback,
+                                                                  ToolCallback recordProgressCallback,
                                                                   ToolCallback thinkCallback,
                                                                   sh.vork.ai.security.SkillSecretSubstitutor skillSecretSubstitutor) {
                 this(chatClientRegistry,
@@ -211,6 +216,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         skillToolCallbackFactory,
                         listAvailableToolsCallback,
                         listAgentTemplatesCallback,
+                        recordProgressCallback,
                         thinkCallback,
                         skillSecretSubstitutor,
                         null,
@@ -530,7 +536,8 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 Map<String, String> envMap = sessionEnvironmentService.getEnv(sessionUuid);
                 if (envMap != null && !envMap.isEmpty()) {
                         StringBuilder envBlock = new StringBuilder("\n### ACTIVE SESSION ENVIRONMENT VARIABLES\n");
-                        envMap.forEach((k, v) -> envBlock.append(k).append("=").append(v).append("\n"));
+                        new java.util.TreeMap<>(envMap)
+                                .forEach((k, v) -> envBlock.append(k).append("=").append(v).append("\n"));
                         prompt.append(envBlock);
 
                         // Append expected output as a hard protocol rule if defined for this job
@@ -716,6 +723,9 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         if (added > 0) {
                                 log.debug("Merged {} session-scoped tool(s) [session={}]", added, sessionUuid);
                         }
+                }
+                if (presentNames.add("recordProgress") && recordProgressCallback != null) {
+                        merged.add(recordProgressCallback);
                 }
                 // think is mandatory — always available regardless of skill-frame depth.
                 if (presentNames.add("think")) merged.add(thinkCallback);
@@ -952,6 +962,83 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         .filter(name -> !name.equals("completeSkillExecution"))
                         .filter(name -> !securedToolCallbackMap.containsKey(name))
                         .toList();
+        }
+
+        /**
+         * Resolves the set of tool names visible to the current parent-agent turn
+         * for a given session. This includes filtered hard tools plus skill-wrapper
+         * tools injected from template/session skill assignments.
+         */
+        public Set<String> resolveVisibleToolNamesForSession(String sessionUuid) {
+                if (sessionUuid == null || sessionUuid.isBlank()) {
+                        return Set.of();
+                }
+                if (sessionRepo == null) {
+                        return Set.of();
+                }
+
+                AiSession session = sessionRepo.get(sessionUuid);
+                if (session == null) {
+                        return Set.of();
+                }
+
+                // Skill frames are handled by the skill sub-loop; parent-history filtering
+                // only needs the parent turn tool visibility.
+                if (session.skillStack() != null && !session.skillStack().isEmpty()) {
+                        return Set.of();
+                }
+
+                Set<String> names = new LinkedHashSet<>();
+
+                // Hard tools from active template + session pinned tools
+                if (agentTemplateRepo != null) {
+                        String agentId = session.getActiveAgentTemplateId();
+                        AgentTemplate template = agentId != null ? agentTemplateRepo.get(agentId) : null;
+                        if (template != null) {
+                                List<String> hard = new ArrayList<>(template.allowedTools() != null
+                                        ? template.allowedTools() : List.of());
+                                if (session.sessionToolIds() != null && !session.sessionToolIds().isEmpty()) {
+                                        for (String id : session.sessionToolIds()) {
+                                                if (!hard.contains(id)) hard.add(id);
+                                        }
+                                }
+                                for (String t : expandWithToolDependencies(hard)) {
+                                        if (securedToolCallbackMap != null && securedToolCallbackMap.containsKey(t)) {
+                                                names.add(t);
+                                        }
+                                }
+
+                                // Skill wrappers assigned at template level
+                                if (skillRepo != null && template.skillUuids() != null) {
+                                        for (String skillUuid : template.skillUuids()) {
+                                                sh.vork.skill.Skill s = skillRepo.get(skillUuid);
+                                                if (s != null && s.toolName() != null && !s.toolName().isBlank()) {
+                                                        names.add(s.toolName());
+                                                }
+                                        }
+                                }
+                        }
+                }
+
+                // Session-level skill wrappers
+                if (skillRepo != null && session.sessionSkillUuids() != null) {
+                        for (String skillUuid : session.sessionSkillUuids()) {
+                                sh.vork.skill.Skill s = skillRepo.get(skillUuid);
+                                if (s != null && s.toolName() != null && !s.toolName().isBlank()) {
+                                        names.add(s.toolName());
+                                }
+                        }
+                }
+
+                // Session-scoped completeBackgroundTask is attached for background loops.
+                if (session.originMode() == SessionOriginMode.BACKGROUND) {
+                        names.add("completeBackgroundTask");
+                }
+
+                // think is always available.
+                names.add("think");
+
+                return Set.copyOf(names);
         }
 
         private void appendAvailableToolsSection(StringBuilder prompt) {

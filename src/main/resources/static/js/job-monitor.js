@@ -4,11 +4,10 @@
  * connects to the STOMP WebSocket for live events, and provides a Terminate
  * button that calls POST /api/jobs/sessions/{uuid}/terminate.
  *
- * Depends on: chat-render.js (ChatRender), auth-modal.js (AuthModal),
- *             vork-modal.js (VorkModal), StompJs, SockJS, marked
+ * Depends on: chat-render.js (ChatRender), StompJs, SockJS, marked
  */
 
-/* global ChatRender, AuthModal, StompJs, SockJS, marked */
+/* global ChatRender, StompJs, SockJS, marked */
 
 'use strict';
 
@@ -16,6 +15,7 @@
 
     // ── Configuration ─────────────────────────────────────────────────────────
     const STATUS_POLL_INTERVAL_MS = 4000;
+    const PROMPT_RESUME_GRACE_MS = 12000;
     const TERMINAL_STATUSES = ['COMPLETED', 'FAILED_MAX_ROUNDS'];
 
     // ── DOM refs ──────────────────────────────────────────────────────────────
@@ -30,6 +30,7 @@
     let stomp = null;
     let statusPollTimer = null;
     let sessionEnded = false;
+    let promptResumeGraceUntil = 0;
 
     // ── marked config ─────────────────────────────────────────────────────────
     if (typeof marked !== 'undefined' && typeof marked.use === 'function') {
@@ -63,6 +64,10 @@
         return s && TERMINAL_STATUSES.indexOf(s) !== -1;
     }
 
+    function inPromptResumeGraceWindow() {
+        return promptResumeGraceUntil > Date.now();
+    }
+
     // ── STOMP ─────────────────────────────────────────────────────────────────
 
     function connectStomp() {
@@ -77,6 +82,14 @@
                 let frame;
                 try { frame = JSON.parse(message.body); } catch (_) { return; }
                 if (!frame) return;
+                if (frame.type === 'PROMPT_REQUIRED') {
+                    if (!inPromptResumeGraceWindow()) {
+                        updateStatusBadge('AWAITING_INPUT');
+                    }
+                } else if (frame.type === 'TEXT_RESPONSE' || frame.type === 'AGENT_TRANSITION' || frame.type === 'SKILL_TRANSITION') {
+                    promptResumeGraceUntil = 0;
+                    updateStatusBadge('RUNNING');
+                }
                 ChatRender.handleIncomingUiFrame(frame);
             });
         };
@@ -108,62 +121,27 @@
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 if (data && data.status) {
-                    updateStatusBadge(data.status);
-                    if (isTerminalStatus(data.status)) markEnded(data.status);
+                    const status = data.status;
+                    if (isTerminalStatus(status)) {
+                        promptResumeGraceUntil = 0;
+                        updateStatusBadge(status);
+                        markEnded(status);
+                        return;
+                    }
+
+                    if (status === 'AWAITING_INPUT' && inPromptResumeGraceWindow()) {
+                        // Resume has been acknowledged by the user; avoid snapping
+                        // back to AWAITING_INPUT while backend state propagation catches up.
+                        updateStatusBadge('RUNNING');
+                    } else {
+                        if (status === 'RUNNING') promptResumeGraceUntil = 0;
+                        updateStatusBadge(status);
+                    }
                 }
             })
             .catch(function (err) {
                 console.warn('[job-monitor] status poll error:', err);
             });
-    }
-
-    // ── PROMPT_REQUIRED handler ───────────────────────────────────────────────
-
-    function handlePromptRequired(frame) {
-        updateStatusBadge('AWAITING_INPUT');
-
-        // Add a persistent notification row so the user can re-open the modal
-        // if they accidentally dismiss it.
-        const existing = messagesArea.querySelector('.auth-notification-row');
-        if (!existing) {
-            const row = document.createElement('div');
-            row.className = 'prompt-notification-row auth-notification-row';
-            row.innerHTML =
-                '<i class="fa-solid fa-lock-open" aria-hidden="true"></i>' +
-                '<span>This job requires authorisation.</span>';
-            const reOpenBtn = document.createElement('button');
-            reOpenBtn.type = 'button';
-            reOpenBtn.className = 'btn btn-warning btn-sm ms-2';
-            reOpenBtn.textContent = 'Authorise';
-            reOpenBtn.addEventListener('click', function () { openAuthModal(frame); });
-            row.appendChild(reOpenBtn);
-            messagesArea.insertBefore(row, typingEl);
-            ChatRender.scrollBottom();
-        }
-
-        // Open the modal immediately
-        openAuthModal(frame);
-    }
-
-    function openAuthModal(frame) {
-        AuthModal.show({
-            title      : (frame.formSchema && frame.formSchema.title) || 'Authorise Action',
-            reasoning  : frame.textResponse,
-            formSchema : frame.formSchema,
-            sessionUuid: sessionUuid,
-            eventId    : frame.eventId,
-            onDone     : function (action, data, err) {
-                // Remove the notification row — the action was taken
-                const row = messagesArea.querySelector('.auth-notification-row');
-                if (row) row.remove();
-                if (err) {
-                    console.warn('[job-monitor] authorization submit error:', err);
-                    return;
-                }
-                // Session will resume; WebSocket + status poll update the badge
-                updateStatusBadge('RUNNING');
-            }
-        });
     }
 
     // ── Terminate button ──────────────────────────────────────────────────────
@@ -200,19 +178,22 @@
             return;
         }
 
-        // Initialise the shared authorization modal
-        AuthModal.init(document.getElementById('auth-modal'));
-
         // Wire up ChatRender
         ChatRender.init({
             messagesArea    : messagesArea,
             typingEl        : typingEl,
             getSessionUuid  : function () { return sessionUuid; },
-            onPromptRequired: handlePromptRequired,
+            promptMode      : 'inline',
+            readOnly        : true,
             onInputStateChange: function () {}, // no input area in monitor
             onAwaitingTerminal: function (on) {
                 // show/hide typing indicator via ChatRender.showTyping
                 // (ChatRender handles this internally)
+            },
+            onPromptSubmitted: function () {
+                // Optimistic status flip; polling and stream events will reconcile if needed.
+                promptResumeGraceUntil = Date.now() + PROMPT_RESUME_GRACE_MS;
+                updateStatusBadge('RUNNING');
             }
         });
 
@@ -231,6 +212,12 @@
 
                 const status = data.status || 'RUNNING';
                 updateStatusBadge(status);
+
+                if (terminateBtn) {
+                    const isBackground = data.originMode === 'BACKGROUND';
+                    terminateBtn.classList.toggle('d-none', !isBackground);
+                    terminateBtn.disabled = !isBackground || isTerminalStatus(status);
+                }
 
                 // Render history
                 if (data.messages && data.messages.length > 0) {

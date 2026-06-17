@@ -69,26 +69,6 @@ html, body {
 /* ── Typing indicator (shared with chat.css) ─────────────────────────────── */
 /* No overrides needed — chat.css classes apply */
 
-/* ── Prompt-required notification row ───────────────────────────────────── */
-.prompt-notification-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    border-radius: 0.5rem;
-    background: rgba(253, 126, 20, 0.12);
-    border: 1px solid rgba(253, 126, 20, 0.4);
-    color: #fd7e14;
-    font-size: 0.875rem;
-    margin-bottom: 0.75rem;
-}
-
-.prompt-notification-row a {
-    color: #fd7e14;
-    font-weight: 600;
-    text-decoration: underline;
-}
-
 /* ── Responsive ──────────────────────────────────────────────────────────── */
 @media (max-width: 575.98px) {
     .monitor-title {

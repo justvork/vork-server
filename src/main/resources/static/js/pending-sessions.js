@@ -9,9 +9,6 @@
     var tableWrapper   = document.getElementById('sessions-table-wrapper');
     var tbody          = document.getElementById('sessions-tbody');
 
-    // Initialise the shared auth modal
-    AuthModal.init(document.getElementById('auth-modal'));
-
     var sessions  = [];   // cached list from the API
 
     // ── Load ──────────────────────────────────────────────────────────────────
@@ -87,7 +84,9 @@
         inputBtn.type = 'button';
         inputBtn.className = 'btn btn-sm btn-primary';
         inputBtn.innerHTML = '<i class="fa-solid fa-keyboard me-1"></i>Provide Input';
-        inputBtn.addEventListener('click', function () { openModal(session, tr); });
+        inputBtn.addEventListener('click', function () {
+            window.location.href = '/job-monitor.html?session=' + encodeURIComponent(session.sessionUuid);
+        });
         actionWrap.appendChild(inputBtn);
 
         var dismissBtn = document.createElement('button');
@@ -101,31 +100,6 @@
         tr.appendChild(tdAction);
 
         return tr;
-    }
-
-    // ── Modal (delegated to AuthModal) ────────────────────────────────────────
-
-    function openModal(session, tr) {
-        AuthModal.show({
-            title      : (session.sessionName || 'Session') +
-                         (session.toolName ? ' \u2014 ' + session.toolName : ''),
-            reasoning  : session.reasoning,
-            formSchema : session.formSchema,
-            sessionUuid: session.sessionUuid,
-            eventId    : session.eventId,
-            onDone     : function (action, data, err) {
-                if (tr && tr.parentNode) tr.parentNode.removeChild(tr);
-                if (tbody.querySelectorAll('tr').length === 0) {
-                    tableWrapper.classList.add('d-none');
-                    emptyEl.classList.remove('d-none');
-                }
-                if (err || (data && data.status === 'AWAITING_INPUT')) {
-                    // Error or session suspended again — reload to surface state
-                    setTimeout(function () { window.location.reload(); }, err ? 600 : 400);
-                }
-                // BACKGROUND_RESUMED / WEB_RESUMED: row already removed, nothing to do
-            }
-        });
     }
 
     function dismissSession(session, tr, buttonEl) {

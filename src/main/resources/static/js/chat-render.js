@@ -173,6 +173,197 @@
         scrollBottom();
     }
 
+    function getPromptMode() {
+        if (!ctx || !ctx.promptMode) return 'inline';
+        return ctx.promptMode;
+    }
+
+    function isReadOnlyMode() {
+        return !!(ctx && ctx.readOnly === true);
+    }
+
+    function sendAuthorizationAction(frame, action, fields, row) {
+        if (!ctx || typeof ctx.getSessionUuid !== 'function') return;
+        const sessionUuid = ctx.getSessionUuid();
+        if (!sessionUuid) return;
+
+        showTyping(true);
+        setInputEnabled(false);
+
+        fetch('/api/chat/respond/' + encodeURIComponent(sessionUuid), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                eventId: frame.eventId,
+                intent: frame.intent || 'AUTHORIZE_TOOL',
+                action: action,
+                fields: fields || {}
+            })
+        })
+            .then(function (resp) {
+                if (!resp.ok) {
+                    return resp.text().then(function (body) {
+                        throw new Error(body || ('HTTP ' + resp.status));
+                    });
+                }
+                return resp.text();
+            })
+            .then(function (body) {
+                if (ctx && typeof ctx.onPromptSubmitted === 'function') {
+                    let parsed = null;
+                    try { parsed = body ? JSON.parse(body) : null; } catch (_) {}
+                    ctx.onPromptSubmitted({ frame: frame, action: action, response: parsed });
+                }
+            })
+            .catch(function (err) {
+                if (row) {
+                    row.querySelectorAll('.prompt-action-btn').forEach(function (btn) {
+                        btn.disabled = false;
+                    });
+                }
+                showTyping(false);
+                setInputEnabled(true);
+                renderMessage({
+                    role: 'ERROR',
+                    content: 'Failed to submit authorization response: ' + (err && err.message ? err.message : String(err))
+                });
+            });
+    }
+
+    function renderPromptRequiredFrame(frame) {
+        if (!ctx || !ctx.messagesArea) return;
+        const formSchema = frame && frame.formSchema ? frame.formSchema : {};
+        const fields = Array.isArray(formSchema.fields) ? formSchema.fields : [];
+        const visibleFields = fields.filter(function (f) {
+            return f && f.name && String(f.type || '').toUpperCase() !== 'HIDDEN';
+        });
+
+        const row = document.createElement('div');
+        row.className = 'message-row';
+        row.innerHTML =
+            '<div class="avatar assistant"><i class="fa-solid fa-lock"></i></div>' +
+            '<div class="bubble assistant prompt-required">' +
+            '  <div class="prompt-title"></div>' +
+            '  <div class="prompt-meta"></div>' +
+            '  <div class="prompt-fields"></div>' +
+            '  <div class="prompt-actions"></div>' +
+            '</div>';
+
+        const titleEl = row.querySelector('.prompt-title');
+        const metaEl = row.querySelector('.prompt-meta');
+        const fieldsEl = row.querySelector('.prompt-fields');
+        const actionsEl = row.querySelector('.prompt-actions');
+
+        titleEl.textContent = formSchema.title || frame.intent || 'Authorization required';
+        metaEl.textContent = frame.textResponse || 'Provide required input to continue.';
+
+        visibleFields.forEach(function (field) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'mb-2';
+            const type = String(field.type || 'text').toLowerCase();
+
+            if (type === 'markdown') {
+                const md = document.createElement('div');
+                md.className = 'prompt-args markdown-body';
+                md.innerHTML = (typeof marked !== 'undefined' && marked.parse)
+                    ? marked.parse(field.defaultValue || field.placeholder || '')
+                    : escapeHtml(field.defaultValue || field.placeholder || '');
+                wrapper.appendChild(md);
+                fieldsEl.appendChild(wrapper);
+                return;
+            }
+
+            const label = document.createElement('label');
+            label.className = 'form-label mb-1';
+            label.textContent = field.label || field.name;
+            wrapper.appendChild(label);
+
+            let input;
+            if (type === 'textarea') {
+                input = document.createElement('textarea');
+                input.rows = 4;
+                input.className = 'form-control form-control-sm';
+            } else if (type === 'select') {
+                input = document.createElement('select');
+                input.className = 'form-select form-select-sm';
+                (Array.isArray(field.options) ? field.options : []).forEach(function (opt) {
+                    const o = document.createElement('option');
+                    o.value = opt.value;
+                    o.textContent = opt.label;
+                    input.appendChild(o);
+                });
+            } else if (type === 'checkbox') {
+                input = document.createElement('input');
+                input.type = 'checkbox';
+                input.className = 'form-check-input';
+            } else {
+                input = document.createElement('input');
+                input.type = (type === 'password') ? 'password' : 'text';
+                input.className = 'form-control form-control-sm';
+            }
+
+            input.setAttribute('data-field-name', field.name);
+            if (field.placeholder && input.type !== 'checkbox') input.placeholder = field.placeholder;
+            if (field.defaultValue != null) {
+                if (input.type === 'checkbox') {
+                    input.checked = String(field.defaultValue).toLowerCase() === 'true';
+                } else {
+                    input.value = field.defaultValue;
+                }
+            }
+            if (field.required) input.setAttribute('required', 'required');
+
+            wrapper.appendChild(input);
+            fieldsEl.appendChild(wrapper);
+        });
+
+        const actions = Array.isArray(formSchema.actions) && formSchema.actions.length > 0
+            ? formSchema.actions
+            : [{ name: 'ONCE', label: 'Approve', style: 'success' }];
+
+        actions.forEach(function (actionDef) {
+            const action = actionDef.name || 'ONCE';
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-sm prompt-action-btn';
+            btn.textContent = actionDef.label || action;
+
+            const style = (actionDef.style || '').toLowerCase();
+            if (style === 'danger') btn.classList.add('btn-danger');
+            else if (style === 'success') btn.classList.add('btn-success');
+            else btn.classList.add('btn-outline-primary');
+
+            btn.addEventListener('click', function () {
+                const fieldValues = {};
+                let missingRequiredField = false;
+                row.querySelectorAll('[data-field-name]').forEach(function (input) {
+                    const fieldName = input.getAttribute('data-field-name');
+                    const isCheckbox = input.type === 'checkbox';
+                    const value = isCheckbox
+                        ? (input.checked ? 'true' : 'false')
+                        : (input.value == null ? '' : String(input.value));
+                    const trimmed = value.trim();
+                    const required = input.hasAttribute('required');
+                    if ((isCheckbox && required && !input.checked) || (!isCheckbox && required && !trimmed)) {
+                        input.classList.add('is-invalid');
+                        missingRequiredField = true;
+                    } else {
+                        input.classList.remove('is-invalid');
+                    }
+                    fieldValues[fieldName] = value;
+                });
+                if (missingRequiredField) return;
+
+                row.querySelectorAll('.prompt-action-btn').forEach(function (b) { b.disabled = true; });
+                sendAuthorizationAction(frame, action, fieldValues, row);
+            });
+            actionsEl.appendChild(btn);
+        });
+
+        ctx.messagesArea.insertBefore(row, ctx.typingEl);
+        scrollBottom();
+    }
+
     // ── UiEventFrame detection ────────────────────────────────────────────────
 
     function isUiEventFrame(obj) {
@@ -407,6 +598,11 @@
 
     function createTerminalInlineRow(terminalId, command) {
         if (!ctx) return null;
+        const stopButtonHtml = isReadOnlyMode()
+            ? ''
+            : '<button type="button" class="terminal-stop-btn" title="Terminate command" aria-label="Terminate command">' +
+              '  <i class="fa-solid fa-stop" aria-hidden="true"></i>' +
+              '</button>';
         const row = document.createElement('div');
         row.className = 'message-row terminal-stream-row';
         row.innerHTML =
@@ -416,9 +612,7 @@
             '      <span class="terminal-status-icon terminal-status-running" title="Running" aria-label="Running">' +
             '        <i class="fa-solid fa-circle-notch fa-spin" aria-hidden="true"></i>' +
             '      </span>' +
-            '      <button type="button" class="terminal-stop-btn" title="Terminate command" aria-label="Terminate command">' +
-            '        <i class="fa-solid fa-stop" aria-hidden="true"></i>' +
-            '      </button>' +
+                     stopButtonHtml +
             '    </div>' +
             '    <button type="button" class="terminal-stream-toggle" aria-label="Collapse output" title="Collapse output">' +
             '      <i class="fa-solid fa-chevron-up" aria-hidden="true"></i>' +
@@ -558,8 +752,10 @@
             case 'PROMPT_REQUIRED':
                 setAwaitingTerminal(false);
                 showTyping(false);
-                if (ctx && typeof ctx.onPromptRequired === 'function') {
+                if (ctx && typeof ctx.onPromptRequired === 'function' && getPromptMode() === 'external') {
                     ctx.onPromptRequired(frame);
+                } else {
+                    renderPromptRequiredFrame(frame);
                 }
                 return;
             case 'TEXT_RESPONSE':
@@ -614,8 +810,12 @@
             if (msg.role === 'PROMPT_REQUIRED') {
                 if (index !== lastPromptIndex) return;
                 const frame = tryParseJson(msg.content);
-                if (frame && isUiEventFrame(frame) && ctx && typeof ctx.onPromptRequired === 'function') {
-                    ctx.onPromptRequired(frame);
+                if (frame && isUiEventFrame(frame)) {
+                    if (ctx && typeof ctx.onPromptRequired === 'function' && getPromptMode() === 'external') {
+                        ctx.onPromptRequired(frame);
+                    } else {
+                        renderPromptRequiredFrame(frame);
+                    }
                 }
                 return;
             }
@@ -653,6 +853,8 @@
          * @param {Function} [config.onInputStateChange] — (enabled) optional input toggle
          * @param {Function} [config.onAwaitingTerminal] — (on) optional callback
          * @param {Function} [config.onAgentSwitch]    — (agentId) optional callback
+         * @param {Function} [config.onPromptSubmitted] — ({frame, action, response}) callback
+         * @param {boolean}  [config.readOnly]          — hide terminal stop controls
          */
         init: function (config) {
             ctx = config;

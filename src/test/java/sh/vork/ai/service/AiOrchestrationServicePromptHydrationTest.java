@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.lang.reflect.Method;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -33,7 +34,7 @@ class AiOrchestrationServicePromptHydrationTest {
         SessionEnvironmentService envService = mock(SessionEnvironmentService.class);
         @SuppressWarnings("unchecked")
         AiOrchestrationService service = new AiOrchestrationService(
-                Map.of(), null, envService, mock(DatabaseRepository.class), mock(DatabaseRepository.class), null, Map.of(), null, null, null, null, null, null);
+            Map.of(), null, envService, mock(DatabaseRepository.class), mock(DatabaseRepository.class), null, Map.of(), null, null, null, null, null, null, null);
 
         String prompt = invokeComposeSystemPrompt(service);
 
@@ -51,7 +52,7 @@ class AiOrchestrationServicePromptHydrationTest {
         @SuppressWarnings("unchecked")
         AiOrchestrationService service = new AiOrchestrationService(
                 Map.of(AiProvider.GEMINI, mock(ChatClient.class)), null, envService,
-                sessionRepo, mock(DatabaseRepository.class), null, Map.of(), null, null, null, null, null, null);
+            sessionRepo, mock(DatabaseRepository.class), null, Map.of(), null, null, null, null, null, null, null);
         ToolExecutionContext.bindSessionUuid("session-1");
 
         String prompt = invokeComposeSystemPrompt(service);
@@ -75,7 +76,7 @@ class AiOrchestrationServicePromptHydrationTest {
         @SuppressWarnings("unchecked")
         AiOrchestrationService service = new AiOrchestrationService(
                 Map.of(AiProvider.GEMINI, mock(ChatClient.class)), null, envService,
-                sessionRepo, mock(DatabaseRepository.class), null, Map.of(), null, null, null, null, null, null);
+            sessionRepo, mock(DatabaseRepository.class), null, Map.of(), null, null, null, null, null, null, null);
         ToolExecutionContext.bindSessionUuid("session-2");
 
         String prompt = invokeComposeSystemPrompt(service);
@@ -87,6 +88,37 @@ class AiOrchestrationServicePromptHydrationTest {
 
         assertEquals(expected, prompt);
         verify(envService).getEnv("session-2");
+    }
+
+    @Test
+    void composeSystemPrompt_whenEnvInsertionIsUnordered_sortsEnvironmentKeysAlphabetically() throws Exception {
+        Map<String, String> env = new HashMap<>();
+        env.put("zeta", "3");
+        env.put("alpha", "1");
+        env.put("middle", "2");
+
+        SessionEnvironmentService envService = mock(SessionEnvironmentService.class);
+        when(envService.getEnv("session-3")).thenReturn(env);
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<AiSession> sessionRepo = mock(DatabaseRepository.class);
+        when(sessionRepo.get("session-3")).thenReturn(null);
+
+        @SuppressWarnings("unchecked")
+        AiOrchestrationService service = new AiOrchestrationService(
+                Map.of(AiProvider.GEMINI, mock(ChatClient.class)), null, envService,
+                sessionRepo, mock(DatabaseRepository.class), null, Map.of(), null, null, null, null, null, null, null);
+        ToolExecutionContext.bindSessionUuid("session-3");
+
+        String prompt = invokeComposeSystemPrompt(service);
+
+        String expected = AiConfig.BASE_SYSTEM_PROMPT
+                + "\n### ACTIVE SESSION ENVIRONMENT VARIABLES\n"
+                + "alpha=1\n"
+                + "middle=2\n"
+                + "zeta=3\n";
+
+        assertEquals(expected, prompt);
+        verify(envService).getEnv("session-3");
     }
 
     private static String invokeComposeSystemPrompt(AiOrchestrationService service) throws Exception {

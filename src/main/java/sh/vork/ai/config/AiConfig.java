@@ -10,6 +10,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +34,7 @@ import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
+import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.ai.function.CompileTypeRequest;
 import sh.vork.ai.function.DeleteSshConnectionRequest;
 import sh.vork.ai.function.DeleteTypeInstanceRequest;
@@ -67,6 +69,7 @@ import sh.vork.ai.security.SecuredToolCallback;
 import sh.vork.ai.security.VisualizableToolCallback;
 import sh.vork.ai.tool.CompleteBackgroundTaskRequest;
 import sh.vork.ai.tool.CompleteSkillExecutionRequest;
+import sh.vork.ai.tool.RecordProgressRequest;
 import sh.vork.ai.tool.ThinkRequest;
 import sh.vork.ai.protocol.UiEventFrame;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -141,6 +144,14 @@ CRITICAL PROCESSING PROTOCOL (HIGHEST PRIORITY):
    you MUST immediately invoke an action tool or complete your data processing 
    in the same turn. You may never end a turn with a `think` call as your 
    standalone or final output.
+
+3b. THE "recordProgress" TOOL RULES:
+    - Use `recordProgress` whenever you complete an important checkpoint whose
+    state may be needed in later turns (e.g., hosts scanned, artifacts generated,
+    report sent).
+    - Keep entries concise and factual.
+    - `recordProgress` is persistent session memory, not a final action; continue
+    execution after recording progress.
 
 4. TURN COMPLETION (FINISHED_TURN):
    - You may only return the final JSON payload with status "FINISHED_TURN" 
@@ -374,7 +385,7 @@ the protocol and will break the system. Do not converse. Execute.
                             session.createdAt(),
                             session.currentRoundCount(),
                             session.messages(),
-                            session.environmentVariables(),
+                            mergedEnv(session.environmentVariables(), req.report()),
                             AiSessionStatus.COMPLETED,
                             session.activeAgentTemplateId(),
                             session.modelId(),
@@ -388,6 +399,18 @@ the protocol and will break the system. Do not converse. Execute.
                 .description("Signals that the background task has entirely fulfilled its operational objectives and that the background processing loop should now gracefully terminate. You MUST supply a boolean 'success' value and a 'report' string summarising what was done and produced.")
                 .inputType(CompleteBackgroundTaskRequest.class)
                 .build();
+    }
+
+    private static Map<String, String> mergedEnv(Map<String, String> env, String report) {
+        if (report == null || report.isBlank()) {
+            return env;
+        }
+        Map<String, String> merged = new HashMap<>();
+        if (env != null && !env.isEmpty()) {
+            merged.putAll(env);
+        }
+        merged.put("JOB_COMPLETION_REPORT", report);
+        return Map.copyOf(merged);
     }
 
     /**
@@ -489,6 +512,67 @@ the protocol and will break the system. Do not converse. Execute.
                         + "Call this to express your thinking, then IMMEDIATELY invoke the next action tool. "
                         + "NEVER end a turn with only a think call.")
                 .inputType(ThinkRequest.class)
+                .build();
+    }
+
+    /**
+     * Global meta-tool for persisting turn-to-turn checkpoints in session memory.
+     *
+     * <p>Entries are stored under indexed environment keys so they are injected
+     * into subsequent system prompts via {@link sh.vork.ai.service.AiOrchestrationService}.
+     */
+    @Bean("recordProgress")
+    @Hidden
+    @ToolCategory("Meta")
+    public ToolCallback recordProgress(SessionEnvironmentService sessionEnvironmentService,
+                                       SimpMessagingTemplate messaging) {
+        return FunctionToolCallback
+                .builder("recordProgress", (RecordProgressRequest req) -> {
+                    String sessionUuid = resolveSessionUuid();
+                    if (sessionUuid == null || sessionUuid.isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"No session bound\"}";
+                    }
+
+                    String entry = req.entry() == null ? "" : req.entry().trim();
+                    if (entry.isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"entry is required\"}";
+                    }
+
+                    Map<String, String> env = sessionEnvironmentService.getEnv(sessionUuid);
+                    int nextIndex = 1;
+                    if (env != null) {
+                        String prior = env.get("BG_PROGRESS_COUNT");
+                        if (prior != null) {
+                            try {
+                                nextIndex = Math.max(1, Integer.parseInt(prior) + 1);
+                            } catch (NumberFormatException ignored) {
+                                nextIndex = 1;
+                            }
+                        }
+                    }
+
+                    String key = String.format("BG_PROGRESS_%04d", nextIndex);
+                    sessionEnvironmentService.setEnv(sessionUuid, "BG_PROGRESS_COUNT", Integer.toString(nextIndex));
+                    sessionEnvironmentService.setEnv(sessionUuid, key, entry);
+
+                    sh.vork.ai.context.ToolExecutionContext.put("BG_PROGRESS_COUNT", Integer.toString(nextIndex));
+                    sh.vork.ai.context.ToolExecutionContext.put(key, entry);
+
+                    log.debug("AI progress recorded [session={}, key={}, entry={}]", sessionUuid, key, entry);
+                    messaging.convertAndSend(
+                            "/topic/chat/" + sessionUuid,
+                            new UiEventFrame(
+                                    java.util.UUID.randomUUID().toString(),
+                                    "AI_PROGRESS",
+                                    "PROGRESS",
+                                    entry,
+                                    null));
+
+                    return "{\"status\":\"ok\",\"storedKey\":\"" + key + "\"}";
+                })
+                .description("Persist a concise progress checkpoint to session memory for use in later turns. "
+                        + "Use this after completing significant steps (e.g. host scanned, report generated, report sent).")
+                .inputType(RecordProgressRequest.class)
                 .build();
     }
 

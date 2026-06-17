@@ -90,7 +90,8 @@ public class ChatController {
                 ? chatService.getOrCreateSession(httpSession.getId(), provider, modelId)
                 : chatService.getSessionForCurrentUser(sessionUuid);
         return new SessionResponse(session.uuid(), session.name(), session.provider(),
-                session.activeAgentTemplateId(), session.messages(), session.modelId(), session.status());
+            session.activeAgentTemplateId(), session.messages(), session.modelId(), session.status(),
+            session.originMode() != null ? session.originMode().name() : null);
     }
 
     @GetMapping("/session/new")
@@ -99,7 +100,8 @@ public class ChatController {
             @RequestParam(required = false) String modelId) {
         AiSession session = chatService.createNewSession(provider, modelId);
         return new SessionResponse(session.uuid(), session.name(), session.provider(),
-                session.activeAgentTemplateId(), session.messages(), session.modelId(), session.status());
+            session.activeAgentTemplateId(), session.messages(), session.modelId(), session.status(),
+            session.originMode() != null ? session.originMode().name() : null);
     }
 
     @GetMapping("/sessions")
@@ -396,7 +398,7 @@ public class ChatController {
 
     record SessionResponse(String sessionUuid, String sessionName, String provider,
                             String activeAgentTemplateId, List<AiChatMessage> messages, String modelId,
-                            AiSessionStatus status) {}
+                            AiSessionStatus status, String originMode) {}
 
     record SessionSummaryResponse(String sessionUuid, String sessionName, String provider,
                                   long createdAt, int messageCount, String modelId) {}

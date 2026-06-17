@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
@@ -745,19 +746,28 @@ public class ChatService {
             }
 
             // FINISHED_TURN (or unresolvable DELEGATE_TURN / SWITCH_AGENT falls through here) — always terminal
-            String finalText = structured.textResponse() != null && !structured.textResponse().isBlank()
-                    ? structured.textResponse()
-                    : rawResponse;
-
-            AiChatMessage aiMsg = new AiChatMessage(
-                    UUID.randomUUID().toString(), "ASSISTANT",
-                    finalText, System.currentTimeMillis(),
-                    refs.isEmpty() ? null : Collections.unmodifiableList(refs));
-
             AiSession latest = sessionRepo.get(sessionUuid);
             if (latest == null) {
                 latest = currentSession;
             }
+
+                String finalText = structured.textResponse() != null && !structured.textResponse().isBlank()
+                    ? structured.textResponse()
+                    : rawResponse;
+                if (latest.originMode() == SessionOriginMode.BACKGROUND
+                    && latest.status() == AiSessionStatus.COMPLETED
+                    && latest.environmentVariables() != null) {
+                String completionReport = latest.environmentVariables().get("JOB_COMPLETION_REPORT");
+                if (completionReport != null && !completionReport.isBlank()) {
+                    finalText = completionReport;
+                }
+                }
+
+                AiChatMessage aiMsg = new AiChatMessage(
+                    UUID.randomUUID().toString(), "ASSISTANT",
+                    finalText, System.currentTimeMillis(),
+                    refs.isEmpty() ? null : Collections.unmodifiableList(refs));
+
             List<AiChatMessage> updated = new ArrayList<>(latest.messages());
             updated.add(userMsg);
             updated.addAll(transitionMsgs);
@@ -767,9 +777,12 @@ public class ChatService {
             // BackgroundOrchestrationEngine.executeSkillTurn can detect that the
             // skill has finished and exit its loop cleanly.
             boolean hasActiveSkillFrame = latest.skillStack() != null && !latest.skillStack().isEmpty();
-            AiSessionStatus persistedStatus = hasActiveSkillFrame
+                boolean isBackgroundSession = latest.originMode() == SessionOriginMode.BACKGROUND;
+                AiSessionStatus persistedStatus = hasActiveSkillFrame
                     ? AiSessionStatus.COMPLETED
-                    : resolveStatusForReplyPersistence(sessionUuid, AiSessionStatus.RUNNING);
+                    : (isBackgroundSession
+                    ? resolveStatusForReplyPersistence(sessionUuid, AiSessionStatus.COMPLETED)
+                    : resolveStatusForReplyPersistence(sessionUuid, AiSessionStatus.RUNNING));
             sessionRepo.save(new AiSession(
                     latest.uuid(), latest.provider(), latest.originMode(),
                     latest.username(), latest.name(), latest.createdAt(),
@@ -1384,7 +1397,8 @@ public class ChatService {
      */
     private List<Message> buildHistoryForSession(AiSession session) {
         List<AiChatMessage> msgs = session.messages();
-        if (session.skillStack() != null && !session.skillStack().isEmpty()) {
+        boolean skillFrameActive = session.skillStack() != null && !session.skillStack().isEmpty();
+        if (skillFrameActive) {
             sh.vork.skill.SkillFrame topFrame = session.skillStack().getLast();
             Integer startIdx = topFrame.startMessageCount();
             if (startIdx == null) {
@@ -1400,16 +1414,31 @@ public class ChatService {
             }
             // startIdx == 0 means the skill started at the beginning — use full history as-is.
         }
-        return hydrateHistory(msgs);
+
+        // Outside skill frames, replay TOOL messages only when the tool remains
+        // visible to the current session. This preserves useful context for
+        // in-scope tools while preventing leakage from inaccessible tool names.
+        Set<String> visibleToolNames = skillFrameActive
+                ? null
+                : aiService.resolveVisibleToolNamesForSession(session.uuid());
+        return hydrateHistory(msgs, skillFrameActive, visibleToolNames);
     }
 
-    private List<Message> hydrateHistory(List<AiChatMessage> messages) {
+    private List<Message> hydrateHistory(List<AiChatMessage> messages,
+                                         boolean includeAllToolMessages,
+                                         Set<String> visibleToolNames) {
         List<Message> history = new ArrayList<>();
         for (AiChatMessage message : messages) {
             switch (message.role()) {
                 case "USER" -> history.add(new UserMessage(message.content() == null ? "" : message.content()));
                 case "ASSISTANT" -> history.add(new AssistantMessage(message.content() == null ? "" : message.content()));
-                case "TOOL" -> appendToolReplay(history, message);
+                case "TOOL" -> {
+                    String toolName = message.toolName();
+                    if (includeAllToolMessages
+                            || (toolName != null && visibleToolNames != null && visibleToolNames.contains(toolName))) {
+                        appendToolReplay(history, message);
+                    }
+                }
                 default -> {
                 }
             }

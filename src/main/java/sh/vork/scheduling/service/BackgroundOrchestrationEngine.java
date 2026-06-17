@@ -52,7 +52,9 @@ public class BackgroundOrchestrationEngine {
 
         // Register completeBackgroundTask for this session only; it is a hidden tool
         // that signals graceful termination and must not be globally available.
-        sessionToolStore.addTool(sessionUuid, completeBackgroundTask);
+        if (sessionToolStore != null && completeBackgroundTask != null) {
+            sessionToolStore.addTool(sessionUuid, completeBackgroundTask);
+        }
 
         try {
             while (true) {
@@ -170,6 +172,7 @@ public class BackgroundOrchestrationEngine {
                     log.info("Background loop awaiting authorization [session={}]", sessionUuid);
                     return;
                 }
+
                 if (afterTurn.status() == AiSessionStatus.COMPLETED) {
                     // If a skill frame is still on the stack, the skill just finished its
                     // FINISHED_TURN via executeAgentLoop on the authorization-resume path.
@@ -213,7 +216,9 @@ public class BackgroundOrchestrationEngine {
                 }
             }
         } finally {
-            sessionToolStore.clearSession(sessionUuid);
+            if (sessionToolStore != null) {
+                sessionToolStore.clearSession(sessionUuid);
+            }
             executionContext.clear();
             ToolExecutionContext.clear();
         }
@@ -308,7 +313,9 @@ public class BackgroundOrchestrationEngine {
                 }
             }
         } finally {
-            sessionToolStore.clearSession(sessionUuid);
+            if (sessionToolStore != null) {
+                sessionToolStore.clearSession(sessionUuid);
+            }
             executionContext.clear();
             ToolExecutionContext.clear();
         }

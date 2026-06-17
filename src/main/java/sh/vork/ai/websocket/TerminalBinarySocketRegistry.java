@@ -105,7 +105,11 @@ public class TerminalBinarySocketRegistry {
         PendingBinaryBuffer pending = pendingByStream.computeIfAbsent(streamKey,
                 k -> new PendingBinaryBuffer(MAX_PENDING_BYTES_PER_STREAM));
         pending.add(data);
-        log.debug("Buffered terminal chunk [stream={}, chunks={}, bytes={}]",
+        if(log.isTraceEnabled()) {
+            log.trace("Buffered terminal chunk [stream={}, chunks={}, bytes={}]",
+                    streamKey, pending.chunkCount(), pending.totalBytes());
+        }
+        log.trace("Buffered terminal chunk [stream={}, chunks={}, bytes={}]",
             streamKey, pending.chunkCount(), pending.totalBytes());
     }
 

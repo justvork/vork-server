@@ -147,8 +147,87 @@ class ChatServiceNoCandidateFallbackTest {
         assertEquals(2, saved.messages().size());
     }
 
+    @Test
+    void sendMessage_backgroundFinishedTurnMarksSessionCompleted() {
+        MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+        BackgroundFinishedTurnAiService aiService = new BackgroundFinishedTurnAiService();
+
+        String sessionId = "session-background-finished-turn";
+        sessionRepo.save(new AiSession(
+                sessionId,
+                AiProvider.BACKGROUND_SCHEDULER.name(),
+                SessionOriginMode.BACKGROUND,
+                "anonymous",
+                "Untitled",
+                System.currentTimeMillis(),
+                0,
+                List.of(),
+            AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.RUNNING, null, null, null, null, null));
+
+        ChatService chatService = new ChatService(
+                sessionRepo,
+                null,
+                aiService,
+                null,
+                null,
+                new ObjectMapper().findAndRegisterModules(),
+                List.of(),
+                null,
+                Runnable::run);
+
+        AiChatMessage out = chatService.sendMessage(sessionId, "finish this background task", null, AiProvider.BACKGROUND_SCHEDULER);
+
+        assertNotNull(out);
+        AiSession saved = sessionRepo.get(sessionId);
+        assertNotNull(saved);
+        assertEquals(AiSessionStatus.COMPLETED, saved.status());
+        assertEquals(2, saved.messages().size());
+        assertEquals("ASSISTANT", saved.messages().get(1).role());
+    }
+
+    @Test
+    void sendMessage_backgroundCompletedSession_usesCompletionReportAsFinalAssistantMessage() {
+        MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+        BackgroundFinishedTurnAiService aiService = new BackgroundFinishedTurnAiService();
+
+        String sessionId = "session-background-completion-report";
+        Map<String, String> env = new java.util.HashMap<>(AiSession.defaultEnvironmentVariables());
+        env.put("JOB_COMPLETION_REPORT", "Completed scan and sent consolidated report to the user.");
+        sessionRepo.save(new AiSession(
+                sessionId,
+                AiProvider.BACKGROUND_SCHEDULER.name(),
+                SessionOriginMode.BACKGROUND,
+                "anonymous",
+                "Untitled",
+                System.currentTimeMillis(),
+                0,
+                List.of(),
+                Map.copyOf(env),
+                AiSessionStatus.COMPLETED, null, null, null, null, null));
+
+        ChatService chatService = new ChatService(
+                sessionRepo,
+                null,
+                aiService,
+                null,
+                null,
+                new ObjectMapper().findAndRegisterModules(),
+                List.of(),
+                null,
+                Runnable::run);
+
+        AiChatMessage out = chatService.sendMessage(sessionId, "finish this background task", null, AiProvider.BACKGROUND_SCHEDULER);
+
+        assertNotNull(out);
+        assertEquals("Completed scan and sent consolidated report to the user.", out.content());
+        AiSession saved = sessionRepo.get(sessionId);
+        assertNotNull(saved);
+        assertEquals("Completed scan and sent consolidated report to the user.", saved.messages().get(saved.messages().size() - 1).content());
+    }
+
         @Test
-        void sendMessage_includesToolMessagesInConversationHistory() {
+        void sendMessage_excludesToolMessagesFromParentConversationHistory() {
         MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
         RecordingHistoryAiService aiService = new RecordingHistoryAiService();
 
@@ -183,8 +262,8 @@ class ChatServiceNoCandidateFallbackTest {
         AiChatMessage out = chatService.sendMessage(sessionId, "summarize that output", null, AiProvider.GEMINI);
 
         assertNotNull(out);
-        assertEquals(2, aiService.lastConversationHistory.size());
-        assertTrue(aiService.lastConversationHistory.get(1) instanceof org.springframework.ai.chat.messages.ToolResponseMessage);
+        assertEquals(1, aiService.lastConversationHistory.size());
+        assertTrue(aiService.lastConversationHistory.get(0) instanceof org.springframework.ai.chat.messages.UserMessage);
         }
 
     private static final class FallbackAiService extends AiOrchestrationService {
@@ -192,7 +271,7 @@ class ChatServiceNoCandidateFallbackTest {
         int simpleCalls;
 
         private FallbackAiService() {
-            super(Map.of(), null, null, null, null, null, Map.of(), null, null, null, null, null, null);
+            super(Map.of(), null, null, null, null, null, Map.of(), null, null, null, null, null, null, null);
         }
 
         @Override
@@ -215,7 +294,7 @@ class ChatServiceNoCandidateFallbackTest {
         int simpleCalls;
 
         private DoubleFailureAiService() {
-            super(Map.of(), null, null, null, null, null, Map.of(), null, null, null, null, null, null);
+            super(Map.of(), null, null, null, null, null, Map.of(), null, null, null, null, null, null, null);
         }
 
         @Override
@@ -238,7 +317,7 @@ class ChatServiceNoCandidateFallbackTest {
         private final String sessionUuid;
 
         private CompletingDuringGenerationAiService(MapDatabaseRepository<AiSession> sessionRepo, String sessionUuid) {
-            super(Map.of(), null, null, null, null, null, Map.of(), null, null, null, null, null, null);
+            super(Map.of(), null, null, null, null, null, Map.of(), null, null, null, null, null, null, null);
             this.sessionRepo = sessionRepo;
             this.sessionUuid = sessionUuid;
         }
@@ -267,7 +346,7 @@ class ChatServiceNoCandidateFallbackTest {
         private List<org.springframework.ai.chat.messages.Message> lastConversationHistory = List.of();
 
         private RecordingHistoryAiService() {
-            super(Map.of(), null, null, null, null, null, Map.of(), null, null, null, null, null, null);
+            super(Map.of(), null, null, null, null, null, Map.of(), null, null, null, null, null, null, null);
         }
 
         @Override
@@ -276,6 +355,19 @@ class ChatServiceNoCandidateFallbackTest {
                                           AiProvider provider) {
             this.lastConversationHistory = List.copyOf(conversationHistory);
             return "history-recorded";
+        }
+    }
+
+    private static final class BackgroundFinishedTurnAiService extends AiOrchestrationService {
+        private BackgroundFinishedTurnAiService() {
+            super(Map.of(), null, null, null, null, null, Map.of(), null, null, null, null, null, null, null);
+        }
+
+        @Override
+        public String generateWithHistory(List<org.springframework.ai.chat.messages.Message> conversationHistory,
+                                          String newUserMessage,
+                                          AiProvider provider) {
+            return "{\"status\":\"FINISHED_TURN\",\"textResponse\":\"Background job finished.\"}";
         }
     }
 }

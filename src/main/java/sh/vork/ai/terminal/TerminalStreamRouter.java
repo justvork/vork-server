@@ -75,7 +75,7 @@ public class TerminalStreamRouter {
         String terminalId = UUID.randomUUID().toString();
         ShellProcess process;
 
-        if (originMode == SessionOriginMode.WEB && messagingTemplate != null) {
+        if (messagingTemplate != null) {
             messagingTemplate.convertAndSend("/topic/chat/" + sessionUuid,
                     Map.of("type", "EVENT", "status", "TERMINAL_START", "command", command, "terminalId", terminalId));
         }
@@ -130,7 +130,7 @@ public class TerminalStreamRouter {
 
                 appendLimited(inlineToolOutput, chunk, TOOL_INLINE_OUTPUT_MAX_CHARS);
 
-                if (originMode == SessionOriginMode.WEB && terminalBinarySocketRegistry != null) {
+                if (terminalBinarySocketRegistry != null) {
                     terminalBinarySocketRegistry.broadcast(sessionUuid, terminalId, payload);
                 }
 
@@ -180,7 +180,7 @@ public class TerminalStreamRouter {
             }
         }
 
-        if (originMode == SessionOriginMode.WEB && messagingTemplate != null) {
+        if (messagingTemplate != null) {
             messagingTemplate.convertAndSend("/topic/chat/" + sessionUuid,
                     Map.of(
                             "type", "EVENT",
