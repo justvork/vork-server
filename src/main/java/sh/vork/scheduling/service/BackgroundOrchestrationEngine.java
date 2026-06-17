@@ -17,6 +17,7 @@ import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.exception.ToolSuspensionException;
 import sh.vork.ai.service.ChatService;
+import sh.vork.skill.SkillFrame;
 import sh.vork.ai.session.SessionToolStore;
 import sh.vork.orm.DatabaseRepository;
 
@@ -83,7 +84,9 @@ public class BackgroundOrchestrationEngine {
                             AiSessionStatus.FAILED_MAX_ROUNDS,
                             session.activeAgentTemplateId(),
                             session.modelId(),
-                            session.skillStack()));
+                            session.skillStack(),
+                            session.sessionSkillUuids(),
+                            session.sessionToolIds()));
                     log.warn("Background loop stopped at max rounds [session={}]", sessionUuid);
                     return;
                 }
@@ -101,7 +104,9 @@ public class BackgroundOrchestrationEngine {
                         AiSessionStatus.RUNNING,
                         session.activeAgentTemplateId(),
                         session.modelId(),
-                        session.skillStack()));
+                        session.skillStack(),
+                        session.sessionSkillUuids(),
+                        session.sessionToolIds()));
 
                 executionContext.clear();
                     ToolExecutionContext.bindSessionUuid(sessionUuid);
@@ -116,9 +121,37 @@ public class BackgroundOrchestrationEngine {
                             provider = AiProvider.valueOf(session.provider());
                         }
                     } catch (IllegalArgumentException ignored) {}
+
+                                        // When a skill frame is active (e.g. resumed after authorization), the skill AI
+                                        // must not see the background-job completion protocol. Background-task directives
+                                        // are injected into the system prompt via ToolExecutionContext for parent rounds.
+                    boolean skillFrameActive = session.skillStack() != null && !session.skillStack().isEmpty();
+                    String effectivePrompt = skillFrameActive
+                            ? "Continue executing the skill toward its objective. "
+                              + "When the skill objective is fully satisfied, return FINISHED_TURN with your output."
+                            : (firstRound ? prompt : CONTINUE_PROMPT);
+
+                    log.debug("Background turn prompt [session={}, skillFrameActive={}, prompt={}]",
+                            sessionUuid, skillFrameActive, effectivePrompt);
+
+                    if (!skillFrameActive) {
+                        ToolExecutionContext.put("__background_turn_instruction__", effectivePrompt);
+                        String taskDirective = null;
+                        if (session.environmentVariables() != null) {
+                            taskDirective = session.environmentVariables().get("JOB_TASK_PROMPT");
+                        }
+                        if ((taskDirective == null || taskDirective.isBlank())
+                                && initialPrompt != null && !initialPrompt.isBlank()) {
+                            taskDirective = initialPrompt;
+                        }
+                        if (taskDirective != null && !taskDirective.isBlank()) {
+                            ToolExecutionContext.put("__background_task_instruction__", taskDirective);
+                        }
+                    }
+
                     chatService.sendMessage(
                             sessionUuid,
-                            firstRound ? prompt : CONTINUE_PROMPT,
+                            "Proceed.",
                             List.of(),
                             provider);
                 } catch (ToolSuspensionException ex) {
@@ -137,6 +170,43 @@ public class BackgroundOrchestrationEngine {
                     log.info("Background loop awaiting authorization [session={}]", sessionUuid);
                     return;
                 }
+                if (afterTurn.status() == AiSessionStatus.COMPLETED) {
+                    // If a skill frame is still on the stack, the skill just finished its
+                    // FINISHED_TURN via executeAgentLoop on the authorization-resume path.
+                    // executeAgentLoop sets COMPLETED but does not pop the frame.
+                    // Pop the frame, label the skill output, and resume the parent agent loop.
+                    List<SkillFrame> skillStack = afterTurn.skillStack();
+                    if (skillStack != null && !skillStack.isEmpty()) {
+                        String skillName = skillStack.getLast().skillName();
+                        List<SkillFrame> poppedStack = new ArrayList<>(skillStack);
+                        poppedStack.removeLast();
+                        // Label the last ASSISTANT message as a skill result so the parent agent
+                        // understands what the output represents when the loop resumes.
+                        List<AiChatMessage> msgs = new ArrayList<>(afterTurn.messages());
+                        for (int j = msgs.size() - 1; j >= 0; j--) {
+                            if ("ASSISTANT".equals(msgs.get(j).role())) {
+                                String labelled = "Skill '" + skillName + "' completed. Output:\n"
+                                        + (msgs.get(j).content() != null ? msgs.get(j).content() : "");
+                                msgs.set(j, new AiChatMessage(msgs.get(j).uuid(), "ASSISTANT",
+                                        labelled, msgs.get(j).timestamp(), null));
+                                break;
+                            }
+                        }
+                        sessionRepository.save(new AiSession(
+                                afterTurn.uuid(), afterTurn.provider(), afterTurn.originMode(),
+                                afterTurn.username(), afterTurn.name(), afterTurn.createdAt(),
+                                afterTurn.currentRoundCount(), List.copyOf(msgs),
+                                afterTurn.environmentVariables(), AiSessionStatus.RUNNING,
+                                afterTurn.activeAgentTemplateId(), afterTurn.modelId(),
+                                List.copyOf(poppedStack), afterTurn.sessionSkillUuids(),
+                                afterTurn.sessionToolIds()));
+                        log.info("Skill completed on authorization-resume path — popping frame and resuming parent loop [session={}, skill={}]",
+                                sessionUuid, skillName);
+                        continue;
+                    }
+                    log.info("Background loop terminated by user [session={}]", sessionUuid);
+                    return;
+                }
                 if (executionContext.isExecutionComplete()) {
                     log.info("Background loop completion flag detected [session={}]", sessionUuid);
                     return;
@@ -152,22 +222,17 @@ public class BackgroundOrchestrationEngine {
     /**
      * Runs the orchestration loop for a skill session.
      *
-     * <p>The {@code completeSkillExecution} tool must be registered in
-     * {@link sh.vork.ai.session.SessionToolStore} by the caller <em>before</em>
-     * invoking this method (typically done by {@link sh.vork.skill.SkillService}).
-     *
      * @param sessionUuid   UUID of the {@code SKILL}-origin session
      * @param initialPrompt first user message (built from the skill input)
      */
     public void executeSkillTurn(String sessionUuid, String initialPrompt) {
         final String SKILL_CONTINUE_PROMPT =
                 "Continue executing the skill toward completion. "
-                + "When the objective is fully satisfied, invoke completeSkillExecution.";
+                + "When the objective is fully satisfied, return FINISHED_TURN with your result.";
         String prompt = (initialPrompt == null || initialPrompt.isBlank())
                 ? SKILL_CONTINUE_PROMPT : initialPrompt;
         boolean firstRound = true;
 
-        // completeSkillExecution is already registered by SkillService
         try {
             while (true) {
                 AiSession session = sessionRepository.get(sessionUuid);
@@ -190,7 +255,7 @@ public class BackgroundOrchestrationEngine {
                             session.currentRoundCount(), List.copyOf(updated),
                             session.environmentVariables(), AiSessionStatus.FAILED_MAX_ROUNDS,
                             session.activeAgentTemplateId(), session.modelId(),
-                            session.skillStack()));
+                            session.skillStack(), session.sessionSkillUuids(), session.sessionToolIds()));
                     log.warn("Skill loop stopped at max rounds [session={}]", sessionUuid);
                     return;
                 }
@@ -201,7 +266,7 @@ public class BackgroundOrchestrationEngine {
                         session.currentRoundCount() + 1, session.messages(),
                         session.environmentVariables(), AiSessionStatus.RUNNING,
                         session.activeAgentTemplateId(), session.modelId(),
-                        session.skillStack()));
+                        session.skillStack(), session.sessionSkillUuids(), session.sessionToolIds()));
 
                 executionContext.clear();
                 ToolExecutionContext.bindSessionUuid(sessionUuid);
@@ -231,6 +296,10 @@ public class BackgroundOrchestrationEngine {
                 if (afterTurn == null) return;
                 if (afterTurn.status() == AiSessionStatus.AWAITING_INPUT) {
                     log.info("Skill loop awaiting authorization [session={}]", sessionUuid);
+                    return;
+                }
+                if (afterTurn.status() == AiSessionStatus.COMPLETED) {
+                    log.info("Skill loop complete via FINISHED_TURN [session={}]", sessionUuid);
                     return;
                 }
                 if (executionContext.isExecutionComplete()) {

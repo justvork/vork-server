@@ -16,6 +16,7 @@ import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -235,7 +236,9 @@ public class ChatAuthorizationController {
                     AiSessionStatus.AWAITING_INPUT,
                     session.activeAgentTemplateId(),
                     session.modelId(),
-                    session.skillStack()));
+                    session.skillStack(),
+                    session.sessionSkillUuids(),
+                    session.sessionToolIds()));
 
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, suspendedPromptEvent);
                 log.info("Tool execution suspended for additional input [tool={}, session={}]",
@@ -340,7 +343,9 @@ public class ChatAuthorizationController {
                         AiSessionStatus.RUNNING,
                         session.activeAgentTemplateId(),
                         session.modelId(),
-                        session.skillStack()));
+                        session.skillStack(),
+                        session.sessionSkillUuids(),
+                        session.sessionToolIds()));
             }
 
             if (originMode == SessionOriginMode.BACKGROUND) {
@@ -357,7 +362,9 @@ public class ChatAuthorizationController {
                     AiSessionStatus.RUNNING,
                     session.activeAgentTemplateId(),
                     session.modelId(),
-                    session.skillStack()));
+                    session.skillStack(),
+                    session.sessionSkillUuids(),
+                    session.sessionToolIds()));
 
                 aiBackgroundExecutor.execute(() -> {
                     ToolExecutionContext.bindSessionUuid(sessionUuid);
@@ -520,7 +527,9 @@ public class ChatAuthorizationController {
                     AiSessionStatus.AWAITING_INPUT,
                     session.activeAgentTemplateId(),
                     session.modelId(),
-                    session.skillStack()));
+                    session.skillStack(),
+                    session.sessionSkillUuids(),
+                    session.sessionToolIds()));
 
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, suspendedPromptEvent);
                 log.info("Resumed call suspended again [tool={}, session={}]", ex.getToolName(), sessionUuid);
@@ -566,7 +575,9 @@ public class ChatAuthorizationController {
                     AiSessionStatus.RUNNING,
                     session.activeAgentTemplateId(),
                     session.modelId(),
-                    session.skillStack()));
+                    session.skillStack(),
+                    session.sessionSkillUuids(),
+                    session.sessionToolIds()));
 
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, errorEvent);
                 ToolExecutionContext.clear();
@@ -629,7 +640,9 @@ public class ChatAuthorizationController {
                     AiSessionStatus.RUNNING,
                     session.activeAgentTemplateId(),
                     session.modelId(),
-                    currentStack));
+                    currentStack,
+                    session.sessionSkillUuids(),
+                    session.sessionToolIds()));
 
             if (chatService != null) {
                 chatService.maybeGenerateSessionName(session.uuid());
@@ -792,13 +805,41 @@ public class ChatAuthorizationController {
             switch (message.role()) {
                 case "USER" -> history.add(new UserMessage(message.content() == null ? "" : message.content()));
                 case "ASSISTANT" -> history.add(new AssistantMessage(message.content() == null ? "" : message.content()));
-                case "TOOL" -> history.add(toToolResponseMessage(message));
+                case "TOOL" -> appendToolReplay(history, message);
                 default -> {
                     // Skip non-conversation event frames and internal control records.
                 }
             }
         }
         return history;
+    }
+
+    private void appendToolReplay(List<Message> history, AiChatMessage message) {
+        boolean canEmitFunctionCall = !history.isEmpty()
+            && (history.getLast().getMessageType() == MessageType.USER
+            || history.getLast().getMessageType() == MessageType.TOOL);
+        if (canEmitFunctionCall) {
+            history.add(toSyntheticToolCallMessage(message));
+            history.add(toToolResponseMessage(message));
+            return;
+        }
+        history.add(toToolReplayTextMessage(message));
+    }
+
+    private Message toSyntheticToolCallMessage(AiChatMessage message) {
+        String toolName = message.toolName() == null ? "unknown-tool" : message.toolName();
+        String toolCallId = message.toolCallId() == null ? "pending-unknown" : message.toolCallId();
+
+        AssistantMessage.ToolCall toolCall = new AssistantMessage.ToolCall(
+                toolCallId,
+                "FUNCTION",
+                toolName,
+                "{}");
+
+        return AssistantMessage.builder()
+                .content("")
+                .toolCalls(List.of(toolCall))
+                .build();
     }
 
     private Message toToolResponseMessage(AiChatMessage message) {
@@ -821,14 +862,42 @@ public class ChatAuthorizationController {
         responseData = normalizeToolResponseData(responseData);
 
         ToolResponseMessage.ToolResponse toolResponse = new ToolResponseMessage.ToolResponse(
-                message.toolCallId() == null ? "pending-unknown" : message.toolCallId(),
-                message.toolName() == null ? "unknown-tool" : message.toolName(),
-                responseData);
+            message.toolCallId() == null ? "pending-unknown" : message.toolCallId(),
+            message.toolName() == null ? "unknown-tool" : message.toolName(),
+            responseData);
 
         return ToolResponseMessage.builder()
-                .responses(List.of(toolResponse))
-                .metadata(Collections.emptyMap())
-                .build();
+            .responses(List.of(toolResponse))
+            .metadata(Collections.emptyMap())
+            .build();
+    }
+
+    private Message toToolReplayTextMessage(AiChatMessage message) {
+        String toolName = message.toolName() == null ? "unknown-tool" : message.toolName();
+        String toolCallId = message.toolCallId() == null ? "pending-unknown" : message.toolCallId();
+        String responseData = extractToolResponseData(message);
+        String replayText = "Tool '" + toolName + "' (callId=" + toolCallId + ") result:\n" + responseData;
+        return new AssistantMessage(replayText);
+    }
+
+    private String extractToolResponseData(AiChatMessage message) {
+        Map<String, Object> payload;
+        try {
+            payload = objectMapper.readValue(message.content(), new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            payload = new HashMap<>();
+        }
+
+        String responseData = null;
+        Object responsesRaw = payload.get("responses");
+        if (responsesRaw instanceof List<?> responses && !responses.isEmpty() && responses.get(0) instanceof Map<?, ?> first) {
+            Object v = first.get("responseData");
+            responseData = v == null ? null : String.valueOf(v);
+        }
+        if (responseData == null) {
+            responseData = message.content();
+        }
+        return normalizeToolResponseData(responseData);
     }
 
     private void applyAuthorizationAction(String action,

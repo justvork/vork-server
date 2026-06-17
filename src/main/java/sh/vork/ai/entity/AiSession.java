@@ -32,6 +32,10 @@ import java.util.concurrent.ConcurrentHashMap;
  *                              or {@code null} to use the provider default
  * @param skillStack            ordered stack of {@link SkillFrame} frames pushed by {@code executeSkill};
  *                              empty when no skill is currently executing
+ * @param sessionSkillUuids     UUIDs of {@link sh.vork.skill.Skill} records attached to this specific
+ *                              session by the user; merged with the active agent's skills at runtime
+ * @param sessionToolIds        Spring bean IDs of {@code ToolCallback} beans added to this specific
+ *                              session by the user; merged with the active agent's allowed tools at runtime
  */
 public record AiSession(
         String              uuid,
@@ -46,7 +50,9 @@ public record AiSession(
     AiSessionStatus     status,
     String              activeAgentTemplateId,
     String              modelId,
-    List<SkillFrame>    skillStack
+    List<SkillFrame>    skillStack,
+    List<String>        sessionSkillUuids,
+    List<String>        sessionToolIds
 ) implements DatabaseEntity {
 
     public AiSession {
@@ -72,6 +78,12 @@ public record AiSession(
         }
         if (skillStack == null) {
             skillStack = List.of();
+        }
+        if (sessionSkillUuids == null) {
+            sessionSkillUuids = List.of();
+        }
+        if (sessionToolIds == null) {
+            sessionToolIds = List.of();
         }
     }
 

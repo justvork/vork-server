@@ -94,12 +94,12 @@
                         <td class="small text-muted">
                             <span th:if="${job.lastExecutionTime() == 0}">Never</span>
                             <span th:unless="${job.lastExecutionTime() == 0}"
-                                  th:text="${#temporals.format(#temporals.createFromEpochMilli(job.lastExecutionTime()), 'dd MMM yyyy HH:mm')}"></span>
+                                  th:text="${#temporals.format(T(java.time.LocalDateTime).ofInstant(T(java.time.Instant).ofEpochMilli(job.lastExecutionTime()), T(java.time.ZoneId).systemDefault()), 'dd MMM yyyy HH:mm')}"></span>
                         </td>
                         <td class="small text-muted">
                             <span th:if="${job.invocationType().name() == 'MANUAL' or job.nextExecutionTime() == 0}">—</span>
                             <span th:unless="${job.invocationType().name() == 'MANUAL' or job.nextExecutionTime() == 0}"
-                                  th:text="${#temporals.format(#temporals.createFromEpochMilli(job.nextExecutionTime()), 'dd MMM yyyy HH:mm')}"></span>
+                                  th:text="${#temporals.format(T(java.time.LocalDateTime).ofInstant(T(java.time.Instant).ofEpochMilli(job.nextExecutionTime()), T(java.time.ZoneId).systemDefault()), 'dd MMM yyyy HH:mm')}"></span>
                         </td>
                         <td class="text-end">
                             <div class="d-flex gap-1 justify-content-end flex-wrap">
@@ -110,6 +110,14 @@
                                         title="Run Now">
                                     <i class="fa-solid fa-play"></i>
                                 </button>
+                                <!-- Monitor — shown when a tracking session is active -->
+                                <a th:if="${job.sessionUuid() != null and !job.sessionUuid().isBlank()}"
+                                   th:href="'/job-monitor.html?session=' + ${job.sessionUuid()}"
+                                   class="btn btn-sm btn-outline-info"
+                                   target="_blank"
+                                   title="View last run">
+                                    <i class="fa-solid fa-eye"></i>
+                                </a>
                                 <!-- Pause — ONE_TIME + REPEAT when WAITING (idle, not currently running) -->
                                 <button th:if="${job.invocationType().name() != 'MANUAL' and job.status().name() == 'WAITING'}"
                                         class="btn btn-sm btn-outline-warning"
@@ -254,13 +262,42 @@
                                placeholder="240">
                         <div class="form-text">How long the relay authorization link remains valid. Default: 240 min (4 hrs).</div>
                     </div>
+
+                    <!-- Session Skills -->
+                    <div class="col-12">
+                        <label class="form-label">Session Skills</label>
+                        <div id="job-skills-pills" class="d-flex flex-wrap gap-1 mb-1"></div>
+                        <div class="input-group input-group-sm" style="max-width:380px;position:relative">
+                            <input id="job-skill-search" type="text" class="form-control"
+                                   placeholder="Search and add skill…" autocomplete="off">
+                            <div id="job-skill-dropdown" class="skills-search-dropdown d-none"
+                                 style="position:absolute;top:100%;left:0;right:0;z-index:300"></div>
+                        </div>
+                        <div class="form-text">Extra skills available to this job's AI session.</div>
+                    </div>
+
+                    <!-- Session Tools -->
+                    <div class="col-12">
+                        <label class="form-label">Session Tools</label>
+                        <div id="job-tools-pills" class="d-flex flex-wrap gap-1 mb-1"></div>
+                        <div class="input-group input-group-sm" style="max-width:380px;position:relative">
+                            <input id="job-tool-search" type="text" class="form-control"
+                                   placeholder="Search and add tool…" autocomplete="off">
+                            <div id="job-tool-dropdown" class="skills-search-dropdown d-none"
+                                 style="position:absolute;top:100%;left:0;right:0;z-index:300"></div>
+                        </div>
+                        <div class="form-text">Extra tools available to this job's AI session.</div>
+                    </div>
                 </div>
             </div>
-            <div class="modal-footer">
+            <div class="modal-footer flex-column align-items-stretch gap-2">
+                <div id="modal-alert-area"></div>
+                <div class="d-flex justify-content-end gap-2">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" id="btn-save-job" class="btn btn-primary" onclick="saveJob()">
                     <i class="fa-solid fa-save me-1"></i>Save Job
                 </button>
+                </div>
             </div>
         </div>
     </div>
@@ -269,6 +306,10 @@
 <script>
     let jobModal;
     let allJobs = [];
+    let _jobToolsCache = null;
+    let _jobSkillsCache = null;
+    let pendingJobSkillUuids = [];
+    let pendingJobToolIds    = [];
 
     // ── Initialise ────────────────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', function () {
@@ -336,6 +377,11 @@
         document.getElementById('job-model').value = '';
         document.getElementById('job-oob-timeout').value = 240;
         document.querySelectorAll('input[name="invocationType"]').forEach(function (r) { r.checked = false; });
+        pendingJobSkillUuids = [];
+        pendingJobToolIds    = [];
+        renderJobSkillPills();
+        renderJobToolPills();
+        document.getElementById('modal-alert-area').innerHTML = '';
         onTypeChange();
         jobModal.show();
     }
@@ -364,7 +410,11 @@
         document.getElementById('job-repeat-duration').value = job.repeatDuration || 1;
         document.getElementById('job-duration-type').value = job.durationType || 'HOURS';
         document.getElementById('job-oob-timeout').value = job.oobTimeoutMinutes > 0 ? job.oobTimeoutMinutes : 240;
-
+        pendingJobSkillUuids = job.skillUuids ? job.skillUuids.slice() : [];
+        pendingJobToolIds    = job.toolIds    ? job.toolIds.slice()    : [];
+        renderJobSkillPills();
+        renderJobToolPills();
+        document.getElementById('modal-alert-area').innerHTML = '';
         jobModal.show();
     }
 
@@ -403,7 +453,9 @@
             agentTemplateId:  document.getElementById('job-agent').value || null,
             provider:         provider,
             modelId:          modelId,
-            oobTimeoutMinutes: parseInt(document.getElementById('job-oob-timeout').value) || 240
+            oobTimeoutMinutes: parseInt(document.getElementById('job-oob-timeout').value) || 240,
+            skillUuids: pendingJobSkillUuids.slice(),
+            toolIds:    pendingJobToolIds.slice()
         };
 
         var btn = document.getElementById('btn-save-job');
@@ -449,7 +501,7 @@
             var res  = await fetch('/api/jobs/' + id + '/run', { method: 'POST' });
             var data = await res.json();
             if (data.error) { showAlert(data.error, 'danger'); return; }
-            showAlert('Job triggered. Check sessions for progress.', 'success');
+            window.open('/job-monitor.html?session=' + encodeURIComponent(data.trackingSessionUuid), '_blank');
         } catch (e) {
             showAlert('Network error triggering job.', 'danger');
         }
@@ -479,9 +531,140 @@
         }
     }
 
+    // ── Job modal — skills / tools ────────────────────────────────────────────
+    function renderJobSkillPills() {
+        var container = document.getElementById('job-skills-pills');
+        if (!container) return;
+        container.innerHTML = '';
+        pendingJobSkillUuids.forEach(function (uuid) {
+            var skill = (_jobSkillsCache || []).find(function (s) { return s.uuid === uuid; });
+            var label = skill ? skill.name : uuid;
+            var pill = document.createElement('span');
+            pill.className = 'extra-pill skill-pill';
+            pill.textContent = label;
+            var btn = document.createElement('button');
+            btn.className = 'pill-remove'; btn.innerHTML = '&times;';
+            btn.addEventListener('click', function () {
+                pendingJobSkillUuids = pendingJobSkillUuids.filter(function (u) { return u !== uuid; });
+                renderJobSkillPills();
+            });
+            pill.appendChild(btn);
+            container.appendChild(pill);
+        });
+    }
+
+    function renderJobToolPills() {
+        var container = document.getElementById('job-tools-pills');
+        if (!container) return;
+        container.innerHTML = '';
+        pendingJobToolIds.forEach(function (id) {
+            var tool = (_jobToolsCache || []).find(function (t) { return t.id === id; });
+            var label = tool ? tool.name : id;
+            var pill = document.createElement('span');
+            pill.className = 'extra-pill tool-pill';
+            pill.textContent = label;
+            var btn = document.createElement('button');
+            btn.className = 'pill-remove'; btn.innerHTML = '&times;';
+            btn.addEventListener('click', function () {
+                pendingJobToolIds = pendingJobToolIds.filter(function (i) { return i !== id; });
+                renderJobToolPills();
+            });
+            pill.appendChild(btn);
+            container.appendChild(pill);
+        });
+    }
+
+    function setupJobSkillSearch() {
+        var input    = document.getElementById('job-skill-search');
+        var dropdown = document.getElementById('job-skill-dropdown');
+        if (!input || !dropdown) return;
+        input.addEventListener('input', async function () {
+            var q = input.value.trim().toLowerCase();
+            dropdown.classList.add('d-none'); dropdown.innerHTML = '';
+            if (q.length < 1) return;
+            if (!_jobSkillsCache) {
+                try {
+                    var r = await fetch('/api/skills?page=0&pageSize=100');
+                    if (r.ok) _jobSkillsCache = await r.json();
+                } catch (e) { _jobSkillsCache = []; }
+            }
+            var matches = (_jobSkillsCache || []).filter(function (s) {
+                return s.name.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q);
+            }).slice(0, 10);
+            if (!matches.length) return;
+            matches.forEach(function (skill) {
+                var item = document.createElement('div');
+                item.className = 'skills-search-item';
+                item.textContent = skill.name;
+                item.title = skill.description || '';
+                item.addEventListener('click', function () {
+                    if (!pendingJobSkillUuids.includes(skill.uuid)) {
+                        pendingJobSkillUuids.push(skill.uuid);
+                        renderJobSkillPills();
+                    }
+                    input.value = ''; dropdown.classList.add('d-none');
+                });
+                dropdown.appendChild(item);
+            });
+            dropdown.classList.remove('d-none');
+        });
+        document.addEventListener('click', function (e) {
+            if (!input.contains(e.target) && !dropdown.contains(e.target)) dropdown.classList.add('d-none');
+        });
+    }
+
+    function setupJobToolSearch() {
+        var input    = document.getElementById('job-tool-search');
+        var dropdown = document.getElementById('job-tool-dropdown');
+        if (!input || !dropdown) return;
+        input.addEventListener('input', async function () {
+            var q = input.value.trim().toLowerCase();
+            dropdown.classList.add('d-none'); dropdown.innerHTML = '';
+            if (q.length < 1) return;
+            if (!_jobToolsCache) {
+                try {
+                    var r = await fetch('/api/chat/tools');
+                    if (r.ok) _jobToolsCache = await r.json();
+                } catch (e) { _jobToolsCache = []; }
+            }
+            var matches = (_jobToolsCache || []).filter(function (t) {
+                return t.name.toLowerCase().includes(q)
+                    || (t.description || '').toLowerCase().includes(q)
+                    || (t.category || '').toLowerCase().includes(q);
+            }).slice(0, 10);
+            if (!matches.length) return;
+            matches.forEach(function (tool) {
+                var item = document.createElement('div');
+                item.className = 'skills-search-item';
+                item.textContent = tool.name + (tool.category ? '  [' + tool.category + ']' : '');
+                item.title = tool.description || '';
+                item.addEventListener('click', function () {
+                    if (!pendingJobToolIds.includes(tool.id)) {
+                        pendingJobToolIds.push(tool.id);
+                        renderJobToolPills();
+                    }
+                    input.value = ''; dropdown.classList.add('d-none');
+                });
+                dropdown.appendChild(item);
+            });
+            dropdown.classList.remove('d-none');
+        });
+        document.addEventListener('click', function (e) {
+            if (!input.contains(e.target) && !dropdown.contains(e.target)) dropdown.classList.add('d-none');
+        });
+    }
+
+    // Wire up search inputs after DOM ready
+    document.addEventListener('DOMContentLoaded', function () {
+        setupJobSkillSearch();
+        setupJobToolSearch();
+    });
+
     // ── Utility ───────────────────────────────────────────────────────────────
     function showAlert(msg, type) {
-        var area = document.getElementById('alert-area');
+        var modalEl  = document.getElementById('jobModal');
+        var isOpen   = modalEl && modalEl.classList.contains('show');
+        var area     = document.getElementById(isOpen ? 'modal-alert-area' : 'alert-area');
         area.innerHTML = '<div class="alert alert-' + type + ' alert-dismissible fade show py-2 small" role="alert">' +
             msg + '<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>';
     }

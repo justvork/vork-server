@@ -11,6 +11,7 @@ import org.slf4j.MDC;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,11 +26,15 @@ import sh.vork.ai.AiProvider;
 import sh.vork.ai.agent.AgentType;
 import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
+import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.provider.AiModelService;
+import sh.vork.ai.registry.ToolRegistry;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
 import sh.vork.ai.terminal.TerminalStreamRouter;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.skill.Skill;
 
 /**
  * Handles both HTTP session initialisation and WebSocket chat messages.
@@ -53,22 +58,24 @@ public class ChatController {
     private final AiOrchestrationService aiOrchestrationService;
     private final TerminalStreamRouter   terminalStreamRouter;
     private final AiModelService         modelService;
+    private final ToolRegistry           toolRegistry;
+    private final DatabaseRepository<Skill> skillRepo;
 
-    private static final String WELCOME_PROMPT =
-            "You are Vork the Concierge, an intelligent assistant that can perform tasks for the user " +
-            "that utilise the tools and skills you have access to. You can also access additional agents " +
-            "that a user has created to perform specific roles. This is the start of a new session, " +
-            "provide a short introduction to introduce yourself to the user and your capabilities.";
+
 
     public ChatController(ChatService chatService, SimpMessagingTemplate messaging,
                           AiOrchestrationService aiOrchestrationService,
                           TerminalStreamRouter terminalStreamRouter,
-                          AiModelService modelService) {
+                          AiModelService modelService,
+                          ToolRegistry toolRegistry,
+                          DatabaseRepository<Skill> skillRepository) {
         this.chatService = chatService;
         this.messaging   = messaging;
         this.aiOrchestrationService = aiOrchestrationService;
         this.terminalStreamRouter = terminalStreamRouter;
         this.modelService = modelService;
+        this.toolRegistry = toolRegistry;
+        this.skillRepo = skillRepository;
     }
 
     // ── HTTP ──────────────────────────────────────────────────────────────────
@@ -83,7 +90,7 @@ public class ChatController {
                 ? chatService.getOrCreateSession(httpSession.getId(), provider, modelId)
                 : chatService.getSessionForCurrentUser(sessionUuid);
         return new SessionResponse(session.uuid(), session.name(), session.provider(),
-                session.activeAgentTemplateId(), session.messages(), session.modelId());
+                session.activeAgentTemplateId(), session.messages(), session.modelId(), session.status());
     }
 
     @GetMapping("/session/new")
@@ -92,7 +99,7 @@ public class ChatController {
             @RequestParam(required = false) String modelId) {
         AiSession session = chatService.createNewSession(provider, modelId);
         return new SessionResponse(session.uuid(), session.name(), session.provider(),
-                session.activeAgentTemplateId(), session.messages(), session.modelId());
+                session.activeAgentTemplateId(), session.messages(), session.modelId(), session.status());
     }
 
     @GetMapping("/sessions")
@@ -211,8 +218,130 @@ public class ChatController {
     public Map<String, String> getWelcomeMessage(
             @RequestParam(defaultValue = "GEMINI") String provider) {
         AiProvider aiProvider = resolveProvider(provider);
-        String content = aiOrchestrationService.generate(WELCOME_PROMPT, aiProvider);
-        return Map.of("content", content);
+        // generateWelcomeMessage uses the active agent system prompt + a welcome
+        // instruction suffix, with all tools stripped to prevent tool-auth challenges.
+        // extractTextResponse unwraps the structured JSON response.
+        String raw = aiOrchestrationService.generateWelcomeMessage(aiProvider);
+        String content = chatService.extractTextResponse(raw);
+        return Map.of("content", content != null ? content : "");
+    }
+
+    // ── Session extras: skills & tools ────────────────────────────────────────
+
+    @PostMapping("/session/{sessionUuid}/session-skills/{skillUuid}")
+    public ResponseEntity<?> addSessionSkill(@PathVariable String sessionUuid,
+                                              @PathVariable String skillUuid) {
+        log.debug("ENTER addSessionSkill: [session={}, skill={}]", sessionUuid, skillUuid);
+        try {
+            AiSession updated = chatService.addSessionSkill(sessionUuid, skillUuid);
+            return ResponseEntity.ok(Map.of("status", "OK",
+                    "sessionSkillUuids", updated.sessionSkillUuids()));
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/session/{sessionUuid}/session-skills/{skillUuid}")
+    public ResponseEntity<?> removeSessionSkill(@PathVariable String sessionUuid,
+                                                 @PathVariable String skillUuid) {
+        log.debug("ENTER removeSessionSkill: [session={}, skill={}]", sessionUuid, skillUuid);
+        try {
+            AiSession updated = chatService.removeSessionSkill(sessionUuid, skillUuid);
+            return ResponseEntity.ok(Map.of("status", "OK",
+                    "sessionSkillUuids", updated.sessionSkillUuids()));
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
+        }
+    }
+
+    @PostMapping("/session/{sessionUuid}/session-tools/{toolId}")
+    public ResponseEntity<?> addSessionTool(@PathVariable String sessionUuid,
+                                             @PathVariable String toolId) {
+        log.debug("ENTER addSessionTool: [session={}, tool={}]", sessionUuid, toolId);
+        try {
+            AiSession updated = chatService.addSessionTool(sessionUuid, toolId);
+            return ResponseEntity.ok(Map.of("status", "OK",
+                    "sessionToolIds", updated.sessionToolIds()));
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/session/{sessionUuid}/session-tools/{toolId}")
+    public ResponseEntity<?> removeSessionTool(@PathVariable String sessionUuid,
+                                                @PathVariable String toolId) {
+        log.debug("ENTER removeSessionTool: [session={}, tool={}]", sessionUuid, toolId);
+        try {
+            AiSession updated = chatService.removeSessionTool(sessionUuid, toolId);
+            return ResponseEntity.ok(Map.of("status", "OK",
+                    "sessionToolIds", updated.sessionToolIds()));
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
+        }
+    }
+
+    /** Returns all non-hidden tools from the registry, optionally filtered by category. */
+    @GetMapping("/tools")
+    public List<ToolSummary> listTools(
+            @RequestParam(required = false) String category) {
+        log.debug("ENTER listTools: [category={}]", category);
+        return toolRegistry.getAvailableTools().stream()
+                .filter(d -> category == null || category.isBlank() || d.category().equalsIgnoreCase(category))
+                .map(d -> new ToolSummary(d.id(), d.friendlyName(), d.category(), d.description()))
+                .sorted(Comparator.comparing(ToolSummary::category).thenComparing(ToolSummary::name))
+                .toList();
+    }
+
+    /** Returns the agent config and session extras for the sidebar panel. */
+    @GetMapping("/session/{sessionUuid}/agent-config")
+    public ResponseEntity<?> getAgentConfig(@PathVariable String sessionUuid) {
+        log.debug("ENTER getAgentConfig: [session={}]", sessionUuid);
+        try {
+            AiSession session = chatService.getSessionForCurrentUser(sessionUuid);
+            // Agent skills
+            sh.vork.ai.agent.AgentTemplate tpl = session.activeAgentTemplateId() != null
+                    ? chatService.listAgentTemplates().stream()
+                            .filter(t -> t.uuid().equals(session.activeAgentTemplateId()))
+                            .findFirst().orElse(null)
+                    : null;
+            List<SkillSummary> agentSkills = tpl != null && tpl.skillUuids() != null
+                    ? tpl.skillUuids().stream()
+                            .map(skillRepo::get)
+                            .filter(java.util.Objects::nonNull)
+                            .map(s -> new SkillSummary(s.uuid(), s.name(), s.description(), s.toolName()))
+                            .toList()
+                    : List.of();
+            // Session skills
+            List<SkillSummary> sessionSkills = session.sessionSkillUuids().stream()
+                    .map(skillRepo::get)
+                    .filter(java.util.Objects::nonNull)
+                    .map(s -> new SkillSummary(s.uuid(), s.name(), s.description(), s.toolName()))
+                    .toList();
+            // Agent tools (from allowedTools list)
+            List<ToolSummary> agentTools = tpl != null && tpl.allowedTools() != null
+                    ? tpl.allowedTools().stream()
+                            .map(id -> toolRegistry.getAvailableTools().stream()
+                                    .filter(d -> d.id().equals(id))
+                                    .findFirst().orElse(null))
+                            .filter(java.util.Objects::nonNull)
+                            .map(d -> new ToolSummary(d.id(), d.friendlyName(), d.category(), d.description()))
+                            .toList()
+                    : List.of();
+            // Session tools
+            List<ToolSummary> sessionTools = session.sessionToolIds().stream()
+                    .map(id -> toolRegistry.getAvailableTools().stream()
+                            .filter(d -> d.id().equals(id))
+                            .findFirst().orElse(null))
+                    .filter(java.util.Objects::nonNull)
+                    .map(d -> new ToolSummary(d.id(), d.friendlyName(), d.category(), d.description()))
+                    .toList();
+            return ResponseEntity.ok(new AgentConfigResponse(
+                    tpl != null ? tpl.uuid() : null,
+                    tpl != null ? tpl.name() : null,
+                    agentSkills, sessionSkills, agentTools, sessionTools));
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
+        }
     }
 
     // ── WebSocket / STOMP ─────────────────────────────────────────────────────
@@ -266,7 +395,8 @@ public class ChatController {
     // ── DTOs ──────────────────────────────────────────────────────────────────
 
     record SessionResponse(String sessionUuid, String sessionName, String provider,
-                            String activeAgentTemplateId, List<AiChatMessage> messages, String modelId) {}
+                            String activeAgentTemplateId, List<AiChatMessage> messages, String modelId,
+                            AiSessionStatus status) {}
 
     record SessionSummaryResponse(String sessionUuid, String sessionName, String provider,
                                   long createdAt, int messageCount, String modelId) {}
@@ -278,4 +408,16 @@ public class ChatController {
     record ModelSelectionRequest(String provider, String modelId) {}
 
     record AgentTemplateSummary(String uuid, String name, String agentType) {}
+
+    record SkillSummary(String uuid, String name, String description, String toolName) {}
+
+    record ToolSummary(String id, String name, String category, String description) {}
+
+    record AgentConfigResponse(
+            String agentUuid,
+            String agentName,
+            List<SkillSummary> agentSkills,
+            List<SkillSummary> sessionSkills,
+            List<ToolSummary> agentTools,
+            List<ToolSummary> sessionTools) {}
 }

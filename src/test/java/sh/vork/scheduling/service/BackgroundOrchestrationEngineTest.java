@@ -46,7 +46,7 @@ class BackgroundOrchestrationEngineTest {
                 10,
                 List.of(),
             AiSession.defaultEnvironmentVariables(),
-                AiSessionStatus.RUNNING, null, null, null));
+                AiSessionStatus.RUNNING, null, null, null, null, null));
 
         engine.executeBackgroundTurn(sessionUuid, "initial");
 
@@ -76,7 +76,7 @@ class BackgroundOrchestrationEngineTest {
                 0,
                 List.of(),
             AiSession.defaultEnvironmentVariables(),
-                AiSessionStatus.RUNNING, null, null, null));
+                AiSessionStatus.RUNNING, null, null, null, null, null));
 
         engine.executeBackgroundTurn(sessionUuid, "initial");
 
@@ -105,7 +105,7 @@ class BackgroundOrchestrationEngineTest {
                 0,
                 List.of(),
             AiSession.defaultEnvironmentVariables(),
-                AiSessionStatus.RUNNING, null, null, null));
+                AiSessionStatus.RUNNING, null, null, null, null, null));
 
         engine.executeBackgroundTurn(sessionUuid, "initial");
 
@@ -134,7 +134,7 @@ class BackgroundOrchestrationEngineTest {
             super(
                     sessionRepo,
                     null,
-                    new AiOrchestrationService(Map.of(), null, null, null, null, null, Map.of(), null, null, null, null),
+                    new AiOrchestrationService(Map.of(), null, null, null, null, null, Map.of(), null, null, null, null, null, null),
                     null,
                     new SimpMessagingTemplate(new NoOpMessageChannel()),
                     new ObjectMapper().findAndRegisterModules(),
@@ -165,7 +165,7 @@ class BackgroundOrchestrationEngineTest {
                         s.currentRoundCount(),
                         s.messages(),
                     AiSession.defaultEnvironmentVariables(),
-                        AiSessionStatus.COMPLETED, null, null, null));
+                        AiSessionStatus.COMPLETED, null, null, null, null, null));
                 context.markExecutionComplete();
             }
             return null;

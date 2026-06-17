@@ -36,12 +36,67 @@ body {
     width: 280px;
     border-right: 1px solid var(--vork-border);
     background: linear-gradient(180deg, rgba(30, 33, 38, 0.95), rgba(20, 22, 26, 0.98));
-    padding: 0.75rem 0.65rem;
+    padding: 0;
     display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
+    flex-direction: row;
+    gap: 0;
     transition: width 0.2s ease;
     flex-shrink: 0;
+}
+
+/* ── Icon-tab strip ───────────────────────────────────────────────────────── */
+
+.sidebar-tabs {
+    width: 44px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--vork-border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.5rem 0;
+    gap: 0.25rem;
+}
+
+.sidebar-tabs-spacer {
+    flex: 1;
+}
+
+.sidebar-tab-btn {
+    width: 34px;
+    height: 34px;
+    border: 1px solid transparent;
+    border-radius: 0.45rem;
+    background: transparent;
+    color: var(--vork-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.sidebar-tab-btn:hover {
+    color: var(--vork-text);
+    background: rgba(255,255,255,0.07);
+}
+
+.sidebar-tab-btn.active {
+    color: var(--vork-primary);
+    background: rgba(253, 170, 2, 0.14);
+    border-color: rgba(253, 170, 2, 0.3);
+}
+
+/* ── Tab content panels ───────────────────────────────────────────────────── */
+
+.sidebar-tab-content {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: 0.75rem 0.65rem;
+    gap: 0.75rem;
 }
 
 .sidebar-top {
@@ -70,6 +125,127 @@ body {
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
+}
+
+/* ── Skills panel ─────────────────────────────────────────────────────────── */
+
+.skills-panel {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.skills-pill-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    min-height: 1.6rem;
+}
+
+.skill-pill,
+.tool-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.15rem 0.55rem;
+    border-radius: 1rem;
+    font-size: 0.75rem;
+    border: 1px solid var(--vork-border);
+    background: rgba(255,255,255,0.04);
+    color: var(--vork-text);
+    white-space: nowrap;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.skill-pill {
+    border-color: rgba(253, 170, 2, 0.4);
+    background: rgba(253, 170, 2, 0.08);
+}
+
+.tool-pill {
+    border-color: rgba(100, 180, 255, 0.4);
+    background: rgba(100, 180, 255, 0.08);
+}
+
+.agent-skill-pill,
+.agent-tool-pill {
+    opacity: 0.7;
+    cursor: default;
+}
+
+.session-skill-pill .pill-remove,
+.session-tool-pill .pill-remove {
+    cursor: pointer;
+    color: var(--vork-muted);
+    font-size: 0.7rem;
+    line-height: 1;
+    padding: 0 0.1rem;
+    border: none;
+    background: transparent;
+    opacity: 0.8;
+}
+
+.session-skill-pill .pill-remove:hover,
+.session-tool-pill .pill-remove:hover {
+    color: var(--vork-danger);
+    opacity: 1;
+}
+
+.skills-search-box {
+    position: relative;
+}
+
+.skills-search-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 200;
+    background: var(--vork-surface);
+    border: 1px solid var(--vork-border);
+    border-radius: 0.45rem;
+    max-height: 180px;
+    overflow-y: auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+
+.skills-search-item {
+    padding: 0.4rem 0.65rem;
+    font-size: 0.82rem;
+    cursor: pointer;
+    border-bottom: 1px solid var(--vork-border);
+}
+
+.skills-search-item:last-child {
+    border-bottom: none;
+}
+
+.skills-search-item:hover {
+    background: rgba(253, 170, 2, 0.1);
+    color: var(--vork-primary);
+}
+
+body.sidebar-collapsed .chat-sidebar {
+    width: 44px;
+}
+
+body.sidebar-collapsed .sidebar-tab-content {
+    display: none !important;
+}
+
+body.sidebar-collapsed .sidebar-tabs {
+    border-right: none;
+    width: 44px;
+}
+
+/* Keep collapse-toggle visible in collapsed state */
+body.sidebar-collapsed .sidebar-tab-btn {
+    display: flex;
 }
 
 .chat-session-item {
@@ -167,30 +343,9 @@ body {
     padding: 0.4rem 0.25rem;
 }
 
-body.sidebar-collapsed .chat-sidebar {
-    width: 52px;
-    padding: 0.5rem 0.35rem;
-    gap: 0;
-}
-
-body.sidebar-collapsed .sidebar-label,
-body.sidebar-collapsed .sidebar-section-title,
-body.sidebar-collapsed .chat-session-name,
-body.sidebar-collapsed .chat-session-meta,
-body.sidebar-collapsed .chat-session-empty {
-    display: none;
-}
-
-body.sidebar-collapsed .sidebar-action,
-body.sidebar-collapsed .chat-session-list,
-body.sidebar-collapsed .chat-session-item,
-body.sidebar-collapsed .chat-session-rename,
-body.sidebar-collapsed .chat-session-open {
-    display: none;
-}
-
-body.sidebar-collapsed .sidebar-top {
-    justify-content: center;
+/* Keep collapse-toggle visible in collapsed state */
+body.sidebar-collapsed .sidebar-tab-btn {
+    display: flex;
 }
 
 /* ── Header ───────────────────────────────────────────────────────────────── */
@@ -350,6 +505,49 @@ body.sidebar-collapsed .sidebar-top {
 
 .agent-transition-row .fa-robot {
     font-size: 0.72rem;
+}
+
+/* ── AI thinking indicator ───────────────────────────────────────────────── */
+
+.thinking-row {
+    margin: 0.1rem 2rem 0.1rem 2.6rem;
+}
+
+.thinking-row details {
+    border-left: 2px solid var(--vork-muted);
+    padding-left: 0.55rem;
+    opacity: 0.65;
+    transition: opacity 0.15s;
+}
+
+.thinking-row details[open] {
+    opacity: 0.85;
+}
+
+.thinking-row summary {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.76rem;
+    color: var(--vork-muted);
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    padding: 0.1rem 0;
+}
+
+.thinking-row summary::-webkit-details-marker { display: none; }
+
+.thinking-row summary .fa-brain {
+    font-size: 0.7rem;
+}
+
+.thinking-row .thinking-content {
+    font-size: 0.75rem;
+    color: var(--vork-muted);
+    white-space: pre-wrap;
+    padding: 0.3rem 0 0.15rem;
+    line-height: 1.45;
 }
 
 .prompt-title {

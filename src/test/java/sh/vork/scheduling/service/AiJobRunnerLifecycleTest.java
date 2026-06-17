@@ -44,7 +44,7 @@ class AiJobRunnerLifecycleTest {
                 0L, 0L, null, null, null,
                 0,
                 null,
-                ScheduledJobStatus.WAITING);
+                ScheduledJobStatus.WAITING, null, null);
 
         jobRepo.save(job);
 
@@ -75,7 +75,7 @@ class AiJobRunnerLifecycleTest {
                 0L, 0L, null, null, null,
                 0,
                 null,
-                ScheduledJobStatus.WAITING);
+                ScheduledJobStatus.WAITING, null, null);
 
         jobRepo.save(job);
 
@@ -119,7 +119,9 @@ class AiJobRunnerLifecycleTest {
                     targetStatus,
                     current.activeAgentTemplateId(),
                     current.modelId(),
-                    current.skillStack()));
+                    current.skillStack(),
+                    current.sessionSkillUuids(),
+                    current.sessionToolIds()));
         }
 
         private static List<AiChatMessage> withSyntheticAssistantMessage(List<AiChatMessage> existing) {

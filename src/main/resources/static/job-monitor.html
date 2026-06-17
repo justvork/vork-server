@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Monitor — Vork</title>
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
+    <link rel="stylesheet" href="/packages/npm/xterm/current/css/xterm.css">
+    <link rel="stylesheet" href="/css/tailwind.css">
+    <link rel="stylesheet" href="/css/vork.css">
+    <link rel="stylesheet" href="/css/chat.css">
+    <link rel="stylesheet" href="/css/job-monitor.css">
+</head>
+<body>
+
+<div class="monitor-layout">
+
+    <!-- Header -->
+    <header class="monitor-header">
+        <a href="/jobs" class="btn btn-outline-secondary btn-sm back-link" title="Back to Jobs">
+            <i class="fa-solid fa-arrow-left"></i>
+        </a>
+        <i class="fa-solid fa-clock-rotate-left job-icon"></i>
+        <span class="monitor-title" id="job-name">Loading&hellip;</span>
+        <span id="status-badge" class="badge badge-RUNNING">RUNNING</span>
+        <button id="terminate-btn" type="button" class="btn btn-danger btn-sm" title="Terminate this job">
+            <i class="fa-solid fa-stop me-1"></i>Terminate
+        </button>
+    </header>
+
+    <!-- Messages area -->
+    <main class="monitor-messages" id="messages-area">
+        <div id="typing-indicator" class="message-row d-none">
+            <div class="avatar assistant"><i class="fa-solid fa-robot"></i></div>
+            <div class="bubble assistant typing-bubble">
+                <span class="typing-dot"></span>
+                <span class="typing-dot"></span>
+                <span class="typing-dot"></span>
+            </div>
+        </div>
+    </main>
+
+</div>
+
+<!-- Authorization modal -->
+<div class="modal fade" id="auth-modal" tabindex="-1" aria-labelledby="auth-modal-label" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="auth-modal-label">Authorise Action</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="auth-modal-body"></div>
+            <div class="modal-footer" id="auth-modal-footer"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Dependencies (same local packages as index.html) -->
+<script src="/packages/npm/sockjs-client/current/dist/sockjs.min.js"></script>
+<script src="/packages/npm.stomp/stompjs/current/bundles/stomp.umd.min.js"></script>
+<script src="/packages/npm/marked/current/marked.min.js"></script>
+<script src="/packages/npm/xterm/current/lib/xterm.js"></script>
+<script src="/packages/npm/xterm-addon-fit/current/lib/xterm-addon-fit.js"></script>
+<!-- Shared rendering module -->
+<script src="/js/chat-render.js"></script>
+<!-- Authorization modal module -->
+<script src="/js/vork-modal.js"></script>
+<script src="/js/auth-modal.js"></script>
+<!-- Page logic -->
+<script src="/js/job-monitor.js"></script>
+
+</body>
+</html>

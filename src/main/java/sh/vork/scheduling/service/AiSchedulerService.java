@@ -79,7 +79,9 @@ public class AiSchedulerService {
                 job.modelId(),
                 job.oobTimeoutMinutes(),
                 job.expectedOutput(),
-                job.status() == null ? ScheduledJobStatus.WAITING : job.status());
+                job.status() == null ? ScheduledJobStatus.WAITING : job.status(),
+                job.skillUuids(),
+                job.toolIds());
 
         // Cancel any existing future for this id
         cancelFuture(id);
@@ -97,7 +99,8 @@ public class AiSchedulerService {
                 base.userId(), type, base.startTime(), base.repeatDuration(),
                 base.durationType(), base.lastExecutionTime(), nextExec,
                 base.agentTemplateId(), base.provider(), base.modelId(),
-                base.oobTimeoutMinutes(), base.expectedOutput(), base.status());
+                base.oobTimeoutMinutes(), base.expectedOutput(), base.status(),
+                base.skillUuids(), base.toolIds());
         jobRepository.save(normalized);
 
         AiJobRunner runner = new AiJobRunner(normalized, backgroundOrchestrationEngine,
@@ -169,19 +172,28 @@ public class AiSchedulerService {
      * next scheduled fire time.  For REPEAT jobs the scheduled future is unchanged;
      * for ONE_TIME the scheduled future is cancelled (avoid a double execution).
      */
-    public void runNow(String jobId) {
+    public String runNow(String jobId) {
         ScheduledJob job = jobRepository.get(jobId);
         if (job == null) {
             log.warn("runNow: job not found [id={}]", jobId);
-            return;
+            return null;
         }
         if (job.invocationType() == InvocationType.ONE_TIME) {
             cancelFuture(jobId); // prevent the scheduled run from also firing
         }
+        String trackingUuid = jobId + "-run-" + java.util.UUID.randomUUID();
+        // Persist the tracking UUID on the job so the monitor page is discoverable
+        jobRepository.save(new ScheduledJob(
+                job.id(), job.name(), job.aiPrompt(), trackingUuid, job.userId(),
+                job.invocationType(), job.startTime(), job.repeatDuration(), job.durationType(),
+                job.lastExecutionTime(), job.nextExecutionTime(), job.agentTemplateId(),
+                job.provider(), job.modelId(), job.oobTimeoutMinutes(), job.expectedOutput(),
+                job.status(), job.skillUuids(), job.toolIds()));
         AiJobRunner runner = new AiJobRunner(job, backgroundOrchestrationEngine,
-                jobRepository, sessionRepository);
+            jobRepository, sessionRepository, trackingUuid);
         taskScheduler.execute(runner);
-        log.info("Job triggered via Run Now [id={}, type={}]", jobId, job.invocationType());
+        log.info("Job triggered via Run Now [id={}, type={}, tracking={}]", jobId, job.invocationType(), trackingUuid);
+        return trackingUuid;
     }
 
     // ── Delete ────────────────────────────────────────────────────────────────
@@ -229,7 +241,8 @@ public class AiSchedulerService {
                     job.userId(), job.invocationType(), job.startTime(), job.repeatDuration(),
                     job.durationType(), job.lastExecutionTime(), 0L,
                     job.agentTemplateId(), job.provider(), job.modelId(),
-                    job.oobTimeoutMinutes(), job.expectedOutput(), ScheduledJobStatus.WAITING));
+                    job.oobTimeoutMinutes(), job.expectedOutput(), ScheduledJobStatus.WAITING,
+                    job.skillUuids(), job.toolIds()));
             log.info("Job marked waiting after authorization resume [id={}, tracking={}]",
                     job.id(), trackingSessionUuid);
         } else {
@@ -251,7 +264,8 @@ public class AiSchedulerService {
                 job.userId(), job.invocationType(), job.startTime(), job.repeatDuration(),
                 job.durationType(), job.lastExecutionTime(), job.nextExecutionTime(),
                 job.agentTemplateId(), job.provider(), job.modelId(),
-                job.oobTimeoutMinutes(), job.expectedOutput(), status);
+                job.oobTimeoutMinutes(), job.expectedOutput(), status,
+                job.skillUuids(), job.toolIds());
     }
 
     public static Duration toDuration(long amount, DurationType type) {

@@ -11,10 +11,21 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+
+import sh.vork.ai.context.ToolExecutionContext;
+import sh.vork.ai.exception.ToolSuspensionException;
+import sh.vork.ai.protocol.interaction.FieldSource;
+import sh.vork.ai.protocol.interaction.FormAction;
+import sh.vork.ai.protocol.interaction.FormField;
+import sh.vork.ai.protocol.interaction.InteractionFormSchema;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.ai.entity.AiSession;
+import sh.vork.security.SecureCredentialStore;
 
 /**
  * Creates a {@link ToolCallback} from a {@link Skill} record so that skills are
@@ -36,6 +47,14 @@ public class SkillToolCallbackFactory {
     @Lazy
     @Autowired
     private SkillService skillService;
+
+    @Lazy
+    @Autowired
+    private DatabaseRepository<AiSession> aiSessionRepository;
+
+    @Lazy
+    @Autowired
+    private SecureCredentialStore secureCredentialStore;
 
     private final ObjectMapper objectMapper;
 
@@ -71,6 +90,54 @@ public class SkillToolCallbackFactory {
             @Override
             public String call(String toolInput, ToolContext toolContext) {
                 log.debug("Skill tool invoked [toolName={}, skillUuid={}]", toolName, skill.uuid());
+
+                // ── Secret gate ───────────────────────────────────────────────────────────
+                // Before activating the skill, ensure all declared secrets are present for
+                // the current user.  Missing secrets trigger an OOB suspension form with
+                // FieldSource.SECRET password fields so the user can supply them securely
+                // without the values appearing in the conversation.
+                if (skill.secrets() != null && !skill.secrets().isEmpty()) {
+                    String sessionUuid = ToolExecutionContext.getSessionUuid();
+                    String username = null;
+                    if (sessionUuid != null && !sessionUuid.isBlank()) {
+                        AiSession session = aiSessionRepository.get(sessionUuid);
+                        if (session != null) username = session.username();
+                    }
+                    if (username != null && !username.isBlank()) {
+                        List<SkillSecret> missing = new ArrayList<>();
+                        for (SkillSecret s : skill.secrets()) {
+                            if (!secureCredentialStore.hasSecret(username, s.name())) {
+                                missing.add(s);
+                            }
+                        }
+                        if (!missing.isEmpty()) {
+                            log.debug("Skill secrets missing — suspending for collection [skill={}, missing={}]",
+                                    skill.uuid(), missing.stream().map(SkillSecret::name).toList());
+                            List<FormField> fields = missing.stream()
+                                    .map(s -> new FormField(
+                                            s.name(),
+                                            "password",
+                                            s.description().isBlank() ? s.name() : s.description(),
+                                            "Enter value for " + s.name(),
+                                            true,
+                                            FieldSource.SECRET,
+                                            null))
+                                    .toList();
+                            InteractionFormSchema schema = new InteractionFormSchema(
+                                    "COLLECT_SKILL_SECRETS",
+                                    "Credentials Required",
+                                    "The skill '" + skill.name() + "' requires the following secrets to continue:",
+                                    fields,
+                                    List.of(new FormAction("SAVE", "Save & Continue", "primary")));
+                            throw new ToolSuspensionException(
+                                    toolName, toolInput,
+                                    "Credentials are required for skill: " + skill.name(),
+                                    schema);
+                        }
+                    }
+                }
+                // ── End secret gate ───────────────────────────────────────────────────────
+
                 Map<String, String> params = parseParams(toolInput, skill.parameters());
                 // SkillActivatedException is a RuntimeException — Spring AI's DefaultToolCallingManager
                 // does not catch it, so it propagates freely to ChatService.executeAgentLoop.
@@ -110,9 +177,17 @@ public class SkillToolCallbackFactory {
         if (params == null || params.isEmpty()) {
             return "{\"type\":\"object\",\"properties\":{}}";
         }
+        // Secret-type parameters are never exposed to the AI — the secret gate
+        // handles them independently via SkillSecret declarations on the skill.
+        List<SkillParameter> visible = params.stream()
+                .filter(p -> !p.isSecret())
+                .toList();
+        if (visible.isEmpty()) {
+            return "{\"type\":\"object\",\"properties\":{}}";
+        }
         StringBuilder props = new StringBuilder();
         boolean first = true;
-        for (SkillParameter p : params) {
+        for (SkillParameter p : visible) {
             if (!first) props.append(",");
             props.append("\"").append(p.name()).append("\":{");
             props.append("\"type\":\"").append(mapType(p.type())).append("\"");
@@ -123,7 +198,7 @@ public class SkillToolCallbackFactory {
             props.append("}");
             first = false;
         }
-        String required = params.stream()
+        String required = visible.stream()
                 .map(p -> "\"" + p.name() + "\"")
                 .collect(Collectors.joining(","));
         return "{\"type\":\"object\",\"properties\":{" + props + "},\"required\":[" + required + "]}";

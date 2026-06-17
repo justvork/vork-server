@@ -34,15 +34,25 @@ public class AiJobRunner implements Runnable {
     private final BackgroundOrchestrationEngine backgroundOrchestrationEngine;
     private final DatabaseRepository<ScheduledJob> jobRepository;
     private final DatabaseRepository<AiSession> sessionRepository;
+    private final String preGeneratedTrackingUuid;
 
     public AiJobRunner(ScheduledJob job,
                        BackgroundOrchestrationEngine backgroundOrchestrationEngine,
                        DatabaseRepository<ScheduledJob> jobRepository,
                        DatabaseRepository<AiSession> sessionRepository) {
+        this(job, backgroundOrchestrationEngine, jobRepository, sessionRepository, null);
+    }
+
+    public AiJobRunner(ScheduledJob job,
+                       BackgroundOrchestrationEngine backgroundOrchestrationEngine,
+                       DatabaseRepository<ScheduledJob> jobRepository,
+                       DatabaseRepository<AiSession> sessionRepository,
+                       String preGeneratedTrackingUuid) {
         this.job = job;
         this.backgroundOrchestrationEngine = backgroundOrchestrationEngine;
         this.jobRepository = jobRepository;
         this.sessionRepository = sessionRepository;
+        this.preGeneratedTrackingUuid = preGeneratedTrackingUuid;
     }
 
     @Override
@@ -67,7 +77,9 @@ public class AiJobRunner implements Runnable {
         // ── Mark ACTIVE before spawning so concurrent fires are blocked ────────
         save(ScheduledJobStatus.ACTIVE, current.lastExecutionTime(), current.nextExecutionTime());
 
-        String trackingSessionUuid = job.id() + "-run-" + UUID.randomUUID();
+        String trackingSessionUuid = (preGeneratedTrackingUuid != null && !preGeneratedTrackingUuid.isBlank())
+            ? preGeneratedTrackingUuid
+            : job.id() + "-run-" + UUID.randomUUID();
         long now = System.currentTimeMillis();
         try {
             String effectiveProvider = (job.provider() != null && !job.provider().isBlank())
@@ -77,7 +89,7 @@ public class AiJobRunner implements Runnable {
             AiChatMessage seedMessage = new AiChatMessage(
                     UUID.randomUUID().toString(),
                     "USER",
-                    job.aiPrompt(),
+                    "Begin task: " + job.name(),
                     now,
                     null);
 
@@ -94,7 +106,9 @@ public class AiJobRunner implements Runnable {
                     AiSessionStatus.RUNNING,
                     job.agentTemplateId(),
                     job.modelId(),
-                    null);
+                    null,
+                    job.skillUuids(),
+                    job.toolIds());
             sessionRepository.save(trackingSession);
 
             SecurityContextHolder.getContext()
@@ -165,29 +179,36 @@ public class AiJobRunner implements Runnable {
     }
 
     private void save(ScheduledJobStatus newStatus, long lastExecutionTime, long nextExecutionTime) {
+        ScheduledJob latest = jobRepository.get(job.id());
+        ScheduledJob base = latest != null ? latest : job;
         jobRepository.save(new ScheduledJob(
-                job.id(),
-                job.name(),
-                job.aiPrompt(),
-                job.sessionUuid(),
-                job.userId(),
-                job.invocationType(),
-                job.startTime(),
-                job.repeatDuration(),
-                job.durationType(),
-                lastExecutionTime,
-                nextExecutionTime,
-                job.agentTemplateId(),
-                job.provider(),
-                job.modelId(),
-                job.oobTimeoutMinutes(),
-                job.expectedOutput(),
-                newStatus));
+            base.id(),
+            base.name(),
+            base.aiPrompt(),
+            base.sessionUuid(),
+            base.userId(),
+            base.invocationType(),
+            base.startTime(),
+            base.repeatDuration(),
+            base.durationType(),
+            lastExecutionTime,
+            nextExecutionTime,
+            base.agentTemplateId(),
+            base.provider(),
+            base.modelId(),
+            base.oobTimeoutMinutes(),
+            base.expectedOutput(),
+            newStatus,
+            base.skillUuids(),
+            base.toolIds()));
     }
 
     private static java.util.concurrent.ConcurrentHashMap<String, String> buildEnvVars(ScheduledJob job) {
         java.util.concurrent.ConcurrentHashMap<String, String> env = AiSession.defaultEnvironmentVariables();
         env.put("JOB_ID", job.id());
+        if (job.aiPrompt() != null && !job.aiPrompt().isBlank()) {
+            env.put("JOB_TASK_PROMPT", job.aiPrompt());
+        }
         if (job.oobTimeoutMinutes() > 0) {
             env.put("vork.oob.timeout.minutes", String.valueOf(job.oobTimeoutMinutes()));
         }

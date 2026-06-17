@@ -57,29 +57,64 @@ public class AiOrchestrationService {
 BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated background thread. You must perform all necessary analysis and tool calls across multiple message rounds without expecting further human input. Once you have validated that the requested objective is entirely satisfied (e.g., your types compile successfully and records are saved), you MUST invoke the completeBackgroundTask tool to cleanly finalize the run. You MUST provide a boolean 'success' value and a 'report' string summarising what was done and produced. Do not exit without invoking this tool.
                         """.stripIndent();
 
-        private static final String STRUCTURED_RESPONSE_MANDATE = """
+        /**
+         * Builds the structured-output mandate injected at the end of every system prompt.
+         * The set of valid statuses is narrowed based on what the current agent/context
+         * is actually able to do, avoiding confusion from status values the AI cannot use.
+         *
+         * @param inSkillFrame  true when the AI is executing inside a sandboxed skill
+         * @param isBackground  true for BACKGROUND_SCHEDULER sessions
+         * @param canDelegate   true only for orchestrator agents that may assign sub-agents
+         * @param canSwitchAgent true for interactive sessions where the user can change agents
+         */
+        private static String buildResponseMandate(boolean inSkillFrame,
+                                                   boolean isBackground,
+                                                   boolean canDelegate,
+                                                   boolean canSwitchAgent) {
+                if (inSkillFrame) {
+                        return "\n\n### TURN OUTPUT REQUIREMENT\n"
+                                + "Return a single valid JSON object. No markdown fences, no explanation outside the JSON:\n"
+                                + "{\n"
+                                + "  \"status\": \"FINISHED_TURN\",\n"
+                                + "  \"textResponse\": \"<the complete skill output>\"\n"
+                                + "}\n"
+                                + "FINISHED_TURN exits the skill. textResponse IS the skill output — "
+                                + "format it exactly as SKILL DIRECTIVES specify. "
+                                + "Do NOT call any tool to signal completion; returning FINISHED_TURN with your result IS the exit signal.";
+                }
 
-            ### CORE OUTPUT REQUIREMENT
-            You MUST return your output as a single valid JSON object matching the StructuredAgentResponse schema.
-            No markdown fences, no explanation outside the JSON. Your entire response must be parsable JSON:
-            {
-              "status": "FINISHED_TURN | DELEGATE_TURN | CONTINUE_TURN | SWITCH_AGENT",
-              "textResponse": "<your human-readable message to the user or supervisor>",
-              "targetAgent": "<exact agent display name, or null>",
-              "delegationInstructions": "<full self-contained task for the sub-agent, or null>"
-            }
-            1. If your goal is completed or you are returning a result to a supervisor, set status to "FINISHED_TURN".
-            2. If you need to delegate a job to a specialized expert agent, set status to "DELEGATE_TURN",
-               populate "targetAgent" with their exact display name, and write explicit, comprehensive
-               task parameters inside "delegationInstructions".
-            3. If you have made meaningful progress and want to inform the user before continuing execution,
-               set status to "CONTINUE_TURN". Your textResponse will be shown to the user immediately and
-               you will be invoked again automatically — do NOT stop and wait for a user reply.
-            4. If the user explicitly asks to switch to a different agent, set status to "SWITCH_AGENT",
-               set "targetAgent" to the exact display name of the desired agent, and write a brief
-               confirmation message in "textResponse". The session active agent will be updated and the
-               user will see a confirmation — you do NOT need to do any work for the new agent.
-            """.stripIndent();
+                StringBuilder sb = new StringBuilder("\n\n### TURN OUTPUT REQUIREMENT\n");
+                sb.append("Return a single valid JSON object. No markdown fences, no explanation outside the JSON:\n{\n");
+                sb.append("  \"status\": \"FINISHED_TURN");
+                if (canDelegate) sb.append(" | DELEGATE_TURN");
+                if (canSwitchAgent) sb.append(" | SWITCH_AGENT");
+                sb.append("\",\n");
+                sb.append("  \"textResponse\": \"<your complete response>\"");
+                if (canDelegate || canSwitchAgent) {
+                        sb.append(",\n  \"targetAgent\": \"<exact agent display name, or null>\"");
+                        sb.append(",\n  \"delegationInstructions\": \"<full self-contained task for sub-agent, or null>\"");
+                }
+                sb.append("\n}\n");
+
+                sb.append("FINISHED_TURN: Task complete — textResponse MUST be a complete, substantive result or summary. ");
+                sb.append("Do NOT set FINISHED_TURN with an empty or status-only message — use the think tool for mid-turn updates.\n");
+                if (canDelegate) {
+                        sb.append("DELEGATE_TURN: Assign work to a specialist agent — set targetAgent to their exact display name "
+                                + "and provide comprehensive instructions in delegationInstructions.\n");
+                }
+                if (canSwitchAgent) {
+                        sb.append("SWITCH_AGENT: Only when the user explicitly asks to change to a different agent — "
+                                + "set targetAgent to the exact display name and confirm in textResponse.\n");
+                }
+
+                if (!isBackground) {
+                        sb.append("You may ask the user clarifying questions when the task is ambiguous before taking action.\n");
+                } else {
+                        sb.append("Do NOT ask for user input — you are running autonomously without human supervision.\n");
+                }
+
+                return sb.toString();
+        }
 
     /**
      * Stable model alias to fall back to when the session's requested model is
@@ -104,6 +139,8 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         private final sh.vork.skill.SkillToolCallbackFactory skillToolCallbackFactory;
         private final ToolCallback listAvailableToolsCallback;
         private final ToolCallback listAgentTemplatesCallback;
+        private final ToolCallback thinkCallback;
+        private final sh.vork.ai.security.SkillSecretSubstitutor skillSecretSubstitutor;
 
         public AiOrchestrationService(Map<AiProvider, ChatClient> chatClientRegistry,
                                                                   AiChatClientFactory chatClientFactory,
@@ -115,7 +152,9 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                                                   SessionToolStore sessionToolStore,
                                                                   sh.vork.skill.SkillToolCallbackFactory skillToolCallbackFactory,
                                                                   @org.springframework.beans.factory.annotation.Qualifier("listAvailableTools") ToolCallback listAvailableToolsCallback,
-                                                                  @org.springframework.beans.factory.annotation.Qualifier("listAgentTemplates") ToolCallback listAgentTemplatesCallback) {
+                                                                  @org.springframework.beans.factory.annotation.Qualifier("listAgentTemplates") ToolCallback listAgentTemplatesCallback,
+                                                                  @org.springframework.beans.factory.annotation.Qualifier("think") ToolCallback thinkCallback,
+                                                                  sh.vork.ai.security.SkillSecretSubstitutor skillSecretSubstitutor) {
                 this.registry = chatClientRegistry;
                 this.chatClientFactory = chatClientFactory;
                 this.sessionEnvironmentService = sessionEnvironmentService;
@@ -127,6 +166,8 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 this.skillToolCallbackFactory = skillToolCallbackFactory;
                 this.listAvailableToolsCallback = listAvailableToolsCallback;
                 this.listAgentTemplatesCallback = listAgentTemplatesCallback;
+                this.thinkCallback = thinkCallback;
+                this.skillSecretSubstitutor = skillSecretSubstitutor;
     }
 
     /**
@@ -157,6 +198,42 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 response == null ? "<null>" : (response.length() > 200 ? response.substring(0, 200) + "…" : response));
 
         return response;
+    }
+
+    /**
+     * Generates a welcome message using the active agent's system prompt with a
+     * welcome-specific instruction appended.  All tool callbacks are stripped so
+     * the model cannot trigger secured tools or authorization challenges.
+     *
+     * <p>The model is instructed to return a JSON object with
+     * {@code status=FINISHED_TURN} and the welcome text in {@code textResponse},
+     * consistent with the normal structured-response protocol.  Callers should
+     * unwrap the result via {@code ChatService.extractTextResponse()}.
+     *
+     * @param provider the AI backend to route to
+     * @return the model's raw response (JSON or plain text)
+     */
+    public String generateWelcomeMessage(AiProvider provider) {
+        ChatClient base = resolveClient(provider);
+        log.info("Generating welcome message [provider={}]...", provider);
+        String systemPrompt = composeSystemPrompt()
+                + "\n\n### WELCOME MESSAGE INSTRUCTION\n"
+                + "This is the start of a new chat session. Your ONLY task right now is to provide "
+                + "a short, friendly welcome message that introduces yourself and summarises the "
+                + "capabilities available to the user. "
+                + "Return a single JSON object with no markdown fences:\n"
+                + "{\n  \"status\": \"FINISHED_TURN\",\n  \"textResponse\": \"<your welcome message>\"\n}\n"
+                + "Do NOT call any tools. Do NOT perform any actions.";
+        return callWithFallback(
+                builder -> builder
+                        .defaultSystem(systemPrompt)
+                        .defaultToolCallbacks(new org.springframework.ai.tool.ToolCallback[0])
+                        .build()
+                        .prompt()
+                        .user("Please provide your welcome message now.")
+                        .call()
+                        .content(),
+                base, provider);
     }
 
     /**
@@ -233,13 +310,15 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         private static final String SKILL_OPERATIONAL_PROTOCOL =
                 "SKILL EXECUTION PROTOCOL: You are executing a sandboxed skill.\n"
                 + "MANDATORY RULES:\n"
-                + "1. You MUST complete this skill by calling the completeSkillExecution tool. "
-                +    "Responding with plain text alone does NOT complete the skill — the tool call is required.\n"
-                + "2. If the user message contains a REQUIRED OUTPUT FORMAT section, the 'output' argument "
-                +    "you pass to completeSkillExecution MUST follow that template exactly — same structure, "
-                +    "same fields, no omissions and no additions.\n"
-                + "3. Do not end a turn without either using an available tool or calling completeSkillExecution. "
-                +    "Use your tools to gather whatever information you need, then call completeSkillExecution.";
+                + "1. Use the available tools to gather information, run commands, or process data.\n"
+                + "2. When your objective is complete, return FINISHED_TURN. "
+                +    "Your textResponse IS the skill output — this is the exit signal.\n"
+                + "3. If SKILL DIRECTIVES specify an output format, textResponse MUST follow it exactly.\n"
+                + "4. Do not end a turn without either using a tool or returning FINISHED_TURN with a result.\n"
+                + "5. Mid-turn commentary: call the think tool first, then immediately invoke your next action tool. "
+                +    "Never emit a bare status message without following it with a tool call in the same turn.";
+
+        private static final String AVAILABLE_TOOLS_CONTEXT_KEY = "__available_tool_names__";
 
         private String composeSystemPrompt() {
                 String sessionUuid = ToolExecutionContext.getSessionUuid();
@@ -257,11 +336,21 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         if (session.skillStack() != null && !session.skillStack().isEmpty()) {
                                 sh.vork.skill.SkillFrame topFrame = session.skillStack().getLast();
                                 String skillPrompt = topFrame.instructions();
+
+                                prompt.append("\n\n").append(SKILL_OPERATIONAL_PROTOCOL);
+
                                 if (skillPrompt != null && !skillPrompt.isBlank()) {
                                         prompt.append("\n\n### SKILL DIRECTIVES\n").append(skillPrompt);
                                 }
-                                prompt.append("\n\n").append(SKILL_OPERATIONAL_PROTOCOL);
-
+                                // Output format mandate belongs in the system prompt, not in a user message,
+                                // so the model treats it as a hard constraint rather than a request.
+                                String outputTemplate = topFrame.outputTemplate();
+                                if (outputTemplate != null && !outputTemplate.isBlank()) {
+                                        prompt.append("\n\n### REQUIRED OUTPUT FORMAT\n")
+                                                .append("Your textResponse MUST conform exactly to this template — ")
+                                                .append("same structure, same fields, no deviations:\n")
+                                                .append(outputTemplate);
+                                }
                                 // List sub-skill tools explicitly so the model knows the exact names to call.
                                 // Without this, lite models don't discover sub-skills from function declarations alone.
                                 sh.vork.skill.Skill frameSkill = skillRepo.get(topFrame.skillUuid());
@@ -289,7 +378,51 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                         }
                                 }
 
-                                return logAndReturn(prompt, sessionUuid, "SKILL"); // skip env-var block and structured mandate
+                                // Inject available secrets so the model knows which {{TOKEN}} to use.
+                                if (frameSkill != null
+                                        && frameSkill.secrets() != null
+                                        && !frameSkill.secrets().isEmpty()) {
+                                        prompt.append("\n\n### AVAILABLE SECRETS\n");
+                                        prompt.append("The following named secrets are pre-configured for this skill. ");
+                                        prompt.append("Use each placeholder token verbatim as the value in any tool argument where the secret is needed ");
+                                        prompt.append("(e.g. in an HTTP header value or request body). ");
+                                        prompt.append("Do NOT ask the user for these values — they are injected automatically.\n\n");
+                                        for (sh.vork.skill.SkillSecret s : frameSkill.secrets()) {
+                                                prompt.append("- `{{").append(s.name()).append("}}`");
+                                                if (!s.description().isBlank())
+                                                        prompt.append(" — ").append(s.description());
+                                                prompt.append("\n");
+                                        }
+                                }
+
+                                // Append skill-specific mandate: FINISHED_TURN is the only exit signal.
+                                appendAvailableToolsSection(prompt);
+                                prompt.append(buildResponseMandate(true, false, false, false));
+                                return logAndReturn(prompt, sessionUuid, "SKILL"); // skip env-var block
+                        }
+
+                        if (session.originMode() == SessionOriginMode.BACKGROUND) {
+                                prompt.append("\n\n").append(BACKGROUND_OPERATIONAL_PROTOCOL);
+
+                                Object persistentTask = ToolExecutionContext.get("__background_task_instruction__");
+                                String taskText = persistentTask == null ? null : persistentTask.toString();
+                                if ((taskText == null || taskText.isBlank())
+                                        && session.environmentVariables() != null) {
+                                        taskText = session.environmentVariables().get("JOB_TASK_PROMPT");
+                                }
+                                if (taskText != null && !taskText.isBlank()) {
+                                        prompt.append("\n\n### BACKGROUND TASK DIRECTIVE\n")
+                                                .append(taskText);
+                                }
+
+                                Object turnInstruction = ToolExecutionContext.get("__background_turn_instruction__");
+                                if (turnInstruction != null) {
+                                        String turnText = turnInstruction.toString();
+                                        if (!turnText.isBlank()) {
+                                                prompt.append("\n\n### BACKGROUND TURN DIRECTIVE\n")
+                                                        .append(turnText);
+                                        }
+                                }
                         }
 
                         String agentId = session.getActiveAgentTemplateId();
@@ -308,13 +441,39 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                         if (!skills.isEmpty()) {
                                                 prompt.append("\n\n### AVAILABLE SKILLS\n");
                                                 prompt.append("The following skills are available to you as tools. ");
-                                                prompt.append("Call them by their tool name:\n\n");
+                                                prompt.append("Call them by their tool name. ");
+                                                prompt.append("Tool visibility is attachment-based: only call tools that are available in this turn ");
+                                                prompt.append("(directly attached to this agent/session, or exposed by the active skill frame):\n\n");
                                                 for (sh.vork.skill.Skill s : skills) {
                                                         prompt.append("- `").append(s.toolName()).append("`");
                                                         if (!s.description().isBlank())
                                                                 prompt.append(": ").append(s.description());
                                                         prompt.append("\n");
                                                 }
+                                        }
+                                }
+                        }
+                        // Also list session-level skills so the model knows their tool names
+                        List<String> sessionSkillUuids = session.sessionSkillUuids();
+                        if (sessionSkillUuids != null && !sessionSkillUuids.isEmpty()) {
+                                List<sh.vork.skill.Skill> sessionSkills = sessionSkillUuids.stream()
+                                        .map(skillRepo::get)
+                                        .filter(Objects::nonNull)
+                                        .toList();
+                                if (!sessionSkills.isEmpty()) {
+                                        // Append to existing ### AVAILABLE SKILLS block if already started, else create it
+                                        if (!prompt.toString().contains("### AVAILABLE SKILLS")) {
+                                                prompt.append("\n\n### AVAILABLE SKILLS\n");
+                                                prompt.append("The following skills are available to you as tools. ");
+                                                prompt.append("Call them by their tool name. ");
+                                                prompt.append("Tool visibility is attachment-based: only call tools that are available in this turn ");
+                                                prompt.append("(directly attached to this agent/session, or exposed by the active skill frame):\n\n");
+                                        }
+                                        for (sh.vork.skill.Skill s : sessionSkills) {
+                                                prompt.append("- `").append(s.toolName()).append("`");
+                                                if (!s.description().isBlank())
+                                                        prompt.append(": ").append(s.description());
+                                                prompt.append("\n");
                                         }
                                 }
                         }
@@ -337,10 +496,13 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         }
                 }
 
-                // Mandate structured output for interactive (non-background, non-skill) sessions
-                if (session != null && session.originMode() != SessionOriginMode.BACKGROUND
-                        && (session.skillStack() == null || session.skillStack().isEmpty())) {
-                        prompt.append(STRUCTURED_RESPONSE_MANDATE);
+                // Mandate structured output — scope of valid statuses depends on agent capability.
+                appendAvailableToolsSection(prompt);
+                if (session != null) {
+                        boolean isBackground = session.originMode() == SessionOriginMode.BACKGROUND;
+                        boolean canDelegate  = isConciergeSession();
+                        boolean canSwitch    = !isBackground;
+                        prompt.append(buildResponseMandate(false, isBackground, canDelegate, canSwitch));
                 }
 
                 String originLabel = session != null ? session.originMode().name() : "UNKNOWN";
@@ -404,6 +566,17 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 // AgentTemplate is active, or the full secured set otherwise.
                 // Tools are always set here (never on the base ChatClient) to prevent
                 // Spring AI from seeing duplicates when the builder is mutated.
+                String sessionUuid = ToolExecutionContext.getSessionUuid();
+                AiSession sessionForSkillCheck = (sessionUuid != null && !sessionUuid.isBlank())
+                        ? sessionRepo.get(sessionUuid) : null;
+                boolean inSkillFrame = sessionForSkillCheck != null
+                        && sessionForSkillCheck.skillStack() != null
+                        && !sessionForSkillCheck.skillStack().isEmpty();
+
+                // Resolve which tools to expose for this request: filtered subset when an
+                // AgentTemplate is active, or the full secured set otherwise.
+                // Tools are always set here (never on the base ChatClient) to prevent
+                // Spring AI from seeing duplicates when the builder is mutated.
                 ToolCallback[] filtered = resolveFilteredToolCallbacks();
                 ToolCallback[] tools = (filtered != null)
                         ? filtered
@@ -411,7 +584,6 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
 
                 // Merge session-scoped tools (e.g. completeBackgroundTask for background sessions).
                 // These are hidden from the global registry and injected programmatically per session.
-                String sessionUuid = ToolExecutionContext.getSessionUuid();
                 List<ToolCallback> sessionTools = sessionToolStore.getTools(sessionUuid);
                 List<ToolCallback> merged = new ArrayList<>(List.of(tools));
 
@@ -422,14 +594,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         .map(t -> t.getToolDefinition().name())
                         .collect(Collectors.toCollection(java.util.HashSet::new));
 
-                // Determine whether we are inside an active skill frame.
-                // If so, skill tools and concierge-only tools must NOT be injected.
-                AiSession sessionForSkillCheck = (sessionUuid != null && !sessionUuid.isBlank())
-                        ? sessionRepo.get(sessionUuid) : null;
-                boolean inSkillFrame = sessionForSkillCheck != null
-                        && sessionForSkillCheck.skillStack() != null
-                        && !sessionForSkillCheck.skillStack().isEmpty();
-
+                // Inject skill tools and concierge tools only when NOT inside a skill frame.
                 if (!inSkillFrame) {
                         // Inject each assigned skill as its own ToolCallback so the AI sees
                         // skills as direct tools rather than going through the generic executeSkill.
@@ -464,16 +629,62 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 }
                         } else {
                                 log.debug("No active agent template — skill injection skipped [session={}]", sessionUuid);
+                        }                        // Inject session-level skills pinned by the user for this specific session
+                        List<String> sessionSkillUuids = sessionForSkillCheck != null
+                                ? sessionForSkillCheck.sessionSkillUuids() : List.of();
+                        if (sessionSkillUuids != null && !sessionSkillUuids.isEmpty()) {
+                                int sessionInjected = 0;
+                                for (String skillUuid : sessionSkillUuids) {
+                                        sh.vork.skill.Skill skill = skillRepo.get(skillUuid);
+                                        if (skill == null) {
+                                                log.warn("Session skill UUID not found in DB — skipping [skillUuid={}]", skillUuid);
+                                                continue;
+                                        }
+                                        ToolCallback skillTool = skillToolCallbackFactory.create(skill);
+                                        String toolName = skillTool.getToolDefinition().name();
+                                        if (presentNames.add(toolName)) {
+                                                merged.add(skillTool);
+                                                sessionInjected++;
+                                        }
+                                }
+                                log.debug("Session skill tools injected [session={}, count={}]", sessionUuid, sessionInjected);
                         }
                         if (presentNames.add("listAvailableTools"))  merged.add(listAvailableToolsCallback);
                         if (isConciergeSession() && presentNames.add("listAgentTemplates"))
                                 merged.add(listAgentTemplatesCallback);
                 }
                 if (!sessionTools.isEmpty()) {
-                        merged.addAll(sessionTools);
-                        log.debug("Merged {} session-scoped tool(s) [session={}]", sessionTools.size(), sessionUuid);
+                        int beforeMerge = merged.size();
+                        for (ToolCallback st : sessionTools) {
+                                // completeBackgroundTask belongs only to the parent agent loop.
+                                // Exposing it inside a skill frame lets the AI short-circuit the
+                                // whole job instead of returning FINISHED_TURN to the skill sub-loop
+                                // and then completing the task from the parent loop.
+                                if (inSkillFrame && "completeBackgroundTask".equals(st.getToolDefinition().name())) {
+                                        continue;
+                                }
+                                merged.add(st);
+                        }
+                        int added = merged.size() - beforeMerge;
+                        if (added > 0) {
+                                log.debug("Merged {} session-scoped tool(s) [session={}]", added, sessionUuid);
+                        }
                 }
+                // think is mandatory — always available regardless of skill-frame depth.
+                if (presentNames.add("think")) merged.add(thinkCallback);
                 tools = merged.toArray(ToolCallback[]::new);
+
+                // Wrap every tool callback with the secret substitutor so that {{KEY}} tokens
+                // in any tool's arguments are replaced with real secret values before execution.
+                // The wrapper is a no-op fast-path when no {{ tokens are present.
+                String secretUsername = (sessionForSkillCheck != null) ? sessionForSkillCheck.username() : null;
+                if (secretUsername != null && !secretUsername.isBlank()) {
+                        final String uname = secretUsername;
+                        tools = java.util.Arrays.stream(tools)
+                                .map(t -> (ToolCallback) new sh.vork.ai.security.SecretSubstitutingToolCallback(
+                                        t, skillSecretSubstitutor, uname))
+                                .toArray(ToolCallback[]::new);
+                }
 
                 if (log.isDebugEnabled()) {
                         String toolNames = merged.stream()
@@ -482,6 +693,12 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         log.debug("Tools available for AI invocation [session={}, count={}, tools=[{}]]",
                                 sessionUuid, merged.size(), toolNames);
                 }
+
+                List<String> visibleToolNames = merged.stream()
+                        .map(t -> t.getToolDefinition().name())
+                        .distinct()
+                        .toList();
+                ToolExecutionContext.put(AVAILABLE_TOOLS_CONTEXT_KEY, visibleToolNames);
 
                 ChatClient.Builder builder = base.mutate()
                         .defaultSystem(composeSystemPrompt())
@@ -563,26 +780,23 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         private ToolCallback[] resolveFilteredToolCallbacks() {
                 String sessionUuid = ToolExecutionContext.getSessionUuid();
                 if (sessionUuid == null || sessionUuid.isBlank()) {
-                        return null;
+                        return new ToolCallback[0];
                 }
 
                 AiSession session = sessionRepo.get(sessionUuid);
                 if (session == null) {
-                        return null;
+                        return new ToolCallback[0];
                 }
 
                 // Sessions with an active skill frame: tool set is bounded by the top frame's allowedTools.
-                // An empty allowedTools list means only completeSkillExecution (never fall through to all-tools).
+                // An empty allowedTools list means no hard tools (the AI exits via FINISHED_TURN).
                 if (session.skillStack() != null && !session.skillStack().isEmpty()) {
                         sh.vork.skill.SkillFrame topFrame = session.skillStack().getLast();
                         List<String> allowedToolNames = topFrame.allowedTools();
 
-                        // Always include completeSkillExecution so the skill can terminate
                         List<String> skillToolNames = new ArrayList<>(
                                 allowedToolNames != null ? allowedToolNames : List.of());
-                        if (!skillToolNames.contains("completeSkillExecution")) {
-                                skillToolNames.add("completeSkillExecution");
-                        }
+                        // Skills exit via FINISHED_TURN — completeSkillExecution is no longer injected.
                         // Resolve hard tools from the secured map
                         List<ToolCallback> frameTools = new ArrayList<>();
                         List<String> unresolved = new ArrayList<>();
@@ -590,7 +804,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 ToolCallback cb = securedToolCallbackMap.get(name);
                                 if (cb != null) {
                                         frameTools.add(cb);
-                                } else if (!"completeSkillExecution".equals(name)) {
+                                } else {
                                         unresolved.add(name);
                                 }
                         }
@@ -630,7 +844,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
 
                 String agentId = session.getActiveAgentTemplateId();
                 if (agentId == null) {
-                        return null;
+                        return new ToolCallback[0];
                 }
 
                 AgentTemplate template = agentTemplateRepo.get(agentId);
@@ -640,6 +854,14 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
 
                 List<String> toolNames = new ArrayList<>(
                         template.allowedTools() != null ? template.allowedTools() : List.of());
+
+                // Also include session-level tool IDs pinned by the user for this session
+                List<String> sessionToolIds = session.sessionToolIds();
+                if (sessionToolIds != null && !sessionToolIds.isEmpty()) {
+                        for (String id : sessionToolIds) {
+                                if (!toolNames.contains(id)) toolNames.add(id);
+                        }
+                }
 
                 if (toolNames.isEmpty()) {
                         log.debug("Agent has no allowedTools assigned — exposing no tools [agent={}]", agentId);
@@ -654,7 +876,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 log.debug("Tool filtering active [agent={}, allowedTools={}, resolved={}]",
                         agentId, template.allowedTools().size(), result.length);
 
-                return result.length > 0 ? result : null;
+                return result.length > 0 ? result : new ToolCallback[0];
         }
 
         /**
@@ -676,7 +898,8 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         /**
          * Returns the names of tools in {@code toolNames} that are not present in the
          * secured tool callback map.  {@code completeSkillExecution} is excluded because
-         * it is always injected as a session-scoped tool, not via the secured map.
+         * it is a legacy tool that is no longer injected at runtime; its presence in
+         * an allowedTools list should not be treated as an error.
          */
         public List<String> findUnresolvableTools(List<String> toolNames) {
                 if (toolNames == null || toolNames.isEmpty()) return List.of();
@@ -684,6 +907,29 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         .filter(name -> !name.equals("completeSkillExecution"))
                         .filter(name -> !securedToolCallbackMap.containsKey(name))
                         .toList();
+        }
+
+        private void appendAvailableToolsSection(StringBuilder prompt) {
+                Object toolsObj = ToolExecutionContext.get(AVAILABLE_TOOLS_CONTEXT_KEY);
+                if (!(toolsObj instanceof List<?> rawList) || rawList.isEmpty()) {
+                        return;
+                }
+
+                List<String> toolNames = rawList.stream()
+                        .map(String::valueOf)
+                        .filter(name -> name != null && !name.isBlank())
+                        .distinct()
+                        .toList();
+                if (toolNames.isEmpty()) {
+                        return;
+                }
+
+                prompt.append("\n\n### TOOL ACCESS POLICY\n");
+                prompt.append("AI may only execute tools it has access to which are listed below. ");
+                prompt.append("Skills are tools. ONLY use these tools:\n\n");
+                for (String toolName : toolNames) {
+                        prompt.append("- `").append(toolName).append("`\n");
+                }
         }
 
 }

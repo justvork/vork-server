@@ -42,7 +42,7 @@ class AiJobRunnerTest {
         return new ScheduledJob(id, "Job " + id, "prompt-" + id, "sid-" + id, "alice",
                 type, Instant.parse("2026-05-17T10:15:30Z"),
                 repeatDuration, durationType,
-                0L, 0L, null, null, null, 0, null, status);
+                0L, 0L, null, null, null, 0, null, status, null, null);
     }
 
     @Test
@@ -59,7 +59,7 @@ class AiJobRunnerTest {
         when(sessionRepo.get(anyString())).thenReturn(new AiSession(
                 "sid", "BACKGROUND_SCHEDULER", SessionOriginMode.BACKGROUND, "alice", "Untitled",
                 System.currentTimeMillis(), 0, List.of(), AiSession.defaultEnvironmentVariables(),
-                AiSessionStatus.COMPLETED, null, null, null));
+                AiSessionStatus.COMPLETED, null, null, null, null, null));
 
         new AiJobRunner(job, engine, repo, sessionRepo).run();
 

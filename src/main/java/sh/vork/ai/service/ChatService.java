@@ -17,6 +17,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.content.Media;
@@ -124,7 +125,7 @@ public class ChatService {
         AiSession session = new AiSession(httpSessionId, provider.name(), SessionOriginMode.WEB,
             username, DEFAULT_SESSION_NAME, System.currentTimeMillis(), 0, List.of(),
             AiSession.defaultEnvironmentVariables(), AiSessionStatus.RUNNING,
-            AgentTemplateSeeder.UUID_CONCIERGE, modelId, null);
+            AgentTemplateSeeder.UUID_CONCIERGE, modelId, null, null, null);
         sessionRepo.save(session);
         log.info("Created HTTP session-bound AI session [id={}, provider={}, model={}, user={}]",
             httpSessionId, provider, modelId, username);
@@ -141,7 +142,7 @@ public class ChatService {
         AiSession session = new AiSession(uuid, provider.name(), SessionOriginMode.WEB,
             username, DEFAULT_SESSION_NAME, System.currentTimeMillis(), 0, List.of(),
             AiSession.defaultEnvironmentVariables(), AiSessionStatus.RUNNING,
-            AgentTemplateSeeder.UUID_CONCIERGE, modelId, null);
+            AgentTemplateSeeder.UUID_CONCIERGE, modelId, null, null, null);
         sessionRepo.save(session);
         log.info("Created AI session [id={}, provider={}, model={}, user={}]", uuid, provider, modelId, username);
         return session;
@@ -171,7 +172,7 @@ public class ChatService {
                 SessionOriginMode.TELEGRAM, username, DEFAULT_SESSION_NAME,
                 System.currentTimeMillis(), 0, List.of(),
                 java.util.Collections.unmodifiableMap(env),
-                AiSessionStatus.RUNNING, AgentTemplateSeeder.UUID_CONCIERGE, null, null);
+                AiSessionStatus.RUNNING, AgentTemplateSeeder.UUID_CONCIERGE, null, null, null, null);
         sessionRepo.save(session);
         log.info("Created Telegram session [id={}, user={}, chatId={}]", uuid, username, chatId);
         return session;
@@ -188,7 +189,7 @@ public class ChatService {
                 SessionOriginMode.SLACK, username, DEFAULT_SESSION_NAME,
                 System.currentTimeMillis(), 0, List.of(),
                 java.util.Collections.unmodifiableMap(env),
-                AiSessionStatus.RUNNING, AgentTemplateSeeder.UUID_CONCIERGE, null, null);
+                AiSessionStatus.RUNNING, AgentTemplateSeeder.UUID_CONCIERGE, null, null, null, null);
         sessionRepo.save(session);
         log.info("Created Slack session [id={}, user={}, channelId={}]", uuid, username, channelId);
         return session;
@@ -238,7 +239,9 @@ public class ChatService {
                 session.status(),
                 session.activeAgentTemplateId(),
                 session.modelId(),
-                session.skillStack());
+                session.skillStack(),
+                session.sessionSkillUuids(),
+                session.sessionToolIds());
         sessionRepo.save(renamed);
         return renamed;
     }
@@ -277,10 +280,10 @@ public class ChatService {
                                      List<String> attachmentUuids, AiProvider provider) {
         AiSession session = getSessionForCurrentUser(sessionUuid);
 
-        // Build Spring AI message list from stored history
-        // AWAITING_INPUT and TOOL messages are skipped here; the
-        // authorization controller handles resumption via generateFromHistory().
-        List<Message> history = hydrateHistory(session.messages());
+        // Build Spring AI message list from stored history.
+        // When a skill frame is active, only messages since the skill started are included
+        // so the skill AI does not see unrelated background-job context.
+        List<Message> history = buildHistoryForSession(session);
 
         log.info("Chat turn [session={}, history={} msgs, attachments={}, provider={}]",
                 sessionUuid, history.size(),
@@ -333,6 +336,20 @@ public class ChatService {
         List<AttachmentRef> userRefs = refs.isEmpty() ? null : Collections.unmodifiableList(refs);
         AiChatMessage userMsg = new AiChatMessage(UUID.randomUUID().toString(), "USER",
                 content == null ? "" : content, now, userRefs);
+
+        if (log.isDebugEnabled()) {
+            log.debug("AI call prompt [session={}]: {}", sessionUuid,
+                    effectiveContent.length() > 500 ? effectiveContent.substring(0, 500) + "…" : effectiveContent);
+            StringBuilder historyDump = new StringBuilder();
+            for (int i = 0; i < history.size(); i++) {
+                Message m = history.get(i);
+                String text = m.getText();
+                historyDump.append("  [").append(i).append("] ").append(m.getMessageType())
+                        .append(": ").append(text == null ? "<null>" : text.length() > 200 ? text.substring(0, 200) + "…" : text)
+                        .append("\n");
+            }
+            log.debug("AI call history [{} msgs, session={}]:\n{}", history.size(), sessionUuid, historyDump);
+        }
 
         ToolExecutionContext.bindSessionUuid(sessionUuid);
         ToolExecutionContext.hydrate(session.environmentVariables());
@@ -391,7 +408,7 @@ public class ChatService {
                 sessionRepo.save(new AiSession(frozenSession.uuid(), frozenSession.provider(), frozenSession.originMode(), frozenSession.username(),
                     frozenSession.name(), frozenSession.createdAt(), frozenSession.currentRoundCount(), List.copyOf(updated),
                     frozenSession.environmentVariables(), AiSessionStatus.AWAITING_INPUT, frozenSession.activeAgentTemplateId(),
-                    frozenSession.modelId(), frozenSession.skillStack()));
+                    frozenSession.modelId(), frozenSession.skillStack(), frozenSession.sessionSkillUuids(), frozenSession.sessionToolIds()));
 
                 if (provider == AiProvider.BACKGROUND_SCHEDULER) {
                 systemNotificationService.notifyOfflineOperator(ex.getToolName(), ex.getArguments(), sessionUuid, eventId);
@@ -465,7 +482,8 @@ public class ChatService {
         ToolExecutionContext.bindSessionUuid(sessionUuid);
         ToolExecutionContext.hydrate(session.environmentVariables());
         try {
-            List<Message> history = hydrateHistory(session.messages());
+            // Skill frames get a filtered view of history; normal sessions get the full history.
+            List<Message> history = buildHistoryForSession(session);
 
             log.info("Chat turn [session={}, history={} msgs, attachments={}, provider={}]",
                     sessionUuid, history.size(),
@@ -581,7 +599,9 @@ public class ChatService {
                         AiSessionStatus.AWAITING_INPUT,
                         frozenSession.activeAgentTemplateId(),
                         frozenSession.modelId(),
-                        frozenSession.skillStack()));
+                        frozenSession.skillStack(),
+                        frozenSession.sessionSkillUuids(),
+                        frozenSession.sessionToolIds()));
 
                 if (provider == AiProvider.BACKGROUND_SCHEDULER) {
                     systemNotificationService.notifyOfflineOperator(ex.getToolName(), ex.getArguments(), sessionUuid, eventId);
@@ -676,7 +696,7 @@ public class ChatService {
                     sessionRepo.save(new AiSession(current.uuid(), current.provider(), current.originMode(),
                             current.username(), current.name(), current.createdAt(), current.currentRoundCount(),
                             current.messages(), current.environmentVariables(), current.status(), targetId,
-                            current.modelId(), current.skillStack()));
+                            current.modelId(), current.skillStack(), current.sessionSkillUuids(), current.sessionToolIds()));
                     log.info("Agent switched [session={}, target={}, newAgent={}]",
                             sessionUuid, structured.targetAgent(), targetId);
 
@@ -708,7 +728,7 @@ public class ChatService {
                     sessionRepo.save(new AiSession(current.uuid(), current.provider(), current.originMode(),
                             current.username(), current.name(), current.createdAt(), current.currentRoundCount(),
                             current.messages(), current.environmentVariables(), current.status(), targetId,
-                            current.modelId(), current.skillStack()));
+                            current.modelId(), current.skillStack(), current.sessionSkillUuids(), current.sessionToolIds()));
                     String agentDisplayName = resolveAgentNameById(targetId);
                     broadcastAndAccumulateTransition(sessionUuid,
                             "Changed to " + agentDisplayName, transitionMsgs);
@@ -743,14 +763,20 @@ public class ChatService {
             updated.addAll(transitionMsgs);
             updated.add(aiMsg);
 
-            AiSessionStatus persistedStatus = resolveStatusForReplyPersistence(sessionUuid, AiSessionStatus.RUNNING);
+            // If a skill frame is active, mark the session COMPLETED so that
+            // BackgroundOrchestrationEngine.executeSkillTurn can detect that the
+            // skill has finished and exit its loop cleanly.
+            boolean hasActiveSkillFrame = latest.skillStack() != null && !latest.skillStack().isEmpty();
+            AiSessionStatus persistedStatus = hasActiveSkillFrame
+                    ? AiSessionStatus.COMPLETED
+                    : resolveStatusForReplyPersistence(sessionUuid, AiSessionStatus.RUNNING);
             sessionRepo.save(new AiSession(
                     latest.uuid(), latest.provider(), latest.originMode(),
                     latest.username(), latest.name(), latest.createdAt(),
                     latest.currentRoundCount(), List.copyOf(updated),
                     latest.environmentVariables(), persistedStatus,
                     latest.activeAgentTemplateId(), latest.modelId(),
-                    latest.skillStack()));
+                    latest.skillStack(), latest.sessionSkillUuids(), latest.sessionToolIds()));
 
             maybeGenerateSessionName(sessionUuid);
             log.info("Agent loop completed [session={}, iterations={}]", sessionUuid, i + 1);
@@ -776,7 +802,7 @@ public class ChatService {
                 latest.currentRoundCount(), List.copyOf(updated),
                 latest.environmentVariables(), AiSessionStatus.RUNNING,
                 latest.activeAgentTemplateId(), latest.modelId(),
-                latest.skillStack()));
+                latest.skillStack(), latest.sessionSkillUuids(), latest.sessionToolIds()));
         return aiMsg;
     }
 
@@ -824,7 +850,8 @@ public class ChatService {
                 session.originMode(), session.username(), session.name(),
                 session.createdAt(), session.currentRoundCount(), session.messages(),
                 session.environmentVariables(), session.status(),
-                session.activeAgentTemplateId(), modelId, session.skillStack());
+                session.activeAgentTemplateId(), modelId, session.skillStack(),
+                session.sessionSkillUuids(), session.sessionToolIds());
         sessionRepo.save(updated);
         log.info("Session model updated [session={}, provider={}, model={}]", sessionUuid, provider, modelId);
         return updated;
@@ -839,15 +866,90 @@ public class ChatService {
         }
     }
 
-    /**
-     * Runs an inline skill sub-loop for a {@link sh.vork.skill.SkillActivatedException}.
-     *
+    /** Adds a skill UUID to the session's {@code sessionSkillUuids} list. */
+    public AiSession addSessionSkill(String sessionUuid, String skillUuid) {
+        AiSession session = getSessionForCurrentUser(sessionUuid);
+        if (session.sessionSkillUuids().contains(skillUuid)) {
+            return session; // already present — idempotent
+        }
+        List<String> updated = new ArrayList<>(session.sessionSkillUuids());
+        updated.add(skillUuid);
+        AiSession saved = new AiSession(
+                session.uuid(), session.provider(), session.originMode(),
+                session.username(), session.name(), session.createdAt(),
+                session.currentRoundCount(), session.messages(),
+                session.environmentVariables(), session.status(),
+                session.activeAgentTemplateId(), session.modelId(),
+                session.skillStack(), List.copyOf(updated), session.sessionToolIds());
+        sessionRepo.save(saved);
+        log.info("Session skill added [session={}, skill={}]", sessionUuid, skillUuid);
+        return saved;
+    }
+
+    /** Removes a skill UUID from the session's {@code sessionSkillUuids} list. */
+    public AiSession removeSessionSkill(String sessionUuid, String skillUuid) {
+        AiSession session = getSessionForCurrentUser(sessionUuid);
+        List<String> updated = session.sessionSkillUuids().stream()
+                .filter(id -> !id.equals(skillUuid))
+                .toList();
+        AiSession saved = new AiSession(
+                session.uuid(), session.provider(), session.originMode(),
+                session.username(), session.name(), session.createdAt(),
+                session.currentRoundCount(), session.messages(),
+                session.environmentVariables(), session.status(),
+                session.activeAgentTemplateId(), session.modelId(),
+                session.skillStack(), List.copyOf(updated), session.sessionToolIds());
+        sessionRepo.save(saved);
+        log.info("Session skill removed [session={}, skill={}]", sessionUuid, skillUuid);
+        return saved;
+    }
+
+    /** Adds a tool bean ID to the session's {@code sessionToolIds} list. */
+    public AiSession addSessionTool(String sessionUuid, String toolId) {
+        AiSession session = getSessionForCurrentUser(sessionUuid);
+        if (session.sessionToolIds().contains(toolId)) {
+            return session;
+        }
+        List<String> updated = new ArrayList<>(session.sessionToolIds());
+        updated.add(toolId);
+        AiSession saved = new AiSession(
+                session.uuid(), session.provider(), session.originMode(),
+                session.username(), session.name(), session.createdAt(),
+                session.currentRoundCount(), session.messages(),
+                session.environmentVariables(), session.status(),
+                session.activeAgentTemplateId(), session.modelId(),
+                session.skillStack(), session.sessionSkillUuids(), List.copyOf(updated));
+        sessionRepo.save(saved);
+        log.info("Session tool added [session={}, tool={}]", sessionUuid, toolId);
+        return saved;
+    }
+
+    /** Removes a tool bean ID from the session's {@code sessionToolIds} list. */
+    public AiSession removeSessionTool(String sessionUuid, String toolId) {
+        AiSession session = getSessionForCurrentUser(sessionUuid);
+        List<String> updated = session.sessionToolIds().stream()
+                .filter(id -> !id.equals(toolId))
+                .toList();
+        AiSession saved = new AiSession(
+                session.uuid(), session.provider(), session.originMode(),
+                session.username(), session.name(), session.createdAt(),
+                session.currentRoundCount(), session.messages(),
+                session.environmentVariables(), session.status(),
+                session.activeAgentTemplateId(), session.modelId(),
+                session.skillStack(), session.sessionSkillUuids(), List.copyOf(updated));
+        sessionRepo.save(saved);
+        log.info("Session tool removed [session={}, tool={}]", sessionUuid, toolId);
+        return saved;
+    }
+
+
+     /*
      * <p>The skill's context (tools + system prompt) is stored in the top
      * {@link sh.vork.skill.SkillFrame} on the session's {@code skillStack}.
      * The sub-loop calls the model in a loop until either:
      * <ul>
-     *   <li>The skill's stack frame is popped (i.e. {@code completeSkillExecution} was called), or</li>
-     *   <li>The model returns {@code FINISHED_TURN}, or</li>
+     *   <li>The model returns {@code FINISHED_TURN} — the primary exit path (pops frame, uses textResponse), or</li>
+     *   <li>The skill's stack frame is popped by a legacy tool call (backward-compat fallback), or</li>
      *   <li>A {@link ToolSuspensionException} is thrown (propagates to parent session freeze), or</li>
      *   <li>Maximum iterations are exhausted.</li>
      * </ul>
@@ -862,7 +964,7 @@ public class ChatService {
         broadcastAndPersistSkillEvent(sessionUuid, "Running skill: " + ex.getSkillName());
 
         // Hard-reject before starting the sub-loop if any tools the skill requires are not registered.
-        // Without this check the model would be handed only completeSkillExecution, hallucinate a result,
+        // Without this check the model would be handed no usable tools, might hallucinate a result,
         // and the caller would get garbage back with no indication of what went wrong.
         AiSession sessionAtStart = sessionRepo.get(sessionUuid);
         if (sessionAtStart != null && sessionAtStart.skillStack() != null && !sessionAtStart.skillStack().isEmpty()) {
@@ -878,7 +980,7 @@ public class ChatService {
                         sessionAtStart.currentRoundCount(), sessionAtStart.messages(),
                         sessionAtStart.environmentVariables(), sessionAtStart.status(),
                         sessionAtStart.getActiveAgentTemplateId(), sessionAtStart.modelId(),
-                        List.copyOf(poppedStack)));
+                        List.copyOf(poppedStack), sessionAtStart.sessionSkillUuids(), sessionAtStart.sessionToolIds()));
                 broadcastAndPersistSkillEvent(sessionUuid, "Skill failed: " + ex.getSkillName());
                 log.warn("Skill aborted — required tools not available [session={}, skill={}, missing={}]",
                         sessionUuid, ex.getSkillName(), unresolvable);
@@ -935,7 +1037,7 @@ public class ChatService {
                                 current.currentRoundCount(), current.messages(),
                                 current.environmentVariables(), current.status(),
                                 current.activeAgentTemplateId(), current.modelId(),
-                                List.copyOf(poppedStack)));
+                                List.copyOf(poppedStack), current.sessionSkillUuids(), current.sessionToolIds()));
                     }
                     broadcastAndPersistSkillEvent(sessionUuid, "Skill error: " + nestedEx.getSkillName());
                     String errMsg = "Error: maximum skill nesting depth (" + MAX_SKILL_DEPTH + ") reached. Sub-skill aborted.";
@@ -952,19 +1054,18 @@ public class ChatService {
                 continue;
             }
 
-            // Check if the skill frame was popped by completeSkillExecution during this turn.
-            // Compare against skillCompleteDepth rather than isEmpty() so that nested skills
-            // (where parent frames keep the stack non-empty) are also detected correctly.
+            // Check if the skill frame was popped by a legacy completeSkillExecution call during this turn.
+            // Skills now exit via FINISHED_TURN, but this guard remains as a safety fallback.
             AiSession afterTurn = sessionRepo.get(sessionUuid);
             boolean skillComplete = afterTurn == null
                     || afterTurn.skillStack() == null
                     || afterTurn.skillStack().size() <= skillCompleteDepth;
 
             if (skillComplete) {
-                // Retrieve the output stored by completeSkillExecution
+                // Legacy path: frame was popped by a completeSkillExecution tool call.
                 Object storedOutput = sh.vork.ai.context.ToolExecutionContext.get("__skill_output__");
                 String output = storedOutput != null ? storedOutput.toString() : rawResponse;
-                log.info("Skill sub-loop complete via completeSkillExecution [session={}, skill={}, iterations={}]",
+                log.info("Skill sub-loop complete via tool call (legacy) [session={}, skill={}, iterations={}]",
                         sessionUuid, ex.getSkillName(), i + 1);
                 broadcastAndPersistSkillEvent(sessionUuid, "Skill completed: " + ex.getSkillName());
                 return output;
@@ -972,25 +1073,26 @@ public class ChatService {
 
             StructuredAgentResponse structured = parseStructuredResponse(rawResponse);
             if ("FINISHED_TURN".equals(structured.status())) {
-                String result = structured.textResponse() != null && !structured.textResponse().isBlank()
-                        ? structured.textResponse() : rawResponse;
-                log.info("Skill sub-loop FINISHED_TURN [session={}, skill={}, iterations={}]",
-                        sessionUuid, ex.getSkillName(), i + 1);
-                broadcastAndPersistSkillEvent(sessionUuid, "Skill completed: " + ex.getSkillName());
-                return result;
-            }
+                // Primary exit path: the skill returned FINISHED_TURN with its output in textResponse.
+                String output = structured.textResponse() != null ? structured.textResponse() : rawResponse;
 
-            if ("CONTINUE_TURN".equals(structured.status())) {
-                String progressText = structured.textResponse() != null && !structured.textResponse().isBlank()
-                        ? structured.textResponse() : rawResponse;
-                UiEventFrame progressEvent = new UiEventFrame(UUID.randomUUID().toString(),
-                        "TEXT_RESPONSE", "CHAT_OUTPUT", progressText, null);
-                messaging.convertAndSend("/topic/chat/" + sessionUuid, progressEvent);
-                skillHistory.add(new AssistantMessage(progressText));
-                currentPrompt = "Continue executing the skill. When the objective is fully satisfied, invoke completeSkillExecution.";
-                log.debug("Skill sub-loop CONTINUE_TURN [session={}, skill={}, iteration={}]",
-                        sessionUuid, ex.getSkillName(), i);
-                continue;
+                // Pop the skill frame from the stack so the parent agent loop can continue.
+                AiSession current = sessionRepo.get(sessionUuid);
+                if (current != null && current.skillStack() != null && !current.skillStack().isEmpty()) {
+                    List<sh.vork.skill.SkillFrame> poppedStack = new ArrayList<>(current.skillStack());
+                    poppedStack.removeLast();
+                    sessionRepo.save(new AiSession(
+                            current.uuid(), current.provider(), current.originMode(),
+                            current.username(), current.name(), current.createdAt(),
+                            current.currentRoundCount(), current.messages(),
+                            current.environmentVariables(), current.status(),
+                            current.activeAgentTemplateId(), current.modelId(),
+                            List.copyOf(poppedStack), current.sessionSkillUuids(), current.sessionToolIds()));
+                }
+                log.info("Skill sub-loop complete via FINISHED_TURN [session={}, skill={}, iterations={}, outputLength={}]",
+                        sessionUuid, ex.getSkillName(), i + 1, output.length());
+                broadcastAndPersistSkillEvent(sessionUuid, "Skill completed: " + ex.getSkillName());
+                return output;
             }
 
             // Anything else: treat as finished
@@ -1017,7 +1119,7 @@ public class ChatService {
         sessionRepo.save(new AiSession(session.uuid(), session.provider(), session.originMode(),
                 session.username(), session.name(), session.createdAt(), session.currentRoundCount(),
                 session.messages(), session.environmentVariables(), session.status(), agentTemplateId,
-                session.modelId(), session.skillStack()));
+                session.modelId(), session.skillStack(), session.sessionSkillUuids(), session.sessionToolIds()));
         UiEventFrame switchEvent = new UiEventFrame(UUID.randomUUID().toString(),
                 "AGENT_SWITCH", "AGENT_SWITCH", agentTemplateId, null);
         messaging.convertAndSend("/topic/chat/" + sessionUuid, switchEvent);
@@ -1056,7 +1158,8 @@ public class ChatService {
                     session.username(), session.name(), session.createdAt(),
                     session.currentRoundCount(), List.copyOf(updated),
                     session.environmentVariables(), session.status(),
-                    session.activeAgentTemplateId(), session.modelId(), session.skillStack()));
+                    session.activeAgentTemplateId(), session.modelId(), session.skillStack(),
+                    session.sessionSkillUuids(), session.sessionToolIds()));
         }
         log.debug("Skill transition [session={}, text={}]", sessionUuid, text);
     }
@@ -1077,7 +1180,27 @@ public class ChatService {
      * Parses raw model output into a {@link StructuredAgentResponse}.
      * Strips markdown code fences if present. On parse failure returns a
      * synthetic FINISHED_TURN with the raw text as textResponse.
+     *
+     * <p>When the parsed record's {@code textResponse} is null or blank (i.e.
+     * the model used a non-standard field name such as {@code result},
+     * {@code response}, or {@code message}), the method attempts to recover
+     * the value from those alternate fields before returning.
      */
+    /**
+     * Extracts the plain {@code textResponse} field from a raw model response that
+     * may or may not be a structured JSON envelope. Safe to call from outside the
+     * agent loop (e.g. the welcome message or session-title generation paths).
+     *
+     * @param raw the model's raw output string
+     * @return the human-readable text; falls back to {@code raw} if not parseable
+     */
+    public String extractTextResponse(String raw) {
+        StructuredAgentResponse parsed = parseStructuredResponse(raw);
+        return parsed.textResponse() != null && !parsed.textResponse().isBlank()
+                ? parsed.textResponse()
+                : raw;
+    }
+
     private StructuredAgentResponse parseStructuredResponse(String rawResponse) {
         if (rawResponse == null || rawResponse.isBlank()) {
             return new StructuredAgentResponse("FINISHED_TURN", "", null, null);
@@ -1094,12 +1217,41 @@ public class ChatService {
                     json = json.substring(brace).strip();
                 }
             }
-            return objectMapper.readValue(json, StructuredAgentResponse.class);
+            StructuredAgentResponse parsed = objectMapper.readValue(json, StructuredAgentResponse.class);
+
+            // If textResponse is missing, try common alternate field names the model might use
+            // (e.g. "result", "response", "message"). This avoids leaking raw JSON to the UI.
+            if (parsed.textResponse() == null || parsed.textResponse().isBlank()) {
+                com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(json);
+                String alt = extractAlternateTextField(node);
+                if (alt != null && !alt.isBlank()) {
+                    log.debug("parseStructuredResponse: textResponse absent, recovered from alternate field [status={}]",
+                            parsed.status());
+                    parsed = new StructuredAgentResponse(
+                            parsed.status(), alt, parsed.targetAgent(), parsed.delegationInstructions());
+                }
+            }
+            return parsed;
         } catch (Exception e) {
             log.warn("Failed to parse StructuredAgentResponse, treating as FINISHED_TURN [preview={}]",
                     rawResponse.length() > 200 ? rawResponse.substring(0, 200) : rawResponse);
             return new StructuredAgentResponse("FINISHED_TURN", rawResponse, null, null);
         }
+    }
+
+    /**
+     * Tries to extract a human-readable text value from well-known alternate field
+     * names that models occasionally use instead of {@code textResponse}.
+     * Returns {@code null} when none match.
+     */
+    private static String extractAlternateTextField(com.fasterxml.jackson.databind.JsonNode node) {
+        for (String field : List.of("result", "response", "message", "content", "output", "text", "reply")) {
+            com.fasterxml.jackson.databind.JsonNode n = node.get(field);
+            if (n != null && n.isTextual() && !n.asText().isBlank()) {
+                return n.asText();
+            }
+        }
+        return null;
     }
 
     /**
@@ -1203,7 +1355,9 @@ public class ChatService {
                 persistedStatus,
                 session.activeAgentTemplateId(),
                 session.modelId(),
-                session.skillStack()));
+                session.skillStack(),
+                session.sessionSkillUuids(),
+                session.sessionToolIds()));
 
         maybeGenerateSessionName(session.uuid());
     }
@@ -1219,18 +1373,76 @@ public class ChatService {
         return defaultStatus;
     }
 
+    /**
+     * Builds the Spring AI message history for a session, filtering to only skill-scoped messages
+     * when an active skill frame is present on the stack.
+     *
+     * <p>Skills run in an isolated context: they should only see tool outputs and messages from
+     * their own execution, not the full background-job history.  The top {@link SkillFrame}'s
+     * {@code startMessageCount} marks the first relevant message; everything before it is
+     * hidden from the skill AI.
+     */
+    private List<Message> buildHistoryForSession(AiSession session) {
+        List<AiChatMessage> msgs = session.messages();
+        if (session.skillStack() != null && !session.skillStack().isEmpty()) {
+            sh.vork.skill.SkillFrame topFrame = session.skillStack().getLast();
+            Integer startIdx = topFrame.startMessageCount();
+            if (startIdx == null) {
+                // Legacy frame without startMessageCount: use empty history so the skill
+                // does not see unrelated background-job messages.
+                log.debug("Skill frame has no startMessageCount — using empty history [session={}, skill={}]",
+                        session.uuid(), topFrame.skillName());
+                msgs = List.of();
+            } else if (startIdx > 0 && startIdx < msgs.size()) {
+                msgs = msgs.subList(startIdx, msgs.size());
+                log.debug("History filtered for skill frame [startIdx={}, total={}, filtered={}, skill={}]",
+                        startIdx, session.messages().size(), msgs.size(), topFrame.skillName());
+            }
+            // startIdx == 0 means the skill started at the beginning — use full history as-is.
+        }
+        return hydrateHistory(msgs);
+    }
+
     private List<Message> hydrateHistory(List<AiChatMessage> messages) {
         List<Message> history = new ArrayList<>();
         for (AiChatMessage message : messages) {
             switch (message.role()) {
                 case "USER" -> history.add(new UserMessage(message.content() == null ? "" : message.content()));
                 case "ASSISTANT" -> history.add(new AssistantMessage(message.content() == null ? "" : message.content()));
-                case "TOOL" -> history.add(toToolResponseMessage(message));
+                case "TOOL" -> appendToolReplay(history, message);
                 default -> {
                 }
             }
         }
         return history;
+    }
+
+    private void appendToolReplay(List<Message> history, AiChatMessage message) {
+        boolean canEmitFunctionCall = !history.isEmpty()
+                && (history.getLast().getMessageType() == MessageType.USER
+                || history.getLast().getMessageType() == MessageType.TOOL);
+        if (canEmitFunctionCall) {
+            history.add(toSyntheticToolCallMessage(message));
+            history.add(toToolResponseMessage(message));
+            return;
+        }
+        history.add(toToolReplayTextMessage(message));
+    }
+
+    private Message toSyntheticToolCallMessage(AiChatMessage message) {
+        String toolName = message.toolName() == null ? "unknown-tool" : message.toolName();
+        String toolCallId = message.toolCallId() == null ? "pending-unknown" : message.toolCallId();
+
+        AssistantMessage.ToolCall toolCall = new AssistantMessage.ToolCall(
+                toolCallId,
+                "FUNCTION",
+                toolName,
+                "{}");
+
+        return AssistantMessage.builder()
+                .content("")
+                .toolCalls(List.of(toolCall))
+                .build();
     }
 
     private Message toToolResponseMessage(AiChatMessage message) {
@@ -1253,14 +1465,42 @@ public class ChatService {
         responseData = normalizeToolResponseData(responseData);
 
         ToolResponseMessage.ToolResponse toolResponse = new ToolResponseMessage.ToolResponse(
-                message.toolCallId() == null ? "pending-unknown" : message.toolCallId(),
-                message.toolName() == null ? "unknown-tool" : message.toolName(),
-                responseData);
+            message.toolCallId() == null ? "pending-unknown" : message.toolCallId(),
+            message.toolName() == null ? "unknown-tool" : message.toolName(),
+            responseData);
 
         return ToolResponseMessage.builder()
-                .responses(List.of(toolResponse))
-                .metadata(Collections.emptyMap())
-                .build();
+            .responses(List.of(toolResponse))
+            .metadata(Collections.emptyMap())
+            .build();
+    }
+
+    private Message toToolReplayTextMessage(AiChatMessage message) {
+        String toolName = message.toolName() == null ? "unknown-tool" : message.toolName();
+        String toolCallId = message.toolCallId() == null ? "pending-unknown" : message.toolCallId();
+        String responseData = extractToolResponseData(message);
+        String replayText = "Tool '" + toolName + "' (callId=" + toolCallId + ") result:\n" + responseData;
+        return new AssistantMessage(replayText);
+    }
+
+    private String extractToolResponseData(AiChatMessage message) {
+        Map<String, Object> payload;
+        try {
+            payload = objectMapper.readValue(message.content(), new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            payload = new HashMap<>();
+        }
+
+        String responseData = null;
+        Object responsesRaw = payload.get("responses");
+        if (responsesRaw instanceof List<?> responses && !responses.isEmpty() && responses.get(0) instanceof Map<?, ?> first) {
+            Object value = first.get("responseData");
+            responseData = value == null ? null : String.valueOf(value);
+        }
+        if (responseData == null) {
+            responseData = message.content();
+        }
+        return normalizeToolResponseData(responseData);
     }
 
     private String normalizeToolResponseData(String responseData) {
@@ -1312,7 +1552,10 @@ public class ChatService {
 
             String prompt = buildSessionTitlePrompt(current.messages());
             String candidate = aiService.generate(prompt, AiProvider.GEMINI);
-            String sanitized = sanitizeSessionTitle(candidate);
+            StructuredAgentResponse titleParsed = parseStructuredResponse(candidate);
+            String titleText = titleParsed.textResponse() != null && !titleParsed.textResponse().isBlank()
+                    ? titleParsed.textResponse() : candidate;
+            String sanitized = sanitizeSessionTitle(titleText);
 
             if (sanitized.isBlank()) {
                 return;
@@ -1336,7 +1579,9 @@ public class ChatService {
                     latest.status(),
                     latest.activeAgentTemplateId(),
                     latest.modelId(),
-                    latest.skillStack()));
+                    latest.skillStack(),
+                    latest.sessionSkillUuids(),
+                    latest.sessionToolIds()));
             log.info("Session title generated [session={}, title={}]", sessionUuid, sanitized);
         } catch (Exception ex) {
             log.warn("Failed to auto-name session [session={}]: {}", sessionUuid, ex.getMessage());

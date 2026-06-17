@@ -55,6 +55,8 @@ class ChatServiceSuspensionPersistenceTest {
             AiSessionStatus.RUNNING,
             null,
             null,
+            null,
+            null,
             null);
         sessionRepo.save(initial);
 

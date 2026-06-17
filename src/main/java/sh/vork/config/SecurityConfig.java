@@ -70,6 +70,7 @@ public class SecurityConfig {
                         "/api/setup/**", "/api/system/**", "/api/ai/**", "/api/agents/**",
                         "/api/notifications/**", "/api/user/**", "/api/types/**",
                         "/api/transcription/**", "/api/ssl/**", "/api/skills/**",
+                        "/api/jobs/**",
                         "/api/v1/relay/**")
             )
             .sessionManagement(session -> session

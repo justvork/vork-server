@@ -444,7 +444,7 @@ public class TelegramChatResumptionService {
                 s.username(), s.name(), s.createdAt(), s.currentRoundCount(),
                 List.copyOf(msgs), s.environmentVariables(), status,
                 s.activeAgentTemplateId(), s.modelId(),
-                s.skillStack());
+                s.skillStack(), s.sessionSkillUuids(), s.sessionToolIds());
     }
 
     private void applyAuthorizationAction(String action, String username,

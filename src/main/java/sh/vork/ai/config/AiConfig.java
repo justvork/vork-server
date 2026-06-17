@@ -40,7 +40,7 @@ import sh.vork.ai.function.DisconnectSshRequest;
 import sh.vork.ai.function.DownloadFileRequest;
 import sh.vork.ai.function.ExecuteTerminalCommandRequest;
 import sh.vork.ai.function.GetTypeSchemaRequest;
-import sh.vork.ai.function.GetURLContentsRequest;
+import sh.vork.ai.function.HttpRequestToolRequest;
 import sh.vork.ai.function.ListAgentTemplatesRequest;
 import sh.vork.ai.function.ListAvailableToolsRequest;
 import sh.vork.ai.function.ListEnumValuesRequest;
@@ -66,6 +66,9 @@ import sh.vork.ai.security.SecuredToolCallback;
 import sh.vork.ai.security.VisualizableToolCallback;
 import sh.vork.ai.tool.CompleteBackgroundTaskRequest;
 import sh.vork.ai.tool.CompleteSkillExecutionRequest;
+import sh.vork.ai.tool.ThinkRequest;
+import sh.vork.ai.protocol.UiEventFrame;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import sh.vork.ai.tool.DeleteSshConnectionTool;
 import sh.vork.ai.tool.DisconnectSshTool;
 import sh.vork.ai.tool.DownloadFileTool;
@@ -113,23 +116,48 @@ public class AiConfig {
 
     private static final Logger log = LoggerFactory.getLogger(AiConfig.class);
     public static final String BASE_SYSTEM_PROMPT = """
-        CRITICAL PROTOCOL (highest priority):
-        1) When a tool is required, invoke the tool immediately in the same turn.
-        2) Do not ask the user for confirmation.
-        3) Do not emit preliminary status-only messages such as 'I will...' before invoking tools.
+You are an autonomous Vork AI agent operating strictly within a turn-based AI 
+orchestration framework. You execute background workflows using function-calling 
+tools. You do not text-chat with a user.
 
-        Authorization text rule:
-        - Provide concise supervisor-facing reasoning that can be shown in authorization review.
-        - Keep it user-friendly plain language, avoid internal API/tool names, and explain why the action is needed.
+CRITICAL PROCESSING PROTOCOL (HIGHEST PRIORITY):
 
-        REASONING_HINT rule:
-        - A tool description may include a line starting with 'REASONING_HINT:'.
-        - This hint only affects wording of authorization reasoning text.
-        - It MUST NOT change execution flow, MUST NOT create extra assistant turns, and MUST NOT override CRITICAL PROTOCOL.
+1. ABSOLUTE SILENCE OUTSIDE OF TOOLS: 
+   You are forbidden from generating free-form, conversational text responses 
+   (e.g., "I will do this," "Processing now," "Sure, let me check"). Every 
+   single turn must consist ONLY of tool calls, or the final JSON response. 
 
-        ENTITY RULE:
-        - For any type implementing sh.vork.orm.DatabaseEntity, uuid is always String (method signature: String uuid()).
-        - Do not generate java.util.UUID as the record field type for uuid.
+2. ONE TURN = COMPLETE EXECUTION:
+   Do not pause for user confirmation or give status updates in raw text. If 
+   you need to perform actions, you must chain or invoke those tool calls 
+   immediately in this turn. 
+
+3. THE "THINK" TOOL RULES:
+   - If you need to reason, log progress, vent, or describe your next steps, 
+   you MUST use the `think` tool.
+   - The `think` tool is for mid-turn internal commentary only. 
+   - CRITICAL: A `think` call is never a final action. If you call `think`, 
+   you MUST immediately invoke an action tool or complete your data processing 
+   in the same turn. You may never end a turn with a `think` call as your 
+   standalone or final output.
+
+4. TURN COMPLETION (FINISHED_TURN):
+   - You may only return the final JSON payload with status "FINISHED_TURN" 
+   when you have fully executed the request and have the actual, substantive
+   data/result ready.
+   - NEVER emit "FINISHED_TURN" with an empty, placeholder, or status-only 
+   text response (e.g., "I am about to scan..."). 
+   - If the final data is not ready, you are NOT finished. Use your action 
+   tools or the think tool to get it.
+
+OUTPUT FORMAT ENFORCEMENT:
+Your output must strictly be either:
+A) Valid tool invocation syntax (including `think` combined with action tools).
+B) The final JSON structure with status "FINISHED_TURN" and the textResponse field 
+containing the actual results.
+
+Any conversational preamble or postamble outside of these structures violates 
+the protocol and will break the system. Do not converse. Execute.
                                 """.stripIndent();
     private final JavaTypeClassLoader typeClassLoader;
     private final TypeDatabaseService typeDatabaseService;
@@ -347,7 +375,9 @@ public class AiConfig {
                             AiSessionStatus.COMPLETED,
                             session.activeAgentTemplateId(),
                             session.modelId(),
-                            session.skillStack()));
+                            session.skillStack(),
+                            session.sessionSkillUuids(),
+                            session.sessionToolIds()));
 
                     backgroundExecutionContext.markExecutionComplete();
                     return "{\"status\":\"shutdown_initiated\"}";
@@ -400,7 +430,9 @@ public class AiConfig {
                             AiSessionStatus.RUNNING,
                             session.activeAgentTemplateId(),
                             session.modelId(),
-                            java.util.List.copyOf(newStack)));
+                            java.util.List.copyOf(newStack),
+                            session.sessionSkillUuids(),
+                            session.sessionToolIds()));
 
                     log.debug("Skill frame popped [session={}, remainingFrames={}]",
                             sessionUuid, newStack.size());
@@ -411,6 +443,49 @@ public class AiConfig {
                 })
                 .description("Signals that the skill has fully completed its objective. Call this exactly once with the skill output when all required work is done.")
                 .inputType(CompleteSkillExecutionRequest.class)
+                .build();
+    }
+
+    /**
+     * Mandatory hidden meta-tool available to the AI in every turn, including inside
+     * skill frames.  Call this to express reasoning or analysis before invoking the
+     * next action tool — it MUST NOT be used as a substitute for taking action.
+     *
+     * <p>The reasoning string is:
+     * <ul>
+     *   <li>logged at DEBUG level with the session UUID;</li>
+     *   <li>broadcast as an {@code AI_THINKING} WebSocket event to the session topic
+     *       so interactive UIs can render it (background sessions have no subscriber,
+     *       so the send is silently a no-op).</li>
+     * </ul>
+     * Reasoning is intentionally <em>not</em> added to the conversation history so
+     * it does not inflate the context window.
+     */
+    @Bean("think")
+    @Hidden
+    @ToolCategory("Meta")
+    public ToolCallback think(SimpMessagingTemplate messaging) {
+        return FunctionToolCallback
+                .builder("think", (ThinkRequest req) -> {
+                    String sessionUuid = resolveSessionUuid();
+                    String reasoning = req.reasoning() != null ? req.reasoning() : "";
+                    log.debug("AI thinking [session={}]: {}", sessionUuid, reasoning);
+                    if (sessionUuid != null && !sessionUuid.isBlank()) {
+                        messaging.convertAndSend(
+                                "/topic/chat/" + sessionUuid,
+                                new UiEventFrame(
+                                        java.util.UUID.randomUUID().toString(),
+                                        "AI_THINKING",
+                                        "THINKING",
+                                        reasoning,
+                                        null));
+                    }
+                    return "{\"status\":\"ok\",\"hint\":\"Reasoning logged. Invoke your next tool now.\"}";
+                })
+                .description("Log your reasoning or analysis mid-turn without ending the turn. "
+                        + "Call this to express your thinking, then IMMEDIATELY invoke the next action tool. "
+                        + "NEVER end a turn with only a think call.")
+                .inputType(ThinkRequest.class)
                 .build();
     }
 
@@ -580,55 +655,89 @@ public class AiConfig {
     }
 
     /**
-     * {@code getURLContents} tool — fetches text content from an HTTP/HTTPS URL.
+     * {@code httpRequest} tool — a generic HTTP client that replaces the old
+     * {@code getURLContents} tool.  Supports all common methods, custom headers,
+     * and a request body so the model can interact with REST APIs, fetch web pages,
+     * and submit forms.
      */
     @Bean
     @ToolCategory("Web")
-    public ToolCallback getURLContents() {
+    public ToolCallback httpRequest() {
         return FunctionToolCallback
-                .builder("getURLContents", (GetURLContentsRequest req) -> {
-                    String rawUrl = req == null ? null : req.url();
-                    if (rawUrl == null || rawUrl.isBlank()) {
+                .builder("httpRequest", (HttpRequestToolRequest req) -> {
+                    if (req == null || req.url() == null || req.url().isBlank()) {
                         return "{\"status\":\"error\",\"message\":\"url is required\"}";
                     }
 
                     try {
-                        URI uri = URI.create(rawUrl.trim());
+                        URI uri = URI.create(req.url().trim());
                         String scheme = uri.getScheme();
-                        if (scheme == null || (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme))) {
+                        if (scheme == null
+                                || (!"http".equalsIgnoreCase(scheme)
+                                    && !"https".equalsIgnoreCase(scheme))) {
                             return "{\"status\":\"error\",\"message\":\"Only http and https URLs are supported\"}";
                         }
 
-                        HttpRequest request = HttpRequest.newBuilder(uri)
-                                .GET()
-                                .timeout(Duration.ofSeconds(15))
-                                .header("User-Agent", "vork-ai-tool/1.0")
-                                .build();
+                        String method = req.method() != null && !req.method().isBlank()
+                                ? req.method().trim().toUpperCase()
+                                : "GET";
 
-                        HttpResponse<String> response = HttpClient.newHttpClient()
-                                .send(request, HttpResponse.BodyHandlers.ofString());
+                        HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
+                                .timeout(Duration.ofSeconds(30))
+                                .header("User-Agent", "vork-ai-tool/1.0");
 
-                        String content = response.body() == null ? "" : response.body();
-                        if (content.length() > 20000) {
-                            content = content.substring(0, 20000) + "\n...<truncated>";
+                        // Apply caller-supplied headers (User-Agent may be overridden)
+                        if (req.headers() != null) {
+                            req.headers().forEach(builder::header);
                         }
 
-                        return objectMapper.writeValueAsString(Map.of(
-                                "status", "ok",
-                                "url", uri.toString(),
-                                "statusCode", response.statusCode(),
-                                "content", content
-                        ));
+                        // Body publisher
+                        HttpRequest.BodyPublisher bodyPublisher =
+                                (req.body() != null && !req.body().isEmpty())
+                                ? HttpRequest.BodyPublishers.ofString(req.body())
+                                : HttpRequest.BodyPublishers.noBody();
+
+                        builder.method(method, bodyPublisher);
+
+                        HttpResponse<String> response = HttpClient.newHttpClient()
+                                .send(builder.build(), HttpResponse.BodyHandlers.ofString());
+
+                        // Collect response headers as a Map<String, List<String>>,
+                        // but flatten single-value headers to strings for readability
+                        Map<String, Object> responseHeaders = new java.util.LinkedHashMap<>();
+                        response.headers().map().forEach((k, vals) -> {
+                            if (vals.size() == 1) {
+                                responseHeaders.put(k, vals.get(0));
+                            } else {
+                                responseHeaders.put(k, vals);
+                            }
+                        });
+
+                        String content = response.body() == null ? "" : response.body();
+                        if (content.length() > 20_000) {
+                            content = content.substring(0, 20_000) + "\n...<truncated>";
+                        }
+
+                        Map<String, Object> result = new java.util.LinkedHashMap<>();
+                        result.put("statusCode", response.statusCode());
+                        result.put("headers", responseHeaders);
+                        result.put("body", content);
+                        return objectMapper.writeValueAsString(result);
+
                     } catch (Exception e) {
-                        return "{\"status\":\"error\",\"message\":\"" + e.getMessage().replace("\"", "'") + "\"}";
+                        return "{\"status\":\"error\",\"message\":\""
+                                + e.getMessage().replace("\"", "'") + "\"}";
                     }
                 })
-                .description(
-                        """
-                        Fetch text content from an HTTP or HTTPS URL and return the response status and body content.
-                        """
-                                .stripIndent())
-                .inputType(GetURLContentsRequest.class)
+                .description("""
+                    Send an HTTP request and return the response status code, headers, and body.
+                    Supports GET, POST, PUT, PATCH, DELETE, HEAD, and OPTIONS.
+                    Use this to interact with REST APIs, fetch web pages, or submit forms.
+                    For GET requests put query parameters in the URL.
+                    For POST/PUT/PATCH supply the body as a string and set the Content-Type header.
+                    The response body is truncated to 20 000 characters.
+                    """.stripIndent())
+                .inputType(HttpRequestToolRequest.class)
                 .build();
     }
 

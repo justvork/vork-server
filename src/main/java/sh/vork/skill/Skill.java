@@ -45,7 +45,8 @@ public record Skill(
         List<String>          subSkillUuids,
         long                  version,
         long                  createdAt,
-        long                  updatedAt
+        long                  updatedAt,
+        List<SkillSecret>     secrets
 ) implements DatabaseEntity {
 
     public Skill {
@@ -60,6 +61,7 @@ public record Skill(
         if (allowedTypes == null)            allowedTypes = List.of();
         if (subSkillUuids == null)           subSkillUuids = List.of();
         if (version < 1)                     version = 1;
+        if (secrets == null)                 secrets = List.of();
     }
 
     /**

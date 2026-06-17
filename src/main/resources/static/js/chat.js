@@ -1624,11 +1624,241 @@ if (logoutBtn) {
     });
 }
 
+// ── Sidebar DOM refs ─────────────────────────────────────────────────────────
+
+const sidebarTabBtns = document.querySelectorAll('.sidebar-tab-btn[data-tab]');
+
+function switchSidebarTab(tabName) {
+    document.querySelectorAll('.sidebar-tab-content').forEach(function (el) {
+        el.classList.toggle('d-none', el.id !== 'tab-' + tabName);
+    });
+    sidebarTabBtns.forEach(function (btn) {
+        btn.classList.toggle('active', btn.dataset.tab === tabName);
+    });
+    if (tabName === 'skills' && sessionUuid) {
+        loadSkillsPanel(sessionUuid);
+    }
+}
+
+sidebarTabBtns.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+        switchSidebarTab(btn.dataset.tab);
+        if (document.body.classList.contains('sidebar-collapsed')) {
+            document.body.classList.remove('sidebar-collapsed');
+        }
+    });
+});
+
 if (sidebarToggle) {
     sidebarToggle.addEventListener('click', function () {
         document.body.classList.toggle('sidebar-collapsed');
     });
 }
+
+// ── Skills / Tools panel ─────────────────────────────────────────────────────
+
+/** All available tools from /api/chat/tools — loaded once on demand. */
+let _toolsCache = null;
+/** All skills — we get them from agent-config + search as needed. */
+let _skillsSearchCache = null;
+
+async function loadSkillsPanel(uuid) {
+    if (!uuid) return;
+    let config;
+    try {
+        const resp = await fetch('/api/chat/session/' + encodeURIComponent(uuid) + '/agent-config');
+        if (!resp.ok) return;
+        config = await resp.json();
+    } catch (e) {
+        console.warn('loadSkillsPanel failed:', e);
+        return;
+    }
+    renderSkillPills('agent-skills-list', config.agentSkills || [], false, false, uuid);
+    renderSkillPills('session-skills-list', config.sessionSkills || [], true, false, uuid);
+    renderToolPills('agent-tools-list', config.agentTools || [], false, uuid);
+    renderToolPills('session-tools-list', config.sessionTools || [], true, uuid);
+}
+
+function renderSkillPills(containerId, skills, removable, _unused, sessionUuidRef) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.innerHTML = '';
+    if (skills.length === 0) {
+        el.innerHTML = '<span class="text-muted small">' + (removable ? 'None' : 'None assigned') + '</span>';
+        return;
+    }
+    skills.forEach(function (skill) {
+        const pill = document.createElement('span');
+        pill.className = 'skill-pill ' + (removable ? 'session-skill-pill' : 'agent-skill-pill');
+        pill.title = skill.description || '';
+        pill.textContent = skill.name;
+        if (removable) {
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'pill-remove';
+            removeBtn.innerHTML = '&times;';
+            removeBtn.title = 'Remove';
+            removeBtn.addEventListener('click', function () {
+                removeSessionSkillAction(sessionUuidRef, skill.uuid);
+            });
+            pill.appendChild(removeBtn);
+        }
+        el.appendChild(pill);
+    });
+}
+
+function renderToolPills(containerId, tools, removable, sessionUuidRef) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.innerHTML = '';
+    if (tools.length === 0) {
+        el.innerHTML = '<span class="text-muted small">' + (removable ? 'None' : 'None assigned') + '</span>';
+        return;
+    }
+    tools.forEach(function (tool) {
+        const pill = document.createElement('span');
+        pill.className = 'tool-pill ' + (removable ? 'session-tool-pill' : 'agent-tool-pill');
+        pill.title = tool.description || '';
+        pill.textContent = tool.name;
+        if (removable) {
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'pill-remove';
+            removeBtn.innerHTML = '&times;';
+            removeBtn.title = 'Remove';
+            removeBtn.addEventListener('click', function () {
+                removeSessionToolAction(sessionUuidRef, tool.id);
+            });
+            pill.appendChild(removeBtn);
+        }
+        el.appendChild(pill);
+    });
+}
+
+async function removeSessionSkillAction(uuid, skillUuid) {
+    try {
+        const resp = await fetch('/api/chat/session/' + encodeURIComponent(uuid)
+            + '/session-skills/' + encodeURIComponent(skillUuid), { method: 'DELETE' });
+        if (resp.ok) loadSkillsPanel(uuid);
+    } catch (e) { console.error('removeSessionSkill failed:', e); }
+}
+
+async function removeSessionToolAction(uuid, toolId) {
+    try {
+        const resp = await fetch('/api/chat/session/' + encodeURIComponent(uuid)
+            + '/session-tools/' + encodeURIComponent(toolId), { method: 'DELETE' });
+        if (resp.ok) loadSkillsPanel(uuid);
+    } catch (e) { console.error('removeSessionTool failed:', e); }
+}
+
+async function addSessionSkillAction(uuid, skillUuid) {
+    try {
+        const resp = await fetch('/api/chat/session/' + encodeURIComponent(uuid)
+            + '/session-skills/' + encodeURIComponent(skillUuid), { method: 'POST' });
+        if (resp.ok) loadSkillsPanel(uuid);
+    } catch (e) { console.error('addSessionSkill failed:', e); }
+}
+
+async function addSessionToolAction(uuid, toolId) {
+    try {
+        const resp = await fetch('/api/chat/session/' + encodeURIComponent(uuid)
+            + '/session-tools/' + encodeURIComponent(toolId), { method: 'POST' });
+        if (resp.ok) loadSkillsPanel(uuid);
+    } catch (e) { console.error('addSessionTool failed:', e); }
+}
+
+// ── Skill search autocomplete ─────────────────────────────────────────────────
+
+function setupSkillSearch() {
+    const input = document.getElementById('skill-search-input');
+    const dropdown = document.getElementById('skill-search-results');
+    if (!input || !dropdown) return;
+
+    input.addEventListener('input', async function () {
+        const query = input.value.trim().toLowerCase();
+        dropdown.classList.add('d-none');
+        dropdown.innerHTML = '';
+        if (query.length < 1) return;
+        if (!_skillsSearchCache) {
+            // Fetch all skills from the API (we'll use /api/skills if it exists, or just local)
+            // For now pull from agent-config which gives session context; use a dedicated search endpoint
+            try {
+                const resp = await fetch('/api/skills?page=0&pageSize=100');
+                if (resp.ok) _skillsSearchCache = await resp.json();
+            } catch (e) { _skillsSearchCache = []; }
+        }
+        const matches = (_skillsSearchCache || []).filter(function (s) {
+            return s.name.toLowerCase().includes(query) || (s.description || '').toLowerCase().includes(query);
+        }).slice(0, 10);
+        if (matches.length === 0) return;
+        matches.forEach(function (skill) {
+            const item = document.createElement('div');
+            item.className = 'skills-search-item';
+            item.textContent = skill.name;
+            item.title = skill.description || '';
+            item.addEventListener('click', function () {
+                if (sessionUuid) addSessionSkillAction(sessionUuid, skill.uuid);
+                input.value = '';
+                dropdown.classList.add('d-none');
+            });
+            dropdown.appendChild(item);
+        });
+        dropdown.classList.remove('d-none');
+    });
+
+    document.addEventListener('click', function (e) {
+        if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+            dropdown.classList.add('d-none');
+        }
+    });
+}
+
+// ── Tool search autocomplete ──────────────────────────────────────────────────
+
+function setupToolSearch() {
+    const input = document.getElementById('tool-search-input');
+    const dropdown = document.getElementById('tool-search-results');
+    if (!input || !dropdown) return;
+
+    input.addEventListener('input', async function () {
+        const query = input.value.trim().toLowerCase();
+        dropdown.classList.add('d-none');
+        dropdown.innerHTML = '';
+        if (query.length < 1) return;
+        if (!_toolsCache) {
+            try {
+                const resp = await fetch('/api/chat/tools');
+                if (resp.ok) _toolsCache = await resp.json();
+            } catch (e) { _toolsCache = []; }
+        }
+        const matches = (_toolsCache || []).filter(function (t) {
+            return t.name.toLowerCase().includes(query)
+                || (t.description || '').toLowerCase().includes(query)
+                || (t.category || '').toLowerCase().includes(query);
+        }).slice(0, 10);
+        if (matches.length === 0) return;
+        matches.forEach(function (tool) {
+            const item = document.createElement('div');
+            item.className = 'skills-search-item';
+            item.textContent = tool.name + (tool.category ? '  [' + tool.category + ']' : '');
+            item.title = tool.description || '';
+            item.addEventListener('click', function () {
+                if (sessionUuid) addSessionToolAction(sessionUuid, tool.id);
+                input.value = '';
+                dropdown.classList.add('d-none');
+            });
+            dropdown.appendChild(item);
+        });
+        dropdown.classList.remove('d-none');
+    });
+
+    document.addEventListener('click', function (e) {
+        if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+            dropdown.classList.add('d-none');
+        }
+    });
+}
+
+setupSkillSearch();
+setupToolSearch();
 
 if (newChatBtn) {
     newChatBtn.addEventListener('click', function () {
@@ -1900,6 +2130,7 @@ function loadSession(targetSessionUuid) {
             sessionUuid = data.sessionUuid;
             sessionDisplay.textContent = (data.sessionName || 'Untitled') + ' · ' + sessionUuid.substring(0, 8) + '…';
             loadAgents(data.activeAgentTemplateId);
+            loadSkillsPanel(sessionUuid);
             clearConversationUi();
             const messages = data.messages || [];
             const lastPromptIndex = findLastUnansweredPromptIndex(messages);

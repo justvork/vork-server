@@ -19,6 +19,8 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.ResponseBody;
 
+import sh.vork.ai.entity.AiSession;
+import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.scheduling.domain.DurationType;
 import sh.vork.scheduling.domain.InvocationType;
@@ -39,11 +41,14 @@ public class JobsController {
 
     private final AiSchedulerService schedulerService;
     private final DatabaseRepository<ScheduledJob> jobRepository;
+    private final DatabaseRepository<AiSession> sessionRepository;
 
     public JobsController(AiSchedulerService schedulerService,
-                          DatabaseRepository<ScheduledJob> jobRepository) {
+                          DatabaseRepository<ScheduledJob> jobRepository,
+                          DatabaseRepository<AiSession> sessionRepository) {
         this.schedulerService = schedulerService;
         this.jobRepository = jobRepository;
+        this.sessionRepository = sessionRepository;
     }
 
     // ── Page ──────────────────────────────────────────────────────────────────
@@ -93,7 +98,9 @@ public class JobsController {
                 req.modelId(),
                 req.oobTimeoutMinutes() > 0 ? req.oobTimeoutMinutes() : 240,
                 req.expectedOutput(),
-                ScheduledJobStatus.WAITING);
+                ScheduledJobStatus.WAITING,
+                req.skillUuids(),
+                req.toolIds());
 
         ScheduledJob saved = schedulerService.scheduleJob(job);
         log.info("Job created [id={}, user={}, type={}]", saved.id(), user.getUsername(), saved.invocationType());
@@ -133,7 +140,9 @@ public class JobsController {
                 req.modelId(),
                 req.oobTimeoutMinutes() > 0 ? req.oobTimeoutMinutes() : existing.oobTimeoutMinutes(),
                 req.expectedOutput(),
-                existing.status());
+                existing.status(),
+                req.skillUuids() != null ? req.skillUuids() : existing.skillUuids(),
+                req.toolIds() != null ? req.toolIds() : existing.toolIds());
 
         ScheduledJob saved = schedulerService.scheduleJob(updated);
         log.info("Job updated [id={}, user={}]", id, user.getUsername());
@@ -169,7 +178,30 @@ public class JobsController {
         if (!user.getUsername().equals(job.userId()))
             return ResponseEntity.status(403).body(Map.of("error", "Forbidden"));
 
-        schedulerService.runNow(id);
+        String trackingUuid = schedulerService.runNow(id);
+        if (trackingUuid == null) return ResponseEntity.internalServerError().body(Map.of("error", "Failed to start job"));
+        log.debug("EXIT runNow: [id={}, tracking={}]", id, trackingUuid);
+        return ResponseEntity.ok(Map.of("ok", true, "trackingSessionUuid", trackingUuid));
+    }
+
+    @PostMapping("/api/jobs/sessions/{sessionUuid}/terminate")
+    @ResponseBody
+    public ResponseEntity<?> terminateSession(@PathVariable String sessionUuid,
+                                              @AuthenticationPrincipal UserDetails user) {
+        log.debug("ENTER terminateSession: [session={}, user={}]", sessionUuid, user.getUsername());
+        AiSession session = sessionRepository.get(sessionUuid);
+        if (session == null) return ResponseEntity.notFound().build();
+        if (!user.getUsername().equals(session.username()))
+            return ResponseEntity.status(403).body(Map.of("error", "Forbidden"));
+
+        sessionRepository.save(new AiSession(
+                session.uuid(), session.provider(), session.originMode(),
+                session.username(), session.name(), session.createdAt(),
+                session.currentRoundCount(), session.messages(),
+                session.environmentVariables(), AiSessionStatus.COMPLETED,
+                session.activeAgentTemplateId(), session.modelId(),
+                session.skillStack(), session.sessionSkillUuids(), session.sessionToolIds()));
+        log.info("Session terminated by user [session={}, user={}]", sessionUuid, user.getUsername());
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
@@ -238,6 +270,8 @@ public class JobsController {
             String provider,
             String modelId,
             int oobTimeoutMinutes,     // minutes before OOB relay auth link expires; 0 = default 240 (4 hrs)
-            String expectedOutput      // optional — describes required output; enforced via background protocol
+            String expectedOutput,     // optional — describes required output; enforced via background protocol
+            List<String> skillUuids,   // optional — extra skill UUIDs for this job's session
+            List<String> toolIds       // optional — extra tool bean IDs for this job's session
     ) {}
 }

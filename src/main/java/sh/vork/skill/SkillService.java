@@ -3,12 +3,10 @@ package sh.vork.skill;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
-import org.springframework.ai.tool.ToolCallback;
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.agent.AgentTemplate;
@@ -30,8 +28,8 @@ import java.util.stream.Collectors;
  * {@code skillStack} and throws {@link SkillActivatedException} to break out
  * of Spring AI's tool chain.  {@link sh.vork.ai.service.ChatService} catches
  * the exception and runs an inline sub-loop with the skill's restricted tool
- * set and custom system prompt, then pops the frame when
- * {@code completeSkillExecution} is called.
+ * set and custom system prompt until the AI returns {@code FINISHED_TURN},
+ * at which point the frame is popped and textResponse is the skill output.
  */
 @Service
 public class SkillService {
@@ -45,13 +43,6 @@ public class SkillService {
     @Lazy
     @Autowired
     private DatabaseRepository<AgentTemplate> agentTemplateRepo;
-
-    /** completeSkillExecution is @Hidden and produced by AiConfig;
-     *  it does NOT depend on SkillService, so no circular dep here. */
-    @Lazy
-    @Autowired
-    @Qualifier("completeSkillExecution")
-    private ToolCallback completeSkillExecutionTool;
 
     /** TypeGeneratorService — used during skill import to compile embedded types. */
     @Lazy
@@ -102,7 +93,8 @@ public class SkillService {
                 req.subSkillUuids() != null ? List.copyOf(req.subSkillUuids()) : List.of(),
                 1L,
                 now,
-                now);
+                now,
+                req.secrets() != null ? List.copyOf(req.secrets()) : List.of());
         skillRepo.save(skill);
         log.info("Skill created [uuid={}, name={}]", skill.uuid(), skill.name());
         return skill;
@@ -126,7 +118,8 @@ public class SkillService {
                 req.subSkillUuids() != null ? List.copyOf(req.subSkillUuids()) : List.of(),
                 existing.version() + 1,
                 existing.createdAt(),
-                System.currentTimeMillis());
+                System.currentTimeMillis(),
+                req.secrets() != null ? List.copyOf(req.secrets()) : List.of());
         skillRepo.save(updated);
         log.info("Skill updated [uuid={}, name={}, version={}]", uuid, updated.name(), updated.version());
         return updated;
@@ -196,13 +189,16 @@ public class SkillService {
         }
 
         // Authorization: when an agent template is active and has skills assigned,
-        // only skills in that agent's skillUuids list may be executed.
+        // only skills in that agent's skillUuids list OR the session's sessionSkillUuids list may be executed.
         String agentId = callerSession.getActiveAgentTemplateId();
         if (agentId != null && !agentId.isBlank()) {
             AgentTemplate template = agentTemplateRepo.get(agentId);
             if (template != null && template.skillUuids() != null && !template.skillUuids().isEmpty()) {
-                if (!template.skillUuids().contains(skillUuid)) {
-                    log.warn("Skill access denied — skill not assigned to agent [session={}, agent={}, skill={}]",
+                boolean inAgentSkills = template.skillUuids().contains(skillUuid);
+                boolean inSessionSkills = callerSession.sessionSkillUuids() != null
+                        && callerSession.sessionSkillUuids().contains(skillUuid);
+                if (!inAgentSkills && !inSessionSkills) {
+                    log.warn("Skill access denied — skill not assigned to agent or session [session={}, agent={}, skill={}]",
                             callerSessionUuid, agentId, skillUuid);
                     return "{\"status\":\"error\",\"message\":\"Skill '" + skill.name()
                             + "' is not assigned to this agent. Only skills configured for your agent may be executed.\"}";
@@ -213,9 +209,15 @@ public class SkillService {
         // Build and push the skill context frame.
         // Substitute non-secret {{paramName}} tokens so the model sees resolved values in the system prompt.
         String resolvedInstructions = substituteNonSecretParams(skill.instructions(), skill.parameters(), params);
+        // startMessageCount is set to messages.size() + 1 (not size()) because the current round's
+        // USER message has not been persisted yet at this point — it is appended to the session only
+        // inside sendMessage's ToolSuspensionException handler.  The +1 skip ensures that on an
+        // authorization-resume the skill AI receives only the TOOL result(s) from the authorized
+        // call, with no background-job seed message or task-prompt leaking into the skill context.
         SkillFrame frame = new SkillFrame(
                 skillUuid, skill.name(), resolvedInstructions, skill.outputTemplate(),
-                skill.allowedTools(), skill.allowedTypes(), params);
+                skill.allowedTools(), skill.allowedTypes(), params,
+                callerSession.messages().size() + 1);
 
         List<SkillFrame> newStack = new ArrayList<>(callerSession.skillStack());
         newStack.add(frame);
@@ -225,10 +227,7 @@ public class SkillService {
                 callerSession.currentRoundCount(), callerSession.messages(),
                 callerSession.environmentVariables(), callerSession.status(),
                 callerSession.activeAgentTemplateId(), callerSession.modelId(),
-                List.copyOf(newStack)));
-
-        // Register the hidden completion tool for the caller session
-        sessionToolStore.addTool(callerSessionUuid, completeSkillExecutionTool);
+                List.copyOf(newStack), callerSession.sessionSkillUuids(), callerSession.sessionToolIds()));
 
         // Build initial prompt from typed parameters
         String initialPrompt = buildInitialPrompt(skill, params);
@@ -278,14 +277,13 @@ public class SkillService {
             sb.append("\n");
         }
 
-        if (!skill.outputTemplate().isBlank()) {
-            sb.append("### REQUIRED OUTPUT FORMAT\n")
-              .append("The 'output' argument you pass to completeSkillExecution MUST conform "
-                      + "exactly to this template — same structure, same fields, no deviations:\n")
-              .append(skill.outputTemplate()).append("\n\n");
-        }
+        // Skill output constraints are expected to be authored directly inside skill.instructions().
+        // This user turn carries only resolved input parameters.
 
-        return sb.toString();
+        String result = sb.toString();
+        // If there are no parameters at all, send a minimal trigger so the model has a
+        // non-empty first user turn to respond to.
+        return result.isBlank() ? "Begin." : result;
     }
 
     @SuppressWarnings("unused")
@@ -415,6 +413,7 @@ public class SkillService {
             String                instructions,
             List<String>          allowedTools,
             List<String>          allowedTypes,
-            List<String>          subSkillUuids
+            List<String>          subSkillUuids,
+            List<SkillSecret>     secrets
     ) {}
 }

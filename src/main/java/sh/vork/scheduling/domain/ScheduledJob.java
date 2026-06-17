@@ -1,6 +1,7 @@
 package sh.vork.scheduling.domain;
 
 import java.time.Instant;
+import java.util.List;
 
 import sh.vork.orm.DatabaseEntity;
 
@@ -29,7 +30,9 @@ public record ScheduledJob(
         String modelId,                // optional — model ID override
         int oobTimeoutMinutes,         // minutes before the OOB relay auth link expires; 0 = use system default
         String expectedOutput,         // optional — describes the required output/result; enforced via protocol
-        ScheduledJobStatus status
+        ScheduledJobStatus status,
+        List<String> skillUuids,       // optional — extra skill UUIDs available for the duration of this job's session
+        List<String> toolIds           // optional — extra tool bean IDs available for the duration of this job's session
 ) implements DatabaseEntity {
 
     @Override

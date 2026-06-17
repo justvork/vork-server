@@ -27,17 +27,61 @@
 <div class="chat-shell">
 
     <aside id="chat-sidebar" class="chat-sidebar">
-        <div class="sidebar-top">
-            <button id="sidebar-toggle" type="button" class="btn btn-outline-secondary btn-sm" title="Collapse menu">
+        <!-- Vertical icon-tab strip -->
+        <div class="sidebar-tabs">
+            <button class="sidebar-tab-btn active" data-tab="chats" title="Chats">
+                <i class="fa-solid fa-comments"></i>
+            </button>
+            <button class="sidebar-tab-btn" data-tab="skills" title="Skills &amp; Tools">
+                <i class="fa-solid fa-puzzle-piece"></i>
+            </button>
+            <div class="sidebar-tabs-spacer"></div>
+            <button id="sidebar-toggle" class="sidebar-tab-btn" type="button" title="Collapse menu">
                 <i class="fa-solid fa-bars"></i>
             </button>
-            <button id="new-chat-btn" type="button" class="btn btn-outline-secondary btn-sm sidebar-action">
-                <i class="fa-solid fa-pen-to-square me-1"></i>
-                <span class="sidebar-label">New Chat</span>
-            </button>
         </div>
-        <div class="sidebar-section-title">Chats</div>
-        <div id="chat-session-list" class="chat-session-list"></div>
+        <!-- Chats tab content -->
+        <div class="sidebar-tab-content" id="tab-chats">
+            <div class="sidebar-top">
+                <button id="new-chat-btn" type="button" class="btn btn-outline-secondary btn-sm sidebar-action">
+                    <i class="fa-solid fa-pen-to-square me-1"></i>
+                    <span class="sidebar-label">New Chat</span>
+                </button>
+            </div>
+            <div class="sidebar-section-title">Chats</div>
+            <div id="chat-session-list" class="chat-session-list"></div>
+        </div>
+        <!-- Skills &amp; Tools tab content -->
+        <div class="sidebar-tab-content d-none" id="tab-skills">
+            <div class="skills-panel">
+                <!-- Agent skills (read-only) -->
+                <div class="sidebar-section-title">Agent Skills</div>
+                <div id="agent-skills-list" class="skills-pill-list">
+                    <span class="text-muted small">Loading&hellip;</span>
+                </div>
+                <!-- Session skills (removable + add) -->
+                <div class="sidebar-section-title mt-2">Session Skills</div>
+                <div id="session-skills-list" class="skills-pill-list"></div>
+                <div class="skills-search-box mt-1">
+                    <input id="skill-search-input" type="text" class="form-control form-control-sm"
+                           placeholder="Add skill&hellip;" autocomplete="off">
+                    <div id="skill-search-results" class="skills-search-dropdown d-none"></div>
+                </div>
+                <!-- Agent tools (read-only) -->
+                <div class="sidebar-section-title mt-2">Agent Tools</div>
+                <div id="agent-tools-list" class="skills-pill-list">
+                    <span class="text-muted small">Loading&hellip;</span>
+                </div>
+                <!-- Session tools (removable + add) -->
+                <div class="sidebar-section-title mt-2">Session Tools</div>
+                <div id="session-tools-list" class="skills-pill-list"></div>
+                <div class="skills-search-box mt-1">
+                    <input id="tool-search-input" type="text" class="form-control form-control-sm"
+                           placeholder="Add tool&hellip;" autocomplete="off">
+                    <div id="tool-search-results" class="skills-search-dropdown d-none"></div>
+                </div>
+            </div>
+        </div>
     </aside>
 
     <div class="chat-main">

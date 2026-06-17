@@ -45,7 +45,8 @@ public class SchedulerLifecycleManager {
                             job.userId(), job.invocationType(), job.startTime(),
                             job.repeatDuration(), job.durationType(), job.lastExecutionTime(),
                             job.nextExecutionTime(), job.agentTemplateId(), job.provider(),
-                            job.modelId(), job.oobTimeoutMinutes(), job.expectedOutput(), ScheduledJobStatus.WAITING));
+                            job.modelId(), job.oobTimeoutMinutes(), job.expectedOutput(), ScheduledJobStatus.WAITING,
+                            job.skillUuids(), job.toolIds()));
                     log.warn("Resetting stuck job to WAITING on startup [id={}, was={}]",
                             job.id(), job.status());
                     reset++;
@@ -60,7 +61,8 @@ public class SchedulerLifecycleManager {
                             job.userId(), job.invocationType(), effectiveStart,
                             job.repeatDuration(), job.durationType(), job.lastExecutionTime(),
                             job.nextExecutionTime(), job.agentTemplateId(), job.provider(),
-                            job.modelId(), job.oobTimeoutMinutes(), job.expectedOutput(), ScheduledJobStatus.WAITING);
+                            job.modelId(), job.oobTimeoutMinutes(), job.expectedOutput(), ScheduledJobStatus.WAITING,
+                            job.skillUuids(), job.toolIds());
                     aiSchedulerService.scheduleJob(adjusted);
                     resumed++;
                 }

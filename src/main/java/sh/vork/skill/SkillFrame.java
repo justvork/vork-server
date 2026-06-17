@@ -18,5 +18,12 @@ public record SkillFrame(
         String outputTemplate,
         List<String> allowedTools,
         List<String> allowedTypes,
-        Map<String, String> params
+        Map<String, String> params,
+        /**
+         * Number of messages in the parent session at the moment this skill frame was pushed.
+         * Used to slice the session history so the skill AI only sees messages from its own
+         * execution, not the full background-job history.  {@code null} for frames created
+         * before this field was introduced (treated as "use empty history").
+         */
+        Integer startMessageCount
 ) {}
