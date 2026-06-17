@@ -1,5 +1,11 @@
 package sh.vork.skill;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -7,19 +13,13 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+
+import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.entity.AiSession;
-import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.orm.DatabaseRepository;
-import sh.vork.ai.session.SessionToolStore;
 import sh.vork.typegen.JavaType;
 import sh.vork.typegen.TypeGeneratorService;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-import java.util.stream.Collectors;
 
 /**
  * CRUD and execution service for {@link Skill} entities.
@@ -38,7 +38,6 @@ public class SkillService {
 
     private final DatabaseRepository<Skill>     skillRepo;
     private final DatabaseRepository<AiSession> aiSessionRepo;
-    private final SessionToolStore              sessionToolStore;
 
     @Lazy
     @Autowired
@@ -55,11 +54,9 @@ public class SkillService {
     private DatabaseRepository<JavaType> javaTypeRepository;
 
     public SkillService(DatabaseRepository<Skill> skillRepo,
-                        DatabaseRepository<AiSession> aiSessionRepo,
-                        SessionToolStore sessionToolStore) {
+                        DatabaseRepository<AiSession> aiSessionRepo) {
         this.skillRepo       = skillRepo;
         this.aiSessionRepo   = aiSessionRepo;
-        this.sessionToolStore = sessionToolStore;
     }
 
     // ── CRUD ─────────────────────────────────────────────────────────────────

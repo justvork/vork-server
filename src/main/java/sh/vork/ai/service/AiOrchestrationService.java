@@ -1,6 +1,9 @@
 package sh.vork.ai.service;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -15,7 +18,13 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.content.Media;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.ClassUtils;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import sh.vork.ai.AiProvider;
 import sh.vork.ai.agent.AgentTemplate;
@@ -25,6 +34,7 @@ import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.ai.provider.AiChatClientFactory;
+import sh.vork.ai.registry.ToolDepends;
 import sh.vork.ai.session.SessionToolStore;
 import sh.vork.orm.DatabaseRepository;
 
@@ -141,7 +151,10 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         private final ToolCallback listAgentTemplatesCallback;
         private final ToolCallback thinkCallback;
         private final sh.vork.ai.security.SkillSecretSubstitutor skillSecretSubstitutor;
+        private final ConfigurableListableBeanFactory beanFactory;
+        private final ObjectMapper objectMapper;
 
+        @org.springframework.beans.factory.annotation.Autowired
         public AiOrchestrationService(Map<AiProvider, ChatClient> chatClientRegistry,
                                                                   AiChatClientFactory chatClientFactory,
                                                                   SessionEnvironmentService sessionEnvironmentService,
@@ -154,7 +167,9 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                                                   @org.springframework.beans.factory.annotation.Qualifier("listAvailableTools") ToolCallback listAvailableToolsCallback,
                                                                   @org.springframework.beans.factory.annotation.Qualifier("listAgentTemplates") ToolCallback listAgentTemplatesCallback,
                                                                   @org.springframework.beans.factory.annotation.Qualifier("think") ToolCallback thinkCallback,
-                                                                  sh.vork.ai.security.SkillSecretSubstitutor skillSecretSubstitutor) {
+                                                                  sh.vork.ai.security.SkillSecretSubstitutor skillSecretSubstitutor,
+                                                                  ConfigurableListableBeanFactory beanFactory,
+                                                                  ObjectMapper objectMapper) {
                 this.registry = chatClientRegistry;
                 this.chatClientFactory = chatClientFactory;
                 this.sessionEnvironmentService = sessionEnvironmentService;
@@ -168,7 +183,39 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 this.listAgentTemplatesCallback = listAgentTemplatesCallback;
                 this.thinkCallback = thinkCallback;
                 this.skillSecretSubstitutor = skillSecretSubstitutor;
+                this.beanFactory = beanFactory;
+                this.objectMapper = objectMapper;
     }
+
+        public AiOrchestrationService(Map<AiProvider, ChatClient> chatClientRegistry,
+                                                                  AiChatClientFactory chatClientFactory,
+                                                                  SessionEnvironmentService sessionEnvironmentService,
+                                                                  DatabaseRepository<AiSession> aiSessionRepository,
+                                                                  DatabaseRepository<AgentTemplate> agentTemplateRepository,
+                                                                  DatabaseRepository<sh.vork.skill.Skill> skillRepository,
+                                                                  Map<String, ToolCallback> securedToolCallbackMap,
+                                                                  SessionToolStore sessionToolStore,
+                                                                  sh.vork.skill.SkillToolCallbackFactory skillToolCallbackFactory,
+                                                                  ToolCallback listAvailableToolsCallback,
+                                                                  ToolCallback listAgentTemplatesCallback,
+                                                                  ToolCallback thinkCallback,
+                                                                  sh.vork.ai.security.SkillSecretSubstitutor skillSecretSubstitutor) {
+                this(chatClientRegistry,
+                        chatClientFactory,
+                        sessionEnvironmentService,
+                        aiSessionRepository,
+                        agentTemplateRepository,
+                        skillRepository,
+                        securedToolCallbackMap,
+                        sessionToolStore,
+                        skillToolCallbackFactory,
+                        listAvailableToolsCallback,
+                        listAgentTemplatesCallback,
+                        thinkCallback,
+                        skillSecretSubstitutor,
+                        null,
+                        new ObjectMapper());
+        }
 
     /**
      * Generates a text response for {@code userPrompt} using the specified provider.
@@ -318,7 +365,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 + "5. Mid-turn commentary: call the think tool first, then immediately invoke your next action tool. "
                 +    "Never emit a bare status message without following it with a tool call in the same turn.";
 
-        private static final String AVAILABLE_TOOLS_CONTEXT_KEY = "__available_tool_names__";
+        private static final String AVAILABLE_TOOL_DETAILS_CONTEXT_KEY = "__available_tool_details__";
 
         private String composeSystemPrompt() {
                 String sessionUuid = ToolExecutionContext.getSessionUuid();
@@ -694,11 +741,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 sessionUuid, merged.size(), toolNames);
                 }
 
-                List<String> visibleToolNames = merged.stream()
-                        .map(t -> t.getToolDefinition().name())
-                        .distinct()
-                        .toList();
-                ToolExecutionContext.put(AVAILABLE_TOOLS_CONTEXT_KEY, visibleToolNames);
+                ToolExecutionContext.put(AVAILABLE_TOOL_DETAILS_CONTEXT_KEY, buildToolDetails(merged));
 
                 ChatClient.Builder builder = base.mutate()
                         .defaultSystem(composeSystemPrompt())
@@ -794,7 +837,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         sh.vork.skill.SkillFrame topFrame = session.skillStack().getLast();
                         List<String> allowedToolNames = topFrame.allowedTools();
 
-                        List<String> skillToolNames = new ArrayList<>(
+                        List<String> skillToolNames = expandWithToolDependencies(
                                 allowedToolNames != null ? allowedToolNames : List.of());
                         // Skills exit via FINISHED_TURN — completeSkillExecution is no longer injected.
                         // Resolve hard tools from the secured map
@@ -868,6 +911,8 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         return new ToolCallback[0];
                 }
 
+                toolNames = expandWithToolDependencies(toolNames);
+
                 ToolCallback[] result = toolNames.stream()
                         .map(securedToolCallbackMap::get)
                         .filter(Objects::nonNull)
@@ -903,33 +948,179 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
          */
         public List<String> findUnresolvableTools(List<String> toolNames) {
                 if (toolNames == null || toolNames.isEmpty()) return List.of();
-                return toolNames.stream()
+                return expandWithToolDependencies(toolNames).stream()
                         .filter(name -> !name.equals("completeSkillExecution"))
                         .filter(name -> !securedToolCallbackMap.containsKey(name))
                         .toList();
         }
 
         private void appendAvailableToolsSection(StringBuilder prompt) {
-                Object toolsObj = ToolExecutionContext.get(AVAILABLE_TOOLS_CONTEXT_KEY);
+                Object toolsObj = ToolExecutionContext.get(AVAILABLE_TOOL_DETAILS_CONTEXT_KEY);
                 if (!(toolsObj instanceof List<?> rawList) || rawList.isEmpty()) {
-                        return;
-                }
-
-                List<String> toolNames = rawList.stream()
-                        .map(String::valueOf)
-                        .filter(name -> name != null && !name.isBlank())
-                        .distinct()
-                        .toList();
-                if (toolNames.isEmpty()) {
                         return;
                 }
 
                 prompt.append("\n\n### TOOL ACCESS POLICY\n");
                 prompt.append("AI may only execute tools it has access to which are listed below. ");
                 prompt.append("Skills are tools. ONLY use these tools:\n\n");
-                for (String toolName : toolNames) {
-                        prompt.append("- `").append(toolName).append("`\n");
+                for (Object raw : rawList) {
+                        if (!(raw instanceof Map<?, ?> item)) {
+                                continue;
+                        }
+                        String name = String.valueOf(item.get("name"));
+                        if (name == null || name.isBlank()) {
+                                continue;
+                        }
+
+                        prompt.append("- `").append(name).append("`");
+
+                        Object descObj = item.get("description");
+                        String description = descObj == null ? "" : String.valueOf(descObj).trim();
+                        if (!description.isBlank()) {
+                                prompt.append("\n  Description: ").append(description);
+                        }
+
+                        Object requiredObj = item.get("requiredArgs");
+                        if (requiredObj instanceof List<?> requiredArgs && !requiredArgs.isEmpty()) {
+                                prompt.append("\n  Required args: ")
+                                        .append(requiredArgs.stream().map(String::valueOf).collect(Collectors.joining(", ")));
+                        }
+
+                        Object optionalObj = item.get("optionalArgs");
+                        if (optionalObj instanceof List<?> optionalArgs && !optionalArgs.isEmpty()) {
+                                prompt.append("\n  Optional args: ")
+                                        .append(optionalArgs.stream().map(String::valueOf).collect(Collectors.joining(", ")));
+                        }
+
+                        prompt.append("\n");
                 }
+        }
+
+        private List<Map<String, Object>> buildToolDetails(List<ToolCallback> tools) {
+                List<Map<String, Object>> details = new ArrayList<>();
+                for (ToolCallback callback : tools) {
+                        var definition = callback.getToolDefinition();
+                        Map<String, Object> detail = new LinkedHashMap<>();
+                        detail.put("name", definition.name());
+                        detail.put("description", definition.description());
+
+                        List<String> requiredArgs = new ArrayList<>();
+                        List<String> optionalArgs = new ArrayList<>();
+                        parseToolInputSchema(definition.inputSchema(), requiredArgs, optionalArgs);
+                        detail.put("requiredArgs", requiredArgs);
+                        detail.put("optionalArgs", optionalArgs);
+
+                        details.add(detail);
+                }
+                return details;
+        }
+
+        private void parseToolInputSchema(String schema, List<String> requiredArgs, List<String> optionalArgs) {
+                if (schema == null || schema.isBlank()) {
+                        return;
+                }
+                if (objectMapper == null) {
+                        return;
+                }
+                try {
+                        JsonNode root = objectMapper.readTree(schema);
+                        JsonNode properties = root.get("properties");
+                        if (properties == null || !properties.isObject()) {
+                                return;
+                        }
+
+                        LinkedHashSet<String> required = new LinkedHashSet<>();
+                        JsonNode requiredNode = root.get("required");
+                        if (requiredNode != null && requiredNode.isArray()) {
+                                requiredNode.forEach(node -> {
+                                        if (node.isTextual()) {
+                                                required.add(node.asText());
+                                        }
+                                });
+                        }
+
+                        var names = properties.fieldNames();
+                        while (names.hasNext()) {
+                                String name = names.next();
+                                if (required.contains(name)) {
+                                        requiredArgs.add(name);
+                                } else {
+                                        optionalArgs.add(name);
+                                }
+                        }
+                } catch (Exception ignored) {
+                        // Best-effort metadata extraction for prompt guidance only.
+                }
+        }
+
+        private List<String> expandWithToolDependencies(List<String> toolNames) {
+                if (toolNames == null || toolNames.isEmpty()) {
+                        return List.of();
+                }
+
+                LinkedHashSet<String> expanded = new LinkedHashSet<>();
+                ArrayList<String> queue = new ArrayList<>();
+                for (String toolName : toolNames) {
+                        if (toolName != null && !toolName.isBlank()) {
+                                queue.add(toolName);
+                        }
+                }
+
+                for (int i = 0; i < queue.size(); i++) {
+                        String current = queue.get(i);
+                        if (!expanded.add(current)) {
+                                continue;
+                        }
+
+                        for (String dep : getDeclaredToolDependencies(current)) {
+                                if (dep != null && !dep.isBlank() && !expanded.contains(dep)) {
+                                        queue.add(dep.trim());
+                                }
+                        }
+                }
+
+                return List.copyOf(expanded);
+        }
+
+        private List<String> getDeclaredToolDependencies(String toolName) {
+                if (beanFactory == null) {
+                        return List.of();
+                }
+                if (!beanFactory.containsBeanDefinition(toolName)) {
+                        return List.of();
+                }
+
+                BeanDefinition bd = beanFactory.getBeanDefinition(toolName);
+                String factoryBeanName = bd.getFactoryBeanName();
+                String factoryMethodName = bd.getFactoryMethodName();
+                if (factoryBeanName == null || factoryMethodName == null) {
+                        return List.of();
+                }
+
+                try {
+                        Object factoryBean = beanFactory.getBean(factoryBeanName);
+                        Class<?> targetClass = ClassUtils.getUserClass(factoryBean);
+                        for (Method method : targetClass.getDeclaredMethods()) {
+                                if (!method.getName().equals(factoryMethodName)) {
+                                        continue;
+                                }
+                                ToolDepends depends = method.getAnnotation(ToolDepends.class);
+                                if (depends == null || depends.value().length == 0) {
+                                        return List.of();
+                                }
+                                List<String> deps = new ArrayList<>();
+                                for (String dep : depends.value()) {
+                                        if (dep != null && !dep.isBlank()) {
+                                                deps.add(dep.trim());
+                                        }
+                                }
+                                return deps;
+                        }
+                } catch (Exception ignored) {
+                        // Dependency metadata failure must not break runtime tool resolution.
+                }
+
+                return List.of();
         }
 
 }

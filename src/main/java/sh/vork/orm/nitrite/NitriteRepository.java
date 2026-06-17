@@ -224,7 +224,7 @@ public class NitriteRepository<T extends DatabaseEntity> implements DatabaseRepo
             if (va == null && vb == null) return 0;
             if (va == null) return 1;
             if (vb == null) return -1;
-            if (va instanceof Comparable ca && vb instanceof Comparable cb) {
+            if (va instanceof Comparable ca && vb instanceof Comparable) {
                 try { return ca.compareTo(vb); } catch (ClassCastException ignored) { /* fall through */ }
             }
             return va.toString().compareTo(vb.toString());

@@ -1,5 +1,7 @@
 package sh.vork.ai.registry;
 
+import java.util.List;
+
 /**
  * A snapshot of a tool's identity and interface contract.
  *
@@ -21,6 +23,7 @@ package sh.vork.ai.registry;
  * @param hidden          {@code true} when the {@code @Bean} factory method is
  *                        annotated with {@link Hidden}, meaning the tool is excluded
  *                        from the public registry and must be injected per-session
+ * @param dependsOn       companion tool IDs auto-included when this tool is attached
  */
 public record ToolDescriptor(
         String  id,
@@ -30,5 +33,6 @@ public record ToolDescriptor(
         String  description,
         String  parameterSchema,
         boolean restricted,
-        boolean hidden
+        boolean hidden,
+        List<String> dependsOn
 ) {}

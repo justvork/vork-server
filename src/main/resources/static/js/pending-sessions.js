@@ -80,12 +80,24 @@
         // Action
         var tdAction = document.createElement('td');
         tdAction.className = 'text-end';
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'btn btn-sm btn-primary';
-        btn.innerHTML = '<i class="fa-solid fa-keyboard me-1"></i>Provide Input';
-        btn.addEventListener('click', function () { openModal(session, tr); });
-        tdAction.appendChild(btn);
+        var actionWrap = document.createElement('div');
+        actionWrap.className = 'd-inline-flex gap-2';
+
+        var inputBtn = document.createElement('button');
+        inputBtn.type = 'button';
+        inputBtn.className = 'btn btn-sm btn-primary';
+        inputBtn.innerHTML = '<i class="fa-solid fa-keyboard me-1"></i>Provide Input';
+        inputBtn.addEventListener('click', function () { openModal(session, tr); });
+        actionWrap.appendChild(inputBtn);
+
+        var dismissBtn = document.createElement('button');
+        dismissBtn.type = 'button';
+        dismissBtn.className = 'btn btn-sm btn-outline-danger';
+        dismissBtn.innerHTML = '<i class="fa-solid fa-xmark me-1"></i>Dismiss';
+        dismissBtn.addEventListener('click', function () { dismissSession(session, tr, dismissBtn); });
+        actionWrap.appendChild(dismissBtn);
+
+        tdAction.appendChild(actionWrap);
         tr.appendChild(tdAction);
 
         return tr;
@@ -114,6 +126,47 @@
                 // BACKGROUND_RESUMED / WEB_RESUMED: row already removed, nothing to do
             }
         });
+    }
+
+    function dismissSession(session, tr, buttonEl) {
+        if (!session || !session.sessionUuid) return;
+        if (!window.confirm('Dismiss this pending request? This will mark it complete and remove it from the list.')) {
+            return;
+        }
+
+        if (buttonEl) {
+            buttonEl.disabled = true;
+            buttonEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i>Dismissing';
+        }
+
+        fetch('/api/chat/sessions/pending-input/' + encodeURIComponent(session.sessionUuid), {
+            method: 'DELETE'
+        })
+            .then(function (r) {
+                if (!r.ok) {
+                    return r.json().then(function (body) {
+                        var msg = (body && body.message) ? body.message : ('HTTP ' + r.status);
+                        throw new Error(msg);
+                    }).catch(function () {
+                        throw new Error('HTTP ' + r.status);
+                    });
+                }
+                return r.json();
+            })
+            .then(function () {
+                if (tr && tr.parentNode) tr.parentNode.removeChild(tr);
+                if (tbody.querySelectorAll('tr').length === 0) {
+                    tableWrapper.classList.add('d-none');
+                    emptyEl.classList.remove('d-none');
+                }
+            })
+            .catch(function (err) {
+                window.alert('Failed to dismiss pending request: ' + escapeHtml(String(err && err.message ? err.message : err)));
+                if (buttonEl) {
+                    buttonEl.disabled = false;
+                    buttonEl.innerHTML = '<i class="fa-solid fa-xmark me-1"></i>Dismiss';
+                }
+            });
     }
 
     // ── Utilities ─────────────────────────────────────────────────────────────

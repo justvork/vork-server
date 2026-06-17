@@ -59,6 +59,7 @@ import sh.vork.ai.function.UploadFileRequest;
 import sh.vork.ai.function.UploadTextFileRequest;
 import sh.vork.ai.registry.Hidden;
 import sh.vork.ai.registry.ToolCategory;
+import sh.vork.ai.registry.ToolDepends;
 import sh.vork.ai.registry.ToolRegistry;
 import sh.vork.ai.security.AuthorizationRuleEngine;
 import sh.vork.ai.security.Restricted;
@@ -304,7 +305,9 @@ the protocol and will break the system. Do not converse. Execute.
                     toolRegistry.getAvailableTools().forEach(d -> entries.add(java.util.Map.of(
                             "id",          d.id(),
                             "name",        d.name(),
-                            "description", d.description())));
+                            "description", d.description(),
+                            "parameterSchema", d.parameterSchema(),
+                            "dependsOn", d.dependsOn())));
                     try {
                         return objectMapper.writeValueAsString(entries);
                     } catch (Exception e) {
@@ -1184,6 +1187,7 @@ REASONING_HINT: Authorization is required to compile {{type_name}}.
     @Bean
     @Restricted
     @ToolCategory("Notifications")
+    @ToolDepends({"listNotificationProviders"})
     public ToolCallback sendNotification(DirectNotificationService directNotificationService) {
         ToolCallback delegate = FunctionToolCallback
                 .builder("sendNotification",

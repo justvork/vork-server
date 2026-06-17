@@ -66,7 +66,8 @@ public class ToolRegistry {
                         def.description(),
                         def.inputSchema(),
                         isRestrictedTool(beanName),
-                        isHiddenTool(beanName)));
+                        isHiddenTool(beanName),
+                        getToolDependencies(beanName)));
             } catch (Exception ex) {
                 log.warn("Failed to index tool callback [bean={}]: {}", beanName, ex.getMessage());
             }
@@ -98,6 +99,20 @@ public class ToolRegistry {
     private String getToolCategory(String beanName) {
         ToolCategory annotation = readMethodAnnotation(beanName, ToolCategory.class);
         return annotation != null ? annotation.value() : "General";
+    }
+
+    private List<String> getToolDependencies(String beanName) {
+        ToolDepends annotation = readMethodAnnotation(beanName, ToolDepends.class);
+        if (annotation == null || annotation.value().length == 0) {
+            return List.of();
+        }
+        List<String> dependencies = new ArrayList<>();
+        for (String dep : annotation.value()) {
+            if (dep != null && !dep.isBlank()) {
+                dependencies.add(dep.trim());
+            }
+        }
+        return dependencies;
     }
 
     /**

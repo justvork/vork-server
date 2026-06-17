@@ -2,12 +2,17 @@ package sh.vork.ai.controller;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Controller;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.ResponseBody;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -105,6 +110,69 @@ public class PendingSessionsController {
         log.debug("EXIT pendingInputSessions: found {} pending session(s) for user={}", result.size(), username);
         return result;
     }
+
+        /**
+         * Dismisses a stale pending-input request by transitioning the session out of
+         * {@link AiSessionStatus#AWAITING_INPUT}. This removes it from the pending list.
+         */
+        @DeleteMapping("/api/chat/sessions/pending-input/{sessionUuid}")
+        @ResponseBody
+        public ResponseEntity<Map<String, Object>> dismissPendingInputSession(@PathVariable String sessionUuid) {
+        String username = resolveUsername();
+        log.debug("ENTER dismissPendingInputSession: user={}, session={}", username, sessionUuid);
+
+        AiSession session = sessionRepo.get(sessionUuid);
+        if (session == null) {
+            log.warn("dismissPendingInputSession: session not found [session={}]", sessionUuid);
+            return ResponseEntity.status(404).body(Map.of(
+                "status", "NOT_FOUND",
+                "message", "Session not found"));
+        }
+        if (!username.equals(session.username())) {
+            log.warn("dismissPendingInputSession: access denied [session={}, user={}]", sessionUuid, username);
+            return ResponseEntity.status(403).body(Map.of(
+                "status", "FORBIDDEN",
+                "message", "Access denied"));
+        }
+        if (session.status() != AiSessionStatus.AWAITING_INPUT) {
+            log.warn("dismissPendingInputSession: session not awaiting input [session={}, status={}]",
+                sessionUuid, session.status());
+            return ResponseEntity.status(409).body(Map.of(
+                "status", "NOT_AWAITING_INPUT",
+                "message", "Session is not waiting for input"));
+        }
+
+        List<AiChatMessage> updatedMessages = new ArrayList<>(session.messages());
+        updatedMessages.add(new AiChatMessage(
+            UUID.randomUUID().toString(),
+            "ASSISTANT",
+            "Pending input request dismissed by user.",
+            System.currentTimeMillis(),
+            null));
+
+        AiSession updated = new AiSession(
+            session.uuid(),
+            session.provider(),
+            session.originMode(),
+            session.username(),
+            session.name(),
+            session.createdAt(),
+            session.currentRoundCount(),
+            List.copyOf(updatedMessages),
+            session.environmentVariables(),
+            AiSessionStatus.COMPLETED,
+            session.activeAgentTemplateId(),
+            session.modelId(),
+            session.skillStack(),
+            session.sessionSkillUuids(),
+            session.sessionToolIds());
+        sessionRepo.save(updated);
+
+        log.info("EXIT dismissPendingInputSession: dismissed [session={}, user={}]", sessionUuid, username);
+        return ResponseEntity.ok(Map.of(
+            "status", "DISMISSED",
+            "sessionUuid", sessionUuid));
+        }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
