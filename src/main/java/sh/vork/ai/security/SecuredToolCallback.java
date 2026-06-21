@@ -165,6 +165,10 @@ public class SecuredToolCallback implements ToolCallback {
             try {
                 String formatted = visualizableTool.formatAuthorizationDetails(argumentsJson);
                 if (formatted != null && !formatted.isBlank()) {
+                    String trimmed = formatted.trim();
+                    if (trimmed.startsWith("```") && trimmed.endsWith("```")) {
+                        return trimmed;
+                    }
                     return "```\n" + formatted + "\n```";
                 }
             } catch (Exception ignored) {

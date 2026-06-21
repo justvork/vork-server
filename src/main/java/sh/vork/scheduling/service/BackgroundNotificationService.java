@@ -30,6 +30,7 @@ import sh.vork.relay.RelayHttpClient;
 import sh.vork.relay.lib.model.RelaySubmission;
 import sh.vork.setup.SystemSettings;
 import sh.vork.setup.SystemSettingsService;
+import sh.vork.web.RequestOriginContext;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.SearchQuery;
 import sh.vork.orm.SortOrder;
@@ -74,7 +75,7 @@ public class BackgroundNotificationService implements SystemNotificationService 
     private final ApplicationContext             applicationContext;
 
     @Value("${vork.app.base-url:}")
-    private String propertyBaseUrl;
+    private String configuredRelayHost;
 
     public BackgroundNotificationService(SystemSettingsService systemSettingsService,
                                        DatabaseRepository<AiSession> sessionRepo,
@@ -109,11 +110,10 @@ public class BackgroundNotificationService implements SystemNotificationService 
 
         String username = resolveUsername(sessionUuid);
 
-        // If appBaseUrl is explicitly configured, use the self-hosted /input-form URL.
-        // Only use the zero-knowledge relay when no custom URL is set.
-        String configuredUrl = resolveConfiguredBaseUrl();
-        if (configuredUrl != null) {
-            notifySelfHosted(toolName, arguments, sessionUuid, eventId, username, configuredUrl);
+        // Use request-origin context for self-hosted links when available.
+        String requestBaseUrl = resolveRequestBaseUrl(sessionUuid);
+        if (requestBaseUrl != null) {
+            notifySelfHosted(toolName, arguments, sessionUuid, eventId, username, requestBaseUrl);
         } else {
             notifyViaRelay(toolName, arguments, sessionUuid, eventId, username);
         }
@@ -138,7 +138,7 @@ public class BackgroundNotificationService implements SystemNotificationService 
     /** Zero-knowledge relay path: encrypt, upload, log relay URL, long-poll for response. */
     private void notifyViaRelay(String toolName, String arguments,
                                  String sessionUuid, String eventId, String username) {
-        String relayBaseUrl   = DEFAULT_RELAY_BASE_URL;
+        String relayBaseUrl   = resolveRelayBaseUrl();
         String relaySessionId = eventId != null ? eventId : sessionUuid;
 
         // ── Resolve OOB timeout ──────────────────────────────────────────────
@@ -440,21 +440,48 @@ public class BackgroundNotificationService implements SystemNotificationService 
         return session != null && session.username() != null ? session.username() : "system";
     }
 
-    private String resolveConfiguredBaseUrl() {
+    private String resolveRequestBaseUrl(String sessionUuid) {
+        String fromCurrentRequest = RequestOriginContext.resolveBaseUrlFromCurrentRequest();
+        if (fromCurrentRequest != null && !fromCurrentRequest.isBlank()) {
+            return trimTrailingSlash(fromCurrentRequest);
+        }
+        if (sessionUuid == null || sessionUuid.isBlank()) {
+            return null;
+        }
+        AiSession session = sessionRepo.get(sessionUuid);
+        if (session != null && session.environmentVariables() != null) {
+            String fromSessionEnv = session.environmentVariables().get("__request_base_url__");
+            if (fromSessionEnv != null && !fromSessionEnv.isBlank()) {
+                return trimTrailingSlash(fromSessionEnv);
+            }
+        }
+        return null;
+    }
+
+    private String resolveRelayBaseUrl() {
         try {
             SystemSettings settings = systemSettingsService.getGlobal();
             if (settings != null && settings.appBaseUrl() != null && !settings.appBaseUrl().isBlank()) {
-                String url = settings.appBaseUrl();
-                return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+                return trimTrailingSlash(settings.appBaseUrl());
             }
         } catch (Exception e) {
-            log.warn("Could not read appBaseUrl from settings: {}", e.getMessage());
+            log.warn("Could not read relayHost from settings: {}", e.getMessage());
         }
-        if (propertyBaseUrl != null && !propertyBaseUrl.isBlank()) {
-            String url = propertyBaseUrl;
-            return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+        if (configuredRelayHost != null && !configuredRelayHost.isBlank()) {
+            return trimTrailingSlash(configuredRelayHost);
         }
-        return null;
+        return DEFAULT_RELAY_BASE_URL;
+    }
+
+    private static String trimTrailingSlash(String url) {
+        if (url == null) {
+            return null;
+        }
+        String v = url.trim();
+        if (v.isBlank()) {
+            return null;
+        }
+        return v.endsWith("/") ? v.substring(0, v.length() - 1) : v;
     }
 
 }

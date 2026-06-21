@@ -29,7 +29,7 @@ public class SystemSettingsService {
     }
 
     /**
-     * Persists the global default provider and model, preserving any existing {@code appBaseUrl}
+    * Persists the global default provider and model, preserving any existing relay host URL
      * and {@code defaultOobTimeoutMinutes}.
      */
     public SystemSettings setGlobal(String provider, String modelId) {
@@ -40,7 +40,7 @@ public class SystemSettingsService {
     }
 
     /**
-     * Persists the global default provider, model, and public base URL, preserving
+    * Persists the global default provider, model, and relay host URL, preserving
      * any existing {@code defaultOobTimeoutMinutes}.
      */
     public SystemSettings setGlobal(String provider, String modelId, String appBaseUrl) {
@@ -54,7 +54,7 @@ public class SystemSettingsService {
      *
      * @param provider              AiProvider enum name
      * @param modelId               model identifier
-     * @param appBaseUrl            public-facing base URL; may be null
+    * @param appBaseUrl            relay host URL; may be null
      * @param defaultOobTimeoutMins default OOB timeout in minutes; 0 means 15 minutes will be used at runtime
      */
     public SystemSettings setGlobal(String provider, String modelId, String appBaseUrl,
@@ -64,7 +64,7 @@ public class SystemSettingsService {
         SystemSettings settings = new SystemSettings(GLOBAL_KEY, provider, modelId,
                 effectiveUrl, defaultOobTimeoutMins);
         repo.save(settings);
-        log.info("Global settings updated [provider={}, model={}, baseUrl={}, oobTimeoutMins={}]",
+        log.info("Global settings updated [provider={}, model={}, relayHost={}, oobTimeoutMins={}]",
                 provider, modelId, appBaseUrl, defaultOobTimeoutMins);
         return settings;
     }

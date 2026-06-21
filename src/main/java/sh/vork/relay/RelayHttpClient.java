@@ -3,6 +3,7 @@ package sh.vork.relay;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
@@ -25,9 +26,12 @@ public class RelayHttpClient {
 
     private final HttpClient  httpClient;
     private final ObjectMapper objectMapper;
+    private final String relayUploadToken;
 
-    public RelayHttpClient(ObjectMapper objectMapper) {
+    public RelayHttpClient(ObjectMapper objectMapper,
+                           @Value("${vork.relay.upload-token:}") String relayUploadToken) {
         this.objectMapper = objectMapper;
+        this.relayUploadToken = relayUploadToken;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -56,12 +60,17 @@ public class RelayHttpClient {
         }
         String body = objectMapper.writeValueAsString(payload);
 
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(relayBaseUrl + "/api/v1/relay/" + sessionId))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .timeout(Duration.ofSeconds(20))
-                .build();
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
+            .uri(URI.create(relayBaseUrl + "/api/v1/relay/" + sessionId))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .timeout(Duration.ofSeconds(20));
+
+        if (relayUploadToken != null && !relayUploadToken.isBlank()) {
+            requestBuilder.header("X-Relay-Token", relayUploadToken);
+        }
+
+        HttpRequest request = requestBuilder.build();
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         log.debug("Relay upload response: HTTP {}", response.statusCode());

@@ -27,6 +27,7 @@ import sh.vork.relay.RelayEncryptionService;
 import sh.vork.relay.RelayHttpClient;
 import sh.vork.relay.lib.model.RelaySubmission;
 import sh.vork.setup.SystemSettingsService;
+import sh.vork.web.RequestOriginContext;
 
 /**
  * Decides how to render a {@link ToolSuspensionException} prompt for a Slack DM user
@@ -59,7 +60,7 @@ public class SlackSuspensionRenderer {
     private final ObjectMapper                  objectMapper;
 
     @Value("${vork.app.base-url:}")
-    private String propertyBaseUrl;
+    private String configuredRelayHost;
 
     public SlackSuspensionRenderer(SlackApiClient slackApiClient,
                                     InputFormTokenService formTokenService,
@@ -188,10 +189,10 @@ public class SlackSuspensionRenderer {
 
     private void renderWebForm(String channelId, String botToken, AiSession session,
                                 UiEventFrame promptEvent, String title, String description) {
-        String configuredUrl = resolveConfiguredBaseUrl();
-        if (configuredUrl != null) {
+        String requestBaseUrl = resolveRequestBaseUrl(session);
+        if (requestBaseUrl != null) {
             renderWebFormSelfHosted(channelId, botToken, session, promptEvent,
-                    title, description, configuredUrl);
+                    title, description, requestBaseUrl);
         } else {
             renderWebFormRelay(channelId, botToken, session, promptEvent, title, description);
         }
@@ -215,7 +216,7 @@ public class SlackSuspensionRenderer {
 
     private void renderWebFormRelay(String channelId, String botToken, AiSession session,
                                      UiEventFrame promptEvent, String title, String description) {
-        String relayBaseUrl   = DEFAULT_RELAY_BASE_URL;
+        String relayBaseUrl   = resolveRelayBaseUrl();
         String relaySessionId = promptEvent.eventId();
 
         InteractionFormSchema schema = promptEvent.formSchema();
@@ -399,17 +400,40 @@ public class SlackSuspensionRenderer {
         return null;
     }
 
-    private String resolveConfiguredBaseUrl() {
-        sh.vork.setup.SystemSettings settings = systemSettingsService.getGlobal();
-        if (settings != null && settings.appBaseUrl() != null && !settings.appBaseUrl().isBlank()) {
-            String url = settings.appBaseUrl();
-            return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+    private String resolveRequestBaseUrl(AiSession session) {
+        String fromCurrentRequest = RequestOriginContext.resolveBaseUrlFromCurrentRequest();
+        if (fromCurrentRequest != null && !fromCurrentRequest.isBlank()) {
+            return trimTrailingSlash(fromCurrentRequest);
         }
-        if (propertyBaseUrl != null && !propertyBaseUrl.isBlank()) {
-            String url = propertyBaseUrl;
-            return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+        if (session != null && session.environmentVariables() != null) {
+            String fromSessionEnv = session.environmentVariables().get("__request_base_url__");
+            if (fromSessionEnv != null && !fromSessionEnv.isBlank()) {
+                return trimTrailingSlash(fromSessionEnv);
+            }
         }
         return null;
+    }
+
+    private String resolveRelayBaseUrl() {
+        sh.vork.setup.SystemSettings settings = systemSettingsService.getGlobal();
+        if (settings != null && settings.appBaseUrl() != null && !settings.appBaseUrl().isBlank()) {
+            return trimTrailingSlash(settings.appBaseUrl());
+        }
+        if (configuredRelayHost != null && !configuredRelayHost.isBlank()) {
+            return trimTrailingSlash(configuredRelayHost);
+        }
+        return DEFAULT_RELAY_BASE_URL;
+    }
+
+    private static String trimTrailingSlash(String url) {
+        if (url == null) {
+            return null;
+        }
+        String v = url.trim();
+        if (v.isBlank()) {
+            return null;
+        }
+        return v.endsWith("/") ? v.substring(0, v.length() - 1) : v;
     }
 
     private static String extractCodeContent(InteractionFormSchema schema) {

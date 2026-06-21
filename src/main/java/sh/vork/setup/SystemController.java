@@ -42,7 +42,7 @@ public class SystemController {
         var result = new java.util.LinkedHashMap<String, Object>();
         result.put("defaultProvider",         s.defaultProvider());
         result.put("defaultModelId",          s.defaultModelId());
-        result.put("appBaseUrl",              s.appBaseUrl() != null ? s.appBaseUrl() : "");
+        result.put("relayHost",               s.appBaseUrl() != null ? s.appBaseUrl() : "");
         result.put("defaultOobTimeoutMinutes", s.defaultOobTimeoutMinutes() > 0 ? s.defaultOobTimeoutMinutes() : 15);
         return result;
     }
@@ -58,11 +58,11 @@ public class SystemController {
             return ResponseEntity.badRequest().body(Map.of("error", "Model is required."));
         }
         systemSettingsService.setGlobal(req.defaultProvider(), req.defaultModelId(),
-                req.appBaseUrl(), req.defaultOobTimeoutMinutes() > 0 ? req.defaultOobTimeoutMinutes() : 0);
-        log.info("Global default updated via settings page [provider={}, model={}, baseUrl={}, oobTimeoutMins={}]",
-                req.defaultProvider(), req.defaultModelId(), req.appBaseUrl(), req.defaultOobTimeoutMinutes());
+            req.relayHost(), req.defaultOobTimeoutMinutes() > 0 ? req.defaultOobTimeoutMinutes() : 0);
+        log.info("Global default updated via settings page [provider={}, model={}, relayHost={}, oobTimeoutMins={}]",
+            req.defaultProvider(), req.defaultModelId(), req.relayHost(), req.defaultOobTimeoutMinutes());
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
-    record SettingsRequest(String defaultProvider, String defaultModelId, String appBaseUrl, int defaultOobTimeoutMinutes) {}
+        record SettingsRequest(String defaultProvider, String defaultModelId, String relayHost, int defaultOobTimeoutMinutes) {}
 }

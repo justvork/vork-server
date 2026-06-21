@@ -13,7 +13,7 @@
 
     <groupId>sh.vork</groupId>
     <artifactId>vork</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>0.0.1-SNAPSHOT</version>
     <name>vork</name>
     <description>Vork — generic MongoDB repository layer for Spring Boot</description>
 
@@ -90,7 +90,7 @@
         <dependency>
             <groupId>sh.vork</groupId>
             <artifactId>vork-relay-lib</artifactId>
-            <version>1.0.0-SNAPSHOT</version>
+            <version>0.0.1-SNAPSHOT</version>
         </dependency>
 
         <!-- Jedis — Redis client; required to compile the orm/redis sources -->
@@ -186,6 +186,11 @@
         </dependency>
 
         <!-- NPM packages (served locally via NpmPackageController) -->
+        <dependency>
+            <groupId>npm</groupId>
+            <artifactId>bootstrap</artifactId>
+            <version>5.3.3</version>
+        </dependency>
         <dependency>
             <groupId>npm.fortawesome</groupId>
             <artifactId>fontawesome-free</artifactId>

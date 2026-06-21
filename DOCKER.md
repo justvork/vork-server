@@ -4,22 +4,26 @@
 
 ```bash
 cd vork-server
-cp .env.example .env          # then fill in GEMINI_API_KEY
 docker compose up --build
 ```
 
 The app is available at http://localhost:8080.  
 MongoDB data is persisted in the `mongodb_data` Docker volume.
 
-### `.env` file
+AI provider selection and credentials are configured in the app setup flow/UI.
+You can choose any supported provider there; no provider-specific API key
+environment variable is required in this Docker guide.
 
-Create a `.env` file in `vork-server/` (next to `docker-compose.yml`):
+### Optional `.env` overrides
+
+If you want to override infrastructure settings for local compose, create a `.env`
+file in `vork-server/` (next to `docker-compose.yml`) with values such as:
 
 ```
-GEMINI_API_KEY=your-key-here
+MONGO_HOST=mongodb
+MONGO_PORT=27017
+MONGO_DATABASE=vork
 ```
-
-Get a key at https://aistudio.google.com/app/apikey.
 
 ---
 
@@ -43,8 +47,8 @@ cd vork-server
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
   --file Dockerfile \
-  --tag yourusername/vork:latest \
-  --tag yourusername/vork:1.0.0 \
+  --tag yourusername/vork-server:latest \
+  --tag yourusername/vork-server:{version} \
   --push \
   .
 ```

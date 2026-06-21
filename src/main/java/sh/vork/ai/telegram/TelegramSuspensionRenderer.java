@@ -26,6 +26,7 @@ import sh.vork.relay.RelayEncryptionService;
 import sh.vork.relay.RelayHttpClient;
 import sh.vork.relay.lib.model.RelaySubmission;
 import sh.vork.setup.SystemSettingsService;
+import sh.vork.web.RequestOriginContext;
 
 /**
  * Decides how to render a {@link ToolSuspensionException} prompt for a Telegram user
@@ -39,7 +40,8 @@ import sh.vork.setup.SystemSettingsService;
  *       sends a plain-text prompt asking the user to type the value; the consumer
  *       saves a pending-capture entry so the next message is treated as the answer.</li>
  *   <li><b>WEB_FORM</b> – contains a password field or two or more visible fields:
- *       sends a link to the Telegram web-form endpoint (requires appBaseUrl to be set).</li>
+ *       sends a link to the Telegram web-form endpoint using request-origin context,
+ *       otherwise falls back to the zero-knowledge relay.</li>
  * </ul>
  *
  * <h3>Inline keyboard callback_data format</h3>
@@ -64,7 +66,7 @@ public class TelegramSuspensionRenderer {
     private final ObjectMapper                   objectMapper;
 
     @Value("${vork.app.base-url:}")
-    private String propertyBaseUrl;
+    private String configuredRelayHost;
 
     public TelegramSuspensionRenderer(TelegramApiClient telegramApiClient,
                                        InputFormTokenService formTokenService,
@@ -172,12 +174,10 @@ public class TelegramSuspensionRenderer {
                                 UiEventFrame promptEvent, String title, String description) {
         String codeContent = extractCodeContent(promptEvent.formSchema());
 
-        // If appBaseUrl is explicitly configured, use the self-hosted /input-form endpoint.
-        // Only fall back to the zero-knowledge relay when no custom URL is set.
-        String configuredUrl = resolveConfiguredBaseUrl();
-        if (configuredUrl != null) {
+        String requestBaseUrl = resolveRequestBaseUrl(session);
+        if (requestBaseUrl != null) {
             renderWebFormSelfHosted(chatId, botToken, session, promptEvent,
-                    title, description, codeContent, configuredUrl);
+                title, description, codeContent, requestBaseUrl);
         } else {
             renderWebFormRelay(chatId, botToken, session, promptEvent,
                     title, description, codeContent);
@@ -204,7 +204,7 @@ public class TelegramSuspensionRenderer {
     private void renderWebFormRelay(String chatId, String botToken, AiSession session,
                                      UiEventFrame promptEvent, String title, String description,
                                      String codeContent) {
-        String relayBaseUrl   = DEFAULT_RELAY_BASE_URL;
+        String relayBaseUrl   = resolveRelayBaseUrl();
         String relaySessionId = promptEvent.eventId();
 
         // ── 1. Encrypt form schema ─────────────────────────────────────────
@@ -509,21 +509,40 @@ public class TelegramSuspensionRenderer {
         return text.replace("\\", "\\\\").replace("`", "\\`");
     }
 
-    /**
-     * Returns the explicitly-configured base URL (from SystemSettings or property),
-     * or {@code null} if nothing is set — meaning the relay default should be used.
-     */
-    private String resolveConfiguredBaseUrl() {
-        sh.vork.setup.SystemSettings settings = systemSettingsService.getGlobal();
-        if (settings != null && settings.appBaseUrl() != null && !settings.appBaseUrl().isBlank()) {
-            String url = settings.appBaseUrl();
-            return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+    private String resolveRequestBaseUrl(AiSession session) {
+        String fromCurrentRequest = RequestOriginContext.resolveBaseUrlFromCurrentRequest();
+        if (fromCurrentRequest != null && !fromCurrentRequest.isBlank()) {
+            return trimTrailingSlash(fromCurrentRequest);
         }
-        if (propertyBaseUrl != null && !propertyBaseUrl.isBlank()) {
-            String url = propertyBaseUrl;
-            return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+        if (session != null && session.environmentVariables() != null) {
+            String fromSessionEnv = session.environmentVariables().get("__request_base_url__");
+            if (fromSessionEnv != null && !fromSessionEnv.isBlank()) {
+                return trimTrailingSlash(fromSessionEnv);
+            }
         }
         return null;
+    }
+
+    private String resolveRelayBaseUrl() {
+        sh.vork.setup.SystemSettings settings = systemSettingsService.getGlobal();
+        if (settings != null && settings.appBaseUrl() != null && !settings.appBaseUrl().isBlank()) {
+            return trimTrailingSlash(settings.appBaseUrl());
+        }
+        if (configuredRelayHost != null && !configuredRelayHost.isBlank()) {
+            return trimTrailingSlash(configuredRelayHost);
+        }
+        return DEFAULT_RELAY_BASE_URL;
+    }
+
+    private static String trimTrailingSlash(String url) {
+        if (url == null) {
+            return null;
+        }
+        String v = url.trim();
+        if (v.isBlank()) {
+            return null;
+        }
+        return v.endsWith("/") ? v.substring(0, v.length() - 1) : v;
     }
 
 }

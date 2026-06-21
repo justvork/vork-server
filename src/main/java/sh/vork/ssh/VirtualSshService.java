@@ -361,13 +361,16 @@ public class VirtualSshService extends AbstractSshServer {
 					false);
 		}
 
+		node = verifyHostKey(node, normalizedHost, port);
+		final VorkNode verifiedNode = node;
+
 		context.setHostKeyVerification(new HostKeyVerification() {
 			@Override
 			public boolean verifyHost(String host, SshPublicKey pk) throws SshException {
 				try {
-					return SshKeyUtils.getPublicKey(node.verifiedHostKey()).equals(pk);
+					return SshKeyUtils.getPublicKey(verifiedNode.verifiedHostKey()).equals(pk);
 				} catch (IOException e) {
-					log.error("Failed to load verified host key for node: " + node.uuid(), e);
+					log.error("Failed to load verified host key for node: " + verifiedNode.uuid(), e);
 					return false;
 				}
 			}
@@ -579,28 +582,28 @@ public class VirtualSshService extends AbstractSshServer {
 						new FormAction("DENIED", "Cancel", "danger")
 				));
 
-		return new ToolSuspensionException("connectSsh", "{}", description, formSchema);
+		return new ToolSuspensionException("executeTerminalCommand", "{}", description, formSchema);
 	}
 
 	private VorkNode resolveNode(VorkUser principal, String host, int port, String username) throws IOException, SshException {
-
-		SshPublicKey currentHostKey = getHostKey(host, port, 5);
 
 		List<VorkNode> nodes = listNodesForHost(principal, host);
 		String resolvedUsername = resolveRequestedUsername(host, username);
 
 		if (resolvedUsername == null || resolvedUsername.isBlank()) {
 			if (nodes.size() == 1) {
-				return verifyHostKey(nodes.get(0), currentHostKey);
+				return nodes.get(0);
 			}
 			throw usernamePrompt(host, nodes);
 		}
 
 		for (VorkNode node : nodes) {
 			if (resolvedUsername.equals(node.username())) {
-				return verifyHostKey(node, currentHostKey);
+				return node;
 			}
 		}
+
+		SshPublicKey currentHostKey = getHostKey(host, port, 5);
 
 		Object approval = ToolExecutionContext.get("HOST_KEY_VERIFICATION");
 	
@@ -621,7 +624,9 @@ public class VirtualSshService extends AbstractSshServer {
 		throw hostKeyPrompt("connectSsh", host, currentHostKey, null);	
 	}
 
-	private VorkNode verifyHostKey(VorkNode node, SshPublicKey currentHostKey) throws IOException, SshException {
+	private VorkNode verifyHostKey(VorkNode node, String host, int port) throws IOException, SshException {
+
+		SshPublicKey currentHostKey = getHostKey(host, port, 5);
 		
 		if(StringUtils.isNotBlank(node.verifiedHostKey()) 
 			&&  SshKeyUtils.getPublicKey(node.verifiedHostKey()).equals(currentHostKey))	{
