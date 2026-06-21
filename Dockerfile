@@ -18,6 +18,8 @@ WORKDIR /workspace
 
 # ── vork-server — resolve dependencies then build ────────────────────────────
 COPY pom.xml pom.xml
+COPY package.json package.json
+COPY tailwind-input.css tailwind-input.css
 # Pre-fetch deps as a separate layer so source changes don't re-download
 RUN mvn -q -Dmaven.test.skip=true dependency:resolve || true
 
