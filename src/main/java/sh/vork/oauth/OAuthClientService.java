@@ -237,6 +237,29 @@ public class OAuthClientService {
                 "message", "OAuth client state cleared. Next oauthConnect call will start from a fresh configuration flow.");
     }
 
+    public List<OAuthClientSummary> listConfiguredClients(String username) {
+        log.debug("ENTER listConfiguredClients: user={}", username);
+        if (username == null || username.isBlank()) {
+            log.warn("EXIT listConfiguredClients: missing username");
+            return List.of();
+        }
+
+        long now = System.currentTimeMillis();
+        try (var stream = clientRepository.search(
+                0,
+                Integer.MAX_VALUE,
+                "updatedAt",
+                SortOrder.DESC,
+                SearchQuery.eq("userUuid", username))) {
+
+            List<OAuthClientSummary> results = stream
+                    .map(client -> toSummary(client, now))
+                    .toList();
+            log.debug("EXIT listConfiguredClients: user={}, count={}", username, results.size());
+            return results;
+        }
+    }
+
     public String resolveHeaderValue(String username, String rawValue) {
         if (rawValue == null || rawValue.isBlank()) {
             return rawValue;
@@ -667,4 +690,54 @@ public class OAuthClientService {
         }
         return v.asLong();
     }
+
+    private static OAuthClientSummary toSummary(OAuthClient client, long now) {
+        boolean hasAccessToken = client.accessTokenEncrypted() != null && !client.accessTokenEncrypted().isBlank();
+        boolean hasRefreshToken = client.refreshTokenEncrypted() != null && !client.refreshTokenEncrypted().isBlank();
+        boolean tokenExpired = client.accessTokenExpiresAt() > 0 && client.accessTokenExpiresAt() <= now;
+        boolean connected = hasAccessToken && !tokenExpired;
+        boolean configComplete = isConnectConfigPresent(client);
+
+        String placeholderKey = accessTokenPlaceholder(client.clientName());
+        String placeholder = "{{" + placeholderKey + "}}";
+
+        return new OAuthClientSummary(
+                client.uuid(),
+                client.clientName(),
+                client.authorizeEndpoint(),
+                client.tokenEndpoint(),
+                client.redirectUri(),
+                client.scopes(),
+                client.authorizationParams(),
+                configComplete,
+                connected,
+                hasAccessToken,
+                hasRefreshToken,
+                tokenExpired,
+                client.accessTokenExpiresAt(),
+                client.createdAt(),
+                client.updatedAt(),
+                placeholderKey,
+                placeholder);
+    }
+
+    public record OAuthClientSummary(
+            String uuid,
+            String clientName,
+            String authorizeEndpoint,
+            String tokenEndpoint,
+            String redirectUri,
+            List<String> scopes,
+            Map<String, String> authorizationParams,
+            boolean configComplete,
+            boolean connected,
+            boolean hasAccessToken,
+            boolean hasRefreshToken,
+            boolean tokenExpired,
+            long accessTokenExpiresAt,
+            long createdAt,
+            long updatedAt,
+            String placeholderKey,
+            String placeholder
+    ) {}
 }

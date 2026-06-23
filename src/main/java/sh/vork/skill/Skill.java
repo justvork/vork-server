@@ -15,12 +15,11 @@ import java.util.List;
  *
  * @param uuid           unique MongoDB _id
  * @param name           human-readable name
- * @param author         author / maintainer of this skill
  * @param description    brief description of what this skill does
- * @param category       category from the vork-skills canonical list
+ * @param groupUuid      parent group UUID that owns this skill
+ * @param autoShareWithinGroup if true, this skill is implicitly available as a
+ *                       sub-skill to other skills in the same group
  * @param parameters     typed input parameters the caller must supply
- * @param outputTemplate free-text template showing what the skill is expected to
- *                       return (may be JSON, plain text, or any example)
  * @param instructions   system prompt injected into the skill's AI session
  * @param allowedTools   Spring bean IDs of tools available inside the skill
  *                       (empty = all tools available)
@@ -34,11 +33,10 @@ import java.util.List;
 public record Skill(
         String                uuid,
         String                name,
-        String                author,
         String                description,
-        String                category,
+    String                groupUuid,
+    boolean               autoShareWithinGroup,
         List<SkillParameter>  parameters,
-        String                outputTemplate,
         String                instructions,
         List<String>          allowedTools,
         List<String>          allowedTypes,
@@ -51,11 +49,9 @@ public record Skill(
 
     public Skill {
         if (name == null || name.isBlank())  name = "Unnamed Skill";
-        if (author == null)                  author = "";
         if (description == null)             description = "";
-        if (category == null)                category = "";
+        if (groupUuid == null)               groupUuid = "";
         if (parameters == null)              parameters = List.of();
-        if (outputTemplate == null)          outputTemplate = "";
         if (instructions == null)            instructions = "";
         if (allowedTools == null)            allowedTools = List.of();
         if (allowedTypes == null)            allowedTypes = List.of();

@@ -44,6 +44,8 @@ import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.ai.function.CompileTypeRequest;
+import sh.vork.ai.function.CreateSkillRequest;
+import sh.vork.ai.function.DesignSkillRequest;
 import sh.vork.ai.function.CreateMongoDbConnectionRequest;
 import sh.vork.ai.function.DeleteSshConnectionRequest;
 import sh.vork.ai.function.DeleteMongoDbDocumentsRequest;
@@ -80,6 +82,7 @@ import sh.vork.ai.function.UpdateMongoDbDocumentsRequest;
 import sh.vork.ai.function.UploadFileRequest;
 import sh.vork.ai.function.UploadTextFileRequest;
 import sh.vork.ai.mongo.MongoToolService;
+import sh.vork.ai.skill.SkillAuthoringService;
 import sh.vork.ai.registry.Hidden;
 import sh.vork.ai.registry.ToolCategory;
 import sh.vork.ai.registry.ToolDepends;
@@ -125,6 +128,8 @@ import sh.vork.typegen.TypeDatabaseService;
 import sh.vork.typegen.TypeGenerationException;
 import sh.vork.typegen.TypeGeneratorService;
 import sh.vork.web.RequestOriginContext;
+import sh.vork.skill.Skill;
+import sh.vork.skill.SkillService;
 
 /**
  * Wires all AI-related Spring beans.
@@ -150,7 +155,10 @@ import sh.vork.web.RequestOriginContext;
 public class AiConfig {
 
     private static final Logger log = LoggerFactory.getLogger(AiConfig.class);
-    private static final String OAUTH_SECRET_CLIENT_SECRET_KEY = "clientSecret";
+    private static final String OAUTH_CLIENT_ID_CONTEXT_PREFIX = "oauth.client.";
+    private static final String OAUTH_CLIENT_ID_CONTEXT_SUFFIX = ".clientId";
+    private static final String OAUTH_CLIENT_SECRET_KEY_PREFIX = "oauth.client.";
+    private static final String OAUTH_CLIENT_SECRET_KEY_SUFFIX = ".clientSecret";
     public static final String BASE_SYSTEM_PROMPT = """
 You are an autonomous Vork AI agent operating strictly within a turn-based AI 
 orchestration framework. You execute background workflows using function-calling 
@@ -372,6 +380,81 @@ the protocol and will break the system. Do not converse. Execute.
                         .stripIndent())
                 .inputType(ListAvailableToolsRequest.class)
                 .build();
+    }
+
+    /**
+     * Read-only skill-authoring helper that converts a natural-language request
+     * into a feasibility assessment and draft skill configuration.
+     */
+    @Bean
+    @ToolCategory("Skills")
+    public ToolCallback designSkillFromRequest(SkillAuthoringService skillAuthoringService) {
+        return FunctionToolCallback
+                .builder("designSkillFromRequest", (DesignSkillRequest req) -> {
+                    SkillAuthoringService.SkillAuthoringResult result =
+                            skillAuthoringService.designSkillFromRequest(resolveUsername(), req);
+                    try {
+                        return objectMapper.writeValueAsString(result);
+                    } catch (Exception e) {
+                        return "{\"status\":\"error\",\"message\":\"" + e.getMessage().replace("\"", "'") + "\"}";
+                    }
+                })
+                .description("Analyze a natural-language skill request using the full non-hidden tool catalog and return a draft skill design without persisting changes.")
+                .inputType(DesignSkillRequest.class)
+                .build();
+    }
+
+    /**
+     * Restricted write tool that persists a fully-specified skill payload.
+     * This tool does not perform natural-language design inference.
+     */
+    @Bean
+    @Restricted
+    @ToolCategory("Skills")
+    public ToolCallback createSkill(SkillService skillService) {
+        ToolCallback delegate = FunctionToolCallback
+                .builder("createSkill", (CreateSkillRequest req) -> {
+                    if (req == null || req.name() == null || req.name().isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"name is required\"}";
+                    }
+                    if (req.description() == null || req.description().isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"description is required\"}";
+                    }
+                    if (req.groupUuid() == null || req.groupUuid().isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"groupUuid is required\"}";
+                    }
+                    if (req.instructions() == null || req.instructions().isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"instructions is required\"}";
+                    }
+
+                    try {
+                        SkillService.SkillRequest skillRequest = new SkillService.SkillRequest(
+                                req.name().trim(),
+                                req.description().trim(),
+                                req.groupUuid().trim(),
+                                req.autoShareEffective(),
+                                req.parameters() == null ? List.of() : req.parameters(),
+                                req.instructions().trim(),
+                                req.allowedTools() == null ? List.of() : req.allowedTools(),
+                                req.allowedTypes() == null ? List.of() : req.allowedTypes(),
+                                req.subSkillUuids() == null ? List.of() : req.subSkillUuids(),
+                                req.secrets() == null ? List.of() : req.secrets());
+
+                        Skill created = skillService.create(skillRequest);
+                        return objectMapper.writeValueAsString(Map.of(
+                                "status", "ok",
+                                "skillUuid", created.uuid(),
+                                "name", created.name(),
+                                "groupUuid", created.groupUuid()));
+                    } catch (Exception e) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + e.getMessage().replace("\"", "'") + "\"}";
+                    }
+                })
+                .description("Persist a skill from explicit fields only. Use this after design is complete. No natural-language inference is performed by this tool.")
+                .inputType(CreateSkillRequest.class)
+                .build();
+            return new VisualizableToolCallback(delegate, this::formatCreateSkillAuthorizationDetails);
     }
 
     // -------------------------------------------------------------------------
@@ -902,6 +985,7 @@ the protocol and will break the system. Do not converse. Execute.
      */
     @Bean
     @ToolCategory("Web")
+    @ToolDepends({"httpRequest"})
     public ToolCallback oauthConnect(OAuthClientService oauthClientService,
                                      SecureCredentialStore secureCredentialStore) {
         ToolCallback schemaCallback = FunctionToolCallback
@@ -912,11 +996,16 @@ the protocol and will break the system. Do not converse. Execute.
                     IMPORTANT: infer and populate as many oauthConnect fields as possible from the
                     user's requested target service (e.g. endpoints, scopes, provider-specific
                     authorizationParams). Minimize required manual user input.
+                    IMPORTANT: do not include clientId or clientSecret as skill runtime inputs.
+                    oauthConnect collects credentials through its interactive configuration form
+                    and secure secret storage when needed.
                     If this tool returns status=requires_service_defaults, you MUST retry oauthConnect
                     in the same turn with inferred authorizeEndpoint, tokenEndpoint, scopes,
                     and authorizationParams before requesting user input.
                     After callback completion, call this tool again to get status=ready and a Bearer placeholder token key
                     such as {{OAUTH_GITHUB_ACCESS_TOKEN}} for httpRequest headers.
+                    SKILL_USAGE_NON_RUNTIME_INPUTS: providerName, provider, clientName, scopes, authorizeEndpoint, tokenEndpoint, redirectUri, authorizationParams, clientId, clientSecret
+                    SKILL_USAGE_GUIDANCE: Infer provider defaults and pass them directly in the oauthConnect tool call (clientName, authorizeEndpoint, tokenEndpoint, scopes, authorizationParams) rather than exposing them as runtime skill inputs.
                     """.stripIndent())
                 .inputType(OAuthConnectRequest.class)
                 .build();
@@ -1058,9 +1147,12 @@ the protocol and will break the system. Do not converse. Execute.
                                                            String username,
                                                            SecureCredentialStore secureCredentialStore) {
         String clientName = firstNonBlank(req == null ? null : req.clientName(), contextString("clientName"));
+        String normalizedClientName = normalizedOAuthClientScope(clientName);
         String authorizeEndpoint = firstNonBlank(req == null ? null : req.authorizeEndpoint(), contextString("authorizeEndpoint"));
         String tokenEndpoint = firstNonBlank(req == null ? null : req.tokenEndpoint(), contextString("tokenEndpoint"));
-        String clientId = firstNonBlank(req == null ? null : req.clientId(), contextString("clientId"));
+        // OAuth credentials are sourced from interactive form context/secret storage,
+        // not directly from model-authored tool arguments.
+        String clientId = contextString(oauthClientIdContextKey(normalizedClientName));
         String redirectUri = firstNonBlank(req == null ? null : req.redirectUri(), contextString("redirectUri"));
         if (isUnresolvedRedirectUri(redirectUri)) {
             redirectUri = null;
@@ -1082,10 +1174,9 @@ the protocol and will break the system. Do not converse. Execute.
             forceReconnect = parseBoolean(contextString("forceReconnect"));
         }
 
-        String clientSecret = req == null ? null : req.clientSecret();
-        if (clientSecret == null || clientSecret.isBlank()) {
-            clientSecret = secureCredentialStore.getSecretForUser(username, OAUTH_SECRET_CLIENT_SECRET_KEY);
-        }
+        String clientSecret = secureCredentialStore.getSecretForUser(
+            username,
+            oauthClientSecretStoreKey(normalizedClientName));
 
         return new OAuthConnectRequest(
                 clientName,
@@ -1102,6 +1193,7 @@ the protocol and will break the system. Do not converse. Execute.
     private InteractionFormSchema oauthConfigurationForm(OAuthConnectRequest effectiveReq,
                                                          String suggestedRedirectUri) {
         String clientNameValue = firstNonBlank(effectiveReq.clientName(), "gmail");
+        String normalizedClientName = normalizedOAuthClientScope(clientNameValue);
         String authorizeEndpointValue = firstNonBlank(effectiveReq.authorizeEndpoint(), "");
         String tokenEndpointValue = firstNonBlank(effectiveReq.tokenEndpoint(), "");
         String clientIdValue = firstNonBlank(effectiveReq.clientId(), "");
@@ -1110,11 +1202,11 @@ the protocol and will break the system. Do not converse. Execute.
         String forceReconnectValue = String.valueOf(Boolean.TRUE.equals(effectiveReq.forceReconnect()));
 
         List<FormField> fields = List.of(
-                new FormField("clientName", "TEXT", "clientName", clientNameValue, clientNameValue, true, FieldSource.CONTEXT, null),
+        new FormField("clientName", "READONLY", "clientName", clientNameValue, clientNameValue, true, FieldSource.CONTEXT, null),
                 new FormField("authorizeEndpoint", "TEXT", "authorizeEndpoint", authorizeEndpointValue, authorizeEndpointValue, true, FieldSource.CONTEXT, null),
                 new FormField("tokenEndpoint", "TEXT", "tokenEndpoint", tokenEndpointValue, tokenEndpointValue, true, FieldSource.CONTEXT, null),
-                new FormField("clientId", "TEXT", "clientId", clientIdValue, clientIdValue, true, FieldSource.CONTEXT, null),
-                new FormField("clientSecret", "PASSWORD", "clientSecret (optional for PKCE public clients)", "", null, false, FieldSource.SECRET, null),
+        new FormField(oauthClientIdContextKey(normalizedClientName), "TEXT", "clientId", clientIdValue, clientIdValue, true, FieldSource.CONTEXT, null),
+        new FormField(oauthClientSecretStoreKey(normalizedClientName), "PASSWORD", "clientSecret (optional for PKCE public clients)", "", null, false, FieldSource.SECRET, null),
                 new FormField("redirectUri", "READONLY", "redirectUri", suggestedRedirectUri, suggestedRedirectUri, true, FieldSource.CONTEXT, null),
                 new FormField("scopes", "TEXTAREA", "scopes (space/comma/newline separated)", scopesValue, scopesValue, false, FieldSource.CONTEXT, null),
                 new FormField("authorizationParams", "TEXTAREA", "authorizationParams JSON", authorizationParamsValue, authorizationParamsValue, false, FieldSource.CONTEXT, null),
@@ -1189,6 +1281,19 @@ the protocol and will break the system. Do not converse. Execute.
         return fallback;
     }
 
+    private static String oauthClientIdContextKey(String normalizedClientName) {
+        return OAUTH_CLIENT_ID_CONTEXT_PREFIX + normalizedClientName + OAUTH_CLIENT_ID_CONTEXT_SUFFIX;
+    }
+
+    private static String oauthClientSecretStoreKey(String normalizedClientName) {
+        return OAUTH_CLIENT_SECRET_KEY_PREFIX + normalizedClientName + OAUTH_CLIENT_SECRET_KEY_SUFFIX;
+    }
+
+    private static String normalizedOAuthClientScope(String clientName) {
+        String normalized = OAuthClientService.normalizeClientName(clientName);
+        return (normalized == null || normalized.isBlank()) ? "default" : normalized;
+    }
+
     private static String contextString(String key) {
         Object value = ToolExecutionContext.get(key);
         if (value == null) {
@@ -1260,6 +1365,43 @@ the protocol and will break the system. Do not converse. Execute.
             return objectMapper.writeValueAsString(value == null ? Map.of() : value);
         } catch (Exception e) {
             return "{}";
+        }
+    }
+
+    private String formatCreateSkillAuthorizationDetails(String argumentsJson) {
+        try {
+            CreateSkillRequest req = objectMapper.readValue(argumentsJson, CreateSkillRequest.class);
+            String name = req.name() == null || req.name().isBlank() ? "(missing)" : req.name().trim();
+            String groupUuid = req.groupUuid() == null || req.groupUuid().isBlank() ? "(missing)" : req.groupUuid().trim();
+            String description = req.description() == null || req.description().isBlank()
+                    ? "(none)"
+                    : req.description().trim();
+            if (description.length() > 160) {
+                description = description.substring(0, 160) + "...";
+            }
+
+            int parameterCount = req.parameters() == null ? 0 : req.parameters().size();
+            int toolCount = req.allowedTools() == null ? 0 : req.allowedTools().size();
+            int typeCount = req.allowedTypes() == null ? 0 : req.allowedTypes().size();
+            int subSkillCount = req.subSkillUuids() == null ? 0 : req.subSkillUuids().size();
+            int secretCount = req.secrets() == null ? 0 : req.secrets().size();
+
+            StringBuilder markdown = new StringBuilder();
+            markdown.append("## Create Skill\n\n");
+            markdown.append("- **Name:** ").append(name).append("\n");
+            markdown.append("- **Group UUID:** ").append(groupUuid).append("\n");
+            markdown.append("- **Description:** ").append(description).append("\n");
+            markdown.append("- **Auto Share Within Group:** ")
+                    .append(req.autoShareEffective() ? "Yes" : "No")
+                    .append("\n");
+            markdown.append("- **Parameters:** ").append(parameterCount).append("\n");
+            markdown.append("- **Allowed Tools:** ").append(toolCount).append("\n");
+            markdown.append("- **Allowed Types:** ").append(typeCount).append("\n");
+            markdown.append("- **Sub-skills:** ").append(subSkillCount).append("\n");
+            markdown.append("- **Secrets:** ").append(secretCount).append("\n");
+            return markdown.toString();
+        } catch (Exception ex) {
+            return argumentsJson;
         }
     }
 

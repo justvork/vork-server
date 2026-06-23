@@ -15,7 +15,6 @@ public record SkillFrame(
         String skillUuid,
         String skillName,
         String instructions,
-        String outputTemplate,
         List<String> allowedTools,
         List<String> allowedTypes,
         Map<String, String> params,

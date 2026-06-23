@@ -511,23 +511,11 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 if (skillPrompt != null && !skillPrompt.isBlank()) {
                                         prompt.append("\n\n### SKILL DIRECTIVES\n").append(skillPrompt);
                                 }
-                                // Output format mandate belongs in the system prompt, not in a user message,
-                                // so the model treats it as a hard constraint rather than a request.
-                                String outputTemplate = topFrame.outputTemplate();
-                                if (outputTemplate != null && !outputTemplate.isBlank()) {
-                                        prompt.append("\n\n### REQUIRED OUTPUT FORMAT\n")
-                                                .append("Your textResponse MUST conform exactly to this template — ")
-                                                .append("same structure, same fields, no deviations:\n")
-                                                .append(outputTemplate);
-                                }
                                 // List sub-skill tools explicitly so the model knows the exact names to call.
                                 // Without this, lite models don't discover sub-skills from function declarations alone.
                                 sh.vork.skill.Skill frameSkill = skillRepo.get(topFrame.skillUuid());
-                                if (frameSkill != null && !frameSkill.subSkillUuids().isEmpty()) {
-                                        List<sh.vork.skill.Skill> subSkills = frameSkill.subSkillUuids().stream()
-                                                .map(skillRepo::get)
-                                                .filter(Objects::nonNull)
-                                                .toList();
+                                List<sh.vork.skill.Skill> subSkills = resolveEffectiveSubSkills(frameSkill);
+                                if (!subSkills.isEmpty()) {
                                         if (!subSkills.isEmpty()) {
                                                 prompt.append("\n\n### AVAILABLE SUB-SKILLS\n");
                                                 prompt.append("The following sub-skills are available as tools. ");
@@ -970,17 +958,13 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         }
                         // Inject sub-skill tools from the skill's subSkillUuids
                         sh.vork.skill.Skill frameSkill = skillRepo.get(topFrame.skillUuid());
-                        if (frameSkill != null && !frameSkill.subSkillUuids().isEmpty()) {
+                        List<sh.vork.skill.Skill> subSkills = resolveEffectiveSubSkills(frameSkill);
+                        if (!subSkills.isEmpty()) {
                                 java.util.Set<String> frameNames = frameTools.stream()
                                         .map(t -> t.getToolDefinition().name())
                                         .collect(Collectors.toCollection(java.util.HashSet::new));
                                 int subInjected = 0;
-                                for (String subUuid : frameSkill.subSkillUuids()) {
-                                        sh.vork.skill.Skill subSkill = skillRepo.get(subUuid);
-                                        if (subSkill == null) {
-                                                log.warn("Sub-skill UUID not found in DB — skipping [subUuid={}]", subUuid);
-                                                continue;
-                                        }
+                                for (sh.vork.skill.Skill subSkill : subSkills) {
                                         ToolCallback subTool = skillToolCallbackFactory.create(subSkill);
                                         if (frameNames.add(subTool.getToolDefinition().name())) {
                                                 frameTools.add(subTool);
@@ -1039,6 +1023,33 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         agentId, template.allowedTools().size(), result.length);
 
                 return result.length > 0 ? result : new ToolCallback[0];
+        }
+
+        private List<sh.vork.skill.Skill> resolveEffectiveSubSkills(sh.vork.skill.Skill frameSkill) {
+                if (frameSkill == null) {
+                        return List.of();
+                }
+
+                LinkedHashMap<String, sh.vork.skill.Skill> resolved = new LinkedHashMap<>();
+                if (frameSkill.subSkillUuids() != null) {
+                        for (String subUuid : frameSkill.subSkillUuids()) {
+                                sh.vork.skill.Skill sub = skillRepo.get(subUuid);
+                                if (sub != null) {
+                                        resolved.put(sub.uuid(), sub);
+                                }
+                        }
+                }
+
+                if (frameSkill.groupUuid() != null && !frameSkill.groupUuid().isBlank()) {
+                        try (var stream = skillRepo.list(0, Integer.MAX_VALUE)) {
+                                stream.filter(s -> frameSkill.groupUuid().equals(s.groupUuid()))
+                                        .filter(s -> !s.uuid().equals(frameSkill.uuid()))
+                                        .filter(sh.vork.skill.Skill::autoShareWithinGroup)
+                                        .forEach(s -> resolved.putIfAbsent(s.uuid(), s));
+                        }
+                }
+
+                return List.copyOf(resolved.values());
         }
 
         /**

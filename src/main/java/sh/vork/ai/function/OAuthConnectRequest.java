@@ -24,11 +24,11 @@ public record OAuthConnectRequest(
         String tokenEndpoint,
 
         @JsonProperty(value = "clientId")
-        @JsonPropertyDescription("OAuth client ID. Required the first time unless already saved.")
+        @JsonPropertyDescription("OAuth client ID from the interactive OAuth configuration form. AI-generated instructions should not require this as a runtime skill parameter.")
         String clientId,
 
         @JsonProperty(value = "clientSecret")
-        @JsonPropertyDescription("Optional OAuth client secret for confidential clients.")
+        @JsonPropertyDescription("OAuth client secret captured via secure form input. AI-generated instructions should not require or expose this value.")
         String clientSecret,
 
         @JsonProperty(value = "redirectUri")

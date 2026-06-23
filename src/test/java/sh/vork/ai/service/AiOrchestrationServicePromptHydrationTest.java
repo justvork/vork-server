@@ -153,7 +153,6 @@ class AiOrchestrationServicePromptHydrationTest {
                 "skill-1",
                 "Skill One",
                 "Do the task",
-                "",
                 List.of(),
                 List.of(),
                 Map.of(),

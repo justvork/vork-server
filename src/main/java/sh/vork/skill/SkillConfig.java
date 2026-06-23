@@ -12,4 +12,9 @@ public class SkillConfig {
     public DatabaseRepository<Skill> skillRepository(RepositoryFactory factory) {
         return factory.create(Skill.class);
     }
+
+    @Bean
+    public DatabaseRepository<SkillGroup> skillGroupRepository(RepositoryFactory factory) {
+        return factory.create(SkillGroup.class);
+    }
 }

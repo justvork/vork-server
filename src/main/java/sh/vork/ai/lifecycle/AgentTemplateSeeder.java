@@ -30,6 +30,7 @@ public class AgentTemplateSeeder {
     public static final String UUID_CONCIERGE            = "agent-tpl-concierge-001";
     public static final String UUID_COMPUTER_ADMIN        = "agent-tpl-computer-admin-001";
     public static final String UUID_VORK_DEVELOPER        = "agent-tpl-vork-developer-001";
+        public static final String UUID_VORK_SKILL_DESIGNER   = "agent-tpl-vork-skill-designer-001";
     public static final String UUID_AUTOMATION_REPORTER   = "agent-tpl-automation-reporter-001";
 
     // -------------------------------------------------------------------------
@@ -58,6 +59,11 @@ registered in the system, you may inform the user of the limitation.
 - When a sub-agent returns with a FINISHED_TURN report via [Agent Report], synthesize the findings and \
 respond to the user with FINISHED_TURN. Only re-delegate if the report explicitly states the task failed \
 and a retry with different instructions would help.
+
+### SKILL AUTHORING LOGIC
+- If the user asks to design or create a skill, delegate to the `Vork Skill Designer` agent.
+- Do not design skill fields yourself unless delegation is impossible.
+- After the delegated agent reports completion, summarize the outcome to the user.
 
 ### CONSTRAINTS
 - You are the root of the stack.
@@ -198,6 +204,35 @@ and SWITCH_AGENT when the user explicitly asks to change agent.
             AgentType.INTERACTIVE
     );
 
+    private static final AgentTemplate VORK_SKILL_DESIGNER = new AgentTemplate(
+            UUID_VORK_SKILL_DESIGNER,
+            "Vork Skill Designer",
+            """
+You are the Vork Skill Designer.
+Your responsibility is to design robust skills from natural-language requirements and persist them only when approved.
+
+Workflow:
+1. Call `listAvailableTools` and inspect tool descriptions, schemas, and dependsOn relationships.
+2. Call `designSkillFromRequest` to produce a draft skill design.
+3. Validate that runtime parameters include only user-provided runtime inputs and exclude tool-internal configuration values.
+4. Ensure instructions include explicit tool arguments and deterministic step sequencing.
+5. If creation is requested, call `createSkill` with the finalized explicit fields.
+
+Rules:
+- Keep designs generic and driven by tool contracts.
+- Prefer minimum required tool set.
+- Never invent tool IDs or fields not present in the catalog.
+""",
+            List.of(
+                    "listAvailableTools",
+                    "designSkillFromRequest",
+                    "createSkill"
+            ),
+            true,
+            List.of(),
+            AgentType.INTERACTIVE
+    );
+
     private static final String AUTOMATION_REPORTER_PROMPT = """
             You are the Vork Automation Reporter, an advanced orchestration and data processing \
             agent. Your objective is to fulfill the explicit requirements of scheduled background \
@@ -266,6 +301,7 @@ and SWITCH_AGENT when the user explicitly asks to change agent.
         seedOrUpdate(CONCIERGE);
         seedOrUpdate(COMPUTER_ADMIN);
         seedOrUpdate(VORK_DEVELOPER);
+        seedOrUpdate(VORK_SKILL_DESIGNER);
         seedOrUpdate(AUTOMATION_REPORTER);
 
         log.info("EXIT AgentTemplateSeeder.onReady: built-in agent template seed complete");

@@ -4,7 +4,10 @@
 const PARAM_TYPES = ['string', 'int', 'double', 'boolean', 'secret'];
 
 let skillModal;
+let groupModal;
 let allSkills     = [];
+let allGroups     = [];
+let allGroupViews = [];
 let allTools      = [];
 let allTypes      = [];
 let allCategories = [];
@@ -16,15 +19,21 @@ let modalParams     = []; // [{name, type, description}]
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function () {
     skillModal = new VorkModal(document.getElementById('skillModal'));
+    groupModal = new VorkModal(document.getElementById('groupModal'));
     loadData();
 
     document.getElementById('skillModal').addEventListener('hidden.bs.modal', function () {
+        clearAlert('skill-modal-alert');
         document.getElementById('tool-search').value        = '';
         document.getElementById('type-search').value        = '';
         document.getElementById('subskill-search').value    = '';
         document.getElementById('tool-dropdown').style.display     = 'none';
         document.getElementById('type-dropdown').style.display     = 'none';
         document.getElementById('subskill-dropdown').style.display = 'none';
+    });
+
+    document.getElementById('groupModal').addEventListener('hidden.bs.modal', function () {
+        clearAlert('group-modal-alert');
     });
     document.addEventListener('click', function (e) {
         if (!e.target.closest('#tool-search') && !e.target.closest('#tool-dropdown')) {
@@ -41,55 +50,109 @@ document.addEventListener('DOMContentLoaded', function () {
 
 async function loadData() {
     try {
-        const [skillsRes, toolsRes, typesRes, catsRes] = await Promise.all([
+        const [skillsRes, groupsRes, toolsRes, typesRes, catsRes] = await Promise.all([
             fetch('/api/skills'),
+            fetch('/api/skill-groups'),
             fetch('/api/management/tools'),
             fetch('/api/types/java-types'),
             fetch('/api/skills/categories')
         ]);
         allSkills     = skillsRes.ok ? await skillsRes.json() : [];
+        allGroupViews = groupsRes.ok ? await groupsRes.json() : [];
+        allGroups     = allGroupViews.map(function (entry) { return entry.group || entry; });
         allTools      = toolsRes.ok  ? await toolsRes.json()  : [];
         allTypes      = typesRes.ok  ? await typesRes.json()  : [];
         allCategories = catsRes.ok   ? await catsRes.json()   : [];
+        renderGroupTable();
     } catch (e) {
         showAlert('Failed to load data.', 'warning');
     }
 }
 
-// ── Category select ───────────────────────────────────────────────────────────
-function populateCategorySelect(selected) {
-    const sel = document.getElementById('skill-category');
-    sel.innerHTML = '<option value="">— select a category —</option>';
-    allCategories.forEach(function (cat) {
+function renderGroupTable() {
+    const table = document.getElementById('group-table');
+    const body = document.getElementById('group-table-body');
+    const empty = document.getElementById('no-groups');
+
+    if (!table || !body || !empty) return;
+
+    body.innerHTML = '';
+    if (!allGroupViews || allGroupViews.length === 0) {
+        table.classList.add('d-none');
+        empty.classList.remove('d-none');
+        return;
+    }
+
+    empty.classList.add('d-none');
+    table.classList.remove('d-none');
+
+    allGroupViews.forEach(function (entry) {
+        const group = entry.group || entry;
+        const skills = entry.skills || allSkills.filter(function (s) { return s.groupUuid === group.uuid; });
+
+        const tr = document.createElement('tr');
+        tr.id = 'group-row-' + group.uuid;
+
+        const pills = skills.length === 0
+            ? '<span class="text-muted small">No skills</span>'
+            : skills.map(function (s) {
+                const autoShared = s.autoShareWithinGroup ? ' <i class="fa-solid fa-share-nodes text-info" title="Auto-shared within group"></i>' : '';
+                return '<span class="skill-pill me-1 mb-1">'
+                    + '<span>' + escapeHtml(s.name) + autoShared + '</span>'
+                    + '<span class="remove-skill" title="Edit skill" onclick="openEdit(\'' + escapeHtml(s.uuid) + '\')"><i class="fa-solid fa-pen"></i></span>'
+                    + '<span class="remove-skill text-danger" title="Delete skill" onclick="deleteSkill(\'' + escapeHtml(s.uuid) + '\')"><i class="fa-solid fa-trash"></i></span>'
+                    + '</span>';
+            }).join('');
+
+        tr.innerHTML = ''
+            + '<td class="fw-semibold">' + escapeHtml(group.name || '') + '</td>'
+            + '<td><span class="badge bg-dark border border-secondary text-secondary">' + escapeHtml(group.category || '—') + '</span></td>'
+            + '<td>' + pills + '</td>'
+            + '<td class="small text-muted">' + escapeHtml(group.author || '—') + '</td>'
+            + '<td class="text-end">'
+            + '  <div class="d-flex gap-1 justify-content-end">'
+            + '    <button class="btn btn-sm btn-outline-secondary" onclick="openEditGroup(\'' + escapeHtml(group.uuid) + '\')" title="Edit group"><i class="fa-solid fa-pen"></i></button>'
+            + '    <button class="btn btn-sm btn-outline-info" onclick="exportGroup(\'' + escapeHtml(group.uuid) + '\')" title="Export group"><i class="fa-solid fa-file-export"></i></button>'
+            + '    <button class="btn btn-sm btn-outline-danger" onclick="deleteGroup(\'' + escapeHtml(group.uuid) + '\')" title="Delete group"><i class="fa-solid fa-trash"></i></button>'
+            + '  </div>'
+            + '</td>';
+
+        body.appendChild(tr);
+    });
+}
+
+function populateGroupSelect(selected) {
+    const sel = document.getElementById('skill-group');
+    sel.innerHTML = '<option value="">- select a group -</option>';
+    allGroups.forEach(function (entry) {
+        const group = entry.group || entry;
         const opt = document.createElement('option');
-        opt.value = cat;
-        opt.textContent = cat;
-        if (cat === selected) opt.selected = true;
+        opt.value = group.uuid;
+        opt.textContent = group.name + (group.category ? ' [' + group.category + ']' : '');
+        if (group.uuid === selected) opt.selected = true;
         sel.appendChild(opt);
     });
-    // If the stored category is not in the fetched list, add it as a disabled placeholder
-    if (selected && !allCategories.includes(selected)) {
-        const opt = document.createElement('option');
-        opt.value = selected;
-        opt.textContent = selected + ' (unknown)';
-        opt.selected = true;
-        sel.appendChild(opt);
-    }
 }
 
 // ── Open modal ────────────────────────────────────────────────────────────────
 function openCreate() {
+    if (!allGroups || allGroups.length === 0) {
+        showAlert('Create a group first before creating skills.', 'warning');
+        return;
+    }
     document.getElementById('skillModalLabel').textContent      = 'New Skill';
     document.getElementById('skill-id').value                   = '';
     document.getElementById('skill-name').value                 = '';
-    document.getElementById('skill-author').value               = '';
     document.getElementById('skill-description').value          = '';
     document.getElementById('skill-instructions').value         = '';
-    populateCategorySelect('');
+    document.getElementById('skill-auto-share').checked         = false;
+    document.getElementById('btn-delete-skill').classList.add('d-none');
+    populateGroupSelect('');
     modalTools      = [];
     modalTypes      = [];
     modalSubSkills  = [];
     modalParams     = [];
+    clearAlert('skill-modal-alert');
     renderToolPills();
     renderTypePills();
     renderSubSkillPills();
@@ -104,16 +167,18 @@ function openEdit(id) {
     document.getElementById('skillModalLabel').textContent      = 'Edit Skill: ' + skill.name;
     document.getElementById('skill-id').value                   = skill.uuid;
     document.getElementById('skill-name').value                 = skill.name;
-    document.getElementById('skill-author').value               = skill.author || '';
     document.getElementById('skill-description').value          = skill.description || '';
     document.getElementById('skill-instructions').value         = skill.instructions || '';
-    populateCategorySelect(skill.category || '');
+    populateGroupSelect(skill.groupUuid || '');
+    document.getElementById('skill-auto-share').checked         = !!skill.autoShareWithinGroup;
+    document.getElementById('btn-delete-skill').classList.remove('d-none');
     modalTools      = skill.allowedTools  ? skill.allowedTools.slice()  : [];
     modalTypes      = skill.allowedTypes  ? skill.allowedTypes.slice()  : [];
     modalSubSkills  = skill.subSkillUuids ? skill.subSkillUuids.slice() : [];
     modalParams     = skill.parameters    ? skill.parameters.map(function (p) {
         return { name: p.name || '', type: p.type || 'string', description: p.description || '' };
     }) : [];
+    clearAlert('skill-modal-alert');
     renderToolPills();
     renderTypePills();
     renderSubSkillPills();
@@ -355,7 +420,7 @@ function filterSubSkills() {
         if (s.uuid === currentId) return false;          // exclude self
         if (modalSubSkills.includes(s.uuid)) return false;
         if (!query) return true;
-        return (s.name + ' ' + (s.description || '') + ' ' + (s.category || '')).toLowerCase().includes(query);
+        return (s.name + ' ' + (s.description || '') + ' ' + (s.groupUuid || '')).toLowerCase().includes(query);
     });
 
     list.innerHTML = '';
@@ -367,7 +432,7 @@ function filterSubSkills() {
             '<div class="d-flex align-items-center gap-2">' +
             '  <i class="fa-solid fa-bolt fa-xs text-secondary"></i>' +
             '  <span class="fw-semibold small">' + escapeHtml(s.name) + '</span>' +
-            (s.category ? '  <span class="badge bg-dark border border-secondary text-secondary" style="font-size:0.65rem">' + escapeHtml(s.category) + '</span>' : '') +
+            (s.groupUuid ? '  <span class="badge bg-dark border border-secondary text-secondary" style="font-size:0.65rem">' + escapeHtml(resolveGroupName(s.groupUuid)) + '</span>' : '') +
             '</div>' +
             (s.description ? '<div class="text-muted" style="font-size:0.7rem">' + escapeHtml(s.description) + '</div>' : '');
         li.addEventListener('click', function () {
@@ -388,27 +453,27 @@ function addSubSkill(uuid) {
 async function saveSkill() {
     const id             = document.getElementById('skill-id').value.trim();
     const name           = document.getElementById('skill-name').value.trim();
-    const author         = document.getElementById('skill-author').value.trim();
-    const category       = document.getElementById('skill-category').value;
+    const groupUuid      = document.getElementById('skill-group').value;
+    const autoShareWithinGroup = document.getElementById('skill-auto-share').checked;
     const description    = document.getElementById('skill-description').value;
     const instructions   = document.getElementById('skill-instructions').value;
 
-    if (!name) { showAlert('Name is required.', 'warning'); return; }
-    if (!category) { showAlert('Category is required — please select one from the list.', 'warning'); return; }
+    if (!name) { showAlertIn('skill-modal-alert', 'Name is required.', 'warning'); return; }
+    if (!groupUuid) { showAlertIn('skill-modal-alert', 'Skill group is required.', 'warning'); return; }
 
     // Validate parameters: names must be non-empty
     for (let i = 0; i < modalParams.length; i++) {
         if (!modalParams[i].name || !modalParams[i].name.trim()) {
-            showAlert('All parameters must have a name (row ' + (i + 1) + ').', 'warning');
+            showAlertIn('skill-modal-alert', 'All parameters must have a name (row ' + (i + 1) + ').', 'warning');
             return;
         }
     }
 
     const body = {
         name:           name,
-        author:         author,
-        category:       category,
         description:    description,
+        groupUuid:      groupUuid,
+        autoShareWithinGroup: autoShareWithinGroup,
         parameters:     modalParams.map(function (p) {
             return { name: p.name.trim(), type: p.type, description: p.description };
         }),
@@ -431,12 +496,12 @@ async function saveSkill() {
             body:    JSON.stringify(body)
         });
         const data = await res.json();
-        if (data.error) { showAlert(data.error, 'danger'); return; }
+        if (data.error) { showAlertIn('skill-modal-alert', data.error, 'danger'); return; }
         skillModal.hide();
         showAlert(id ? 'Skill updated.' : 'Skill created.', 'success');
         setTimeout(function () { location.reload(); }, 800);
     } catch (e) {
-        showAlert('Network error saving skill.', 'danger');
+        showAlertIn('skill-modal-alert', 'Network error saving skill.', 'danger');
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="fa-solid fa-save me-1"></i>Save Skill';
@@ -445,8 +510,16 @@ async function saveSkill() {
 
 // ── Export ────────────────────────────────────────────────────────────────────
 function exportSkill(id) {
-    // Navigating to the export URL triggers the browser's file download.
-    window.location.href = '/api/skills/' + id + '/export';
+    const skill = allSkills.find(function (s) { return s.uuid === id; });
+    if (!skill || !skill.groupUuid) {
+        showAlert('Group for this skill could not be resolved.', 'warning');
+        return;
+    }
+    window.location.href = '/api/skill-groups/' + skill.groupUuid + '/export';
+}
+
+function exportGroup(groupUuid) {
+    window.location.href = '/api/skill-groups/' + groupUuid + '/export';
 }
 
 // ── Import ────────────────────────────────────────────────────────────────────
@@ -463,13 +536,13 @@ async function importSkill(input) {
         return;
     }
 
-    if (!pkg.vorkSkillExport || !pkg.skill || !pkg.skill.uuid) {
-        showAlert('Not a valid Vork skill export file.', 'danger');
+    if (!pkg.vorkSkillGroupExport || !pkg.group || !pkg.group.uuid || !pkg.skills) {
+        showAlert('Not a valid Vork skill-group export file.', 'danger');
         return;
     }
 
     try {
-        const res  = await fetch('/api/skills/import', {
+        const res  = await fetch('/api/skill-groups/import', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify(pkg)
@@ -477,12 +550,14 @@ async function importSkill(input) {
         const data = await res.json();
         if (data.status === 'already_installed') {
             showAlert(
-                'Skill "' + escapeHtml(pkg.skill.name) + '" is already installed (UUID: ' + escapeHtml(pkg.skill.uuid) + ').',
+                'Group "' + escapeHtml(pkg.group.name) + '" is already installed (UUID: ' + escapeHtml(pkg.group.uuid) + ').',
                 'warning'
             );
+        } else if (data.status === 'missing_dependencies') {
+            showAlert('Import blocked: missing dependencies: ' + escapeHtml((data.missingDependencies || []).join(', ')), 'danger');
         } else if (data.status === 'imported') {
             const extra = data.message ? ' — ' + data.message : '';
-            showAlert('Skill "' + escapeHtml(pkg.skill.name) + '" imported successfully.' + extra, 'success');
+            showAlert('Group "' + escapeHtml(pkg.group.name) + '" imported successfully.' + extra, 'success');
             setTimeout(function () { location.reload(); }, 900);
         } else {
             showAlert('Import failed: ' + escapeHtml(data.message || 'Unknown error'), 'danger');
@@ -496,26 +571,151 @@ async function importSkill(input) {
 async function deleteSkill(id) {
     if (!confirm('Delete this skill? This cannot be undone.')) return;
     try {
-        const res  = await fetch('/api/skills/' + id, { method: 'DELETE' });
-        const data = await res.json();
-        if (data.error) { showAlert(data.error, 'danger'); return; }
+        const res = await fetch('/api/skills/' + id, { method: 'DELETE' });
+        let data = {};
+        try {
+            data = await res.json();
+        } catch (_ignored) {
+            data = {};
+        }
+        if (!res.ok) {
+            showAlert(data.error || 'Failed to delete skill.', 'danger');
+            return;
+        }
+        if (data.error) {
+            showAlert(data.error, 'danger');
+            return;
+        }
         showAlert('Skill deleted.', 'success');
-        const row = document.getElementById('row-' + id);
-        if (row) row.remove();
-        allSkills = allSkills.filter(function (s) { return s.uuid !== id; });
+        setTimeout(function () { location.reload(); }, 600);
     } catch (e) {
         showAlert('Network error deleting skill.', 'danger');
     }
 }
 
+function deleteCurrentSkillFromModal() {
+    const id = document.getElementById('skill-id').value.trim();
+    if (!id) {
+        showAlertIn('skill-modal-alert', 'Only saved skills can be deleted.', 'warning');
+        return;
+    }
+    skillModal.hide();
+    deleteSkill(id);
+}
+
+// ── Group CRUD ───────────────────────────────────────────────────────────────
+function openCreateGroup() {
+    document.getElementById('groupModalLabel').textContent = 'New Group';
+    document.getElementById('group-id').value = '';
+    document.getElementById('group-name').value = '';
+    document.getElementById('group-author').value = '';
+    document.getElementById('group-category').value = '';
+    clearAlert('group-modal-alert');
+    groupModal.show();
+}
+
+function openEditGroup(groupUuid) {
+    const group = allGroups.find(function (g) { return g.uuid === groupUuid; });
+    if (!group) {
+        showAlert('Group not found.', 'warning');
+        return;
+    }
+    document.getElementById('groupModalLabel').textContent = 'Edit Group: ' + group.name;
+    document.getElementById('group-id').value = group.uuid;
+    document.getElementById('group-name').value = group.name || '';
+    document.getElementById('group-author').value = group.author || '';
+    document.getElementById('group-category').value = group.category || '';
+    clearAlert('group-modal-alert');
+    groupModal.show();
+}
+
+async function saveGroup() {
+    const id = document.getElementById('group-id').value.trim();
+    const name = document.getElementById('group-name').value.trim();
+    const author = document.getElementById('group-author').value.trim();
+    const category = document.getElementById('group-category').value.trim();
+
+    if (!name) {
+        showAlertIn('group-modal-alert', 'Group name is required.', 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('btn-save-group');
+    btn.disabled = true;
+
+    try {
+        const url = id ? '/api/skill-groups/' + id : '/api/skill-groups';
+        const method = id ? 'PUT' : 'POST';
+        const res = await fetch(url, {
+            method: method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name, author: author, category: category })
+        });
+        const data = await res.json();
+        if (data.error) {
+            showAlertIn('group-modal-alert', data.error, 'danger');
+            return;
+        }
+        groupModal.hide();
+        showAlert(id ? 'Group updated.' : 'Group created.', 'success');
+        setTimeout(function () { location.reload(); }, 600);
+    } catch (e) {
+        showAlertIn('group-modal-alert', 'Network error saving group.', 'danger');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function deleteGroup(groupUuid) {
+    if (!confirm('Delete this group? Only empty groups can be deleted.')) return;
+    try {
+        const res = await fetch('/api/skill-groups/' + groupUuid, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.error) {
+            showAlert(data.error, 'danger');
+            return;
+        }
+        showAlert('Group deleted.', 'success');
+        setTimeout(function () { location.reload(); }, 600);
+    } catch (e) {
+        showAlert('Network error deleting group.', 'danger');
+    }
+}
+
+function resolveGroupName(groupUuid) {
+    const group = allGroups.find(function (g) { return g.uuid === groupUuid; });
+    return group ? group.name : groupUuid;
+}
+
 // ── Alert helper ──────────────────────────────────────────────────────────────
 function showAlert(msg, type) {
     const area = document.getElementById('alert-area');
+    if (!area) return;
     area.innerHTML =
         '<div class="alert alert-' + type + ' alert-dismissible fade show" role="alert">' +
         escapeHtml(msg) +
         '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>' +
         '</div>';
+}
+
+function showAlertIn(areaId, msg, type) {
+    const area = document.getElementById(areaId);
+    if (!area) {
+        showAlert(msg, type);
+        return;
+    }
+    area.innerHTML =
+        '<div class="alert alert-' + type + ' alert-dismissible fade show" role="alert">' +
+        escapeHtml(msg) +
+        '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>' +
+        '</div>';
+}
+
+function clearAlert(areaId) {
+    const area = document.getElementById(areaId);
+    if (area) {
+        area.innerHTML = '';
+    }
 }
 
 function escapeHtml(str) {

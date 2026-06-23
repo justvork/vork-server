@@ -27,11 +27,14 @@
         <div class="d-flex gap-2">
             <button class="btn btn-outline-secondary"
                     onclick="document.getElementById('import-file-input').click()"
-                    title="Import a skill from a JSON export file">
+                    title="Import a skill group from a JSON export file">
                 <i class="fa-solid fa-file-import me-2"></i>Import
             </button>
             <input type="file" id="import-file-input" accept=".json"
                    style="display:none" onchange="importSkill(this)">
+            <button class="btn btn-outline-info" onclick="openCreateGroup()">
+                <i class="fa-solid fa-layer-group me-2"></i>New Group
+            </button>
             <button class="btn btn-primary" onclick="openCreate()">
                 <i class="fa-solid fa-plus me-2"></i>New Skill
             </button>
@@ -40,71 +43,24 @@
 
     <div id="alert-area" class="mb-3"></div>
 
-    <!-- Skills table -->
+    <!-- Group-first table -->
     <div class="card">
         <div class="card-body p-0">
-            <div th:if="${#lists.isEmpty(skills)}" class="text-center text-muted py-5">
+            <div id="no-groups" class="text-center text-muted py-5 d-none">
                 <i class="fa-solid fa-bolt fa-2x mb-3 d-block"></i>
-                No skills defined yet.
+                No skill groups defined yet.
             </div>
-            <table th:unless="${#lists.isEmpty(skills)}" class="table table-hover mb-0 align-middle">
+            <table id="group-table" class="table table-hover mb-0 align-middle d-none">
                 <thead class="table-dark">
                     <tr>
-                        <th>Name</th>
-                        <th>Version</th>
-                        <th>Tools</th>
-                        <th>Types</th>
-                        <th>Description</th>
+                        <th>Group</th>
+                        <th>Category</th>
+                        <th>Skills</th>
+                        <th>Author</th>
                         <th class="text-end">Actions</th>
                     </tr>
                 </thead>
-                <tbody>
-                    <tr th:each="skill : ${skills}" th:id="'row-' + ${skill.uuid()}">
-                        <td class="fw-semibold" th:text="${skill.name()}"></td>
-                        <td>
-                            <span class="skill-version-badge" th:text="'v' + ${skill.version()}"></span>
-                        </td>
-                        <td>
-                            <span th:if="${#lists.isEmpty(skill.allowedTools())}"
-                                  class="text-muted small">None</span>
-                            <span th:unless="${#lists.isEmpty(skill.allowedTools())}"
-                                  class="badge bg-dark border border-secondary text-secondary"
-                                  th:text="${#lists.size(skill.allowedTools())} + ' tool(s)'"></span>
-                        </td>
-                        <td>
-                            <span th:if="${#lists.isEmpty(skill.allowedTypes())}"
-                                  class="text-muted small">—</span>
-                            <span th:unless="${#lists.isEmpty(skill.allowedTypes())}"
-                                  class="badge bg-dark border border-secondary text-secondary"
-                                  th:text="${#lists.size(skill.allowedTypes())} + ' type(s)'"></span>
-                        </td>
-                        <td>
-                            <div class="truncate-desc" th:text="${skill.description()}"></div>
-                        </td>
-                        <td class="text-end">
-                            <div class="d-flex gap-1 justify-content-end">
-                                <button class="btn btn-sm btn-outline-secondary"
-                                        th:attr="data-id=${skill.uuid()}"
-                                        onclick="openEdit(this.dataset.id)"
-                                        title="Edit">
-                                    <i class="fa-solid fa-pen"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-info"
-                                        th:attr="data-id=${skill.uuid()}"
-                                        onclick="exportSkill(this.dataset.id)"
-                                        title="Export to JSON">
-                                    <i class="fa-solid fa-file-export"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-danger"
-                                        th:attr="data-id=${skill.uuid()}"
-                                        onclick="deleteSkill(this.dataset.id)"
-                                        title="Delete">
-                                    <i class="fa-solid fa-trash"></i>
-                                </button>
-                            </div>
-                        </td>
-                    </tr>
-                </tbody>
+                <tbody id="group-table-body"></tbody>
             </table>
         </div>
     </div>
@@ -120,6 +76,7 @@
             </div>
             <div class="modal-body">
                 <input type="hidden" id="skill-id">
+                <div id="skill-modal-alert" class="mb-3"></div>
 
                 <div class="mb-3">
                     <label class="form-label" for="skill-name">Name <span class="text-danger">*</span></label>
@@ -127,15 +84,20 @@
                 </div>
 
                 <div class="mb-3">
-                    <label class="form-label" for="skill-author">Author</label>
-                    <input type="text" id="skill-author" class="form-control" placeholder="e.g. your name or team">
+                    <label class="form-label" for="skill-group">Group <span class="text-danger">*</span></label>
+                    <select id="skill-group" class="form-select">
+                        <option value="">— select a group —</option>
+                    </select>
                 </div>
 
-                <div class="mb-3">
-                    <label class="form-label" for="skill-category">Category <span class="text-danger">*</span></label>
-                    <select id="skill-category" class="form-select">
-                        <option value="">— select a category —</option>
-                    </select>
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" role="switch" id="skill-auto-share">
+                    <label class="form-check-label" for="skill-auto-share">
+                        Auto-share within group
+                    </label>
+                    <div class="form-text">
+                        When enabled, this skill is automatically available as a sub-skill to other skills in the same group.
+                    </div>
                 </div>
 
                 <div class="mb-3">
@@ -203,9 +165,46 @@
                 </div>
             </div>
             <div class="modal-footer">
+                <button type="button" id="btn-delete-skill" class="btn btn-outline-danger d-none" onclick="deleteCurrentSkillFromModal()">
+                    <i class="fa-solid fa-trash me-1"></i>Delete Skill
+                </button>
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" id="btn-save-skill" class="btn btn-primary" onclick="saveSkill()">
                     <i class="fa-solid fa-save me-1"></i>Save Skill
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ─── Create / Edit Group Modal ───────────────────────────────────────── -->
+<div class="modal fade" id="groupModal" tabindex="-1" aria-labelledby="groupModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="groupModalLabel">New Group</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="group-id">
+                <div id="group-modal-alert" class="mb-3"></div>
+                <div class="mb-3">
+                    <label class="form-label" for="group-name">Name <span class="text-danger">*</span></label>
+                    <input type="text" id="group-name" class="form-control" placeholder="e.g. Gmail Skills">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="group-author">Author</label>
+                    <input type="text" id="group-author" class="form-control" placeholder="Team or owner">
+                </div>
+                <div class="mb-0">
+                    <label class="form-label" for="group-category">Category</label>
+                    <input type="text" id="group-category" class="form-control" placeholder="e.g. Productivity">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" id="btn-save-group" class="btn btn-primary" onclick="saveGroup()">
+                    <i class="fa-solid fa-save me-1"></i>Save Group
                 </button>
             </div>
         </div>

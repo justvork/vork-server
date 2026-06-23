@@ -13,9 +13,15 @@ import org.springframework.ai.tool.ToolCallback;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.util.List;
+
 import sh.vork.ai.context.ToolExecutionContext;
+import sh.vork.ai.function.CreateSkillRequest;
 import sh.vork.ai.memory.InMemorySessionEnvironmentService;
+import sh.vork.ai.security.VisualizableTool;
 import sh.vork.orm.DatabaseEntity;
+import sh.vork.skill.Skill;
+import sh.vork.skill.SkillService;
 import sh.vork.typegen.JavaTypeClassLoader;
 import sh.vork.typegen.TypeDatabaseService;
 
@@ -128,6 +134,57 @@ class AiConfigRecordToolsTest {
             ToolExecutionContext.clear();
         }
     }
+
+        @Test
+        void createSkill_persistsExplicitSkillFields() throws Exception {
+        JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
+        TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
+        SkillService skillService = mock(SkillService.class);
+
+        when(skillService.create(org.mockito.ArgumentMatchers.any(SkillService.SkillRequest.class)))
+            .thenReturn(new Skill(
+                "skill-1",
+                "My Skill",
+                "desc",
+                "group-1",
+                false,
+                List.of(),
+                "do steps",
+                List.of("listAvailableTools"),
+                List.of(),
+                List.of(),
+                1,
+                1,
+                1,
+                List.of()));
+
+        AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
+        ToolCallback tool = config.createSkill(skillService);
+        assertTrue(tool instanceof VisualizableTool);
+
+        CreateSkillRequest request = new CreateSkillRequest(
+            "My Skill",
+            "desc",
+            "group-1",
+            false,
+            List.of(),
+            "do steps",
+            List.of("listAvailableTools"),
+            List.of(),
+            List.of(),
+            List.of());
+
+        String output = tool.call(objectMapper.writeValueAsString(request));
+        var map = objectMapper.readValue(output, new TypeReference<java.util.Map<String, Object>>() {});
+        assertEquals("ok", map.get("status"));
+        assertEquals("skill-1", map.get("skillUuid"));
+        assertEquals("group-1", map.get("groupUuid"));
+
+        String markdown = ((VisualizableTool) tool).formatAuthorizationDetails(objectMapper.writeValueAsString(request));
+        assertTrue(markdown.startsWith("## Create Skill"));
+        assertTrue(markdown.contains("- **Name:** My Skill"));
+        assertTrue(markdown.contains("- **Group UUID:** group-1"));
+        }
 
     private record CatRecord(String uuid, String name) implements DatabaseEntity {}
 }

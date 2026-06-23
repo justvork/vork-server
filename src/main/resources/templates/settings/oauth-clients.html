@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth Clients - Vork</title>
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png">
+    <link rel="stylesheet" href="/css/tailwind.css">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
+    <link rel="stylesheet" href="/css/vork.css">
+    <link rel="stylesheet" href="/css/settings.css">
+</head>
+<body class="bg-zinc-950 text-zinc-100">
+<div class="container py-5">
+    <div th:replace="~{fragments/settings-navigation :: backToSettings}"></div>
+    <h2 class="mb-1"><i class="fa-solid fa-key me-2"></i>OAuth Clients</h2>
+    <p class="text-muted mb-4">Configured OAuth clients for your account.</p>
+
+    <div class="card" th:if="${oauthClients != null and !#lists.isEmpty(oauthClients)}">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-dark table-striped align-middle mb-0">
+                    <thead>
+                    <tr>
+                        <th>Client</th>
+                        <th>Status</th>
+                        <th>Token</th>
+                        <th>Expires</th>
+                        <th>Scopes</th>
+                        <th>Placeholder</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="client : ${oauthClients}">
+                        <td>
+                            <div class="fw-semibold" th:text="${client.clientName}"></div>
+                            <div class="small text-muted" th:text="${client.redirectUri}"></div>
+                        </td>
+                        <td>
+                            <span th:if="${client.connected}" class="badge bg-success">Connected</span>
+                            <span th:if="${!client.connected and client.configComplete}" class="badge bg-warning text-dark">Configured</span>
+                            <span th:if="${!client.connected and !client.configComplete}" class="badge bg-secondary">Incomplete</span>
+                        </td>
+                        <td>
+                            <span th:if="${client.hasAccessToken}" class="badge bg-success me-1">Access</span>
+                            <span th:if="${!client.hasAccessToken}" class="badge bg-secondary me-1">None</span>
+                            <span th:if="${client.hasRefreshToken}" class="badge bg-info text-dark">Refresh</span>
+                            <span th:if="${client.tokenExpired}" class="badge bg-danger">Expired</span>
+                        </td>
+                        <td>
+                            <span th:if="${client.accessTokenExpiresAt > 0}"
+                                  th:text="${#dates.format(new java.util.Date(client.accessTokenExpiresAt), 'yyyy-MM-dd HH:mm:ss')}"></span>
+                            <span th:if="${client.accessTokenExpiresAt <= 0}" class="text-muted">-</span>
+                        </td>
+                        <td>
+                            <span th:if="${#lists.isEmpty(client.scopes)}" class="text-muted">-</span>
+                            <span th:if="${!#lists.isEmpty(client.scopes)}" th:text="${#strings.listJoin(client.scopes, ', ')}"></span>
+                        </td>
+                        <td>
+                            <code th:text="${client.placeholder}"></code>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div th:if="${oauthClients == null or #lists.isEmpty(oauthClients)}" class="card">
+        <div class="card-body text-center py-5 text-muted">
+            <i class="fa-solid fa-circle-info me-2"></i>No OAuth clients are configured yet.
+        </div>
+    </div>
+</div>
+</body>
+</html>

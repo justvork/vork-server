@@ -1,10 +1,13 @@
 package sh.vork.ui.controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import sh.vork.oauth.OAuthClientService;
 import sh.vork.ai.provider.AiModelService;
 import sh.vork.ai.registry.ToolDescriptor;
 import sh.vork.ai.registry.ToolRegistry;
@@ -23,14 +26,18 @@ public class SettingsController {
     private final ToolRegistry toolRegistry;
     private final AiModelService modelService;
     private final SystemSettingsService systemSettingsService;
+    private final OAuthClientService oAuthClientService;
 
     @Autowired
     public SettingsController(SettingsPageRegistry registry, ToolRegistry toolRegistry,
-                              AiModelService modelService, SystemSettingsService systemSettingsService) {
+                              AiModelService modelService,
+                              SystemSettingsService systemSettingsService,
+                              OAuthClientService oAuthClientService) {
         this.registry = registry;
         this.toolRegistry = toolRegistry;
         this.modelService = modelService;
         this.systemSettingsService = systemSettingsService;
+        this.oAuthClientService = oAuthClientService;
     }
 
     @GetMapping("")
@@ -59,8 +66,24 @@ public class SettingsController {
         return "settings/ai-models";
     }
 
+    @GetMapping("/oauth-clients")
+    public String oauthClients(Model model) {
+        String username = resolveUsername();
+        model.addAttribute("oauthClients", oAuthClientService.listConfiguredClients(username));
+        return "settings/oauth-clients";
+    }
+
     @GetMapping("/{page}")
     public String settingsPage(@org.springframework.web.bind.annotation.PathVariable String page) {
         return "settings/" + page;
+    }
+
+    private static String resolveUsername() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getName() == null || auth.getName().isBlank()
+                || "anonymousUser".equalsIgnoreCase(auth.getName())) {
+            return null;
+        }
+        return auth.getName();
     }
 }
