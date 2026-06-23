@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 520" role="img" aria-labelledby="title desc">
+  <title id="title">Vork Journal 007 Banner</title>
+  <desc id="desc">Joshua intelligence update with client-scoped OAuth firebreak visualization.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1320"/>
+      <stop offset="55%" stop-color="#13233d"/>
+      <stop offset="100%" stop-color="#2a1f3e"/>
+    </linearGradient>
+    <linearGradient id="wire" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#5eead4"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="520" fill="url(#bg)"/>
+
+  <g opacity="0.16" stroke="#7dd3fc" stroke-width="1">
+    <path d="M0 80 H1600"/>
+    <path d="M0 150 H1600"/>
+    <path d="M0 220 H1600"/>
+    <path d="M0 290 H1600"/>
+    <path d="M0 360 H1600"/>
+    <path d="M0 430 H1600"/>
+  </g>
+
+  <g filter="url(#glow)">
+    <path d="M210 270 C330 170, 500 170, 620 270" fill="none" stroke="url(#wire)" stroke-width="4"/>
+    <path d="M210 270 C330 370, 500 370, 620 270" fill="none" stroke="url(#wire)" stroke-width="4"/>
+    <path d="M980 270 C1100 170, 1270 170, 1390 270" fill="none" stroke="url(#wire)" stroke-width="4"/>
+    <path d="M980 270 C1100 370, 1270 370, 1390 270" fill="none" stroke="url(#wire)" stroke-width="4"/>
+  </g>
+
+  <g>
+    <rect x="80" y="210" width="170" height="120" rx="14" fill="#0f172a" stroke="#67e8f9" stroke-width="2"/>
+    <text x="165" y="250" text-anchor="middle" font-size="20" fill="#a5f3fc" font-family="monospace">gmail</text>
+    <text x="165" y="282" text-anchor="middle" font-size="14" fill="#d1d5db" font-family="monospace">client scope</text>
+  </g>
+
+  <g>
+    <rect x="1350" y="210" width="170" height="120" rx="14" fill="#0f172a" stroke="#fbbf24" stroke-width="2"/>
+    <text x="1435" y="250" text-anchor="middle" font-size="20" fill="#fde68a" font-family="monospace">calendar</text>
+    <text x="1435" y="282" text-anchor="middle" font-size="14" fill="#d1d5db" font-family="monospace">client scope</text>
+  </g>
+
+  <g>
+    <rect x="620" y="150" width="360" height="240" rx="18" fill="#111827" stroke="#e879f9" stroke-width="2.5"/>
+    <text x="800" y="205" text-anchor="middle" font-size="26" fill="#f5d0fe" font-family="monospace">JOURNAL 007</text>
+    <text x="800" y="245" text-anchor="middle" font-size="18" fill="#d1d5db" font-family="monospace">oauth credential firebreak</text>
+    <text x="800" y="280" text-anchor="middle" font-size="16" fill="#93c5fd" font-family="monospace">joshua system report</text>
+    <line x1="675" y1="305" x2="925" y2="305" stroke="#4ade80" stroke-width="2"/>
+    <text x="800" y="338" text-anchor="middle" font-size="14" fill="#cbd5e1" font-family="monospace">createSkill auth prompt now markdown</text>
+  </g>
+
+  <g>
+    <circle cx="620" cy="270" r="9" fill="#34d399"/>
+    <circle cx="980" cy="270" r="9" fill="#f59e0b"/>
+    <text x="800" y="110" text-anchor="middle" font-size="14" fill="#e5e7eb" font-family="monospace">isolate credentials per oauth client name</text>
+  </g>
+</svg>
