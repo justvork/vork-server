@@ -23,16 +23,6 @@ class SkillServiceGroupImportExportTest {
 
         SkillService service = new SkillService(skillRepo, groupRepo, sessionRepo);
 
-        SkillGroup group = new SkillGroup(
-                "grp-gmail",
-                "Gmail Skills",
-                "ops",
-                "Productivity",
-                List.of("skill-read"),
-                1,
-                1000,
-                1000);
-
         Skill readSkill = new Skill(
                 "skill-read",
                 "Read Gmail",
@@ -49,10 +39,19 @@ class SkillServiceGroupImportExportTest {
                 1000,
                 List.of());
 
+        SkillGroup group = new SkillGroup(
+                "grp-gmail",
+                "Gmail Skills",
+                "ops",
+                "Productivity",
+                List.of(readSkill),
+                1,
+                1000,
+                1000);
+
         SkillService.SkillGroupExportPackage pkg = new SkillService.SkillGroupExportPackage(
                 "1.0",
                 group,
-                List.of(readSkill),
                 List.of());
 
         SkillService.SkillGroupImportResult result = service.importGroup(pkg);
@@ -78,7 +77,7 @@ class SkillServiceGroupImportExportTest {
                 "Mail Skills",
                 "team-a",
                 "Productivity",
-                List.of("skill-connect", "skill-send"),
+                List.of(),
                 1,
                 1000,
                 1000);
@@ -120,7 +119,7 @@ class SkillServiceGroupImportExportTest {
 
         assertNotNull(exported);
         assertEquals("grp-mail", exported.group().uuid());
-        assertEquals(2, exported.skills().size());
+        assertEquals(2, exported.group().skills().size());
         assertEquals(0, exported.types().size());
     }
 }

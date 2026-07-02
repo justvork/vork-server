@@ -44,6 +44,7 @@ import sh.vork.ai.service.ChatService;
 import sh.vork.scheduling.service.SystemBackgroundAuthentication;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.security.SecureCredentialStore;
+import sh.vork.security.UserService;
 import sh.vork.security.VorkUser;
 
 /**
@@ -71,6 +72,7 @@ public class TelegramChatResumptionService {
     private final ChatService                     chatService;
     private final ObjectMapper                    objectMapper;
     private final Map<String, ToolCallback>       toolCallbacksByName;
+    private final UserService                     userService;
 
     public TelegramChatResumptionService(DatabaseRepository<AiSession> sessionRepo,
                                           SessionEnvironmentService sessionEnvironmentService,
@@ -78,6 +80,7 @@ public class TelegramChatResumptionService {
                                           AuthorizationRuleEngine authorizationRuleEngine,
                                           AiOrchestrationService aiService,
                                           ChatService chatService,
+                                          UserService userService,
                                           ObjectMapper objectMapper,
                                           List<ToolCallback> toolCallbacks) {
         this.sessionRepo              = sessionRepo;
@@ -86,6 +89,7 @@ public class TelegramChatResumptionService {
         this.authorizationRuleEngine  = authorizationRuleEngine;
         this.aiService                = aiService;
         this.chatService              = chatService;
+                        this.userService              = userService;
         this.objectMapper             = objectMapper;
         this.toolCallbacksByName      = toolCallbacks.stream().collect(
                 Collectors.toMap(t -> t.getToolDefinition().name(), Function.identity(), (a, b) -> a));
@@ -143,6 +147,7 @@ public class TelegramChatResumptionService {
             String toolName         = promptMessage.toolName();
             String toolCallId       = promptMessage.toolCallId();
             String argumentsJson    = extractPendingArguments(promptMessage, toolCallId);
+            VorkUser principalUser  = userService.getRequiredEnabledUser(username);
 
             // ── Dispatch field values by FieldSource ──────────────────────────
             Map<String, FieldSource> sourceByField = buildFieldSourceMap(promptEvent.formSchema());
@@ -152,8 +157,7 @@ public class TelegramChatResumptionService {
                 String value = entry.getValue();
                 FieldSource source = sourceByField.getOrDefault(key, FieldSource.CONVERSATION);
                 switch (source) {
-                    case SECRET -> secureCredentialStore.saveSecret(
-                            new VorkUser(username, "", "USER", 0L, 0L), key, value);
+                    case SECRET -> secureCredentialStore.saveSecret(principalUser, key, value);
                     case CONTEXT -> {
                         sessionEnvironmentService.setEnv(sessionUuid, key, value);
                         ToolExecutionContext.put(key, value);
@@ -335,6 +339,7 @@ public class TelegramChatResumptionService {
             String toolName         = promptMessage.toolName();
             String toolCallId       = promptMessage.toolCallId();
             String argumentsJson    = extractPendingArguments(promptMessage, toolCallId);
+            VorkUser principalUser  = userService.getRequiredEnabledUser(username);
 
             // Dispatch field values by FieldSource
             Map<String, FieldSource> sourceByField    = buildFieldSourceMap(promptEvent.formSchema());
@@ -344,8 +349,7 @@ public class TelegramChatResumptionService {
                 String value = entry.getValue();
                 FieldSource source = sourceByField.getOrDefault(key, FieldSource.CONVERSATION);
                 switch (source) {
-                    case SECRET -> secureCredentialStore.saveSecret(
-                            new VorkUser(username, "", "USER", 0L, 0L), key, value);
+                    case SECRET -> secureCredentialStore.saveSecret(principalUser, key, value);
                     case CONTEXT -> {
                         sessionEnvironmentService.setEnv(sessionUuid, key, value);
                         ToolExecutionContext.put(key, value);

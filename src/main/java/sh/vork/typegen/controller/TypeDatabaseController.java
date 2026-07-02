@@ -14,6 +14,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -396,6 +397,7 @@ public class TypeDatabaseController {
     @PostMapping(value = "/{fqn}",
             consumes = {MediaType.MULTIPART_FORM_DATA_VALUE, MediaType.APPLICATION_FORM_URLENCODED_VALUE},
             produces = MediaType.APPLICATION_JSON_VALUE)
+        @PreAuthorize("hasAuthority('TYPES_WRITE')")
     public ResponseEntity<String> save(@PathVariable String fqn, HttpServletRequest request) {
         Class<?> entityClass = resolveClass(fqn);
         if (entityClass == null) {
@@ -428,6 +430,7 @@ public class TypeDatabaseController {
     // -------------------------------------------------------------------------
 
     @DeleteMapping(value = "/{fqn}/{uuid}", produces = MediaType.APPLICATION_JSON_VALUE)
+    @PreAuthorize("hasAuthority('TYPES_WRITE')")
     public ResponseEntity<String> delete(@PathVariable String fqn, @PathVariable String uuid) {
         Class<?> entityClass = resolveClass(fqn);
         if (entityClass == null) {

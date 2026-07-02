@@ -64,6 +64,15 @@ import sh.vork.orm.DatabaseRepository;
 public class AiOrchestrationService {
 
     private static final Logger log = LoggerFactory.getLogger(AiOrchestrationService.class);
+        private static final List<String> SKILL_TYPE_CRUD_TOOL_NAMES = List.of(
+                "getTypeSchema",
+                "saveTypeInstance",
+                "getTypeInstance",
+                "listTypeInstances",
+                "countTypeInstances",
+                "deleteTypeInstance",
+                "searchTypeInstances",
+                "listEnumValues");
         private static final String BACKGROUND_OPERATIONAL_PROTOCOL = """
 BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated background thread. You must perform all necessary analysis and tool calls across multiple message rounds without expecting further human input. Once you have validated that the requested objective is entirely satisfied (e.g., your types compile successfully and records are saved), you MUST invoke the completeBackgroundTask tool to cleanly finalize the run. You MUST provide a boolean 'success' value and a 'report' string summarising what was done and produced. Do not exit without invoking this tool.
                         """.stripIndent();
@@ -940,10 +949,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 // An empty allowedTools list means no hard tools (the AI exits via FINISHED_TURN).
                 if (session.skillStack() != null && !session.skillStack().isEmpty()) {
                         sh.vork.skill.SkillFrame topFrame = session.skillStack().getLast();
-                        List<String> allowedToolNames = topFrame.allowedTools();
-
-                        List<String> skillToolNames = expandWithToolDependencies(
-                                allowedToolNames != null ? allowedToolNames : List.of());
+                        List<String> skillToolNames = buildSkillToolNames(topFrame);
                         // Skills exit via FINISHED_TURN — completeSkillExecution is no longer injected.
                         // Resolve hard tools from the secured map
                         List<ToolCallback> frameTools = new ArrayList<>();
@@ -1023,6 +1029,22 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         agentId, template.allowedTools().size(), result.length);
 
                 return result.length > 0 ? result : new ToolCallback[0];
+        }
+
+        private List<String> buildSkillToolNames(sh.vork.skill.SkillFrame frame) {
+                LinkedHashSet<String> requested = new LinkedHashSet<>();
+                if (frame.allowedTools() != null) {
+                        requested.addAll(frame.allowedTools());
+                }
+
+                List<String> allowedTypes = frame.allowedTypes() != null ? frame.allowedTypes() : List.of();
+                if (!allowedTypes.isEmpty()) {
+                        requested.addAll(SKILL_TYPE_CRUD_TOOL_NAMES);
+                        log.debug("Auto-injected type CRUD tools for skill frame [skill={}, types={}]",
+                                frame.skillName(), allowedTypes.size());
+                }
+
+                return expandWithToolDependencies(List.copyOf(requested));
         }
 
         private List<sh.vork.skill.Skill> resolveEffectiveSubSkills(sh.vork.skill.Skill frameSkill) {

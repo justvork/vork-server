@@ -63,6 +63,7 @@ import sh.vork.scheduling.service.SystemBackgroundAuthentication;
 import java.util.concurrent.Executor;
 
 import sh.vork.security.SecureCredentialStore;
+import sh.vork.security.UserService;
 import sh.vork.security.VorkUser;
 import sh.vork.storage.FileStorageService;
 
@@ -88,6 +89,7 @@ public class ChatAuthorizationController {
     private final ChatService chatService;
     private final SecureCredentialStore secureCredentialStore;
     private final SessionEnvironmentService sessionEnvironmentService;
+    private final UserService userService;
 
     @Autowired
     public ChatAuthorizationController(DatabaseRepository<AiSession> sessionRepo,
@@ -101,7 +103,8 @@ public class ChatAuthorizationController {
                                        FileStorageService fileStorageService,
                                        ChatService chatService,
                                        SecureCredentialStore secureCredentialStore,
-                                       SessionEnvironmentService sessionEnvironmentService) {
+                                       SessionEnvironmentService sessionEnvironmentService,
+                                       UserService userService) {
         this.sessionRepo = sessionRepo;
         this.authorizationRuleEngine = authorizationRuleEngine;
         this.aiService = aiService;
@@ -113,6 +116,7 @@ public class ChatAuthorizationController {
         this.chatService = chatService;
         this.secureCredentialStore = secureCredentialStore;
         this.sessionEnvironmentService = sessionEnvironmentService;
+        this.userService = userService;
         this.toolCallbacksByName = toolCallbacks.stream().collect(
                 java.util.stream.Collectors.toMap(
                         t -> t.getToolDefinition().name(),
@@ -144,6 +148,7 @@ public class ChatAuthorizationController {
              MDC.MDCCloseable _ = MDC.putCloseable("eventId", correlationEventId)) {
             String action = normalizeAction(request.action());
             String username = resolveUsername();
+            VorkUser principalUser = userService.getRequiredEnabledUser(username);
 
             String toolName = promptMessage.toolName();
             String toolCallId = promptMessage.toolCallId();
@@ -165,7 +170,7 @@ public class ChatAuthorizationController {
                 switch (source) {
                     case SECRET -> {
                         if (secureCredentialStore != null) {
-                            secureCredentialStore.saveSecret(toPrincipalUser(username), key, value);
+                            secureCredentialStore.saveSecret(principalUser, key, value);
                         }
                     }
                     case CONTEXT -> {
@@ -1261,10 +1266,6 @@ public class ChatAuthorizationController {
             String action,
             Map<String, String> fields
     ) {}
-
-    private static VorkUser toPrincipalUser(String username) {
-        return new VorkUser(username, "", "USER", 0L, 0L);
-    }
 
     private static Map<String, FieldSource> buildFieldSourceMap(InteractionFormSchema schema) {
         if (schema == null || schema.fields() == null) {

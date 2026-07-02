@@ -50,9 +50,13 @@ import sh.vork.ai.function.CreateMongoDbConnectionRequest;
 import sh.vork.ai.function.DeleteSshConnectionRequest;
 import sh.vork.ai.function.DeleteMongoDbDocumentsRequest;
 import sh.vork.ai.function.DeleteTypeInstanceRequest;
+import sh.vork.ai.function.DiscoverExportableTypesRequest;
 import sh.vork.ai.function.DisconnectSshRequest;
 import sh.vork.ai.function.DownloadFileRequest;
 import sh.vork.ai.function.ExecuteTerminalCommandRequest;
+import sh.vork.ai.function.ExportAllJavaTypeDataRequest;
+import sh.vork.ai.function.ExportJavaTypeRequest;
+import sh.vork.ai.function.ExportJavaTypeSourceRequest;
 import sh.vork.ai.function.GetDateTimeRequest;
 import sh.vork.ai.function.GetMongoDbCollectionSchemaRequest;
 import sh.vork.ai.function.GetTypeInstanceRequest;
@@ -125,6 +129,7 @@ import sh.vork.typegen.JavaType;
 import sh.vork.typegen.JavaTypeClassLoader;
 import sh.vork.typegen.SqlParseException;
 import sh.vork.typegen.TypeDatabaseService;
+import sh.vork.typegen.TypeExportService;
 import sh.vork.typegen.TypeGenerationException;
 import sh.vork.typegen.TypeGeneratorService;
 import sh.vork.web.RequestOriginContext;
@@ -1909,6 +1914,117 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
                                 """
                                 .stripIndent())
                 .inputType(ListJavaTypesRequest.class)
+                .build();
+    }
+
+    /**
+     * {@code discoverExportableTypes} tool — lists all built-in annotated types and
+     * runtime-compiled custom types that can be exported.
+     */
+    @Bean
+    @ToolCategory("Schema & Types")
+    public ToolCallback discoverExportableTypes(TypeExportService typeExportService) {
+        return FunctionToolCallback
+                .builder("discoverExportableTypes", (DiscoverExportableTypesRequest req) -> {
+                    try {
+                        return objectMapper.writeValueAsString(
+                                Map.of("types", typeExportService.discoverExportableTypes()));
+                    } catch (Exception e) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + e.getMessage().replace("\"", "'") + "\"}";
+                    }
+                })
+                .description(
+                        """
+                                Discover all exportable Java types. Built-in types are listed only if explicitly marked with @ExportableType. Runtime-compiled custom types are also listed.
+                                """
+                                .stripIndent())
+                .inputType(DiscoverExportableTypesRequest.class)
+                .build();
+    }
+
+    /**
+     * {@code exportJavaType} tool — exports persisted data for one exportable entity type.
+     */
+    @Bean
+    @ToolCategory("Schema & Types")
+    public ToolCallback exportJavaType(TypeExportService typeExportService) {
+        return FunctionToolCallback
+                .builder("exportJavaType", (ExportJavaTypeRequest req) -> {
+                    try {
+                        return objectMapper.writeValueAsString(
+                                typeExportService.exportTypeData(req.fqn(), req.mode(), req.uuid()));
+                    } catch (IllegalArgumentException e) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + e.getMessage().replace("\"", "'") + "\"}";
+                    } catch (Exception e) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + e.getMessage().replace("\"", "'") + "\"}";
+                    }
+                })
+                .description(
+                        """
+                                Export persisted JSON data for an exportable DatabaseEntity type by fully-qualified class name.
+                                Built-in types are exportable only when explicitly marked with @ExportableType.
+                                Modes:
+                                - BY_ID (default): export exactly one instance by uuid (uuid required)
+                                - ALL: export all persisted instances for that type
+                                """
+                                .stripIndent())
+                .inputType(ExportJavaTypeRequest.class)
+                .build();
+    }
+
+    /**
+     * {@code exportAllJavaTypeData} tool — exports all persisted data across all exportable entity types.
+     */
+    @Bean
+    @ToolCategory("Schema & Types")
+    public ToolCallback exportAllJavaTypeData(TypeExportService typeExportService) {
+        return FunctionToolCallback
+                .builder("exportAllJavaTypeData", (ExportAllJavaTypeDataRequest req) -> {
+                    try {
+                        return objectMapper.writeValueAsString(typeExportService.exportAllTypeData());
+                    } catch (Exception e) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + e.getMessage().replace("\"", "'") + "\"}";
+                    }
+                })
+                .description(
+                        """
+                                Export all persisted JSON data across all exportable entity types.
+                                Use this for full backup/export snapshots.
+                                """
+                                .stripIndent())
+                .inputType(ExportAllJavaTypeDataRequest.class)
+                .build();
+    }
+
+    /**
+     * {@code exportJavaTypeSource} tool — exports source separately from data for runtime-compiled custom types.
+     */
+    @Bean
+    @ToolCategory("Schema & Types")
+    public ToolCallback exportJavaTypeSource(TypeExportService typeExportService) {
+        return FunctionToolCallback
+                .builder("exportJavaTypeSource", (ExportJavaTypeSourceRequest req) -> {
+                    try {
+                        return objectMapper.writeValueAsString(typeExportService.exportTypeSource(req.fqn()));
+                    } catch (IllegalArgumentException e) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + e.getMessage().replace("\"", "'") + "\"}";
+                    } catch (Exception e) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + e.getMessage().replace("\"", "'") + "\"}";
+                    }
+                })
+                .description(
+                        """
+                                Export source code separately from data for a runtime-compiled custom type.
+                                Built-in application types do not expose source through this tool.
+                                """
+                                .stripIndent())
+                .inputType(ExportJavaTypeSourceRequest.class)
                 .build();
     }
 

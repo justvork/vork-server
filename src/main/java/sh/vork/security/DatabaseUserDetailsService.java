@@ -1,5 +1,8 @@
 package sh.vork.security;
 
+import java.util.ArrayList;
+
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -34,9 +37,16 @@ public class DatabaseUserDetailsService implements UserDetailsService {
             throw new UsernameNotFoundException("User not found: " + username);
         }
 
+        UserRole role = UserRole.fromStoredValue(vorkUser.role());
+        var authorities = new ArrayList<SimpleGrantedAuthority>();
+        authorities.add(new SimpleGrantedAuthority(role.authority()));
+        RolePermissionPolicy.permissionsFor(role)
+                .forEach(permission -> authorities.add(new SimpleGrantedAuthority(permission.authority())));
+
         return User.withUsername(vorkUser.uuid())
                 .password(vorkUser.passwordHash())
-                .roles(vorkUser.role().replace("ROLE_", ""))
+                .authorities(authorities)
+                .disabled(!vorkUser.isEnabled())
                 .build();
     }
 
@@ -55,6 +65,7 @@ public class DatabaseUserDetailsService implements UserDetailsService {
             user.uuid(),
             passwordEncoder.encode(newPassword),
             user.role(),
+            user.enabled(),
             user.createdAt(),
             System.currentTimeMillis()
         );

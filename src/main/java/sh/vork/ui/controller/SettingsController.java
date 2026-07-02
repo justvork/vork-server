@@ -1,6 +1,7 @@
 package sh.vork.ui.controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Controller;
@@ -11,6 +12,8 @@ import sh.vork.oauth.OAuthClientService;
 import sh.vork.ai.provider.AiModelService;
 import sh.vork.ai.registry.ToolDescriptor;
 import sh.vork.ai.registry.ToolRegistry;
+import sh.vork.security.Permission;
+import sh.vork.security.UserManagementService;
 import sh.vork.setup.SystemSettings;
 import sh.vork.setup.SystemSettingsService;
 import sh.vork.ui.SettingsPage;
@@ -27,22 +30,30 @@ public class SettingsController {
     private final AiModelService modelService;
     private final SystemSettingsService systemSettingsService;
     private final OAuthClientService oAuthClientService;
+    private final UserManagementService userManagementService;
 
     @Autowired
     public SettingsController(SettingsPageRegistry registry, ToolRegistry toolRegistry,
                               AiModelService modelService,
                               SystemSettingsService systemSettingsService,
-                              OAuthClientService oAuthClientService) {
+                              OAuthClientService oAuthClientService,
+                              UserManagementService userManagementService) {
         this.registry = registry;
         this.toolRegistry = toolRegistry;
         this.modelService = modelService;
         this.systemSettingsService = systemSettingsService;
         this.oAuthClientService = oAuthClientService;
+        this.userManagementService = userManagementService;
     }
 
     @GetMapping("")
     public String settingsHome(Model model) {
         List<SettingsPage> pages = registry.getAllPages();
+        if (!hasAuthority(Permission.USERS_MANAGE.authority())) {
+            pages = pages.stream()
+                    .filter(page -> !"users".equals(page.getPath()))
+                    .toList();
+        }
         model.addAttribute("pages", pages);
         return "settings";
     }
@@ -73,6 +84,13 @@ public class SettingsController {
         return "settings/oauth-clients";
     }
 
+    @GetMapping("/users")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public String users(Model model) {
+        model.addAttribute("users", userManagementService.listUsers());
+        return "settings/users";
+    }
+
     @GetMapping("/{page}")
     public String settingsPage(@org.springframework.web.bind.annotation.PathVariable String page) {
         return "settings/" + page;
@@ -85,5 +103,13 @@ public class SettingsController {
             return null;
         }
         return auth.getName();
+    }
+
+    private static boolean hasAuthority(String authority) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getAuthorities() == null) {
+            return false;
+        }
+        return auth.getAuthorities().stream().anyMatch(a -> authority.equals(a.getAuthority()));
     }
 }

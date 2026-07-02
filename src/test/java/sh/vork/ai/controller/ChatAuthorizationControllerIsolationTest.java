@@ -66,7 +66,7 @@ class ChatAuthorizationControllerIsolationTest {
                 AiSession.defaultEnvironmentVariables(),
                 AiSessionStatus.AWAITING_INPUT, null, null, null, null, null));
 
-        AuthorizationRuleEngine rules = new AuthorizationRuleEngine(List.of(), null);
+        AuthorizationRuleEngine rules = new AuthorizationRuleEngine(java.util.Set.<String>of());
         RecordingAiService aiService = new RecordingAiService("web-final");
         RecordingSchedulerService schedulerService = new RecordingSchedulerService();
         SimpMessagingTemplate messaging = new SimpMessagingTemplate(new NoOpMessageChannel());
@@ -121,7 +121,7 @@ class ChatAuthorizationControllerIsolationTest {
                 AiSession.defaultEnvironmentVariables(),
                 AiSessionStatus.AWAITING_INPUT, null, null, null, null, null));
 
-        AuthorizationRuleEngine rules = new AuthorizationRuleEngine(List.of(), null);
+        AuthorizationRuleEngine rules = new AuthorizationRuleEngine(java.util.Set.<String>of());
         RecordingAiService aiService = new RecordingAiService("bg-final");
         RecordingSchedulerService schedulerService = new RecordingSchedulerService();
         SimpMessagingTemplate messaging = new SimpMessagingTemplate(new NoOpMessageChannel());
@@ -174,7 +174,7 @@ class ChatAuthorizationControllerIsolationTest {
                 AiSession.defaultEnvironmentVariables(),
                 AiSessionStatus.AWAITING_INPUT, null, null, null, null, null));
 
-        AuthorizationRuleEngine rules = new AuthorizationRuleEngine(List.of(), null);
+        AuthorizationRuleEngine rules = new AuthorizationRuleEngine(java.util.Set.<String>of());
         RecordingAiService aiService = new RecordingAiService("bg-final");
         RecordingSchedulerService schedulerService = new RecordingSchedulerService();
         SimpMessagingTemplate messaging = new SimpMessagingTemplate(new NoOpMessageChannel());
@@ -236,7 +236,7 @@ class ChatAuthorizationControllerIsolationTest {
 
         ChatAuthorizationController controller = new ChatAuthorizationController(
                 sessionRepo,
-                new AuthorizationRuleEngine(List.of(), null),
+                new AuthorizationRuleEngine(java.util.Set.<String>of()),
                 new RecordingAiService("unused"),
                 new SimpMessagingTemplate(new NoOpMessageChannel()),
                 objectMapper,
@@ -296,7 +296,7 @@ class ChatAuthorizationControllerIsolationTest {
 
         ChatAuthorizationController controller = new ChatAuthorizationController(
                 sessionRepo,
-                new AuthorizationRuleEngine(List.of(), null),
+                new AuthorizationRuleEngine(java.util.Set.<String>of()),
                 new RecordingAiService("context-final"),
                 new SimpMessagingTemplate(new NoOpMessageChannel()),
                 objectMapper,
@@ -359,7 +359,7 @@ class ChatAuthorizationControllerIsolationTest {
 
         ChatAuthorizationController controller = new ChatAuthorizationController(
                 sessionRepo,
-                new AuthorizationRuleEngine(List.of(), null),
+                new AuthorizationRuleEngine(java.util.Set.<String>of()),
                 new RecordingAiService("terminal-final"),
                 new SimpMessagingTemplate(new NoOpMessageChannel()),
                 objectMapper,
@@ -422,7 +422,7 @@ class ChatAuthorizationControllerIsolationTest {
 
         ChatAuthorizationController controller = new ChatAuthorizationController(
                 sessionRepo,
-                new AuthorizationRuleEngine(List.of(), null),
+                new AuthorizationRuleEngine(java.util.Set.<String>of()),
                 new RecordingAiService("terminal-final"),
                 new SimpMessagingTemplate(new NoOpMessageChannel()),
                 objectMapper,
@@ -483,7 +483,7 @@ class ChatAuthorizationControllerIsolationTest {
 
         ChatAuthorizationController controller = new ChatAuthorizationController(
                 sessionRepo,
-                new AuthorizationRuleEngine(List.of(), null),
+                new AuthorizationRuleEngine(java.util.Set.<String>of()),
                 new FailingAiService(),
                 new SimpMessagingTemplate(new NoOpMessageChannel()),
                 objectMapper,
@@ -553,7 +553,7 @@ class ChatAuthorizationControllerIsolationTest {
 
         ChatAuthorizationController controller = new ChatAuthorizationController(
                 sessionRepo,
-                new AuthorizationRuleEngine(List.of(), null),
+                new AuthorizationRuleEngine(java.util.Set.<String>of()),
                 new RecordingAiService("unused"),
                 new SimpMessagingTemplate(new NoOpMessageChannel()),
                 objectMapper,

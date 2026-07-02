@@ -15,6 +15,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.ClassUtils;
 
 import jakarta.annotation.PostConstruct;
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.security.RolePermissionPolicy;
+import sh.vork.security.UserRole;
+import sh.vork.security.VorkUser;
 
 /**
  * Decides whether a given tool invocation requires explicit user authorization before execution.
@@ -66,25 +70,46 @@ public class AuthorizationRuleEngine {
 
     private final List<ToolCallback> allTools;
     private final ConfigurableListableBeanFactory beanFactory;
+    private final DatabaseRepository<VorkUser> userRepository;
 
     // ── Constructors ──────────────────────────────────────────────────────────
 
     /** Spring-managed constructor — used in the application context. */
     @Autowired
     public AuthorizationRuleEngine(List<ToolCallback> allTools,
-                                   ConfigurableListableBeanFactory beanFactory) {
+                                   ConfigurableListableBeanFactory beanFactory,
+                                   DatabaseRepository<VorkUser> userRepository) {
         this.allTools    = allTools;
         this.beanFactory = beanFactory;
+        this.userRepository = userRepository;
     }
 
     /**
      * Test constructor — directly supplies the initial set of restricted tool names.
      * Skips the bean-factory scan so no Spring context is required.
      */
-    AuthorizationRuleEngine(Set<String> restrictedToolNames) {
+    public AuthorizationRuleEngine(Set<String> restrictedToolNames) {
         this.allTools    = List.of();
         this.beanFactory = null;
+        this.userRepository = null;
         this.restrictedToolNames.addAll(restrictedToolNames);
+    }
+
+    AuthorizationRuleEngine(Set<String> restrictedToolNames,
+                            DatabaseRepository<VorkUser> userRepository) {
+        this.allTools = List.of();
+        this.beanFactory = null;
+        this.userRepository = userRepository;
+        this.restrictedToolNames.addAll(restrictedToolNames);
+    }
+
+    public boolean isRolePermitted(String toolName, String username) {
+        var required = RolePermissionPolicy.requiredPermissionForTool(toolName);
+        if (required.isEmpty()) {
+            return true;
+        }
+        UserRole role = roleForUser(username);
+        return RolePermissionPolicy.permissionsFor(role).contains(required.get());
     }
 
     // ── Startup scanner ───────────────────────────────────────────────────────
@@ -217,6 +242,20 @@ public class AuthorizationRuleEngine {
     private boolean hasPermanentRule(String username, String toolName) {
         Set<String> rules = permanentRules.get(username);
         return rules != null && rules.contains(toolName);
+    }
+
+    private UserRole roleForUser(String username) {
+        if (username == null || username.isBlank() || "anonymous".equalsIgnoreCase(username)) {
+            return UserRole.USER;
+        }
+        if (userRepository == null) {
+            return UserRole.USER;
+        }
+        VorkUser user = userRepository.get(username);
+        if (user == null) {
+            return UserRole.USER;
+        }
+        return UserRole.fromStoredValue(user.role());
     }
 
     // ── Accessors (for testing / diagnostics) ─────────────────────────────────

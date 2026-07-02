@@ -1,6 +1,7 @@
 package sh.vork.skill;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -97,7 +98,7 @@ public class SkillService {
                 req.name(),
                 req.author(),
                 req.category(),
-                existing.skillUuids(),
+            existing.skills(),
                 existing.version() + 1,
                 existing.createdAt(),
                 System.currentTimeMillis());
@@ -134,9 +135,14 @@ public class SkillService {
 
     public List<Skill> skillsForGroup(String groupUuid) {
         log.debug("ENTER skillsForGroup: [groupUuid={}]", groupUuid);
-        return list().stream()
-                .filter(skill -> groupUuid != null && groupUuid.equals(skill.groupUuid()))
-                .toList();
+        if (groupUuid == null || groupUuid.isBlank()) {
+            return List.of();
+        }
+        SkillGroup group = skillGroupRepo.get(groupUuid);
+        if (group == null || group.skills() == null) {
+            return List.of();
+        }
+        return group.skills();
     }
 
     public Skill get(String uuid) {
@@ -169,7 +175,7 @@ public class SkillService {
                 now,
                 req.secrets() != null ? List.copyOf(req.secrets()) : List.of());
         skillRepo.save(skill);
-        addSkillToGroup(group, skill.uuid());
+            syncGroupSkills(group.uuid());
         log.info("Skill created [uuid={}, name={}, group={}]", skill.uuid(), skill.name(), skill.groupUuid());
         return skill;
     }
@@ -205,12 +211,9 @@ public class SkillService {
         skillRepo.save(updated);
 
         if (!existing.groupUuid().equals(targetGroup.uuid())) {
-            SkillGroup previous = skillGroupRepo.get(existing.groupUuid());
-            if (previous != null) {
-                removeSkillFromGroup(previous, uuid);
-            }
-            addSkillToGroup(targetGroup, uuid);
+            syncGroupSkills(existing.groupUuid());
         }
+        syncGroupSkills(targetGroup.uuid());
 
         log.info("Skill updated [uuid={}, name={}, version={}, group={}]", uuid, updated.name(), updated.version(), updated.groupUuid());
         return updated;
@@ -219,13 +222,11 @@ public class SkillService {
     public void delete(String uuid) {
         log.debug("ENTER delete: [uuid={}]", uuid);
         Skill existing = skillRepo.get(uuid);
-        if (existing != null) {
-            SkillGroup group = skillGroupRepo.get(existing.groupUuid());
-            if (group != null) {
-                removeSkillFromGroup(group, uuid);
-            }
-        }
+        String groupUuid = existing != null ? existing.groupUuid() : null;
         skillRepo.delete(uuid);
+        if (groupUuid != null && !groupUuid.isBlank()) {
+            syncGroupSkills(groupUuid);
+        }
         log.info("Skill deleted [uuid={}]", uuid);
     }
 
@@ -349,12 +350,13 @@ public class SkillService {
 
     public SkillGroupExportPackage exportGroup(String groupUuid) {
         log.debug("ENTER exportGroup: [groupUuid={}]", groupUuid);
+        syncGroupSkills(groupUuid);
         SkillGroup group = skillGroupRepo.get(groupUuid);
         if (group == null) {
             return null;
         }
 
-        List<Skill> skills = skillsForGroup(groupUuid);
+        List<Skill> skills = sortSkills(group.skills() == null ? List.of() : group.skills());
         LinkedHashSet<String> allTypes = new LinkedHashSet<>();
         for (Skill skill : skills) {
             allTypes.addAll(skill.allowedTypes());
@@ -373,24 +375,25 @@ public class SkillService {
                 group.name(),
                 group.author(),
                 group.category(),
-                skills.stream().map(Skill::uuid).toList(),
+                skills,
                 group.version(),
                 group.createdAt(),
                 group.updatedAt());
 
         log.debug("EXIT exportGroup: [groupUuid={}, skills={}, embeddedTypes={}]", groupUuid, skills.size(), types.size());
-        return new SkillGroupExportPackage("1.0", normalizedGroup, skills, types);
+            return new SkillGroupExportPackage("1.0", normalizedGroup, types);
     }
 
     public SkillGroupImportResult importGroup(SkillGroupExportPackage pkg) {
         log.debug("ENTER importGroup: [groupUuid={}]",
                 pkg != null && pkg.group() != null ? pkg.group().uuid() : "null");
 
-        if (pkg == null || pkg.group() == null || pkg.skills() == null || pkg.skills().isEmpty()) {
+        if (pkg == null || pkg.group() == null || pkg.group().skills() == null || pkg.group().skills().isEmpty()) {
             return new SkillGroupImportResult("error", null, List.of(), List.of(), "Invalid skill-group export package.");
         }
 
         SkillGroup incomingGroup = pkg.group();
+        List<Skill> incomingSkills = sortSkills(incomingGroup.skills());
         if (skillGroupRepo.get(incomingGroup.uuid()) != null) {
             return new SkillGroupImportResult(
                     "already_installed",
@@ -400,7 +403,7 @@ public class SkillService {
                     "Skill group '" + incomingGroup.name() + "' is already installed.");
         }
 
-        List<String> incomingSkillIds = pkg.skills().stream().map(Skill::uuid).toList();
+        List<String> incomingSkillIds = incomingSkills.stream().map(Skill::uuid).toList();
         for (String skillId : incomingSkillIds) {
             if (skillRepo.get(skillId) != null) {
                 return new SkillGroupImportResult(
@@ -414,7 +417,7 @@ public class SkillService {
 
         List<String> missingDependencies = new ArrayList<>();
         Set<String> incomingSet = Set.copyOf(incomingSkillIds);
-        for (Skill skill : pkg.skills()) {
+        for (Skill skill : incomingSkills) {
             if (skill.subSkillUuids() == null || skill.subSkillUuids().isEmpty()) {
                 continue;
             }
@@ -451,19 +454,21 @@ public class SkillService {
         }
 
         long now = System.currentTimeMillis();
+        List<Skill> normalizedSkills = incomingSkills.stream()
+            .map(skill -> normalizeImportedSkill(skill, incomingGroup.uuid()))
+            .toList();
         SkillGroup normalizedGroup = new SkillGroup(
                 incomingGroup.uuid(),
                 incomingGroup.name(),
                 incomingGroup.author(),
                 incomingGroup.category(),
-                List.copyOf(incomingSkillIds),
+            normalizedSkills,
                 incomingGroup.version() < 1 ? 1 : incomingGroup.version(),
                 incomingGroup.createdAt() > 0 ? incomingGroup.createdAt() : now,
                 incomingGroup.updatedAt() > 0 ? incomingGroup.updatedAt() : now);
         skillGroupRepo.save(normalizedGroup);
 
-        for (Skill skill : pkg.skills()) {
-            Skill normalizedSkill = normalizeImportedSkill(skill, normalizedGroup.uuid());
+        for (Skill normalizedSkill : normalizedSkills) {
             skillRepo.save(normalizedSkill);
         }
 
@@ -492,9 +497,21 @@ public class SkillService {
         return group;
     }
 
-    private void addSkillToGroup(SkillGroup group, String skillUuid) {
-        LinkedHashSet<String> merged = new LinkedHashSet<>(group.skillUuids());
-        if (!merged.add(skillUuid)) {
+    private void syncGroupSkills(String groupUuid) {
+        if (groupUuid == null || groupUuid.isBlank()) {
+            return;
+        }
+        SkillGroup group = skillGroupRepo.get(groupUuid);
+        if (group == null) {
+            return;
+        }
+
+        List<Skill> embedded = sortSkills(list().stream()
+                .filter(skill -> groupUuid.equals(skill.groupUuid()))
+                .toList());
+        List<Skill> existing = sortSkills(group.skills() == null ? List.of() : group.skills());
+
+        if (existing.equals(embedded)) {
             return;
         }
 
@@ -503,31 +520,21 @@ public class SkillService {
                 group.name(),
                 group.author(),
                 group.category(),
-                List.copyOf(merged),
+                embedded,
                 group.version() + 1,
                 group.createdAt(),
                 System.currentTimeMillis());
         skillGroupRepo.save(updated);
     }
 
-    private void removeSkillFromGroup(SkillGroup group, String skillUuid) {
-        List<String> remaining = group.skillUuids().stream()
-                .filter(id -> !skillUuid.equals(id))
-                .toList();
-        if (remaining.size() == group.skillUuids().size()) {
-            return;
+    private static List<Skill> sortSkills(List<Skill> skills) {
+        if (skills == null || skills.isEmpty()) {
+            return List.of();
         }
-
-        SkillGroup updated = new SkillGroup(
-                group.uuid(),
-                group.name(),
-                group.author(),
-                group.category(),
-                remaining,
-                group.version() + 1,
-                group.createdAt(),
-                System.currentTimeMillis());
-        skillGroupRepo.save(updated);
+        return skills.stream()
+                .filter(skill -> skill != null && skill.uuid() != null)
+                .sorted(Comparator.comparingLong(Skill::createdAt).thenComparing(Skill::uuid))
+                .toList();
     }
 
     private List<String> findMissingDependencies(List<String> subSkillUuids, Set<String> allowedMissing) {
@@ -630,7 +637,6 @@ public class SkillService {
     public record SkillGroupExportPackage(
             String vorkSkillGroupExport,
             SkillGroup group,
-            List<Skill> skills,
             List<SkillExportType> types) {}
 
     public record SkillGroupImportResult(

@@ -58,13 +58,13 @@ class VirtualSshServiceCredentialsTest {
                 () -> service.connectClient("system", "example.com", 1));
 
         verify(credentialStore).getSecret(
-                eq(new VorkUser("alice", "", "USER", 0L, 0L)),
+                eq(new VorkUser("alice", "", "USER", true, 0L, 0L)),
                 eq("ssh-password-node-123"));
         verify(credentialStore).getSecret(
-                eq(new VorkUser("alice", "", "USER", 0L, 0L)),
+                eq(new VorkUser("alice", "", "USER", true, 0L, 0L)),
                 eq("ssh-key-node-123"));
         verify(credentialStore).getSecret(
-                eq(new VorkUser("alice", "", "USER", 0L, 0L)),
+                eq(new VorkUser("alice", "", "USER", true, 0L, 0L)),
                 eq("ssh-passphrase-node-123"));
 
         assertEquals("executeTerminalCommand", ex.getToolName());
@@ -172,8 +172,8 @@ class VirtualSshServiceCredentialsTest {
 
                 assertThrows(ToolSuspensionException.class, () -> service.connectClient(null, "example.com", 1));
 
-                verify(credentialStore).getSecret(eq(new VorkUser("alice", "", "USER", 0L, 0L)), eq("ssh-password-node-777"));
-                verify(credentialStore).getSecret(eq(new VorkUser("alice", "", "USER", 0L, 0L)), eq("ssh-key-node-777"));
-                verify(credentialStore).getSecret(eq(new VorkUser("alice", "", "USER", 0L, 0L)), eq("ssh-passphrase-node-777"));
+                verify(credentialStore).getSecret(eq(new VorkUser("alice", "", "USER", true, 0L, 0L)), eq("ssh-password-node-777"));
+                verify(credentialStore).getSecret(eq(new VorkUser("alice", "", "USER", true, 0L, 0L)), eq("ssh-key-node-777"));
+                verify(credentialStore).getSecret(eq(new VorkUser("alice", "", "USER", true, 0L, 0L)), eq("ssh-passphrase-node-777"));
         }
 }

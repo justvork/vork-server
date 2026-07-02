@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -64,6 +65,7 @@ public class SkillController {
 
     @PostMapping("/api/skills")
     @ResponseBody
+    @PreAuthorize("hasAuthority('SKILLS_WRITE')")
     public ResponseEntity<?> createSkill(@RequestBody SkillService.SkillRequest req) {
         if (req.name() == null || req.name().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Name is required."));
@@ -81,6 +83,7 @@ public class SkillController {
 
     @PutMapping("/api/skills/{uuid}")
     @ResponseBody
+    @PreAuthorize("hasAuthority('SKILLS_WRITE')")
     public ResponseEntity<?> updateSkill(@PathVariable String uuid,
                                          @RequestBody SkillService.SkillRequest req) {
         if (req.name() == null || req.name().isBlank()) {
@@ -102,6 +105,7 @@ public class SkillController {
 
     @DeleteMapping("/api/skills/{uuid}")
     @ResponseBody
+    @PreAuthorize("hasAuthority('SKILLS_WRITE')")
     public ResponseEntity<?> deleteSkill(@PathVariable String uuid) {
         if (skillService.get(uuid) == null) {
             return ResponseEntity.notFound().build();
@@ -133,6 +137,7 @@ public class SkillController {
 
     @PostMapping("/api/skill-groups")
     @ResponseBody
+    @PreAuthorize("hasAuthority('SKILLS_WRITE')")
     public ResponseEntity<?> createGroup(@RequestBody SkillService.SkillGroupRequest req) {
         if (req.name() == null || req.name().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Group name is required."));
@@ -143,6 +148,7 @@ public class SkillController {
 
     @PutMapping("/api/skill-groups/{uuid}")
     @ResponseBody
+    @PreAuthorize("hasAuthority('SKILLS_WRITE')")
     public ResponseEntity<?> updateGroup(@PathVariable String uuid,
                                          @RequestBody SkillService.SkillGroupRequest req) {
         if (req.name() == null || req.name().isBlank()) {
@@ -157,6 +163,7 @@ public class SkillController {
 
     @DeleteMapping("/api/skill-groups/{uuid}")
     @ResponseBody
+    @PreAuthorize("hasAuthority('SKILLS_WRITE')")
     public ResponseEntity<?> deleteGroup(@PathVariable String uuid) {
         SkillService.GroupDeleteResult result = skillService.deleteGroup(uuid);
         if (!result.ok()) {
@@ -193,6 +200,7 @@ public class SkillController {
 
     @PostMapping("/api/skill-groups/import")
     @ResponseBody
+    @PreAuthorize("hasAuthority('SKILLS_WRITE')")
     public ResponseEntity<?> importGroup(@RequestBody SkillService.SkillGroupExportPackage pkg) {
         SkillService.SkillGroupImportResult result = skillService.importGroup(pkg);
         if ("error".equals(result.status()) || "missing_dependencies".equals(result.status())) {

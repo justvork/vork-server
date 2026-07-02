@@ -66,6 +66,7 @@ import sh.vork.ai.protocol.interaction.FormAction;
 import sh.vork.ai.protocol.interaction.FormField;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
 import sh.vork.security.SecureCredentialStore;
+import sh.vork.security.UserService;
 import sh.vork.security.VorkUser;
 
 @Service
@@ -77,6 +78,8 @@ public class VirtualSshService extends AbstractSshServer {
 
 	@Autowired
 	private SecureCredentialStore credentialStore;
+	@Autowired
+	private UserService userService;
 	@Autowired
 	private DatabaseRepository<VorkNode> nodeRepository;
 
@@ -959,11 +962,11 @@ public class VirtualSshService extends AbstractSshServer {
 		return host.trim().toLowerCase(Locale.ROOT);
 	}
 
-	private static VorkUser currentPrincipalUser() {
+	private VorkUser currentPrincipalUser() {
 		Authentication auth = SecurityContextHolder.getContext().getAuthentication();
 		if (auth == null || auth.getName() == null || auth.getName().isBlank()) {
 			throw new IllegalStateException("No authenticated principal available for credential lookup");
 		}
-		return new VorkUser(auth.getName(), "", "USER", 0L, 0L);
+		return userService.getRequiredEnabledUser(auth.getName());
 	}
 }

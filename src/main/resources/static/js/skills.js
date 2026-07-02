@@ -536,7 +536,7 @@ async function importSkill(input) {
         return;
     }
 
-    if (!pkg.vorkSkillGroupExport || !pkg.group || !pkg.group.uuid || !pkg.skills) {
+    if (!pkg.vorkSkillGroupExport || !pkg.group || !pkg.group.uuid || !Array.isArray(pkg.group.skills) || pkg.group.skills.length === 0) {
         showAlert('Not a valid Vork skill-group export file.', 'danger');
         return;
     }

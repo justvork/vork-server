@@ -41,7 +41,7 @@ class SkillControllerGroupImportTest {
         MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         SkillGroup group = new SkillGroup("grp-mail", "Mail Skills", "ops", "Productivity", List.of(), 1, 1, 1);
-        SkillService.SkillGroupExportPackage pkg = new SkillService.SkillGroupExportPackage("1.0", group, List.of(), List.of());
+        SkillService.SkillGroupExportPackage pkg = new SkillService.SkillGroupExportPackage("1.0", group, List.of());
 
         mvc.perform(post("/api/skill-groups/import")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -66,7 +66,7 @@ class SkillControllerGroupImportTest {
         MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         SkillGroup group = new SkillGroup("grp-mail", "Mail Skills", "ops", "Productivity", List.of(), 1, 1, 1);
-        SkillService.SkillGroupExportPackage pkg = new SkillService.SkillGroupExportPackage("1.0", group, List.of(), List.of());
+        SkillService.SkillGroupExportPackage pkg = new SkillService.SkillGroupExportPackage("1.0", group, List.of());
 
         mvc.perform(post("/api/skill-groups/import")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -80,7 +80,6 @@ class SkillControllerGroupImportTest {
         SkillService skillService = mock(SkillService.class);
         SkillCategoryService categoryService = mock(SkillCategoryService.class);
 
-        SkillGroup group = new SkillGroup("grp-mail", "Mail Skills", "ops", "Productivity", List.of("skill-send"), 1, 1, 1);
         Skill skill = new Skill(
                 "skill-send",
                 "Send Mail",
@@ -96,6 +95,7 @@ class SkillControllerGroupImportTest {
                 1,
                 1,
                 List.of());
+        SkillGroup group = new SkillGroup("grp-mail", "Mail Skills", "ops", "Productivity", List.of(skill), 1, 1, 1);
 
         when(skillService.listGroups()).thenReturn(List.of(group));
         when(skillService.skillsForGroup(eq("grp-mail"))).thenReturn(List.of(skill));

@@ -18,12 +18,16 @@ import sh.vork.orm.SearchQuery;
 public class SecureCredentialStore {
 
     private final EncryptionService encryptionService;
+    private final UserService userService;
 
     private final  DatabaseRepository<Secret> secretRepository;
 
-    public SecureCredentialStore( RepositoryFactory factory, EncryptionService encryptionService ) {
+    public SecureCredentialStore( RepositoryFactory factory,
+                                  EncryptionService encryptionService,
+                                  UserService userService ) {
         this.secretRepository = factory.create(Secret.class);
         this.encryptionService = encryptionService;
+        this.userService = userService;
     }
     public void saveSecret(VorkUser user, String key, String value) {
         if (value == null) {
@@ -70,15 +74,13 @@ public class SecureCredentialStore {
      * or {@code null} when not found.
      */
     public String getSecretForUser(String username, String key) {
-        VorkUser user = new VorkUser(username, "", "USER", 0L, 0L);
-        return getSecret(user, key);
+        return getSecret(userService.getRequiredEnabledUser(username), key);
     }
 
     /**
      * Saves a secret keyed by username string directly, without a full {@link VorkUser} object.
      */
     public void saveSecretForUser(String username, String key, String value) {
-        VorkUser user = new VorkUser(username, "", "USER", 0L, 0L);
-        saveSecret(user, key, value);
+        saveSecret(userService.getRequiredEnabledUser(username), key, value);
     }
 }

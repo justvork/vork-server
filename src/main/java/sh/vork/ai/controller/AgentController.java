@@ -9,6 +9,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -78,6 +79,7 @@ public class AgentController {
 
     @PostMapping("/api/agents")
     @ResponseBody
+    @PreAuthorize("hasAuthority('AGENTS_WRITE')")
     public ResponseEntity<?> createAgent(@RequestBody AgentRequest req) {
         log.debug("ENTER createAgent: [name={}]", req.name());
         String err = validate(req);
@@ -100,6 +102,7 @@ public class AgentController {
 
     @PutMapping("/api/agents/{id}")
     @ResponseBody
+    @PreAuthorize("hasAuthority('AGENTS_WRITE')")
     public ResponseEntity<?> updateAgent(@PathVariable String id, @RequestBody AgentRequest req) {
         log.debug("ENTER updateAgent: [id={}]", id);
         AgentTemplate existing = agentRepository.get(id);
@@ -139,6 +142,7 @@ public class AgentController {
 
     @DeleteMapping("/api/agents/{id}")
     @ResponseBody
+    @PreAuthorize("hasAuthority('AGENTS_WRITE')")
     public ResponseEntity<?> deleteAgent(@PathVariable String id) {
         log.debug("ENTER deleteAgent: [id={}]", id);
         AgentTemplate existing = agentRepository.get(id);

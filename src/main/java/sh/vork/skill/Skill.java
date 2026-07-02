@@ -1,6 +1,7 @@
 package sh.vork.skill;
 
 import sh.vork.orm.DatabaseEntity;
+import sh.vork.typegen.ExportableType;
 
 import java.util.List;
 

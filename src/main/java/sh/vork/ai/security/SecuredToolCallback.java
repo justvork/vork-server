@@ -8,6 +8,7 @@ import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.metadata.ToolMetadata;
 import org.springframework.ai.chat.model.ToolContext;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 
@@ -57,6 +58,11 @@ public class SecuredToolCallback implements ToolCallback {
         String username = resolveUsername();
         String toolName = delegate.getToolDefinition().name();
         String effectiveArguments = resolveArguments(arguments, toolContext);
+
+        if (!ruleEngine.isRolePermitted(toolName, username)) {
+            throw new AccessDeniedException(
+                "Current role does not have permission to execute tool: " + toolName);
+        }
 
         if (ruleEngine.requiresAuthorization(toolName, username, "pending-id")) {
             String reasoning = extractReasoning(toolContext);

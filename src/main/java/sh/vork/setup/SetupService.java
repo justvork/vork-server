@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import sh.vork.orm.DatabaseRepository;
 
 import sh.vork.security.VorkUser;
+import sh.vork.security.UserRole;
 
 /**
  * Detects whether first-time setup is required and handles admin account creation.
@@ -88,7 +89,13 @@ public class SetupService {
             throw new IllegalArgumentException("Username already taken: " + username);
         }
         long now = System.currentTimeMillis();
-        VorkUser admin = new VorkUser(username, passwordEncoder.encode(password), "ADMIN", now, now);
+        VorkUser admin = new VorkUser(
+                username,
+                passwordEncoder.encode(password),
+                UserRole.ADMIN.name(),
+                true,
+                now,
+                now);
         userRepo.save(admin);
         setupComplete = true;
         log.info("Admin user created during setup: [username={}]", username);
