@@ -1,6 +1,6 @@
 # Skills and Sub-skills
 
-Vork agents can execute reusable skills and nested sub-skills to break larger tasks into controlled units of work.
+Vork agents can execute reusable skills and nested sub-skills to break larger tasks into controlled units of work. Skills are wrapped in a group container, for example `Gmail Client` might have a `Connect`, `List`, `Read`, `Send` skills.
 
 ## Current model
 
