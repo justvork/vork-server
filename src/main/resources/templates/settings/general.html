@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>General Settings — Vork</title>
-    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png">
-    <link rel="stylesheet" href="/css/tailwind.css">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
-    <link rel="stylesheet" href="/css/vork.css">
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
 </head>
 <body class="bg-zinc-950 text-zinc-100">
 <div class="max-w-2xl mx-auto px-4 py-8">
@@ -108,6 +108,6 @@
             .catch(e => showAlert('Failed to save: ' + (e.error || e.message || 'unknown error'), 'danger'));
     }
 </script>
-    <script src="/js/vork-modal.js"></script>
+    <script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
 </body>
 </html>

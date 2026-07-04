@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Agents — Vork</title>
-    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png">
-    <link rel="stylesheet" href="/css/tailwind.css">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
-    <link rel="stylesheet" href="/css/vork.css">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
     <style>
         .truncate-prompt { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 320px; font-size: 0.8rem; color: #adb5bd; }
         .tool-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem; padding: 2px 8px; border-radius: 50rem; background: #1d3557; border: 1px solid #457b9d; color: #a8dadc; white-space: nowrap; }
@@ -24,7 +24,7 @@
 <div class="container py-4" style="max-width: 1000px;">
     <div class="d-flex align-items-center justify-content-between mb-4">
         <div class="d-flex align-items-center gap-3">
-            <a href="/index.html" class="btn btn-outline-secondary btn-sm" title="Back to Chat">
+            <a href="/index.html" th:href="@{/index.html}" class="btn btn-outline-secondary btn-sm" title="Back to Chat">
                 <i class="fa-solid fa-arrow-left"></i>
             </a>
             <div>
@@ -179,7 +179,7 @@
     </div>
 </div>
 
-<script src="/js/vork-modal.js"></script>
+<script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
 <script>
     let agentModal;
     let allAgents  = [];

@@ -1,16 +1,22 @@
 <!DOCTYPE html>
-<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<html lang="en" data-bs-theme="dark" xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login — Vork</title>
-    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png">
-    <link rel="stylesheet" href="/css/tailwind.css">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
-    <link rel="stylesheet" href="/css/vork.css">
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
     <style>
         @keyframes fadeInUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
         .login-card { animation: fadeInUp 0.3s ease-out; }
+
+        html,
+        body {
+            background: var(--bs-body-bg, var(--vork-bg, #0f0f0f));
+            color: var(--bs-body-color, var(--vork-text, #e9ecef));
+        }
 
         /* CRT terminal tagline — Vork orange with scanline overlay */
         .crt-tagline {
@@ -61,12 +67,12 @@
 
             <!-- Header -->
             <div class="text-center mb-8">
-                <img src="/images/Vork-Faviconx128.png" alt="Vork Logo" class="w-14 h-14 mx-auto mb-3">
+                <img src="/images/Vork-Faviconx128.png" th:src="@{/images/Vork-Faviconx128.png}" alt="Vork Logo" class="w-14 h-14 mx-auto mb-3">
                 <h1 class="text-2xl font-bold text-zinc-100 tracking-tight mb-1">Vork</h1>
                 <p class="text-sm"><span class="crt-tagline">&gt; What shall we build today?</span><span class="terminal-cursor"></span></p>
             </div>
 
-            <form method="POST" action="/login">
+            <form method="POST" action="/login" th:action="@{/login}">
                 <!-- Error message -->
                 <div th:if="${param.error}"
                      class="flex items-center gap-2 bg-red-950/50 border border-red-800/60 text-red-400 rounded-lg px-3 py-2.5 mb-4 text-sm">

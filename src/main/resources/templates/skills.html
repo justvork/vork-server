@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Skills — Vork</title>
-    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png">
-    <link rel="stylesheet" href="/css/tailwind.css">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
-    <link rel="stylesheet" href="/css/vork.css">
-    <link rel="stylesheet" href="/css/skills.css">
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="/css/skills.css" th:href="@{/css/skills.css}">
 </head>
 <body class="bg-zinc-950 text-zinc-100">
 <div th:replace="~{fragments/header :: header}"></div>
@@ -16,7 +16,7 @@
 <div class="container py-4" style="max-width: 1000px;">
     <div class="d-flex align-items-center justify-content-between mb-4">
         <div class="d-flex align-items-center gap-3">
-            <a href="/index.html" class="btn btn-outline-secondary btn-sm" title="Back to Chat">
+            <a href="/index.html" th:href="@{/index.html}" class="btn btn-outline-secondary btn-sm" title="Back to Chat">
                 <i class="fa-solid fa-arrow-left"></i>
             </a>
             <div>
@@ -211,7 +211,7 @@
     </div>
 </div>
 
-<script src="/js/vork-modal.js"></script>
-<script src="/js/skills.js"></script>
+<script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
+<script src="/js/skills.js" th:src="@{/js/skills.js}"></script>
 </body>
 </html>

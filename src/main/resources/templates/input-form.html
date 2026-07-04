@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title th:text="${title} + ' — Vork'">Input Form — Vork</title>
-    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png">
-    <link rel="stylesheet" href="/css/tailwind.css">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
-    <link rel="stylesheet" href="/css/vork.css">
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
 </head>
 <body class="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
 
@@ -16,7 +16,7 @@
 
         <!-- Header -->
         <div class="flex items-center gap-3 px-5 py-4 border-b border-zinc-800 bg-zinc-900/80">
-            <img src="/images/Vork-Faviconx128.png" alt="Vork" class="w-6 h-6">
+            <img src="/images/Vork-Faviconx128.png" th:src="@{/images/Vork-Faviconx128.png}" alt="Vork" class="w-6 h-6">
             <div>
                 <div class="font-semibold text-zinc-100 text-sm" th:text="${title}">Input Required</div>
                 <div class="text-zinc-500 text-xs" th:text="${description}"></div>

@@ -160,7 +160,6 @@ The README introduces the philosophy behind Vork. The detailed documentation bel
 ## Getting Started
 
 - [Quick Start](QUICKSTART.md)
-- [Docker Deployment](DOCKER.md)
 - [Configuration](CONFIGURATION.md)
 
 ## Core Concepts

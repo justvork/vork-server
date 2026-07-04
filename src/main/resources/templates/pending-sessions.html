@@ -4,12 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pending Input — Vork</title>
-    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png">
-    <link rel="stylesheet" href="/css/tailwind.css">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
-    <link rel="stylesheet" href="/css/vork.css">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
-    <link rel="stylesheet" href="/css/pending-sessions.css">
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/pending-sessions.css" th:href="@{/css/pending-sessions.css}">
 </head>
 <body class="bg-zinc-950 text-zinc-100">
 <div th:replace="~{fragments/header :: header}"></div>
@@ -17,7 +17,7 @@
 <div class="container py-4" style="max-width: 860px;">
 
     <div class="d-flex align-items-center gap-3 mb-4">
-        <a href="/index.html" class="btn btn-outline-secondary btn-sm" title="Back to Chat">
+        <a href="/index.html" th:href="@{/index.html}" class="btn btn-outline-secondary btn-sm" title="Back to Chat">
             <i class="fa-solid fa-arrow-left"></i>
         </a>
         <div>
@@ -41,7 +41,7 @@
         <i class="fa-solid fa-circle-check fa-3x text-success mb-3 d-block"></i>
         <h5 class="text-muted">All clear</h5>
         <p class="text-muted small">No sessions are waiting for your input.</p>
-        <a href="/index.html" class="btn btn-outline-secondary btn-sm mt-2">
+        <a href="/index.html" th:href="@{/index.html}" class="btn btn-outline-secondary btn-sm mt-2">
             <i class="fa-solid fa-comments me-1"></i>Back to Chat
         </a>
     </div>
@@ -67,6 +67,6 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
-<script src="/js/pending-sessions.js"></script>
+<script src="/js/pending-sessions.js" th:src="@{/js/pending-sessions.js}"></script>
 </body>
 </html>

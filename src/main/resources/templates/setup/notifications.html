@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Notifications Setup — Vork</title>
-    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png">
-    <link rel="stylesheet" href="/css/tailwind.css">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
-    <link rel="stylesheet" href="/css/vork.css">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
     <style>
         body { background: var(--bs-body-bg); }
         .wizard-wrapper {
@@ -67,7 +67,7 @@
 
         <!-- Branding -->
         <div class="text-center mb-4">
-            <img src="/images/Vork-Faviconx128.png" alt="Vork" width="52" height="52" class="mb-3">
+            <img src="/images/Vork-Faviconx128.png" th:src="@{/images/Vork-Faviconx128.png}" alt="Vork" width="52" height="52" class="mb-3">
             <h4 class="fw-bold mb-0">Notification Setup</h4>
             <p class="text-muted small mt-1 mb-0">Add your addresses for each configured provider</p>
         </div>
@@ -88,7 +88,7 @@
                         (e.g. SendGrid, SMTP, Twilio) under
                         <strong>Settings → Notifications</strong> before you can add your addresses.
                     </p>
-                    <a href="/" class="btn btn-primary">
+                    <a href="/" th:href="@{/}" class="btn btn-primary">
                         <i class="fa-solid fa-house me-2"></i>Go to Dashboard
                     </a>
                 </div>
@@ -109,10 +109,10 @@
                         <p class="text-muted small mb-0">Your notification addresses are saved.</p>
                     </div>
                     <div id="summary-list" class="mb-4"></div>
-                    <a href="/notifications" class="btn btn-outline-secondary w-100 mb-2">
+                    <a href="/notifications" th:href="@{/notifications}" class="btn btn-outline-secondary w-100 mb-2">
                         <i class="fa-solid fa-bell me-2"></i>Manage addresses
                     </a>
-                    <a href="/" class="btn btn-primary w-100">
+                    <a href="/" th:href="@{/}" class="btn btn-primary w-100">
                         <i class="fa-solid fa-house me-2"></i>Go to Dashboard
                     </a>
                 </div>
@@ -122,7 +122,7 @@
     </div>
 </div>
 
-<script src="/js/vork-modal.js"></script>
+<script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
 <script>
     /* State */
     let providers     = [];   // ProviderView[]

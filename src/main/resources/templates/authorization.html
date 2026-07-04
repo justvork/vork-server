@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Authorize — Vork</title>
-    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png">
-    <link rel="stylesheet" href="/css/tailwind.css">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
-    <link rel="stylesheet" href="/css/vork.css">
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
     <style>
         @keyframes fadeInUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
         .auth-card { animation: fadeInUp 0.3s ease-out; }
@@ -69,13 +69,13 @@
     <!-- Footer -->
     <div class="text-center mt-4">
         <p class="text-xs text-zinc-700">
-            <img src="/images/Vork-Faviconx128.png" alt="" class="inline w-3.5 h-3.5 mr-1 opacity-40">
+            <img src="/images/Vork-Faviconx128.png" th:src="@{/images/Vork-Faviconx128.png}" alt="" class="inline w-3.5 h-3.5 mr-1 opacity-40">
             Secure Vork Authorization
         </p>
     </div>
 </div>
 
-<script src="/js/vork-modal.js"></script>
-<script src="/js/authorization.js"></script>
+<script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
+<script src="/js/authorization.js" th:src="@{/js/authorization.js}"></script>
 </body>
 </html>

@@ -4,13 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Job Monitor — Vork</title>
-    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
-    <link rel="stylesheet" href="/packages/npm/xterm/current/css/xterm.css">
-    <link rel="stylesheet" href="/css/tailwind.css">
-    <link rel="stylesheet" href="/css/vork.css">
-    <link rel="stylesheet" href="/css/chat.css">
-    <link rel="stylesheet" href="/css/job-monitor.css">
+    <style>html,body{background:#0f0f0f;color:#e9ecef;}</style>
+    <link rel="icon" type="image/png" href="images/Vork-Faviconx128.png?v=20260704">
+    <link rel="shortcut icon" href="images/Vork-Faviconx128.png?v=20260704">
+    <link rel="stylesheet" href="packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
+    <link rel="stylesheet" href="packages/npm/xterm/current/css/xterm.css">
+    <link rel="stylesheet" href="css/tailwind.css">
+    <link rel="stylesheet" href="css/vork.css">
+    <link rel="stylesheet" href="css/chat.css">
+    <link rel="stylesheet" href="css/job-monitor.css">
 </head>
 <body>
 
@@ -18,7 +20,7 @@
 
     <!-- Header -->
     <header class="monitor-header">
-        <a href="/jobs" class="btn btn-outline-secondary btn-sm back-link" title="Back to Jobs">
+        <a href="jobs" class="btn btn-outline-secondary btn-sm back-link" title="Back to Jobs">
             <i class="fa-solid fa-arrow-left"></i>
         </a>
         <i class="fa-solid fa-clock-rotate-left job-icon"></i>
@@ -44,15 +46,15 @@
 </div>
 
 <!-- Dependencies (same local packages as index.html) -->
-<script src="/packages/npm/sockjs-client/current/dist/sockjs.min.js"></script>
-<script src="/packages/npm.stomp/stompjs/current/bundles/stomp.umd.min.js"></script>
-<script src="/packages/npm/marked/current/marked.min.js"></script>
-<script src="/packages/npm/xterm/current/lib/xterm.js"></script>
-<script src="/packages/npm/xterm-addon-fit/current/lib/xterm-addon-fit.js"></script>
+<script src="packages/npm/sockjs-client/current/dist/sockjs.min.js"></script>
+<script src="packages/npm.stomp/stompjs/current/bundles/stomp.umd.min.js"></script>
+<script src="packages/npm/marked/current/marked.min.js"></script>
+<script src="packages/npm/xterm/current/lib/xterm.js"></script>
+<script src="packages/npm/xterm-addon-fit/current/lib/xterm-addon-fit.js"></script>
 <!-- Shared rendering module -->
-<script src="/js/chat-render.js"></script>
+<script src="js/chat-render.js"></script>
 <!-- Page logic -->
-<script src="/js/job-monitor.js"></script>
+<script src="js/job-monitor.js"></script>
 
 </body>
 </html>

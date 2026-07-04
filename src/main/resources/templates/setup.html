@@ -1,16 +1,21 @@
 <!DOCTYPE html>
-<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<html lang="en" data-bs-theme="dark" xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Setup — Vork</title>
-    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png">
-    <link rel="stylesheet" href="/css/tailwind.css">
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/css/bootstrap-theme.css" th:href="@{/css/bootstrap-theme.css}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <link rel="stylesheet" href="/css/vork.css">
-    <script src="/packages/npm/qrious/current/dist/qrious.min.js"></script>
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <script src="/packages/npm/qrious/current/dist/qrious.min.js" th:src="@{/packages/npm/qrious/current/dist/qrious.min.js}"></script>
     <style>
-        body { background: var(--bs-body-bg); }
+        html,
+        body {
+            background: var(--bs-body-bg, var(--vork-bg, #0f0f0f));
+            color: var(--bs-body-color, var(--vork-text, #e9ecef));
+        }
         .setup-wrapper {
             min-height: 100vh;
             display: flex;
@@ -71,7 +76,7 @@
 
         <!-- Branding -->
         <div class="text-center mb-4">
-            <img src="/images/Vork-Faviconx128.png" alt="Vork" width="60" height="60" class="mb-3">
+            <img src="/images/Vork-Faviconx128.png" th:src="@{/images/Vork-Faviconx128.png}" alt="Vork" width="60" height="60" class="mb-3">
             <h4 class="fw-bold mb-0">Welcome to Vork</h4>
             <p class="text-muted small mt-1 mb-0">Let&rsquo;s get you up and running</p>
         </div>
@@ -507,7 +512,7 @@
                             <strong>AI model discovery</strong> — Dynamic model lists fetched from provider APIs</li>
                     </ul>
 
-                    <a href="/index.html" class="btn btn-success w-100">
+                    <a href="/index.html" th:href="@{/index.html}" class="btn btn-success w-100">
                         <i class="fa-solid fa-rocket me-2"></i>Start Chatting
                     </a>
                 </div>
@@ -1178,6 +1183,6 @@
     // On load: determine starting step and pre-fill database form
     loadInitialState();
 </script>
-<script src="/js/vork-modal.js"></script>
+<script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
 </body>
 </html>

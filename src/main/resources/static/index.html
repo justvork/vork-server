@@ -4,19 +4,21 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vork AI Chat</title>
-    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png">
-    <link rel="stylesheet" href="/css/tailwind.css">
-    <link rel="stylesheet" href="/css/vork.css">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
-    <link rel="stylesheet" href="/packages/npm/xterm/current/css/xterm.css">
-    <link rel="stylesheet" href="/css/chat.css">
-    <link rel="stylesheet" href="/css/console.css">
+    <style>html,body{background:#0f0f0f;color:#e9ecef;}</style>
+    <link rel="icon" type="image/png" href="images/Vork-Faviconx128.png?v=20260704">
+    <link rel="shortcut icon" href="images/Vork-Faviconx128.png?v=20260704">
+    <link rel="stylesheet" href="css/tailwind.css">
+    <link rel="stylesheet" href="css/vork.css">
+    <link rel="stylesheet" href="packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
+    <link rel="stylesheet" href="packages/npm/xterm/current/css/xterm.css">
+    <link rel="stylesheet" href="css/chat.css">
+    <link rel="stylesheet" href="css/console.css">
 </head>
 <body>
 
 <!-- Splash screen -->
 <div id="splash">
-    <img src="/images/Vork.png" alt="Vork">
+    <img src="images/Vork.png" alt="Vork">
     <div id="splash-tagline"><span id="splash-typed"></span><span id="splash-cursor"></span></div>
 </div>
 
@@ -89,7 +91,7 @@
     <!-- Header -->
     <header class="chat-header d-flex align-items-center justify-content-between">
         <div class="d-flex align-items-center gap-2">
-            <img src="/images/Vork-Header.png" alt="Vork" class="header-logo">
+            <img src="images/Vork-Header.png" alt="Vork" class="header-logo">
             <span class="text-secondary small ps-1">AI Chat</span>
             <span id="status-dot" class="status-dot connecting ms-1" title="Connecting&hellip;"></span>
         </div>
@@ -194,15 +196,15 @@
 </div><!-- /.page-layout -->
 
 <!-- CDN dependencies -->
-<script src="/packages/npm/sockjs-client/current/dist/sockjs.min.js"></script>
-<script src="/packages/npm.stomp/stompjs/current/bundles/stomp.umd.min.js"></script>
-<script src="/packages/npm/marked/current/marked.min.js"></script>
-<script src="/packages/npm/xterm/current/lib/xterm.js"></script>
-<script src="/packages/npm/xterm-addon-fit/current/lib/xterm-addon-fit.js"></script>
+<script src="packages/npm/sockjs-client/current/dist/sockjs.min.js"></script>
+<script src="packages/npm.stomp/stompjs/current/bundles/stomp.umd.min.js"></script>
+<script src="packages/npm/marked/current/marked.min.js"></script>
+<script src="packages/npm/xterm/current/lib/xterm.js"></script>
+<script src="packages/npm/xterm-addon-fit/current/lib/xterm-addon-fit.js"></script>
 
 <!-- Application -->
-<script src="/js/chat.js"></script>
-<script src="/js/console.js"></script>
+<script src="js/chat.js"></script>
+<script src="js/console.js"></script>
 
 </body>
 </html>

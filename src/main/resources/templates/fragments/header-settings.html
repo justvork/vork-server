@@ -1,18 +1,18 @@
 <header class="flex items-center justify-between px-4 py-2 bg-zinc-950 border-b border-zinc-800">
-    <a href="/" class="flex items-center gap-2 no-underline">
-        <img src="/images/Vork-Faviconx128.png" alt="Vork" width="28" height="28">
+    <a href="/" th:href="@{/}" class="flex items-center gap-2 no-underline">
+        <img src="/images/Vork-Faviconx128.png" th:src="@{/images/Vork-Faviconx128.png}" alt="Vork" width="28" height="28">
         <span class="font-bold text-[#fdaa02] text-base tracking-tight">Vork</span>
     </a>
     <nav class="flex items-center gap-3">
-        <a href="/jobs" title="Jobs"
+        <a href="/jobs" th:href="@{/jobs}" title="Jobs"
            class="text-zinc-400 hover:text-[#fdaa02] transition-colors">
             <i class="fa-solid fa-clock-rotate-left"></i>
         </a>
-        <a href="/settings" title="Settings"
+        <a href="/settings" th:href="@{/settings}" title="Settings"
            class="text-zinc-400 hover:text-[#fdaa02] transition-colors">
             <i class="fa-solid fa-gear"></i>
         </a>
-        <form id="logout-form" method="post" action="/logout" class="contents">
+        <form id="logout-form" method="post" action="/logout" th:action="@{/logout}" class="contents">
             <button type="submit" title="Logout"
                     class="text-zinc-400 hover:text-red-400 transition-colors border-0 bg-transparent cursor-pointer p-0">
                 <i class="fa-solid fa-right-from-bracket"></i>

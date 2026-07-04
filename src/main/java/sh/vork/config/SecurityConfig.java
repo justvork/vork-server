@@ -32,7 +32,7 @@ public class SecurityConfig {
                 .requestMatchers("/login", "/login/**").permitAll()
                 .requestMatchers("/setup", "/api/setup/**").permitAll()
                 .requestMatchers("/api/authorization/**").permitAll()
-                .requestMatchers("/css/**", "/js/**", "/images/**", "/*.ico").permitAll()
+                .requestMatchers("/favicon.ico", "/*.ico", "/css/**", "/js/**", "/images/**").permitAll()
                 .requestMatchers("/packages/**").permitAll()
                 .requestMatchers("/ws/**").permitAll()
                 .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()

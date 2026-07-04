@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Jobs — Vork</title>
-    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png">
-    <link rel="stylesheet" href="/css/tailwind.css">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
-    <link rel="stylesheet" href="/css/vork.css">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
     <style>
         .badge-MANUAL        { background: #6c757d; }
         .badge-ONE_TIME      { background: #0d6efd; }
@@ -26,7 +26,7 @@
 <div class="container py-4" style="max-width: 960px;">
     <div class="d-flex align-items-center justify-content-between mb-4">
         <div class="d-flex align-items-center gap-3">
-            <a href="/index.html" class="btn btn-outline-secondary btn-sm" title="Back to Chat">
+            <a href="/index.html" th:href="@{/index.html}" class="btn btn-outline-secondary btn-sm" title="Back to Chat">
                 <i class="fa-solid fa-arrow-left"></i>
             </a>
             <div>
@@ -675,6 +675,6 @@
                'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
     }
 </script>
-<script src="/js/vork-modal.js"></script>
+<script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
 </body>
 </html>
