@@ -11,6 +11,7 @@ let allGroupViews = [];
 let allTools      = [];
 let allTypes      = [];
 let allCategories = [];
+let categoriesLoadFailed = false;
 let modalTools      = [];
 let modalTypes      = [];
 let modalSubSkills  = [];
@@ -63,10 +64,34 @@ async function loadData() {
         allTools      = toolsRes.ok  ? await toolsRes.json()  : [];
         allTypes      = typesRes.ok  ? await typesRes.json()  : [];
         allCategories = catsRes.ok   ? await catsRes.json()   : [];
+        categoriesLoadFailed = !catsRes.ok;
+        updateCategoryHelp();
         renderGroupTable();
     } catch (e) {
+        categoriesLoadFailed = true;
+        updateCategoryHelp();
         showAlert('Failed to load data.', 'warning');
     }
+}
+
+function updateCategoryHelp() {
+    const help = document.getElementById('group-category-help');
+    if (!help) return;
+
+    if (categoriesLoadFailed) {
+        help.className = 'form-text text-warning';
+        help.textContent = 'Supported categories could not be loaded from GitHub. Retry later.';
+        return;
+    }
+
+    if (!allCategories || allCategories.length === 0) {
+        help.className = 'form-text text-warning';
+        help.textContent = 'No supported categories are available right now.';
+        return;
+    }
+
+    help.className = 'form-text text-muted';
+    help.textContent = 'Category must be selected from the supported list.';
 }
 
 function renderGroupTable() {
@@ -130,6 +155,20 @@ function populateGroupSelect(selected) {
         opt.value = group.uuid;
         opt.textContent = group.name + (group.category ? ' [' + group.category + ']' : '');
         if (group.uuid === selected) opt.selected = true;
+        sel.appendChild(opt);
+    });
+}
+
+function populateCategorySelect(selected) {
+    const sel = document.getElementById('group-category');
+    if (!sel) return;
+
+    sel.innerHTML = '<option value="">— select a category —</option>';
+    allCategories.forEach(function (category) {
+        const opt = document.createElement('option');
+        opt.value = category;
+        opt.textContent = category;
+        if (category === selected) opt.selected = true;
         sel.appendChild(opt);
     });
 }
@@ -609,7 +648,7 @@ function openCreateGroup() {
     document.getElementById('group-id').value = '';
     document.getElementById('group-name').value = '';
     document.getElementById('group-author').value = '';
-    document.getElementById('group-category').value = '';
+    populateCategorySelect('');
     clearAlert('group-modal-alert');
     groupModal.show();
 }
@@ -624,7 +663,7 @@ function openEditGroup(groupUuid) {
     document.getElementById('group-id').value = group.uuid;
     document.getElementById('group-name').value = group.name || '';
     document.getElementById('group-author').value = group.author || '';
-    document.getElementById('group-category').value = group.category || '';
+    populateCategorySelect(group.category || '');
     clearAlert('group-modal-alert');
     groupModal.show();
 }
@@ -637,6 +676,16 @@ async function saveGroup() {
 
     if (!name) {
         showAlertIn('group-modal-alert', 'Group name is required.', 'warning');
+        return;
+    }
+
+    if (!category) {
+        showAlertIn('group-modal-alert', 'Category is required. Please select from supported categories.', 'warning');
+        return;
+    }
+
+    if (!allCategories.includes(category)) {
+        showAlertIn('group-modal-alert', 'Unsupported category selected. Please reload and pick a supported category.', 'warning');
         return;
     }
 

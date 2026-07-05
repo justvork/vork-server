@@ -164,6 +164,8 @@ public class AiConfig {
     private static final String OAUTH_CLIENT_ID_CONTEXT_SUFFIX = ".clientId";
     private static final String OAUTH_CLIENT_SECRET_KEY_PREFIX = "oauth.client.";
     private static final String OAUTH_CLIENT_SECRET_KEY_SUFFIX = ".clientSecret";
+    private static final String OAUTH_CLIENT_ID_FORM_KEY = "clientId";
+    private static final String OAUTH_CLIENT_SECRET_FORM_KEY = "oauth.clientSecret";
     public static final String BASE_SYSTEM_PROMPT = """
 You are an autonomous Vork AI agent operating strictly within a turn-based AI 
 orchestration framework. You execute background workflows using function-calling 
@@ -1157,7 +1159,11 @@ the protocol and will break the system. Do not converse. Execute.
         String tokenEndpoint = firstNonBlank(req == null ? null : req.tokenEndpoint(), contextString("tokenEndpoint"));
         // OAuth credentials are sourced from interactive form context/secret storage,
         // not directly from model-authored tool arguments.
-        String clientId = contextString(oauthClientIdContextKey(normalizedClientName));
+        String clientId = firstNonBlank(
+            req == null ? null : req.clientId(),
+            firstNonBlank(
+                contextString(OAUTH_CLIENT_ID_FORM_KEY),
+                contextString(oauthClientIdContextKey(normalizedClientName))));
         String redirectUri = firstNonBlank(req == null ? null : req.redirectUri(), contextString("redirectUri"));
         if (isUnresolvedRedirectUri(redirectUri)) {
             redirectUri = null;
@@ -1179,9 +1185,9 @@ the protocol and will break the system. Do not converse. Execute.
             forceReconnect = parseBoolean(contextString("forceReconnect"));
         }
 
-        String clientSecret = secureCredentialStore.getSecretForUser(
-            username,
-            oauthClientSecretStoreKey(normalizedClientName));
+        String clientSecret = firstNonBlank(
+            secureCredentialStore.getSecretForUser(username, OAUTH_CLIENT_SECRET_FORM_KEY),
+            secureCredentialStore.getSecretForUser(username, oauthClientSecretStoreKey(normalizedClientName)));
 
         return new OAuthConnectRequest(
                 clientName,
@@ -1207,11 +1213,11 @@ the protocol and will break the system. Do not converse. Execute.
         String forceReconnectValue = String.valueOf(Boolean.TRUE.equals(effectiveReq.forceReconnect()));
 
         List<FormField> fields = List.of(
-        new FormField("clientName", "READONLY", "clientName", clientNameValue, clientNameValue, true, FieldSource.CONTEXT, null),
+            new FormField("clientName", "TEXT", "clientName", clientNameValue, clientNameValue, true, FieldSource.CONTEXT, null),
                 new FormField("authorizeEndpoint", "TEXT", "authorizeEndpoint", authorizeEndpointValue, authorizeEndpointValue, true, FieldSource.CONTEXT, null),
                 new FormField("tokenEndpoint", "TEXT", "tokenEndpoint", tokenEndpointValue, tokenEndpointValue, true, FieldSource.CONTEXT, null),
-        new FormField(oauthClientIdContextKey(normalizedClientName), "TEXT", "clientId", clientIdValue, clientIdValue, true, FieldSource.CONTEXT, null),
-        new FormField(oauthClientSecretStoreKey(normalizedClientName), "PASSWORD", "clientSecret (optional for PKCE public clients)", "", null, false, FieldSource.SECRET, null),
+            new FormField(OAUTH_CLIENT_ID_FORM_KEY, "TEXT", "clientId", clientIdValue, clientIdValue, true, FieldSource.CONTEXT, null),
+            new FormField(OAUTH_CLIENT_SECRET_FORM_KEY, "PASSWORD", "clientSecret (optional for PKCE public clients)", "", null, false, FieldSource.SECRET, null),
                 new FormField("redirectUri", "READONLY", "redirectUri", suggestedRedirectUri, suggestedRedirectUri, true, FieldSource.CONTEXT, null),
                 new FormField("scopes", "TEXTAREA", "scopes (space/comma/newline separated)", scopesValue, scopesValue, false, FieldSource.CONTEXT, null),
                 new FormField("authorizationParams", "TEXTAREA", "authorizationParams JSON", authorizationParamsValue, authorizationParamsValue, false, FieldSource.CONTEXT, null),

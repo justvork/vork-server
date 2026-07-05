@@ -142,6 +142,10 @@ public class SkillController {
         if (req.name() == null || req.name().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Group name is required."));
         }
+        String categoryError = validateCategory(req.category());
+        if (categoryError != null) {
+            return ResponseEntity.badRequest().body(Map.of("error", categoryError));
+        }
         SkillGroup created = skillService.createGroup(req);
         return ResponseEntity.ok(created);
     }
@@ -153,6 +157,10 @@ public class SkillController {
                                          @RequestBody SkillService.SkillGroupRequest req) {
         if (req.name() == null || req.name().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Group name is required."));
+        }
+        String categoryError = validateCategory(req.category());
+        if (categoryError != null) {
+            return ResponseEntity.badRequest().body(Map.of("error", categoryError));
         }
         SkillGroup updated = skillService.updateGroup(uuid, req);
         if (updated == null) {
@@ -178,6 +186,18 @@ public class SkillController {
     @ResponseBody
     public ResponseEntity<?> listCategories() {
         return ResponseEntity.ok(categoryService.getCategories());
+    }
+
+    private String validateCategory(String category) {
+        if (category == null || category.isBlank()) {
+            return "Category is required and must be selected from supported categories.";
+        }
+        List<String> supported = categoryService.getCategories();
+        boolean match = supported.stream().anyMatch(c -> c.equalsIgnoreCase(category.trim()));
+        if (!match) {
+            return "Unsupported category. Choose one of the supported categories.";
+        }
+        return null;
     }
 
     // -- Export / Import -----------------------------------------------------

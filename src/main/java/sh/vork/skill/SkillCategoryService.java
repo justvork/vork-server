@@ -6,6 +6,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -37,6 +39,7 @@ public class SkillCategoryService {
             "https://raw.githubusercontent.com/vork-ai/vork-skills/main/categories.json";
 
     private static final long CACHE_TTL_MS = 24L * 60 * 60 * 1_000; // 24 hours
+        private static final int STARTUP_REFRESH_ATTEMPTS = 3;
 
     private final RestClient    restClient;
     private final ObjectMapper  objectMapper;
@@ -50,8 +53,6 @@ public class SkillCategoryService {
                                 ObjectMapper objectMapper) {
         this.restClient   = restClientBuilder.build();
         this.objectMapper = objectMapper;
-        // Eager initial load so the first HTTP request to /categories is fast.
-        refresh();
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -69,6 +70,35 @@ public class SkillCategoryService {
     /** Refreshes the category list every 24 hours. */
     @Scheduled(fixedDelay = CACHE_TTL_MS)
     public void refresh() {
+        refreshOnce();
+    }
+
+    /**
+     * Forces a refresh whenever the app starts/restarts, with a small retry
+     * window in case outbound networking is briefly unavailable during boot.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void refreshOnStartup() {
+        log.debug("ENTER refreshOnStartup");
+        for (int attempt = 1; attempt <= STARTUP_REFRESH_ATTEMPTS; attempt++) {
+            if (refreshOnce()) {
+                log.debug("EXIT refreshOnStartup: success on attempt {}", attempt);
+                return;
+            }
+            if (attempt < STARTUP_REFRESH_ATTEMPTS) {
+                try {
+                    Thread.sleep(2_000L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.warn("Startup category refresh interrupted");
+                    return;
+                }
+            }
+        }
+        log.warn("Startup category refresh failed after {} attempts", STARTUP_REFRESH_ATTEMPTS);
+    }
+
+    private boolean refreshOnce() {
         log.debug("ENTER refresh: fetching categories from {}", CATEGORIES_URL);
         try {
             String body = restClient.get()
@@ -78,22 +108,24 @@ public class SkillCategoryService {
 
             if (body == null || body.isBlank()) {
                 log.warn("Empty response from categories URL — retaining previous cache");
-                return;
+                return false;
             }
 
             List<String> parsed = parseCategories(body);
             if (parsed.isEmpty()) {
                 log.warn("Parsed zero categories from response — retaining previous cache");
-                return;
+                return false;
             }
 
             cache.set(Collections.unmodifiableList(parsed));
             lastFetchedAt = System.currentTimeMillis();
             log.info("Skill categories refreshed [count={}, source={}]", parsed.size(), CATEGORIES_URL);
+            return true;
 
         } catch (Exception e) {
             log.warn("Failed to refresh skill categories [url={}]: {} — retaining previous cache",
                     CATEGORIES_URL, e.getMessage());
+            return false;
         }
     }
 
