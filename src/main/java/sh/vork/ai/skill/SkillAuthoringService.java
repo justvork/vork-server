@@ -16,6 +16,7 @@ import sh.vork.skill.Skill;
 import sh.vork.skill.SkillGroup;
 import sh.vork.skill.SkillParameter;
 import sh.vork.skill.SkillService;
+import sh.vork.skill.SkillVisibility;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -149,17 +150,11 @@ public class SkillAuthoringService {
                 : inferParametersFromRequest(requestText, allowedTools);
         parameters = sanitizeRuntimeParameters(requestText, allowedTools, parameters, byId);
 
-        AutoShareRecommendation autoShareRecommendation = recommendAutoShare(req, name, requestText, allowedTools, limitedSubSkills);
-        if (aiDraft != null && aiDraft.autoShareWithinGroup() != null && req != null && req.autoShareWithinGroup() == null) {
-            autoShareRecommendation = new AutoShareRecommendation(
-                    aiDraft.autoShareWithinGroup(),
-                    "Recommended by AI-generated skill design based on request semantics."
-            );
+        SkillVisibility visibility = SkillVisibility.PUBLIC;
+        if (req != null && req.visibility() != null) {
+            visibility = req.visibility();
         }
-        boolean autoShareWithinGroup = autoShareRecommendation.enabled();
-        log.debug("Step 2: auto-share recommendation [enabled={}, reason={}]",
-            autoShareRecommendation.enabled(),
-            autoShareRecommendation.rationale());
+        log.debug("Step 2: visibility selected [visibility={}]", visibility);
 
         String instructions = (aiDraft != null && aiDraft.instructions() != null && !aiDraft.instructions().isBlank())
                 ? aiDraft.instructions().trim()
@@ -178,7 +173,7 @@ public class SkillAuthoringService {
                 name,
                 description,
                 groupUuid,
-                autoShareWithinGroup,
+                visibility,
                 parameters,
                 instructions,
                 allowedTools,
@@ -207,8 +202,8 @@ public class SkillAuthoringService {
                 targetGroup != null ? targetGroup.uuid() : null,
                 targetGroup != null ? targetGroup.name() : groupResolution.proposedGroupName(),
                 groupResolution.created(),
-                autoShareRecommendation.enabled(),
-                autoShareRecommendation.rationale(),
+                true,
+                "All skills are auto-shared within their group by default.",
                 skillRequest);
     }
 
@@ -1011,51 +1006,6 @@ Optional explicit fields:
         return new GroupResolution(skillService.createGroup(groupRequest), true, groupName);
     }
 
-    private static AutoShareRecommendation recommendAutoShare(DesignSkillRequest req,
-                                                              String skillName,
-                                                              String requestText,
-                                                              List<String> selectedTools,
-                                                              List<Skill> selectedSubSkills) {
-        if (req != null && req.autoShareWithinGroup() != null) {
-            boolean enabled = req.autoShareWithinGroup();
-            String rationale = enabled
-                    ? "Auto-share explicitly enabled by request input."
-                    : "Auto-share explicitly disabled by request input.";
-            return new AutoShareRecommendation(enabled, rationale);
-        }
-
-        String lower = ((skillName == null ? "" : skillName) + " "
-                + (requestText == null ? "" : requestText)).toLowerCase(Locale.ROOT);
-
-        boolean connectionLike = lower.contains("connect")
-                || lower.contains("connection")
-                || lower.contains("auth")
-                || lower.contains("oauth")
-                || lower.contains("login")
-                || lower.contains("token")
-                || lower.contains("credential")
-                || lower.contains("session");
-
-        boolean connectionTool = selectedTools != null && selectedTools.stream()
-                .filter(t -> t != null)
-                .map(t -> t.toLowerCase(Locale.ROOT))
-                .anyMatch(t -> t.contains("connection")
-                        || t.contains("oauth")
-                        || t.contains("auth")
-                        || t.contains("login"));
-
-        boolean sharedDependencyHub = selectedSubSkills != null && selectedSubSkills.stream()
-                .anyMatch(s -> s != null && s.autoShareWithinGroup());
-
-        if (connectionLike || connectionTool || sharedDependencyHub) {
-            return new AutoShareRecommendation(true,
-                    "Recommended enabled: this skill appears to provide reusable connection/auth/session capability for peer skills.");
-        }
-
-        return new AutoShareRecommendation(false,
-                "Recommended disabled: this skill appears task-specific rather than a shared dependency.");
-    }
-
     private static String normalizeGroupName(String raw) {
         if (raw == null || raw.isBlank()) {
             return "Automation Skills";
@@ -1069,8 +1019,6 @@ Optional explicit fields:
     private record ScoredTool(String toolId, int score) {}
 
     private record GroupResolution(SkillGroup group, boolean created, String proposedGroupName) {}
-
-    private record AutoShareRecommendation(boolean enabled, String rationale) {}
 
         private record AiSkillDraft(
             List<String> selectedToolIds,

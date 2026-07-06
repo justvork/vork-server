@@ -1,6 +1,7 @@
 package sh.vork.skill;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 /**
  * A typed input parameter declared on a {@link Skill}.
@@ -18,15 +19,24 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  * @param type        one of: string | int | double | boolean | secret
  * @param description optional human-readable hint passed into the skill prompt
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public record SkillParameter(
         String name,
         String type,
-        String description
+        String description,
+    SkillParameterInputMode inputMode
 ) {
     public SkillParameter {
         if (name == null || name.isBlank()) name = "param";
         if (type == null || type.isBlank()) type = "string";
         if (description == null)            description = "";
+    if (inputMode == null)              inputMode = SkillParameterInputMode.AI_REQUIRED;
+    }
+
+    public SkillParameter(String name,
+                          String type,
+                          String description) {
+        this(name, type, description, SkillParameterInputMode.AI_REQUIRED);
     }
 
     /** Returns {@code true} when this parameter's value should be masked in logs. */

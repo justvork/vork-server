@@ -8,6 +8,24 @@ Vork agents can execute reusable skills and nested sub-skills to break larger ta
 - Sub-skills allow a parent skill to delegate focused work without exposing unrelated tools.
 - OAuth client management can be used inside these workflows when external APIs require authorization.
 
+## Visibility and API contract
+
+- Each skill has `visibility`: `PUBLIC` or `PRIVATE`.
+- `PUBLIC` skills are visible to end users and are assignable to agents/jobs.
+- `PRIVATE` skills are hidden from end-user skill listings and cannot be attached to agents/jobs.
+- Skills are auto-shared within their group for skill-to-skill composition.
+
+### REST behavior
+
+- `GET /api/skills` returns only public skills.
+- `GET /api/skills?includePrivate=true` includes private skills only for skill managers (`SKILLS_WRITE`).
+- Agent and job APIs reject private skill UUIDs on create/update.
+
+### Tool behavior
+
+- `createSkill` accepts `visibility` (`PUBLIC` by default).
+- `designSkillFromRequest` accepts optional `visibility` override for the generated draft request.
+
 ## Why this matters
 
 - Better reuse of proven automation patterns.

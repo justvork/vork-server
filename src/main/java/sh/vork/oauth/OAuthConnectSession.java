@@ -11,7 +11,10 @@ public record OAuthConnectSession(
         String uuid,
         String userUuid,
         String clientName,
-    String aiSessionUuid,
+    String profileName,
+    boolean isDefaultProfile,
+    String ownerSkillUuid,
+        String aiSessionUuid,
         String codeVerifierEncrypted,
         String redirectUri,
         List<String> scopes,
@@ -20,6 +23,9 @@ public record OAuthConnectSession(
 ) implements DatabaseEntity {
 
     public OAuthConnectSession {
+        if (profileName == null || profileName.isBlank()) {
+            profileName = "default";
+        }
         if (scopes == null) {
             scopes = List.of();
         }

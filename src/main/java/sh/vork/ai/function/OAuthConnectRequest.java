@@ -15,6 +15,10 @@ public record OAuthConnectRequest(
         @JsonPropertyDescription("Logical OAuth client name, e.g. gmail, reddit, xero.")
         String clientName,
 
+        @JsonProperty(value = "profileName")
+        @JsonPropertyDescription("Optional profile name under this clientName (e.g. work, personal).")
+        String profileName,
+
         @JsonProperty(value = "authorizeEndpoint")
         @JsonPropertyDescription("OAuth authorization endpoint URL. Required the first time unless already saved.")
         String authorizeEndpoint,

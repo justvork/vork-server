@@ -15,6 +15,9 @@ public record OAuthClient(
         String uuid,
         String userUuid,
         String clientName,
+    String profileName,
+    boolean isDefaultProfile,
+    String ownerSkillUuid,
         String authorizeEndpoint,
         String tokenEndpoint,
         String clientIdEncrypted,
@@ -30,6 +33,9 @@ public record OAuthClient(
 ) implements DatabaseEntity {
 
     public OAuthClient {
+        if (profileName == null || profileName.isBlank()) {
+            profileName = "default";
+        }
         if (scopes == null) {
             scopes = List.of();
         }

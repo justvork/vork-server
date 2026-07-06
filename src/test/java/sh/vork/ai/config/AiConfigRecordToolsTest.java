@@ -22,6 +22,7 @@ import sh.vork.ai.security.VisualizableTool;
 import sh.vork.orm.DatabaseEntity;
 import sh.vork.skill.Skill;
 import sh.vork.skill.SkillService;
+import sh.vork.skill.SkillVisibility;
 import sh.vork.typegen.JavaTypeClassLoader;
 import sh.vork.typegen.TypeDatabaseService;
 
@@ -147,7 +148,7 @@ class AiConfigRecordToolsTest {
                 "My Skill",
                 "desc",
                 "group-1",
-                false,
+                    SkillVisibility.PUBLIC,
                 List.of(),
                 "do steps",
                 List.of("listAvailableTools"),
@@ -166,7 +167,7 @@ class AiConfigRecordToolsTest {
             "My Skill",
             "desc",
             "group-1",
-            false,
+            SkillVisibility.PUBLIC,
             List.of(),
             "do steps",
             List.of("listAvailableTools"),

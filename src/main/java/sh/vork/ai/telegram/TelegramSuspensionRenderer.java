@@ -26,7 +26,6 @@ import sh.vork.relay.RelayEncryptionService;
 import sh.vork.relay.RelayHttpClient;
 import sh.vork.relay.lib.model.RelaySubmission;
 import sh.vork.setup.SystemSettingsService;
-import sh.vork.web.RequestOriginContext;
 
 /**
  * Decides how to render a {@link ToolSuspensionException} prompt for a Telegram user
@@ -40,8 +39,8 @@ import sh.vork.web.RequestOriginContext;
  *       sends a plain-text prompt asking the user to type the value; the consumer
  *       saves a pending-capture entry so the next message is treated as the answer.</li>
  *   <li><b>WEB_FORM</b> – contains a password field or two or more visible fields:
- *       sends a link to the Telegram web-form endpoint using request-origin context,
- *       otherwise falls back to the zero-knowledge relay.</li>
+ *       sends a link to the zero-knowledge relay. Channel flows intentionally use relay
+ *       for complex forms.</li>
  * </ul>
  *
  * <h3>Inline keyboard callback_data format</h3>
@@ -173,15 +172,10 @@ public class TelegramSuspensionRenderer {
     private void renderWebForm(String chatId, String botToken, AiSession session,
                                 UiEventFrame promptEvent, String title, String description) {
         String codeContent = extractCodeContent(promptEvent.formSchema());
-
-        String requestBaseUrl = resolveRequestBaseUrl(session);
-        if (requestBaseUrl != null) {
-            renderWebFormSelfHosted(chatId, botToken, session, promptEvent,
-                title, description, codeContent, requestBaseUrl);
-        } else {
-            renderWebFormRelay(chatId, botToken, session, promptEvent,
-                    title, description, codeContent);
-        }
+        log.debug("Rendering Telegram WEB_FORM via relay [session={}, event={}]",
+            session.uuid(), promptEvent.eventId());
+        renderWebFormRelay(chatId, botToken, session, promptEvent,
+            title, description, codeContent);
     }
 
     /** Self-hosted path: generates a token URL pointing to this app's {@code /input-form} endpoint. */
@@ -206,6 +200,8 @@ public class TelegramSuspensionRenderer {
                                      String codeContent) {
         String relayBaseUrl   = resolveRelayBaseUrl();
         String relaySessionId = promptEvent.eventId();
+        log.debug("Rendering Telegram WEB_FORM via relay (channel complex-form policy) [session={}, event={}]",
+            session.uuid(), relaySessionId);
 
         // ── 1. Encrypt form schema ─────────────────────────────────────────
         InteractionFormSchema schema = promptEvent.formSchema();
@@ -215,9 +211,9 @@ public class TelegramSuspensionRenderer {
             enc = relayEncryption.encrypt(schemaJson);
         } catch (Exception e) {
             log.error("Failed to encrypt form schema for relay [session={}, event={}]: {}",
-                    session.uuid(), relaySessionId, e.getMessage(), e);
+                session.uuid(), relaySessionId, e.getMessage(), e);
             String text = buildPromptTextMarkdownV2(title, description, codeContent,
-                    "\n\u26a0\ufe0f Form preparation failed\\. Please try again or use the Vork web app\\.");
+                "\n\u26a0\ufe0f Form preparation failed\\. Please try again or use the Vork web app\\.");
             telegramApiClient.sendTextMarkdownV2(botToken, chatId, text);
             return;
         }
@@ -226,12 +222,12 @@ public class TelegramSuspensionRenderer {
         int oobTimeoutMins = systemSettingsService.getDefaultOobTimeoutMinutes();
         try {
             relayHttpClient.upload(relayBaseUrl, relaySessionId,
-                    enc.ciphertext(), enc.nonce(), enc.authTag(), oobTimeoutMins);
+                enc.ciphertext(), enc.nonce(), enc.authTag(), oobTimeoutMins);
         } catch (Exception e) {
             log.error("Relay upload failed [session={}, event={}]: {}",
-                    session.uuid(), relaySessionId, e.getMessage(), e);
+                session.uuid(), relaySessionId, e.getMessage(), e);
             String text = buildPromptTextMarkdownV2(title, description, codeContent,
-                    "\n\u26a0\ufe0f Could not reach the relay server\\. Please try again later\\.");
+                "\n\u26a0\ufe0f Could not reach the relay server\\. Please try again later\\.");
             telegramApiClient.sendTextMarkdownV2(botToken, chatId, text);
             return;
         }
@@ -240,18 +236,18 @@ public class TelegramSuspensionRenderer {
         String authUrl     = relayBaseUrl + "/auth/" + relaySessionId + "#k=" + enc.keyBase64Url();
         String urlEscaped  = escapeMarkdownV2(authUrl);
         String text = buildPromptTextMarkdownV2(title, description, codeContent,
-                "\n\ud83d\udd12 Please complete the secure form: " + urlEscaped);
+            "\n\ud83d\udd12 Please complete the secure form: " + urlEscaped);
         telegramApiClient.sendTextMarkdownV2(botToken, chatId, text);
         log.info("Relay form dispatched [session={}, event={}, relay={}]",
-                session.uuid(), relaySessionId, relayBaseUrl);
+            session.uuid(), relaySessionId, relayBaseUrl);
 
         // ── 4. Long-poll on a virtual thread; resume session on response ───
         final javax.crypto.SecretKey sessionKey = enc.key();
         final String sessionUuid  = session.uuid();
         final String username     = session.username();
         Thread.ofVirtual().name("relay-poll-" + relaySessionId).start(() ->
-                pollAndResume(relayBaseUrl, relaySessionId, sessionKey,
-                              username, sessionUuid, chatId, botToken));
+            pollAndResume(relayBaseUrl, relaySessionId, sessionKey,
+                      username, sessionUuid, chatId, botToken));
     }
 
     /**
@@ -507,20 +503,6 @@ public class TelegramSuspensionRenderer {
     private static String escapeCodeContent(String text) {
         if (text == null) return "";
         return text.replace("\\", "\\\\").replace("`", "\\`");
-    }
-
-    private String resolveRequestBaseUrl(AiSession session) {
-        String fromCurrentRequest = RequestOriginContext.resolveBaseUrlFromCurrentRequest();
-        if (fromCurrentRequest != null && !fromCurrentRequest.isBlank()) {
-            return trimTrailingSlash(fromCurrentRequest);
-        }
-        if (session != null && session.environmentVariables() != null) {
-            String fromSessionEnv = session.environmentVariables().get("__request_base_url__");
-            if (fromSessionEnv != null && !fromSessionEnv.isBlank()) {
-                return trimTrailingSlash(fromSessionEnv);
-            }
-        }
-        return null;
     }
 
     private String resolveRelayBaseUrl() {

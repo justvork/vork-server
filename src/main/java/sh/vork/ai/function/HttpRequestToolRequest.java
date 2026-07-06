@@ -1,8 +1,12 @@
 package sh.vork.ai.function;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -37,4 +41,64 @@ public record HttpRequestToolRequest(
         @JsonPropertyDescription("Optional request body as a string. For JSON APIs supply a JSON string. Ignored for GET and HEAD requests.")
         String body
 
-) {}
+) {
+
+        private static final ObjectMapper HEADER_OBJECT_MAPPER = new ObjectMapper();
+
+        @JsonCreator
+        public static HttpRequestToolRequest create(
+                        @JsonProperty("method") String method,
+                        @JsonProperty("url") String url,
+                        @JsonProperty("headers") Object headers,
+                        @JsonProperty("body") String body) {
+                return new HttpRequestToolRequest(method, url, normalizeHeaders(headers), body);
+        }
+
+        private static Map<String, String> normalizeHeaders(Object headers) {
+                if (headers == null) {
+                        return null;
+                }
+
+                if (headers instanceof Map<?, ?> rawMap) {
+                        Map<String, String> normalized = new LinkedHashMap<>();
+                        for (Map.Entry<?, ?> entry : rawMap.entrySet()) {
+                                if (entry.getKey() == null || entry.getValue() == null) {
+                                        continue;
+                                }
+                                normalized.put(String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
+                        }
+                        return normalized;
+                }
+
+                if (headers instanceof String rawString) {
+                        String text = rawString.trim();
+                        if (text.isEmpty()) {
+                                return Map.of();
+                        }
+
+                        // Handle model outputs that send a JSON object as a string.
+                        if (text.startsWith("{") && text.endsWith("}")) {
+                                try {
+                                        return HEADER_OBJECT_MAPPER.readValue(text, new TypeReference<Map<String, String>>() {
+                                        });
+                                } catch (Exception ignored) {
+                                        // Fall through to plain header parsing.
+                                }
+                        }
+
+                        // Handle simple "Header-Name: value" form.
+                        int colon = text.indexOf(':');
+                        if (colon > 0 && colon < text.length() - 1) {
+                                String key = text.substring(0, colon).trim();
+                                String value = text.substring(colon + 1).trim();
+                                if (!key.isEmpty() && !value.isEmpty()) {
+                                        Map<String, String> single = new LinkedHashMap<>();
+                                        single.put(key, value);
+                                        return single;
+                                }
+                        }
+                }
+
+                throw new IllegalArgumentException("headers must be an object map, a JSON object string, or a single 'Header: value' string");
+        }
+}

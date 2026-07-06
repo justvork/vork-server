@@ -15,7 +15,7 @@ let categoriesLoadFailed = false;
 let modalTools      = [];
 let modalTypes      = [];
 let modalSubSkills  = [];
-let modalParams     = []; // [{name, type, description}]
+let modalParams     = []; // [{name, type, description, inputMode}]
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function () {
@@ -52,7 +52,7 @@ document.addEventListener('DOMContentLoaded', function () {
 async function loadData() {
     try {
         const [skillsRes, groupsRes, toolsRes, typesRes, catsRes] = await Promise.all([
-            fetch('/api/skills'),
+            fetch('/api/skills?includePrivate=true'),
             fetch('/api/skill-groups'),
             fetch('/api/management/tools'),
             fetch('/api/types/java-types'),
@@ -121,9 +121,12 @@ function renderGroupTable() {
         const pills = skills.length === 0
             ? '<span class="text-muted small">No skills</span>'
             : skills.map(function (s) {
-                const autoShared = s.autoShareWithinGroup ? ' <i class="fa-solid fa-share-nodes text-info" title="Auto-shared within group"></i>' : '';
+                const isPrivate = (s.visibility || 'PUBLIC') === 'PRIVATE';
+                const visibilityIcon = isPrivate
+                    ? ' <i class="fa-solid fa-lock text-warning" title="Private skill"></i>'
+                    : ' <i class="fa-solid fa-globe text-info" title="Public skill"></i>';
                 return '<span class="skill-pill me-1 mb-1">'
-                    + '<span>' + escapeHtml(s.name) + autoShared + '</span>'
+                    + '<span>' + escapeHtml(s.name) + visibilityIcon + '</span>'
                     + '<span class="remove-skill" title="Edit skill" onclick="openEdit(\'' + escapeHtml(s.uuid) + '\')"><i class="fa-solid fa-pen"></i></span>'
                     + '<span class="remove-skill text-danger" title="Delete skill" onclick="deleteSkill(\'' + escapeHtml(s.uuid) + '\')"><i class="fa-solid fa-trash"></i></span>'
                     + '</span>';
@@ -184,7 +187,7 @@ function openCreate() {
     document.getElementById('skill-name').value                 = '';
     document.getElementById('skill-description').value          = '';
     document.getElementById('skill-instructions').value         = '';
-    document.getElementById('skill-auto-share').checked         = false;
+    document.getElementById('skill-visibility').value           = 'PUBLIC';
     document.getElementById('btn-delete-skill').classList.add('d-none');
     populateGroupSelect('');
     modalTools      = [];
@@ -209,13 +212,21 @@ function openEdit(id) {
     document.getElementById('skill-description').value          = skill.description || '';
     document.getElementById('skill-instructions').value         = skill.instructions || '';
     populateGroupSelect(skill.groupUuid || '');
-    document.getElementById('skill-auto-share').checked         = !!skill.autoShareWithinGroup;
+    document.getElementById('skill-visibility').value           = skill.visibility || 'PUBLIC';
     document.getElementById('btn-delete-skill').classList.remove('d-none');
     modalTools      = skill.allowedTools  ? skill.allowedTools.slice()  : [];
     modalTypes      = skill.allowedTypes  ? skill.allowedTypes.slice()  : [];
     modalSubSkills  = skill.subSkillUuids ? skill.subSkillUuids.slice() : [];
     modalParams     = skill.parameters    ? skill.parameters.map(function (p) {
-        return { name: p.name || '', type: p.type || 'string', description: p.description || '' };
+        let inputMode = p.inputMode || 'AI_REQUIRED';
+        if (!p.inputMode && p.forceUserInput === true) inputMode = 'USER_ALWAYS_PROMPT';
+        if (!p.inputMode && p.forceUserInput === false) inputMode = 'AI_REQUIRED';
+        return {
+            name: p.name || '',
+            type: p.type || 'string',
+            description: p.description || '',
+            inputMode: inputMode
+        };
     }) : [];
     clearAlert('skill-modal-alert');
     renderToolPills();
@@ -227,7 +238,7 @@ function openEdit(id) {
 
 // ── Parameter rows ────────────────────────────────────────────────────────────
 function addParam() {
-    modalParams.push({ name: '', type: 'string', description: '' });
+    modalParams.push({ name: '', type: 'string', description: '', inputMode: 'AI_REQUIRED' });
     renderParams();
     // Focus the name field of the new row
     const list = document.getElementById('param-list');
@@ -254,6 +265,7 @@ function renderParams() {
     hdr.innerHTML =
         '<span class="param-name text-muted small">Name</span>' +
         '<span class="param-type text-muted small">Type</span>' +
+        '<span class="param-input-mode text-muted small">Input</span>' +
         '<span class="param-desc text-muted small">Description (optional)</span>' +
         '<span style="width:32px"></span>';
     list.appendChild(hdr);
@@ -266,6 +278,16 @@ function renderParams() {
             return '<option value="' + t + '"' + (p.type === t ? ' selected' : '') + '>' + t + '</option>';
         }).join('');
 
+        const forceOptions = [
+            { value: 'USER_ALWAYS_PROMPT', label: 'User Input: Always Prompt' },
+            { value: 'USER_PROMPT_IF_EMPTY', label: 'User Input: Prompt if Empty' },
+            { value: 'AI_REQUIRED', label: 'AI Input: Required' },
+            { value: 'AI_OPTIONAL', label: 'AI Input: Optional' }
+        ].map(function (entry) {
+            const selected = (p.inputMode || 'AI_REQUIRED') === entry.value ? ' selected' : '';
+            return '<option value="' + entry.value + '"' + selected + '>' + entry.label + '</option>';
+        }).join('');
+
         row.innerHTML =
             '<input type="text" class="form-control form-control-sm param-name" ' +
                    'placeholder="paramName" value="' + escapeHtml(p.name) + '" ' +
@@ -274,6 +296,10 @@ function renderParams() {
                     'data-idx="' + idx + '" onchange="updateParam(this)">' +
             typeOptions +
             '</select>' +
+                '<select class="form-select form-select-sm param-input-mode" ' +
+                    'data-idx="' + idx + '" onchange="updateParam(this)">' +
+                forceOptions +
+                '</select>' +
             '<input type="text" class="form-control form-control-sm param-desc" ' +
                    'placeholder="Brief description…" value="' + escapeHtml(p.description) + '" ' +
                    'data-idx="' + idx + '" oninput="updateParam(this)">' +
@@ -290,6 +316,7 @@ function updateParam(el) {
     const idx = parseInt(el.dataset.idx, 10);
     if (el.classList.contains('param-name'))  modalParams[idx].name        = el.value;
     if (el.classList.contains('param-type'))  modalParams[idx].type        = el.value;
+    if (el.classList.contains('param-input-mode'))  modalParams[idx].inputMode = el.value;
     if (el.classList.contains('param-desc'))  modalParams[idx].description = el.value;
 }
 
@@ -493,7 +520,7 @@ async function saveSkill() {
     const id             = document.getElementById('skill-id').value.trim();
     const name           = document.getElementById('skill-name').value.trim();
     const groupUuid      = document.getElementById('skill-group').value;
-    const autoShareWithinGroup = document.getElementById('skill-auto-share').checked;
+    const visibility     = document.getElementById('skill-visibility').value || 'PUBLIC';
     const description    = document.getElementById('skill-description').value;
     const instructions   = document.getElementById('skill-instructions').value;
 
@@ -512,9 +539,14 @@ async function saveSkill() {
         name:           name,
         description:    description,
         groupUuid:      groupUuid,
-        autoShareWithinGroup: autoShareWithinGroup,
+        visibility:     visibility,
         parameters:     modalParams.map(function (p) {
-            return { name: p.name.trim(), type: p.type, description: p.description };
+            return {
+                name: p.name.trim(),
+                type: p.type,
+                description: p.description,
+                inputMode: p.inputMode || 'AI_REQUIRED'
+            };
         }),
         instructions:   instructions,
         allowedTools:   modalTools.slice(),

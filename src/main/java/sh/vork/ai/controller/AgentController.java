@@ -24,6 +24,7 @@ import sh.vork.orm.DatabaseRepository;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.agent.AgentType;
 import sh.vork.skill.Skill;
+import sh.vork.skill.SkillVisibility;
 
 /**
  * Page and REST API controller for the Agents management UI.
@@ -84,6 +85,8 @@ public class AgentController {
         log.debug("ENTER createAgent: [name={}]", req.name());
         String err = validate(req);
         if (err != null) return ResponseEntity.badRequest().body(Map.of("error", err));
+        String skillErr = validateAssignableSkillUuids(req.skillUuids());
+        if (skillErr != null) return ResponseEntity.badRequest().body(Map.of("error", skillErr));
 
         AgentTemplate agent = new AgentTemplate(
                 UUID.randomUUID().toString(),
@@ -110,6 +113,8 @@ public class AgentController {
 
         String err = validate(req);
         if (err != null) return ResponseEntity.badRequest().body(Map.of("error", err));
+        String skillErr = validateAssignableSkillUuids(req.skillUuids());
+        if (skillErr != null) return ResponseEntity.badRequest().body(Map.of("error", skillErr));
 
         if (existing.systemAgent()) {
             boolean instructionsChanged = !Objects.equals(
@@ -162,6 +167,22 @@ public class AgentController {
 
     private static String validate(AgentRequest req) {
         if (req.name() == null || req.name().isBlank()) return "Name is required.";
+        return null;
+    }
+
+    private String validateAssignableSkillUuids(List<String> skillUuids) {
+        if (skillUuids == null || skillUuids.isEmpty()) {
+            return null;
+        }
+        for (String skillUuid : skillUuids) {
+            Skill skill = skillRepository.get(skillUuid);
+            if (skill == null) {
+                return "Unknown skill UUID: " + skillUuid;
+            }
+            if (skill.visibility() == SkillVisibility.PRIVATE) {
+                return "Private skill cannot be attached to agents: " + skill.name();
+            }
+        }
         return null;
     }
 

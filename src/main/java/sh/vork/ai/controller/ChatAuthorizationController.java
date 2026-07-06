@@ -9,6 +9,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -76,6 +77,8 @@ public class ChatAuthorizationController {
 
     private static final Logger log = LoggerFactory.getLogger(ChatAuthorizationController.class);
     private static final int TERMINAL_HISTORY_OUTPUT_MAX_CHARS = 24_000;
+        private static final Pattern OAUTH_ACCESS_PLACEHOLDER_PATTERN =
+            Pattern.compile("\\{\\{OAUTH_[A-Z0-9_]+_ACCESS_TOKEN\\}\\}");
 
     private final DatabaseRepository<AiSession> sessionRepo;
     private final AuthorizationRuleEngine authorizationRuleEngine;
@@ -193,68 +196,37 @@ public class ChatAuthorizationController {
                 applyAuthorizationAction(action, username, toolName, toolCallId);
             }
 
+            String executionArgumentsJson = argumentsJson;
+            if (!"AUTHORIZE_TOOL".equalsIgnoreCase(request.intent()) && !conversationFields.isEmpty()) {
+                executionArgumentsJson = mergeArgumentsJson(argumentsJson, conversationFields);
+            }
+
                 String token;
                 try {
-                token = toolResponseDataForAction(action, conversationFields, toolName, argumentsJson);
+                token = toolResponseDataForAction(action, conversationFields, toolName, executionArgumentsJson);
                 } catch (ToolSuspensionException ex) {
-                String suspendedToolCallId = (toolCallId == null || toolCallId.isBlank())
-                    ? "pending-" + UUID.randomUUID()
-                    : toolCallId;
-                String suspendedArguments = resolveSuspendedArguments(argumentsJson, ex.getArguments());
-                String justification = (ex.getJustification() == null || ex.getJustification().isBlank())
-                    ? defaultAuthorizationReason(ex.getToolName())
-                    : ex.getJustification();
-
-                UiEventFrame suspendedPromptEvent = new UiEventFrame(
-                    UUID.randomUUID().toString(),
-                    "PROMPT_REQUIRED",
-                    "AUTHORIZE_TOOL",
-                    justification,
-                    ex.getFormSchema());
-
-                List<AiChatMessage> suspendedMessages = new ArrayList<>(session.messages());
-                suspendedMessages.add(new AiChatMessage(
-                    UUID.randomUUID().toString(),
-                    "PROMPT_REQUIRED",
-                    toJson(suspendedPromptEvent),
-                    System.currentTimeMillis(),
-                    null,
-                    List.of(new AiChatMessage.ToolCallRef(
-                        suspendedToolCallId,
-                        "FUNCTION",
-                        ex.getToolName(),
-                        suspendedArguments)),
-                    suspendedToolCallId,
-                    ex.getToolName()));
-
-                SessionOriginMode originMode = session.originMode() == null ? SessionOriginMode.WEB : session.originMode();
-                sessionRepo.save(new AiSession(
-                    session.uuid(),
-                    session.provider(),
-                    originMode,
-                    session.username(),
-                    session.name(),
-                    session.createdAt(),
-                    session.currentRoundCount(),
-                    List.copyOf(suspendedMessages),
-                    session.environmentVariables(),
-                    AiSessionStatus.AWAITING_INPUT,
-                    session.activeAgentTemplateId(),
-                    session.modelId(),
-                    session.skillStack(),
-                    session.sessionSkillUuids(),
-                    session.sessionToolIds()));
-
-                messaging.convertAndSend("/topic/chat/" + sessionUuid, suspendedPromptEvent);
-                log.info("Tool execution suspended for additional input [tool={}, session={}]",
-                    ex.getToolName(), sessionUuid);
-
-                return ResponseEntity.ok(Map.of(
-                    "status", "AWAITING_INPUT",
-                    "eventType", suspendedPromptEvent.type(),
-                    "eventId", suspendedPromptEvent.eventId(),
-                    "toolName", ex.getToolName()
+                return handleSuspendedToolExecution(sessionUuid, session, toolCallId, argumentsJson, ex);
+                } catch (SkillActivatedException ex) {
+                if (chatService == null) {
+                    throw ex;
+                }
+                List<Message> activationHistory = hydrateHistory(session.messages());
+                String skillOutput;
+                try {
+                    skillOutput = chatService.executeSkillSubLoop(
+                        sessionUuid,
+                        activationHistory,
+                        ex,
+                        resolveProvider(session.provider()));
+                } catch (ToolSuspensionException nestedEx) {
+                    return handleSuspendedToolExecution(sessionUuid, session, toolCallId, argumentsJson, nestedEx);
+                }
+                token = toJson(Map.of(
+                    "status", "SKILL_COMPLETED",
+                    "skill", ex.getSkillName(),
+                    "result", skillOutput == null ? "" : skillOutput
                 ));
+                log.info("Skill completed from authorization resume [session={}, skill={}]", sessionUuid, ex.getSkillName());
                 }
             ToolResponseMessage.ToolResponse toolResponse =
                 new ToolResponseMessage.ToolResponse(toolCallId, toolName, token);
@@ -428,6 +400,7 @@ public class ChatAuthorizationController {
                     if ("CONTINUE_TURN".equals(structured.status())) {
                         String progressText = structured.textResponse() != null && !structured.textResponse().isBlank()
                                 ? structured.textResponse() : "";
+                        progressText = sanitizeUserFacingText(progressText);
                         if (!progressText.isBlank()) {
                             UiEventFrame progressEvent = new UiEventFrame(
                                     UUID.randomUUID().toString(), "TEXT_RESPONSE", "CHAT_OUTPUT", progressText, null);
@@ -484,14 +457,25 @@ public class ChatAuthorizationController {
                                 ? structured.textResponse() : rawResponse;
                         break;
                     } else {
-                        finalText = structured.textResponse() != null && !structured.textResponse().isBlank()
+                        String candidateText = structured.textResponse() != null && !structured.textResponse().isBlank()
                                 ? structured.textResponse() : rawResponse;
+                        if (isOAuthPlaceholderOnly(candidateText)
+                                && popCompletedSkillFrameForOAuthPlaceholder(sessionUuid, candidateText, history)) {
+                            continuationPrompt = "A nested OAuth connect step has completed and produced a bearer placeholder token in history. "
+                                    + "Continue executing the parent task now using the available tools. "
+                                    + "Do NOT output OAuth token placeholders in user-visible text.";
+                            log.info("Suppressed OAuth placeholder-only FINISHED_TURN and continued parent flow [session={}]",
+                                    sessionUuid);
+                            continue;
+                        }
+                        finalText = candidateText;
                         break;
                     }
                 }
                 if (finalText == null) {
                     finalText = "Processing required too many steps and was interrupted. Please try again.";
                 }
+                finalText = sanitizeUserFacingText(finalText);
             } catch (ToolSuspensionException ex) {
                 String simulatedToolCallId = "pending-" + UUID.randomUUID();
                 List<AiChatMessage.ToolCallRef> pendingToolCalls = List.of(
@@ -929,7 +913,7 @@ public class ChatAuthorizationController {
                                              String toolName,
                                              String argumentsJson) {
         switch (action) {
-            case "ONCE", "ALLOW_ONCE", "SESSION", "ALLOW_SESSION", "ALWAYS", "ALLOW_ALWAYS" -> {
+            case "ONCE", "ALLOW_ONCE", "SESSION", "ALLOW_SESSION", "ALWAYS", "ALLOW_ALWAYS", "SAVE", "CONTINUE", "SUBMIT" -> {
                 String toolResult = executeTool(toolName, argumentsJson);
                 if ("executeTerminalCommand".equals(toolName)) {
                     return buildTerminalToolResponse(argumentsJson, toolResult);
@@ -1147,6 +1131,9 @@ public class ChatAuthorizationController {
     private String executeTool(String toolName, String argumentsJson) {
         ToolCallback callback = toolCallbacksByName.get(toolName);
         if (callback == null) {
+            callback = aiService.resolveDynamicToolCallbackForSession(ToolExecutionContext.getSessionUuid(), toolName);
+        }
+        if (callback == null) {
             throw new IllegalStateException("No tool callback registered for: " + toolName);
         }
         log.info("Executing approved tool [tool={}, argsSize={}]", toolName,
@@ -1168,6 +1155,86 @@ public class ChatAuthorizationController {
                 result == null ? 0 : result.length());
         log.debug("Tool result [tool={}]: {}", toolName, abbreviate(result, 4000));
         return result;
+    }
+
+        private ResponseEntity<Map<String, Object>> handleSuspendedToolExecution(String sessionUuid,
+                                              AiSession session,
+                                              String toolCallId,
+                                              String argumentsJson,
+                                              ToolSuspensionException ex) {
+        String suspendedToolCallId = (toolCallId == null || toolCallId.isBlank())
+            ? "pending-" + UUID.randomUUID()
+            : toolCallId;
+        String suspendedArguments = resolveSuspendedArguments(argumentsJson, ex.getArguments());
+        String justification = (ex.getJustification() == null || ex.getJustification().isBlank())
+            ? defaultAuthorizationReason(ex.getToolName())
+            : ex.getJustification();
+
+        UiEventFrame suspendedPromptEvent = new UiEventFrame(
+            UUID.randomUUID().toString(),
+            "PROMPT_REQUIRED",
+            resolvePromptIntent(ex.getFormSchema()),
+            justification,
+            ex.getFormSchema());
+
+        List<AiChatMessage> suspendedMessages = new ArrayList<>(session.messages());
+        suspendedMessages.add(new AiChatMessage(
+            UUID.randomUUID().toString(),
+            "PROMPT_REQUIRED",
+            toJson(suspendedPromptEvent),
+            System.currentTimeMillis(),
+            null,
+            List.of(new AiChatMessage.ToolCallRef(
+                suspendedToolCallId,
+                "FUNCTION",
+                ex.getToolName(),
+                suspendedArguments)),
+            suspendedToolCallId,
+            ex.getToolName()));
+
+        SessionOriginMode originMode = session.originMode() == null ? SessionOriginMode.WEB : session.originMode();
+        sessionRepo.save(new AiSession(
+            session.uuid(),
+            session.provider(),
+            originMode,
+            session.username(),
+            session.name(),
+            session.createdAt(),
+            session.currentRoundCount(),
+            List.copyOf(suspendedMessages),
+            session.environmentVariables(),
+            AiSessionStatus.AWAITING_INPUT,
+            session.activeAgentTemplateId(),
+            session.modelId(),
+            session.skillStack(),
+            session.sessionSkillUuids(),
+            session.sessionToolIds()));
+
+        messaging.convertAndSend("/topic/chat/" + sessionUuid, suspendedPromptEvent);
+        log.info("Tool execution suspended for additional input [tool={}, session={}]",
+            ex.getToolName(), sessionUuid);
+
+        return ResponseEntity.ok(Map.of(
+            "status", "AWAITING_INPUT",
+            "eventType", suspendedPromptEvent.type(),
+            "eventId", suspendedPromptEvent.eventId(),
+            "toolName", ex.getToolName()
+        ));
+        }
+
+    private String mergeArgumentsJson(String argumentsJson, Map<String, String> submittedFields) {
+        Map<String, Object> merged = new HashMap<>();
+        if (argumentsJson != null && !argumentsJson.isBlank()) {
+            try {
+                Map<String, Object> existing = objectMapper.readValue(argumentsJson, new TypeReference<Map<String, Object>>() {});
+                merged.putAll(existing);
+            } catch (Exception ex) {
+                log.warn("Failed to parse pending tool arguments for merge, continuing with submitted fields only: {}",
+                        ex.getMessage());
+            }
+        }
+        merged.putAll(submittedFields);
+        return toJson(merged);
     }
 
     private static <T extends Throwable> T findCause(Throwable ex, Class<T> type) {
@@ -1232,6 +1299,13 @@ public class ChatAuthorizationController {
         return "Approval is required to run this protected action so your request can continue safely.";
     }
 
+    private static String resolvePromptIntent(InteractionFormSchema schema) {
+        if (schema != null && schema.intent() != null && !schema.intent().isBlank()) {
+            return schema.intent();
+        }
+        return "AUTHORIZE_TOOL";
+    }
+
     private static String resolveUsername() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || auth.getName() == null || auth.getName().isBlank()) {
@@ -1258,6 +1332,64 @@ public class ChatAuthorizationController {
         } catch (Exception e) {
             throw new IllegalStateException("Failed to serialize JSON payload", e);
         }
+    }
+
+    private static boolean isOAuthPlaceholderOnly(String text) {
+        if (text == null) {
+            return false;
+        }
+        return OAUTH_ACCESS_PLACEHOLDER_PATTERN.matcher(text.trim()).matches();
+    }
+
+    private String sanitizeUserFacingText(String text) {
+        if (text == null || text.isBlank()) {
+            return text;
+        }
+        if (isOAuthPlaceholderOnly(text)) {
+            return "OAuth connection is ready.";
+        }
+        return OAUTH_ACCESS_PLACEHOLDER_PATTERN.matcher(text)
+                .replaceAll("[OAUTH_ACCESS_TOKEN]");
+    }
+
+    private boolean popCompletedSkillFrameForOAuthPlaceholder(String sessionUuid,
+                                                               String placeholder,
+                                                               List<Message> history) {
+        AiSession current = sessionRepo.get(sessionUuid);
+        if (current == null || current.skillStack() == null || current.skillStack().isEmpty()) {
+            return false;
+        }
+
+        List<sh.vork.skill.SkillFrame> updatedStack = new ArrayList<>(current.skillStack());
+        sh.vork.skill.SkillFrame completedFrame = updatedStack.removeLast();
+
+        sessionRepo.save(new AiSession(
+                current.uuid(),
+                current.provider(),
+                current.originMode(),
+                current.username(),
+                current.name(),
+                current.createdAt(),
+                current.currentRoundCount(),
+                current.messages(),
+                current.environmentVariables(),
+                current.status(),
+                current.activeAgentTemplateId(),
+                current.modelId(),
+                List.copyOf(updatedStack),
+                current.sessionSkillUuids(),
+                current.sessionToolIds()));
+
+        String completedSkillName = (completedFrame.skillName() == null || completedFrame.skillName().isBlank())
+                ? "Skill"
+                : completedFrame.skillName();
+        String internalSkillResult = "Skill '" + completedSkillName
+                + "' completed. OAuth access placeholder is ready for tool calls: " + placeholder;
+        history.add(new AssistantMessage(internalSkillResult));
+
+        log.debug("Popped completed OAuth skill frame and resumed parent context [session={}, skill={}]",
+                sessionUuid, completedSkillName);
+        return true;
     }
 
     public record InteractionResponse(

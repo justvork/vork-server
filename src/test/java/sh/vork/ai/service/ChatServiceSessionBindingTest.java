@@ -19,7 +19,10 @@ import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.orm.mock.MapDatabaseRepository;
+import sh.vork.relay.RelayEncryptionService;
+import sh.vork.relay.RelayHttpClient;
 import sh.vork.scheduling.service.SystemNotificationService;
+import sh.vork.setup.SystemSettingsService;
 import sh.vork.storage.FileStorageService;
 
 class ChatServiceSessionBindingTest {
@@ -44,13 +47,18 @@ class ChatServiceSessionBindingTest {
                 new ObjectMapper().findAndRegisterModules(),
                 List.of(),
                 mock(SystemNotificationService.class),
-                Runnable::run);
+                Runnable::run,
+                mock(RelayEncryptionService.class),
+                mock(RelayHttpClient.class),
+                mock(SystemSettingsService.class),
+                null);
 
         AiSession created = chatService.getOrCreateSession("http-session-123", AiProvider.GEMINI);
         assertEquals("http-session-123", created.uuid());
         assertEquals("alice", created.username());
         assertEquals(AiSessionStatus.RUNNING, created.status());
         assertEquals(SessionOriginMode.WEB, created.originMode());
+        assertEquals(List.of("toggleInputRelay"), created.sessionToolIds());
 
         AiSession loaded = chatService.getOrCreateSession("http-session-123", AiProvider.GEMINI);
         assertEquals(created.uuid(), loaded.uuid());
@@ -84,7 +92,11 @@ class ChatServiceSessionBindingTest {
                 new ObjectMapper().findAndRegisterModules(),
                 List.of(),
                 mock(SystemNotificationService.class),
-                Runnable::run);
+                Runnable::run,
+                mock(RelayEncryptionService.class),
+                mock(RelayHttpClient.class),
+                mock(SystemSettingsService.class),
+                null);
 
         assertThrows(IllegalStateException.class,
                 () -> chatService.getOrCreateSession("http-session-shared", AiProvider.GEMINI));

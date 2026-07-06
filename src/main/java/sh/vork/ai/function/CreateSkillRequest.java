@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 
 import sh.vork.skill.SkillParameter;
 import sh.vork.skill.SkillSecret;
+import sh.vork.skill.SkillVisibility;
 
 /**
  * Input schema for the {@code createSkill} tool.
@@ -27,9 +28,9 @@ public record CreateSkillRequest(
         @JsonPropertyDescription("Target skill group UUID.")
         String groupUuid,
 
-        @JsonProperty(value = "autoShareWithinGroup")
-        @JsonPropertyDescription("Whether this skill should be auto-shared within its group.")
-        Boolean autoShareWithinGroup,
+        @JsonProperty(value = "visibility")
+        @JsonPropertyDescription("Visibility for this skill: PUBLIC or PRIVATE. PRIVATE skills are only callable from skills in the same group.")
+        SkillVisibility visibility,
 
         @JsonProperty(value = "parameters")
         @JsonPropertyDescription("Runtime input parameters required by this skill.")
@@ -55,7 +56,7 @@ public record CreateSkillRequest(
         @JsonPropertyDescription("Optional skill secret declarations.")
         List<SkillSecret> secrets
 ) {
-    public boolean autoShareEffective() {
-        return Boolean.TRUE.equals(autoShareWithinGroup);
+    public SkillVisibility visibilityEffective() {
+        return visibility == null ? SkillVisibility.PUBLIC : visibility;
     }
 }

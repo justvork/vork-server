@@ -85,7 +85,7 @@ class SkillControllerGroupImportTest {
                 "Send Mail",
                 "Sends an email",
                 "grp-mail",
-                false,
+                SkillVisibility.PUBLIC,
                 List.of(),
                 "Send email",
                 List.of(),

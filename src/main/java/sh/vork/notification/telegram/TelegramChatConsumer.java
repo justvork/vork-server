@@ -220,7 +220,7 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
         try {
             String result = resumptionService.resumeAndRun(
                     capture.username(), capture.sessionUuid(), capture.eventId(),
-                    "ONCE", Map.of(capture.fieldName(), fieldValue));
+                    capture.actionName(), Map.of(capture.fieldName(), fieldValue));
             if (result != null && !result.isBlank()) {
                 telegramApiClient.sendText(botToken, chatId, result);
             }
@@ -284,9 +284,10 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
         if (formClass == TelegramSuspensionRenderer.FormClass.SINGLE_TEXT) {
             // Store a pending capture so the user's next text is the field value
             String fieldName = findSingleVisibleFieldName(promptEvent);
+            String actionName = defaultSingleFieldAction(promptEvent);
             pendingCaptures.put(chatId,
                     new PendingCapture(session.username(), sessionUuid,
-                            promptEvent.eventId(), fieldName));
+                    promptEvent.eventId(), fieldName, actionName));
         }
     }
 
@@ -344,7 +345,17 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
         return "HIDDEN".equals(t) || "MARKDOWN".equals(t);
     }
 
+    private String defaultSingleFieldAction(UiEventFrame promptEvent) {
+        if (promptEvent.formSchema() == null || promptEvent.formSchema().actions() == null
+                || promptEvent.formSchema().actions().isEmpty()) {
+            return "ONCE";
+        }
+        String action = promptEvent.formSchema().actions().get(0).name();
+        return (action == null || action.isBlank()) ? "ONCE" : action;
+    }
+
     // ── Value types ───────────────────────────────────────────────────────────
 
-    private record PendingCapture(String username, String sessionUuid, String eventId, String fieldName) {}
+    private record PendingCapture(String username, String sessionUuid, String eventId,
+                                  String fieldName, String actionName) {}
 }

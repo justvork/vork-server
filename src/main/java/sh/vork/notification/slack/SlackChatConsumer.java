@@ -216,7 +216,7 @@ public class SlackChatConsumer implements SlackMessageConsumer {
         try {
             String result = resumptionService.resumeAndRun(
                     capture.username(), capture.sessionUuid(), capture.eventId(),
-                    "ONCE", Map.of(capture.fieldName(), fieldValue));
+                    capture.actionName(), Map.of(capture.fieldName(), fieldValue));
             if (result != null && !result.isBlank()) {
                 slackApiClient.sendMessage(botToken, channelId, result);
             }
@@ -276,9 +276,10 @@ public class SlackChatConsumer implements SlackMessageConsumer {
         switch (formClass) {
             case SINGLE_TEXT -> {
                 String fieldName = findSingleVisibleFieldName(promptEvent);
+                String actionName = defaultSingleFieldAction(promptEvent);
                 pendingCaptures.put(channelId,
                         new PendingCapture(session.username(), sessionUuid,
-                                promptEvent.eventId(), fieldName));
+                        promptEvent.eventId(), fieldName, actionName));
             }
             case SIMPLE -> {
                 List<FormAction> actions = suspensionRenderer.getActions(promptEvent.formSchema());
@@ -331,10 +332,19 @@ public class SlackChatConsumer implements SlackMessageConsumer {
         return "HIDDEN".equals(t) || "MARKDOWN".equals(t);
     }
 
+    private String defaultSingleFieldAction(UiEventFrame promptEvent) {
+        if (promptEvent.formSchema() == null || promptEvent.formSchema().actions() == null
+                || promptEvent.formSchema().actions().isEmpty()) {
+            return "ONCE";
+        }
+        String action = promptEvent.formSchema().actions().get(0).name();
+        return (action == null || action.isBlank()) ? "ONCE" : action;
+    }
+
     // ── Value types ───────────────────────────────────────────────────────────
 
     private record PendingCapture(String username, String sessionUuid,
-                                   String eventId, String fieldName) {}
+                                   String eventId, String fieldName, String actionName) {}
 
     private record PendingActionChoice(String username, String sessionUuid,
                                         String eventId, List<FormAction> actions) {}

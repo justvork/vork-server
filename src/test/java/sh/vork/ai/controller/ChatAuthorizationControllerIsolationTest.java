@@ -9,9 +9,13 @@ import static org.mockito.Mockito.mock;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.definition.DefaultToolDefinition;
+import org.springframework.ai.tool.definition.ToolDefinition;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.function.FunctionToolCallback;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.Message;
@@ -38,6 +42,7 @@ import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.orm.mock.MapDatabaseRepository;
 import sh.vork.scheduling.service.AiSchedulerService;
 import sh.vork.security.SecureCredentialStore;
+import sh.vork.security.UserService;
 
 class ChatAuthorizationControllerIsolationTest {
 
@@ -84,7 +89,8 @@ class ChatAuthorizationControllerIsolationTest {
                 null,
                 null,
                 mock(SecureCredentialStore.class),
-                null);
+                        null,
+                        mock(UserService.class));
 
         ResponseEntity<Map<String, Object>> response = controller.respond(
                 sessionUuid,
@@ -139,7 +145,8 @@ class ChatAuthorizationControllerIsolationTest {
                 null,
                 null,
                 mock(SecureCredentialStore.class),
-                null);
+                        null,
+                        mock(UserService.class));
 
         ResponseEntity<Map<String, Object>> response = controller.respond(
                 sessionUuid,
@@ -192,7 +199,8 @@ class ChatAuthorizationControllerIsolationTest {
                 null,
                 null,
                 mock(SecureCredentialStore.class),
-                null);
+                        null,
+                        mock(UserService.class));
 
         ResponseEntity<Map<String, Object>> response = controller.authorizeViaLink(
                 sessionUuid,
@@ -246,7 +254,8 @@ class ChatAuthorizationControllerIsolationTest {
                 null,
                 null,
                 mock(SecureCredentialStore.class),
-                null);
+                null,
+                mock(UserService.class));
 
         ResponseEntity<Map<String, Object>> response = controller.pendingAuthorization(sessionUuid, null);
 
@@ -306,7 +315,8 @@ class ChatAuthorizationControllerIsolationTest {
                 null,
                 null,
                 mock(SecureCredentialStore.class),
-                null);
+                null,
+                mock(UserService.class));
 
         controller.respond(sessionUuid,
                 new ChatAuthorizationController.InteractionResponse("evt-context", "AUTHORIZE_TOOL", "ONCE", Map.of()));
@@ -369,7 +379,8 @@ class ChatAuthorizationControllerIsolationTest {
                 null,
                 null,
                 mock(SecureCredentialStore.class),
-                null);
+                null,
+                mock(UserService.class));
 
         controller.respond(sessionUuid,
                 new ChatAuthorizationController.InteractionResponse("evt-terminal", "AUTHORIZE_TOOL", "ONCE", Map.of()));
@@ -432,7 +443,8 @@ class ChatAuthorizationControllerIsolationTest {
                 null,
                 null,
                 mock(SecureCredentialStore.class),
-                null);
+                null,
+                mock(UserService.class));
 
         controller.respond(sessionUuid,
                 new ChatAuthorizationController.InteractionResponse("evt-terminal-id", "AUTHORIZE_TOOL", "ONCE", Map.of()));
@@ -493,7 +505,8 @@ class ChatAuthorizationControllerIsolationTest {
                 null,
                 null,
                 mock(SecureCredentialStore.class),
-                null);
+                null,
+                mock(UserService.class));
 
         ResponseEntity<Map<String, Object>> response = controller.respond(
                 sessionUuid,
@@ -563,7 +576,8 @@ class ChatAuthorizationControllerIsolationTest {
                 null,
                 null,
                 mock(SecureCredentialStore.class),
-                null);
+                null,
+                mock(UserService.class));
 
         ResponseEntity<Map<String, Object>> response = controller.respond(
                 sessionUuid,
@@ -582,6 +596,108 @@ class ChatAuthorizationControllerIsolationTest {
         assertEquals("{\"command\":\"ls -l\",\"host\":\"system@example.com\"}",
                 latest.toolCalls().get(0).arguments());
     }
+
+        @Test
+        void respond_collectSkillInput_save_mergesFieldsIntoToolArguments() throws Exception {
+                ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+                MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+
+                String sessionUuid = "session-skill-input";
+                String eventId = "evt-skill-input";
+                String toolCallId = "pending-skill-input";
+                UiEventFrame frame = new UiEventFrame(
+                                eventId,
+                                "PROMPT_REQUIRED",
+                                "COLLECT_SKILL_INPUT",
+                                "Confirm input",
+                                new InteractionFormSchema(
+                                                "COLLECT_SKILL_INPUT",
+                                                "Skill Input Required",
+                                                "Review and confirm",
+                                                List.of(
+                                                                new FormField("query", "text", "query", "", true, FieldSource.CONVERSATION, List.of()),
+                                                                new FormField("__skill_input_token", "hidden", "token", "token-123", true, FieldSource.CONVERSATION, List.of())),
+                                                List.of(new FormAction("SAVE", "Save & Continue", "primary"))));
+
+                AiChatMessage prompt = new AiChatMessage(
+                                "m-" + eventId,
+                                "PROMPT_REQUIRED",
+                                objectMapper.writeValueAsString(frame),
+                                System.currentTimeMillis(),
+                                null,
+                                List.of(new AiChatMessage.ToolCallRef(toolCallId, "FUNCTION", "skillTool", "{\"query\":\"ai-default\"}")),
+                                toolCallId,
+                                "skillTool");
+
+                sessionRepo.save(new AiSession(
+                                sessionUuid,
+                                AiProvider.GEMINI.name(),
+                                SessionOriginMode.WEB,
+                                "alice",
+                                "Untitled",
+                                System.currentTimeMillis(),
+                                0,
+                                List.of(prompt),
+                                AiSession.defaultEnvironmentVariables(),
+                                AiSessionStatus.AWAITING_INPUT, null, null, null, null, null));
+
+                AtomicReference<String> capturedQuery = new AtomicReference<>();
+                ToolCallback skillTool = new ToolCallback() {
+                        private final ToolDefinition definition = DefaultToolDefinition.builder()
+                                        .name("skillTool")
+                                        .description("test skill tool")
+                                        .inputSchema("{\"type\":\"object\"}")
+                                        .build();
+
+                        @Override
+                        public ToolDefinition getToolDefinition() {
+                                return definition;
+                        }
+
+                        @Override
+                        public String call(String toolInput) {
+                                return call(toolInput, null);
+                        }
+
+                        @Override
+                        public String call(String toolInput, ToolContext toolContext) {
+                                try {
+                                        @SuppressWarnings("unchecked")
+                                        Map<String, Object> args = objectMapper.readValue(toolInput, Map.class);
+                                        capturedQuery.set(String.valueOf(args.getOrDefault("query", "")));
+                                } catch (Exception ignored) {
+                                        capturedQuery.set("");
+                                }
+                                return "{\"status\":\"ok\"}";
+                        }
+                };
+
+                ChatAuthorizationController controller = new ChatAuthorizationController(
+                                sessionRepo,
+                                new AuthorizationRuleEngine(java.util.Set.<String>of()),
+                                new RecordingAiService("skill-input-final"),
+                                new SimpMessagingTemplate(new NoOpMessageChannel()),
+                                objectMapper,
+                                List.of(skillTool),
+                                Runnable::run,
+                                new RecordingSchedulerService(),
+                                null,
+                                null,
+                                mock(SecureCredentialStore.class),
+                                null,
+                                mock(UserService.class));
+
+                ResponseEntity<Map<String, Object>> response = controller.respond(
+                                sessionUuid,
+                                new ChatAuthorizationController.InteractionResponse(
+                                                eventId,
+                                                "COLLECT_SKILL_INPUT",
+                                                "SAVE",
+                                                Map.of("query", "user-confirmed", "__skill_input_token", "token-123")));
+
+                assertEquals("WEB_RESUMED", response.getBody().get("status"));
+                assertEquals("user-confirmed", capturedQuery.get());
+        }
 
     private static AiChatMessage promptMessage(
             String eventId,

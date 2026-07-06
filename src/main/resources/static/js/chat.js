@@ -372,6 +372,26 @@ function renderSkillEvent(text) {
     scrollBottom();
 }
 
+function renderThinkingEvent(text) {
+    const row = document.createElement('div');
+    row.className = 'thinking-row';
+
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.innerHTML = '<i class="fa-solid fa-brain" aria-hidden="true"></i><span>AI reasoning...</span>';
+
+    const content = document.createElement('div');
+    content.className = 'thinking-content';
+    content.textContent = text || '';
+
+    details.appendChild(summary);
+    details.appendChild(content);
+    row.appendChild(details);
+
+    messagesArea.insertBefore(row, typingEl);
+    scrollBottom();
+}
+
 function renderModelSwitch(text) {
     const row = document.createElement('div');
     row.className = 'agent-transition-row';
@@ -1290,7 +1310,10 @@ function renderPromptRequiredFrame(frame) {
                 }
             }
 
-            sendAuthorizationAction(frame.eventId, frame.intent, action, fieldValues);
+            const outboundIntent = (frame && frame.formSchema && typeof frame.formSchema.intent === 'string' && frame.formSchema.intent.trim())
+                ? frame.formSchema.intent
+                : frame.intent;
+            sendAuthorizationAction(frame.eventId, outboundIntent, action, fieldValues);
             row.querySelectorAll('.prompt-action-btn').forEach(function (b) { b.disabled = true; });
         });
         actionsEl.appendChild(btn);
@@ -1315,6 +1338,11 @@ function handleIncomingUiFrame(frame) {
     }
 
     switch (frame.type) {
+        case 'AI_THINKING':
+            renderThinkingEvent(frame.textResponse || '');
+            showTyping(true);
+            return;
+
         case 'PROMPT_REQUIRED':
             setAwaitingPostTerminalResponse(false);
             renderPromptRequiredFrame(frame);
@@ -1352,6 +1380,19 @@ function handleIncomingUiFrame(frame) {
             // Visual notification is handled by the accompanying AGENT_TRANSITION event
             if (agentSel && frame.textResponse) {
                 agentSel.value = frame.textResponse;
+            }
+            return;
+
+        case 'MANUAL_AGENT_SWITCH':
+            // User-triggered agent switch should release chat input.
+            if (agentSel && frame.textResponse) {
+                agentSel.value = frame.textResponse;
+            }
+            setAwaitingPostTerminalResponse(false);
+            showTyping(false);
+            if (!hasLiveTerminal()) {
+                setInputEnabled(true);
+                focusMessageInput();
             }
             return;
 
@@ -1915,6 +1956,26 @@ function subscribeToCurrentSession() {
     }
     chatSubscription = stomp.subscribe('/topic/chat/' + sessionUuid, function (frame) {
         const msg = JSON.parse(frame.body);
+
+        function shouldReleaseInputForMessage(incoming) {
+            if (!incoming || typeof incoming !== 'object') {
+                return false;
+            }
+            if (isUiEventFrame(incoming)) {
+                // Keep waiting during progress/transition UI frames.
+                // Explicit terminal frames should unlock input.
+                return incoming.type === 'PROMPT_REQUIRED'
+                    || incoming.type === 'MANUAL_AGENT_SWITCH'
+                    || incoming.type === 'ERROR'
+                    || incoming.type === 'TEXT_RESPONSE';
+            }
+            // Terminal completion is represented by assistant/error chat messages.
+            return incoming.role === 'ASSISTANT'
+                || incoming.role === 'ERROR'
+                || incoming.role === 'PROMPT_REQUIRED'
+                || incoming.role === 'TEXT_RESPONSE';
+        }
+
         if (isTerminalEventFrame(msg)) {
             handleIncomingUiFrame(msg);
             return;
@@ -1929,10 +1990,18 @@ function subscribeToCurrentSession() {
         if (isTerminalToolMessage(msg)) {
             setAwaitingPostTerminalResponse(true);
         } else {
-            setAwaitingPostTerminalResponse(false);
-            showTyping(false);
-            if (!hasLiveTerminal()) {
-                setInputEnabled(true);
+            if (shouldReleaseInputForMessage(msg)) {
+                setAwaitingPostTerminalResponse(false);
+                showTyping(false);
+                if (!hasLiveTerminal()) {
+                    setInputEnabled(true);
+                }
+            } else {
+                // Transition/progress events should not end the in-flight turn.
+                showTyping(true);
+                if (!hasLiveTerminal()) {
+                    setInputEnabled(false);
+                }
             }
         }
 

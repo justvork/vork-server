@@ -1,6 +1,7 @@
 package sh.vork.security.controller;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -16,6 +17,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import sh.vork.ai.controller.AgentController;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.setup.SetupService;
 import sh.vork.skill.Skill;
 import sh.vork.skill.SkillCategoryService;
 import sh.vork.skill.SkillController;
@@ -62,14 +64,15 @@ class ProtectedWriteEndpointsSecurityTest {
     private JavaTypeClassLoader javaTypeClassLoader;
 
     @MockBean
-    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private DatabaseRepository<JavaType> javaTypeRepository;
 
     @MockBean
-    private DatabaseRepository<JavaType> javaTypeRepository;
+    private SetupService setupService;
 
     @Test
     void postAgents_forbiddenWithoutAgentsWrite() throws Exception {
         mockMvc.perform(post("/api/agents")
+                .with(csrf())
                         .with(user("alice").authorities(() -> "ROLE_USER"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"Demo\"}"))
@@ -79,6 +82,7 @@ class ProtectedWriteEndpointsSecurityTest {
     @Test
     void postSkills_forbiddenWithoutSkillsWrite() throws Exception {
         mockMvc.perform(post("/api/skills")
+                .with(csrf())
                         .with(user("alice").authorities(() -> "ROLE_USER"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"Skill\",\"groupUuid\":\"g1\"}"))
@@ -88,6 +92,7 @@ class ProtectedWriteEndpointsSecurityTest {
     @Test
     void postTypes_forbiddenWithoutTypesWrite() throws Exception {
         mockMvc.perform(post("/api/types/sh.vork.generated.Product")
+                .with(csrf())
                         .with(user("alice").authorities(() -> "ROLE_USER"))
                         .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                         .content("uuid=1"))
@@ -97,6 +102,7 @@ class ProtectedWriteEndpointsSecurityTest {
     @Test
     void postAgents_allowedWithAgentsWrite() throws Exception {
         mockMvc.perform(post("/api/agents")
+                .with(csrf())
                         .with(user("admin").authorities(() -> "ROLE_ADMIN", () -> "AGENTS_WRITE"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"Demo\"}"))
@@ -106,15 +112,17 @@ class ProtectedWriteEndpointsSecurityTest {
     @Test
     void postSkills_allowedWithSkillsWrite() throws Exception {
         mockMvc.perform(post("/api/skills")
+                .with(csrf())
                         .with(user("admin").authorities(() -> "ROLE_ADMIN", () -> "SKILLS_WRITE"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"Skill\",\"groupUuid\":\"g1\"}"))
-                .andExpect(status().isBadRequest());
+                                .andExpect(status().isOk());
     }
 
     @Test
     void postTypes_allowedWithTypesWrite() throws Exception {
         mockMvc.perform(post("/api/types/sh.vork.generated.Product")
+                .with(csrf())
                         .with(user("admin").authorities(() -> "ROLE_ADMIN", () -> "TYPES_WRITE"))
                         .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                         .content("uuid=1"))

@@ -144,6 +144,7 @@ public class TelegramChatResumptionService {
              MDC.MDCCloseable _ = MDC.putCloseable("eventId", correlationEventId)) {
 
             String normalizedAction = normalizeAction(action);
+            String promptIntent = resolvePromptIntent(promptEvent.formSchema(), promptEvent.intent());
             String toolName         = promptMessage.toolName();
             String toolCallId       = promptMessage.toolCallId();
             String argumentsJson    = extractPendingArguments(promptMessage, toolCallId);
@@ -184,13 +185,20 @@ public class TelegramChatResumptionService {
                     normalizedAction, toolName, toolCallId, username);
 
             // ── Apply authorization rule ───────────────────────────────────────
-            applyAuthorizationAction(normalizedAction, username, toolName, toolCallId);
+            if ("AUTHORIZE_TOOL".equalsIgnoreCase(promptIntent)) {
+                applyAuthorizationAction(normalizedAction, username, toolName, toolCallId);
+            }
+
+            String executionArgumentsJson = argumentsJson;
+            if (!"AUTHORIZE_TOOL".equalsIgnoreCase(promptIntent) && !conversationFields.isEmpty()) {
+                executionArgumentsJson = mergeArgumentsJson(argumentsJson, conversationFields);
+            }
 
             // ── Execute tool ──────────────────────────────────────────────────
             String token;
             try {
                 token = toolResponseDataForAction(normalizedAction, conversationFields,
-                        toolName, argumentsJson);
+                        toolName, executionArgumentsJson);
             } catch (ToolSuspensionException ex) {
                 // Tool suspended again before producing a result
                 return saveAndRethrow(session, ex, toolCallId, argumentsJson);
@@ -336,6 +344,7 @@ public class TelegramChatResumptionService {
              MDC.MDCCloseable _ = MDC.putCloseable("eventId", correlationEventId)) {
 
             String normalizedAction = normalizeAction(action);
+            String promptIntent = resolvePromptIntent(promptEvent.formSchema(), promptEvent.intent());
             String toolName         = promptMessage.toolName();
             String toolCallId       = promptMessage.toolCallId();
             String argumentsJson    = extractPendingArguments(promptMessage, toolCallId);
@@ -373,12 +382,19 @@ public class TelegramChatResumptionService {
             log.info("Background form resume [action={}, tool={}, user={}]",
                     normalizedAction, toolName, username);
 
-            applyAuthorizationAction(normalizedAction, username, toolName, toolCallId);
+            if ("AUTHORIZE_TOOL".equalsIgnoreCase(promptIntent)) {
+                applyAuthorizationAction(normalizedAction, username, toolName, toolCallId);
+            }
+
+            String executionArgumentsJson = argumentsJson;
+            if (!"AUTHORIZE_TOOL".equalsIgnoreCase(promptIntent) && !conversationFields.isEmpty()) {
+                executionArgumentsJson = mergeArgumentsJson(argumentsJson, conversationFields);
+            }
 
             String token;
             try {
                 token = toolResponseDataForAction(normalizedAction, conversationFields,
-                        toolName, argumentsJson);
+                        toolName, executionArgumentsJson);
             } catch (ToolSuspensionException ex) {
                 saveAndRethrow(session, ex, toolCallId, argumentsJson);
                 throw ex; // unreachable, but satisfies compiler
@@ -461,6 +477,7 @@ public class TelegramChatResumptionService {
             case "SESSION", "ALLOW_SESSION" -> authorizationRuleEngine.addTemporaryUserRule(username, toolName);
             case "ALWAYS", "ALLOW_ALWAYS"   -> authorizationRuleEngine.addPermanentRule(username, toolName);
             case "DENIED", "DENY"           -> { /* no bypass */ }
+            case "SAVE", "CONTINUE", "SUBMIT" -> { /* non-authorization resume actions */ }
             default -> throw new IllegalArgumentException("Unsupported action: " + action);
         }
     }
@@ -468,7 +485,8 @@ public class TelegramChatResumptionService {
     private String toolResponseDataForAction(String action, Map<String, String> fields,
                                               String toolName, String argumentsJson) {
         return switch (action) {
-            case "ONCE", "ALLOW_ONCE", "SESSION", "ALLOW_SESSION", "ALWAYS", "ALLOW_ALWAYS" -> {
+            case "ONCE", "ALLOW_ONCE", "SESSION", "ALLOW_SESSION", "ALWAYS", "ALLOW_ALWAYS",
+                    "SAVE", "CONTINUE", "SUBMIT" -> {
                 String result = executeTool(toolName, argumentsJson);
                 try {
                     objectMapper.readValue(result, new TypeReference<Map<String, Object>>() {});
@@ -598,6 +616,29 @@ public class TelegramChatResumptionService {
     private static String normalizeAction(String action) {
         if (action == null || action.isBlank()) return "DENIED";
         return action.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private static String resolvePromptIntent(InteractionFormSchema schema, String fallbackIntent) {
+        if (schema != null && schema.intent() != null && !schema.intent().isBlank()) {
+            return schema.intent();
+        }
+        if (fallbackIntent != null && !fallbackIntent.isBlank()) {
+            return fallbackIntent;
+        }
+        return "AUTHORIZE_TOOL";
+    }
+
+    private String mergeArgumentsJson(String baseArgumentsJson, Map<String, String> fields) {
+        try {
+            Map<String, Object> merged = objectMapper.readValue(
+                    baseArgumentsJson == null || baseArgumentsJson.isBlank() ? "{}" : baseArgumentsJson,
+                    new TypeReference<Map<String, Object>>() {});
+            Map<String, Object> mutable = new HashMap<>(merged);
+            mutable.putAll(fields);
+            return objectMapper.writeValueAsString(mutable);
+        } catch (Exception ex) {
+            throw new IllegalStateException("Failed to merge tool arguments", ex);
+        }
     }
 
     private static String resolveSuspendedArguments(String prior, String suspended) {

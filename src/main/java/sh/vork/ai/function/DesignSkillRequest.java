@@ -2,6 +2,7 @@ package sh.vork.ai.function;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
+import sh.vork.skill.SkillVisibility;
 
 /**
  * Input schema for the {@code designSkillFromRequest} tool.
@@ -29,9 +30,9 @@ public record DesignSkillRequest(
         @JsonPropertyDescription("Optional author label override.")
         String author,
 
-        @JsonProperty(value = "autoShareWithinGroup")
-        @JsonPropertyDescription("Optional recommendation override for auto-share within group.")
-        Boolean autoShareWithinGroup,
+        @JsonProperty(value = "visibility")
+        @JsonPropertyDescription("Optional visibility override for generated skill request (PUBLIC or PRIVATE).")
+        SkillVisibility visibility,
 
         @JsonProperty(value = "dryRun")
         @JsonPropertyDescription("Accepted for compatibility; designSkillFromRequest is always dry-run behavior.")

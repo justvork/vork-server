@@ -10,6 +10,7 @@ import sh.vork.ai.registry.ToolRegistry;
 import sh.vork.skill.Skill;
 import sh.vork.skill.SkillGroup;
 import sh.vork.skill.SkillService;
+import sh.vork.skill.SkillVisibility;
 
 import java.util.List;
 
@@ -53,7 +54,7 @@ class SkillAuthoringServiceTest {
     }
 
     @Test
-    void designSkillFromRequest_usesAutoShareOverrideFromInput() {
+        void designSkillFromRequest_usesVisibilityOverrideFromInput() {
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         SkillService skillService = mock(SkillService.class);
 
@@ -69,14 +70,11 @@ class SkillAuthoringServiceTest {
 
         SkillAuthoringService.SkillAuthoringResult result = service.designSkillFromRequest(
                 "lee",
-                new DesignSkillRequest("create mongo connection helper", null, "Data", null, null, false, true));
+                new DesignSkillRequest("create mongo connection helper", null, "Data", null, null, SkillVisibility.PRIVATE, true));
 
         assertEquals("dry_run", result.status());
-        assertFalse(result.recommendedAutoShareWithinGroup());
-        assertNotNull(result.autoShareRecommendation());
-        assertTrue(result.autoShareRecommendation().toLowerCase().contains("explicitly disabled"));
         assertNotNull(result.generatedSkillRequest());
-        assertFalse(result.generatedSkillRequest().autoShareWithinGroup());
+        assertEquals(SkillVisibility.PRIVATE, result.generatedSkillRequest().visibility());
     }
 
     @Test
@@ -93,7 +91,7 @@ class SkillAuthoringServiceTest {
                 descriptor("saveTypeInstance", List.of())
         ));
         when(skillService.list()).thenReturn(List.of(
-                new Skill("skill-calendar-1", "Google Calendar Read", "Reads Google Calendar events", "grp-google", true,
+                new Skill("skill-calendar-1", "Google Calendar Read", "Reads Google Calendar events", "grp-google", SkillVisibility.PUBLIC,
                         List.of(new sh.vork.skill.SkillParameter("date", "string", "Date input")),
                         "Use oauthConnect then httpRequest for Google APIs",
                         List.of("oauthConnect", "httpRequest"),

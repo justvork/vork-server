@@ -2,6 +2,7 @@ package sh.vork.skill;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -133,6 +134,17 @@ public class SkillService {
         }
     }
 
+    public List<Skill> listPublic() {
+        log.debug("ENTER listPublic");
+        return list().stream()
+                .filter(skill -> skill.visibility() == SkillVisibility.PUBLIC)
+                .toList();
+    }
+
+    public List<Skill> listVisible(boolean includePrivate) {
+        return includePrivate ? list() : listPublic();
+    }
+
     public List<Skill> skillsForGroup(String groupUuid) {
         log.debug("ENTER skillsForGroup: [groupUuid={}]", groupUuid);
         if (groupUuid == null || groupUuid.isBlank()) {
@@ -164,7 +176,7 @@ public class SkillService {
                 req.name(),
                 req.description(),
                 req.groupUuid(),
-                req.autoShareWithinGroup(),
+                req.visibility() != null ? req.visibility() : SkillVisibility.PUBLIC,
                 req.parameters() != null ? List.copyOf(req.parameters()) : List.of(),
                 req.instructions(),
                 req.allowedTools() != null ? List.copyOf(req.allowedTools()) : List.of(),
@@ -198,7 +210,7 @@ public class SkillService {
                 req.name(),
                 req.description(),
                 req.groupUuid(),
-                req.autoShareWithinGroup(),
+                req.visibility() != null ? req.visibility() : SkillVisibility.PUBLIC,
                 req.parameters() != null ? List.copyOf(req.parameters()) : List.of(),
                 req.instructions(),
                 req.allowedTools() != null ? List.copyOf(req.allowedTools()) : List.of(),
@@ -234,7 +246,7 @@ public class SkillService {
 
     public String executeSkill(String skillUuid, Map<String, String> parameters) {
         log.debug("ENTER executeSkill: [skillUuid={}, paramKeys={}]", skillUuid,
-                parameters == null ? "null" : parameters.keySet());
+            parameters == null ? "null" : parameters.keySet());
 
         Skill skill = skillRepo.get(skillUuid);
         if (skill == null) {
@@ -243,7 +255,14 @@ public class SkillService {
 
         Map<String, String> params = parameters != null ? parameters : Map.of();
 
+        if (log.isDebugEnabled()) {
+            Map<String, String> sanitized = sanitizeParamsForLog(skill, params);
+            log.debug("executeSkill input parameters [skillUuid={}, skillName={}, params={}]",
+                skillUuid, skill.name(), sanitized);
+        }
+
         List<String> missing = skill.parameters().stream()
+                .filter(p -> p.inputMode() == SkillParameterInputMode.AI_REQUIRED)
                 .filter(p -> {
                     String val = params.get(p.name());
                     return val == null || val.isBlank();
@@ -272,10 +291,46 @@ public class SkillService {
         if (agentId != null && !agentId.isBlank()) {
             AgentTemplate template = agentTemplateRepo.get(agentId);
             if (template != null && template.skillUuids() != null && !template.skillUuids().isEmpty()) {
+                boolean calledFromSkill = callerSession.skillStack() != null && !callerSession.skillStack().isEmpty();
+                boolean reachableFromAttached = false;
+                if (!calledFromSkill) {
+                    List<String> roots = new ArrayList<>();
+                    if (template.skillUuids() != null) {
+                        roots.addAll(template.skillUuids());
+                    }
+                    if (callerSession.sessionSkillUuids() != null) {
+                        roots.addAll(callerSession.sessionSkillUuids());
+                    }
+                    reachableFromAttached = isReachableFromAttachedRoots(skillUuid, roots);
+                }
+
+                if (skill.visibility() == SkillVisibility.PRIVATE) {
+                    if (!calledFromSkill && !reachableFromAttached) {
+                        log.warn("Private skill access denied — caller is not inside a skill and skill is not reachable from attached roots [session={}, skill={}]",
+                                callerSessionUuid, skillUuid);
+                        return "{\"status\":\"error\",\"message\":\"Skill '" + skill.name()
+                                + "' is private and can only be called from another skill in the same group.\"}";
+                    }
+
+                    if (calledFromSkill) {
+                        SkillFrame callerFrame = callerSession.skillStack().getLast();
+                        Skill callerSkill = callerFrame == null ? null : skillRepo.get(callerFrame.skillUuid());
+                        boolean sameGroup = callerSkill != null
+                                && callerSkill.groupUuid() != null
+                                && callerSkill.groupUuid().equals(skill.groupUuid());
+                        if (!sameGroup) {
+                            log.warn("Private skill access denied — cross-group invocation [session={}, skill={}, callerSkill={}]",
+                                    callerSessionUuid, skillUuid, callerSkill == null ? "null" : callerSkill.uuid());
+                            return "{\"status\":\"error\",\"message\":\"Skill '" + skill.name()
+                                    + "' is private and can only be called by skills from its own group.\"}";
+                        }
+                    }
+                }
+
                 boolean inAgentSkills = template.skillUuids().contains(skillUuid);
                 boolean inSessionSkills = callerSession.sessionSkillUuids() != null
                         && callerSession.sessionSkillUuids().contains(skillUuid);
-                if (!inAgentSkills && !inSessionSkills) {
+                if (!calledFromSkill && !inAgentSkills && !inSessionSkills && !reachableFromAttached) {
                     log.warn("Skill access denied — skill not assigned to agent or session [session={}, agent={}, skill={}]",
                             callerSessionUuid, agentId, skillUuid);
                     return "{\"status\":\"error\",\"message\":\"Skill '" + skill.name()
@@ -308,6 +363,28 @@ public class SkillService {
         throw new SkillActivatedException(skillUuid, skill.name(), initialPrompt);
     }
 
+    private boolean isReachableFromAttachedRoots(String targetSkillUuid, List<String> rootSkillUuids) {
+        if (targetSkillUuid == null || targetSkillUuid.isBlank() || rootSkillUuids == null || rootSkillUuids.isEmpty()) {
+            return false;
+        }
+        LinkedHashSet<String> roots = new LinkedHashSet<>(rootSkillUuids);
+        for (String rootUuid : roots) {
+            if (targetSkillUuid.equals(rootUuid)) {
+                return true;
+            }
+            Skill root = skillRepo.get(rootUuid);
+            if (root == null) {
+                continue;
+            }
+            List<Skill> effective = resolveEffectiveSubSkills(root);
+            boolean found = effective.stream().anyMatch(s -> s != null && targetSkillUuid.equals(s.uuid()));
+            if (found) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // -- Sub-skill resolution ------------------------------------------------
 
     public List<Skill> resolveEffectiveSubSkills(String skillUuid) {
@@ -330,9 +407,7 @@ public class SkillService {
                 if (peer == null || peer.uuid().equals(skill.uuid())) {
                     continue;
                 }
-                if (peer.autoShareWithinGroup()) {
-                    ids.add(peer.uuid());
-                }
+                ids.add(peer.uuid());
             }
         }
 
@@ -564,7 +639,7 @@ public class SkillService {
                 skill.name(),
                 skill.description(),
                 groupUuid,
-                skill.autoShareWithinGroup(),
+                skill.visibility(),
                 skill.parameters() != null ? List.copyOf(skill.parameters()) : List.of(),
                 skill.instructions(),
                 skill.allowedTools() != null ? List.copyOf(skill.allowedTools()) : List.of(),
@@ -592,6 +667,19 @@ public class SkillService {
     private static String buildInitialPrompt(Skill skill, Map<String, String> params) {
         StringBuilder sb = new StringBuilder();
 
+        List<String> requiredNames = skill.parameters().stream()
+                .filter(p -> p != null && !p.isSecret())
+                .filter(p -> p.inputMode() == SkillParameterInputMode.AI_REQUIRED)
+                .map(SkillParameter::name)
+                .toList();
+
+        List<String> missingRequired = requiredNames.stream()
+                .filter(name -> {
+                    String value = params.get(name);
+                    return value == null || value.isBlank();
+                })
+                .toList();
+
         if (!skill.parameters().isEmpty()) {
             sb.append("Input Parameters:\n");
             for (SkillParameter p : skill.parameters()) {
@@ -602,6 +690,24 @@ public class SkillService {
                     sb.append(" -- ").append(p.description());
                 }
                 sb.append("\n");
+            }
+            sb.append("\n");
+
+            sb.append("Parameter Usage Contract:\n");
+            sb.append("- You MUST use the exact parameter values listed above when calling downstream tools.\n");
+            sb.append("- AI-required parameters are inferred runtime inputs: derive missing values from the current user request and conversation context.\n");
+            sb.append("- Do NOT use stale values from unrelated prior turns when the current request provides constraints.\n");
+            sb.append("- Do NOT omit required parameters when the downstream tool supports them.\n");
+            if (!requiredNames.isEmpty()) {
+                sb.append("- Required parameters for this skill: ")
+                        .append(String.join(", ", requiredNames))
+                        .append("\n");
+            }
+            if (!missingRequired.isEmpty()) {
+                sb.append("- Missing required parameters detected: ")
+                        .append(String.join(", ", missingRequired))
+                        .append("\n");
+                sb.append("- Infer these missing required values from the current request before proceeding; only return an explicit error if genuinely ambiguous.\n");
             }
             sb.append("\n");
         }
@@ -628,6 +734,58 @@ public class SkillService {
         }
         sb.append("]");
         return sb.toString();
+    }
+
+    private static Map<String, String> sanitizeParamsForLog(Skill skill, Map<String, String> params) {
+        if (params == null || params.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<String, Boolean> secretByName = new LinkedHashMap<>();
+        if (skill != null && skill.parameters() != null) {
+            for (SkillParameter p : skill.parameters()) {
+                if (p != null && p.name() != null && !p.name().isBlank()) {
+                    secretByName.put(p.name(), p.isSecret());
+                }
+            }
+        }
+
+        Map<String, String> out = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : params.entrySet()) {
+            String key = entry.getKey();
+            String value = entry.getValue();
+            boolean declaredSecret = Boolean.TRUE.equals(secretByName.get(key));
+            boolean heuristicSecret = isSensitiveParamName(key);
+            if (declaredSecret || heuristicSecret) {
+                out.put(key, "[REDACTED]");
+                continue;
+            }
+            out.put(key, abbreviateForLog(value));
+        }
+        return out;
+    }
+
+    private static boolean isSensitiveParamName(String name) {
+        if (name == null) {
+            return false;
+        }
+        String n = name.toLowerCase();
+        return n.contains("secret")
+                || n.contains("password")
+                || n.contains("token")
+                || n.contains("apikey")
+                || n.contains("api_key")
+                || n.contains("credential");
+    }
+
+    private static String abbreviateForLog(String value) {
+        if (value == null) {
+            return "<null>";
+        }
+        if (value.length() <= 300) {
+            return value;
+        }
+        return value.substring(0, 300) + "...<truncated>";
     }
 
     // -- DTOs ----------------------------------------------------------------
@@ -657,7 +815,7 @@ public class SkillService {
             String name,
             String description,
             String groupUuid,
-            boolean autoShareWithinGroup,
+            SkillVisibility visibility,
             List<SkillParameter> parameters,
             String instructions,
             List<String> allowedTools,

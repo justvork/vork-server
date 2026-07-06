@@ -90,13 +90,14 @@
                     </select>
                 </div>
 
-                <div class="form-check form-switch mb-3">
-                    <input class="form-check-input" type="checkbox" role="switch" id="skill-auto-share">
-                    <label class="form-check-label" for="skill-auto-share">
-                        Auto-share within group
-                    </label>
+                <div class="mb-3">
+                    <label class="form-label" for="skill-visibility">Visibility</label>
+                    <select id="skill-visibility" class="form-select">
+                        <option value="PUBLIC">Public</option>
+                        <option value="PRIVATE">Private</option>
+                    </select>
                     <div class="form-text">
-                        When enabled, this skill is automatically available as a sub-skill to other skills in the same group.
+                        Public skills are visible to users. Private skills can only be called from skills in the same group.
                     </div>
                 </div>
 

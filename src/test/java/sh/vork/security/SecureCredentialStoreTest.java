@@ -31,7 +31,8 @@ class SecureCredentialStoreTest {
                         return new MapDatabaseRepository<>(entityClass);
                     }
                 },
-                enc);
+                enc,
+                mock(UserService.class));
     }
 
     @Test

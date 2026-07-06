@@ -48,7 +48,11 @@ class ChatServiceNoCandidateFallbackTest {
                 new ObjectMapper().findAndRegisterModules(),
                 List.of(),
                 null,
-                Runnable::run);
+            Runnable::run,
+            null,
+            null,
+            null,
+            null);
 
         AiChatMessage out = chatService.sendMessage(sessionId, "schedule a task", null, AiProvider.GEMINI);
 
@@ -91,7 +95,11 @@ class ChatServiceNoCandidateFallbackTest {
             new ObjectMapper().findAndRegisterModules(),
             List.of(),
             null,
-            Runnable::run);
+            Runnable::run,
+            null,
+            null,
+            null,
+            null);
 
         AiChatMessage out = chatService.sendMessage(sessionId, "schedule a task", null, AiProvider.GEMINI);
 
@@ -136,7 +144,11 @@ class ChatServiceNoCandidateFallbackTest {
                 new ObjectMapper().findAndRegisterModules(),
                 List.of(),
                 null,
-                Runnable::run);
+            Runnable::run,
+            null,
+            null,
+            null,
+            null);
 
         AiChatMessage out = chatService.sendMessage(sessionId, "finish the task", null, AiProvider.BACKGROUND_SCHEDULER);
 
@@ -174,7 +186,11 @@ class ChatServiceNoCandidateFallbackTest {
                 new ObjectMapper().findAndRegisterModules(),
                 List.of(),
                 null,
-                Runnable::run);
+            Runnable::run,
+            null,
+            null,
+            null,
+            null);
 
         AiChatMessage out = chatService.sendMessage(sessionId, "finish this background task", null, AiProvider.BACKGROUND_SCHEDULER);
 
@@ -215,7 +231,11 @@ class ChatServiceNoCandidateFallbackTest {
                 new ObjectMapper().findAndRegisterModules(),
                 List.of(),
                 null,
-                Runnable::run);
+            Runnable::run,
+            null,
+            null,
+            null,
+            null);
 
         AiChatMessage out = chatService.sendMessage(sessionId, "finish this background task", null, AiProvider.BACKGROUND_SCHEDULER);
 
@@ -253,7 +273,11 @@ class ChatServiceNoCandidateFallbackTest {
                 new ObjectMapper().findAndRegisterModules(),
                 List.of(),
                 null,
-                Runnable::run);
+            Runnable::run,
+            null,
+            null,
+            null,
+            null);
 
         AiChatMessage out = chatService.sendMessage(
                 sessionId,
@@ -301,7 +325,11 @@ class ChatServiceNoCandidateFallbackTest {
             new ObjectMapper().findAndRegisterModules(),
             List.of(),
             null,
-            Runnable::run);
+            Runnable::run,
+            null,
+            null,
+            null,
+            null);
 
         AiChatMessage out = chatService.sendMessage(sessionId, "summarize that output", null, AiProvider.GEMINI);
 

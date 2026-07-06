@@ -73,6 +73,7 @@ import sh.vork.ai.function.ListSshConnectionsRequest;
 import sh.vork.ai.function.ListTypeInstancesRequest;
 import sh.vork.ai.function.LogInfoRequest;
 import sh.vork.ai.function.OAuthConnectRequest;
+import sh.vork.ai.function.OAuthDiscoverProfilesRequest;
 import sh.vork.ai.function.OAuthResetRequest;
 import sh.vork.ai.function.CountTypeInstancesRequest;
 import sh.vork.ai.function.SaveTypeInstanceRequest;
@@ -92,6 +93,7 @@ import sh.vork.ai.registry.ToolCategory;
 import sh.vork.ai.registry.ToolDepends;
 import sh.vork.ai.registry.ToolRegistry;
 import sh.vork.ai.security.AuthorizationRuleEngine;
+import sh.vork.ai.security.LoggedToolCallback;
 import sh.vork.ai.security.Restricted;
 import sh.vork.ai.security.SecuredToolCallback;
 import sh.vork.ai.security.VisualizableToolCallback;
@@ -106,6 +108,7 @@ import sh.vork.ai.tool.CompleteSkillExecutionRequest;
 import sh.vork.ai.tool.MemoryRequest;
 import sh.vork.ai.tool.RecordProgressRequest;
 import sh.vork.ai.tool.ThinkRequest;
+import sh.vork.ai.tool.ToggleInputRelayRequest;
 import sh.vork.ai.protocol.UiEventFrame;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import sh.vork.ai.tool.DeleteSshConnectionTool;
@@ -317,10 +320,10 @@ the protocol and will break the system. Do not converse. Execute.
             if (isHiddenTool(beanFactory, toolName)) {
                 return; // hidden tools are injected per-session via SessionToolStore
             }
-            ToolCallback secured = isRestrictedTool(beanFactory, toolName)
+            ToolCallback wrapped = isRestrictedTool(beanFactory, toolName)
                     ? new SecuredToolCallback(tool, authorizationRuleEngine)
                     : tool;
-            map.put(toolName, secured);
+            map.put(toolName, new LoggedToolCallback(wrapped));
         });
         return map;
     }
@@ -439,7 +442,7 @@ the protocol and will break the system. Do not converse. Execute.
                                 req.name().trim(),
                                 req.description().trim(),
                                 req.groupUuid().trim(),
-                                req.autoShareEffective(),
+                                req.visibilityEffective(),
                                 req.parameters() == null ? List.of() : req.parameters(),
                                 req.instructions().trim(),
                                 req.allowedTools() == null ? List.of() : req.allowedTools(),
@@ -703,6 +706,28 @@ the protocol and will break the system. Do not converse. Execute.
                 .description("Persist a concise progress checkpoint to session memory for use in later turns. "
                         + "Use this after completing significant steps (e.g. host scanned, report generated, report sent).")
                 .inputType(RecordProgressRequest.class)
+                .build();
+    }
+
+    @Bean("toggleInputRelay")
+    @Hidden
+    @ToolCategory("Meta")
+    public ToolCallback toggleInputRelay(SessionEnvironmentService sessionEnvironmentService) {
+        return FunctionToolCallback
+                .builder("toggleInputRelay", (ToggleInputRelayRequest req) -> {
+                    String sessionUuid = resolveSessionUuid();
+                    if (sessionUuid == null || sessionUuid.isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"No session bound\"}";
+                    }
+
+                    String value = Boolean.toString(req.enabled());
+                    sessionEnvironmentService.setEnv(sessionUuid, "WEB_INPUT_RELAY_ENABLED", value);
+                    ToolExecutionContext.put("WEB_INPUT_RELAY_ENABLED", value);
+                    log.info("Web relay input toggled [session={}, enabled={}]", sessionUuid, req.enabled());
+                    return "{\"status\":\"ok\",\"enabled\":" + req.enabled() + "}";
+                })
+                .description("Enable or disable secure relay input handling for this web chat session.")
+                .inputType(ToggleInputRelayRequest.class)
                 .build();
     }
 
@@ -992,7 +1017,7 @@ the protocol and will break the system. Do not converse. Execute.
      */
     @Bean
     @ToolCategory("Web")
-    @ToolDepends({"httpRequest"})
+    @ToolDepends({"httpRequest", "oauthDiscoverProfiles"})
     public ToolCallback oauthConnect(OAuthClientService oauthClientService,
                                      SecureCredentialStore secureCredentialStore) {
         ToolCallback schemaCallback = FunctionToolCallback
@@ -1034,7 +1059,7 @@ the protocol and will break the system. Do not converse. Execute.
                 OAuthConnectRequest req;
                 try {
                     req = toolInput == null || toolInput.isBlank()
-                            ? new OAuthConnectRequest(null, null, null, null, null, null, null, null, null)
+                            ? new OAuthConnectRequest(null, null, null, null, null, null, null, null, null, null)
                             : objectMapper.readValue(toolInput, OAuthConnectRequest.class);
                 } catch (Exception parseError) {
                     return "{\"status\":\"error\",\"message\":\"Invalid oauthConnect input JSON\"}";
@@ -1104,6 +1129,53 @@ the protocol and will break the system. Do not converse. Execute.
      */
     @Bean
     @ToolCategory("Web")
+    public ToolCallback oauthDiscoverProfiles(OAuthClientService oauthClientService) {
+        ToolCallback schemaCallback = FunctionToolCallback
+                .builder("oauthDiscoverProfiles", (OAuthDiscoverProfilesRequest req) -> "{}")
+                .description("""
+                    Discover saved OAuth profiles for a given clientName in the current skill context.
+                    Use this before oauthConnect when multiple profiles may exist. The result includes
+                    profile names and which profile is marked as default.
+                    """.stripIndent())
+                .inputType(OAuthDiscoverProfilesRequest.class)
+                .build();
+
+        ToolDefinition definition = schemaCallback.getToolDefinition();
+        return new ToolCallback() {
+            @Override
+            public ToolDefinition getToolDefinition() {
+                return definition;
+            }
+
+            @Override
+            public String call(String toolInput) {
+                OAuthDiscoverProfilesRequest req;
+                try {
+                    req = toolInput == null || toolInput.isBlank()
+                            ? new OAuthDiscoverProfilesRequest(null)
+                            : objectMapper.readValue(toolInput, OAuthDiscoverProfilesRequest.class);
+                } catch (Exception parseError) {
+                    return "{\"status\":\"error\",\"message\":\"Invalid oauthDiscoverProfiles input JSON\"}";
+                }
+
+                String username = resolveUsername();
+                if (username == null || username.isBlank()) {
+                    return "{\"status\":\"error\",\"message\":\"Authenticated user is required\"}";
+                }
+
+                try {
+                    Map<String, Object> result = oauthClientService.discoverProfiles(username, req.clientName());
+                    return objectMapper.writeValueAsString(result);
+                } catch (Exception e) {
+                    return "{\"status\":\"error\",\"message\":\""
+                            + e.getMessage().replace("\"", "'") + "\"}";
+                }
+            }
+        };
+    }
+
+    @Bean
+    @ToolCategory("Web")
     public ToolCallback oauthReset(OAuthClientService oauthClientService) {
         ToolCallback schemaCallback = FunctionToolCallback
                 .builder("oauthReset", (OAuthResetRequest req) -> "{}")
@@ -1154,16 +1226,17 @@ the protocol and will break the system. Do not converse. Execute.
                                                            String username,
                                                            SecureCredentialStore secureCredentialStore) {
         String clientName = firstNonBlank(req == null ? null : req.clientName(), contextString("clientName"));
+        String profileName = firstNonBlank(req == null ? null : req.profileName(), contextString("profileName"));
         String normalizedClientName = normalizedOAuthClientScope(clientName);
         String authorizeEndpoint = firstNonBlank(req == null ? null : req.authorizeEndpoint(), contextString("authorizeEndpoint"));
         String tokenEndpoint = firstNonBlank(req == null ? null : req.tokenEndpoint(), contextString("tokenEndpoint"));
         // OAuth credentials are sourced from interactive form context/secret storage,
         // not directly from model-authored tool arguments.
         String clientId = firstNonBlank(
-            req == null ? null : req.clientId(),
+            contextString(OAUTH_CLIENT_ID_FORM_KEY),
             firstNonBlank(
-                contextString(OAUTH_CLIENT_ID_FORM_KEY),
-                contextString(oauthClientIdContextKey(normalizedClientName))));
+                contextString(oauthClientIdContextKey(normalizedClientName)),
+                req == null ? null : req.clientId()));
         String redirectUri = firstNonBlank(req == null ? null : req.redirectUri(), contextString("redirectUri"));
         if (isUnresolvedRedirectUri(redirectUri)) {
             redirectUri = null;
@@ -1191,6 +1264,7 @@ the protocol and will break the system. Do not converse. Execute.
 
         return new OAuthConnectRequest(
                 clientName,
+            profileName,
                 authorizeEndpoint,
                 tokenEndpoint,
                 clientId,
@@ -1204,7 +1278,7 @@ the protocol and will break the system. Do not converse. Execute.
     private InteractionFormSchema oauthConfigurationForm(OAuthConnectRequest effectiveReq,
                                                          String suggestedRedirectUri) {
         String clientNameValue = firstNonBlank(effectiveReq.clientName(), "gmail");
-        String normalizedClientName = normalizedOAuthClientScope(clientNameValue);
+        String profileNameValue = firstNonBlank(effectiveReq.profileName(), "default");
         String authorizeEndpointValue = firstNonBlank(effectiveReq.authorizeEndpoint(), "");
         String tokenEndpointValue = firstNonBlank(effectiveReq.tokenEndpoint(), "");
         String clientIdValue = firstNonBlank(effectiveReq.clientId(), "");
@@ -1214,6 +1288,7 @@ the protocol and will break the system. Do not converse. Execute.
 
         List<FormField> fields = List.of(
             new FormField("clientName", "TEXT", "clientName", clientNameValue, clientNameValue, true, FieldSource.CONTEXT, null),
+            new FormField("profileName", "TEXT", "profileName", profileNameValue, profileNameValue, true, FieldSource.CONTEXT, null),
                 new FormField("authorizeEndpoint", "TEXT", "authorizeEndpoint", authorizeEndpointValue, authorizeEndpointValue, true, FieldSource.CONTEXT, null),
                 new FormField("tokenEndpoint", "TEXT", "tokenEndpoint", tokenEndpointValue, tokenEndpointValue, true, FieldSource.CONTEXT, null),
             new FormField(OAUTH_CLIENT_ID_FORM_KEY, "TEXT", "clientId", clientIdValue, clientIdValue, true, FieldSource.CONTEXT, null),
@@ -1402,9 +1477,7 @@ the protocol and will break the system. Do not converse. Execute.
             markdown.append("- **Name:** ").append(name).append("\n");
             markdown.append("- **Group UUID:** ").append(groupUuid).append("\n");
             markdown.append("- **Description:** ").append(description).append("\n");
-            markdown.append("- **Auto Share Within Group:** ")
-                    .append(req.autoShareEffective() ? "Yes" : "No")
-                    .append("\n");
+                markdown.append("- **Visibility:** ").append(req.visibilityEffective()).append("\n");
             markdown.append("- **Parameters:** ").append(parameterCount).append("\n");
             markdown.append("- **Allowed Tools:** ").append(toolCount).append("\n");
             markdown.append("- **Allowed Types:** ").append(typeCount).append("\n");

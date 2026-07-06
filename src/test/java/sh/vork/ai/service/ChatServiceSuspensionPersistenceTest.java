@@ -28,8 +28,11 @@ import sh.vork.ai.exception.ToolSuspensionException;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.security.VisualizableToolCallback;
 import sh.vork.orm.mock.MapDatabaseRepository;
+import sh.vork.relay.RelayEncryptionService;
+import sh.vork.relay.RelayHttpClient;
 import sh.vork.storage.FileStorageService;
 import sh.vork.scheduling.service.SystemNotificationService;
+import sh.vork.setup.SystemSettingsService;
 
 class ChatServiceSuspensionPersistenceTest {
 
@@ -90,7 +93,11 @@ class ChatServiceSuspensionPersistenceTest {
             objectMapper,
             List.of(compileTool),
             mock(SystemNotificationService.class),
-            Runnable::run);
+            Runnable::run,
+            mock(RelayEncryptionService.class),
+            mock(RelayHttpClient.class),
+            mock(SystemSettingsService.class),
+            null);
 
         AiChatMessage out = chatService.sendMessage(sessionId, "please compile", null, AiProvider.GEMINI);
 

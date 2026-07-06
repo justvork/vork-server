@@ -7,7 +7,10 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 import sh.vork.oauth.OAuthClientService;
 import sh.vork.ai.provider.AiModelService;
 import sh.vork.ai.registry.ToolDescriptor;
@@ -81,7 +84,20 @@ public class SettingsController {
     public String oauthClients(Model model) {
         String username = resolveUsername();
         model.addAttribute("oauthClients", oAuthClientService.listConfiguredClients(username));
+        model.addAttribute("canManageUsers", hasAuthority(Permission.USERS_MANAGE.authority()));
         return "settings/oauth-clients";
+    }
+
+    @PostMapping("/oauth-clients/{clientUuid}/delete")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public String deleteOAuthClient(@PathVariable String clientUuid, RedirectAttributes redirectAttributes) {
+        boolean deleted = oAuthClientService.deleteClientByUuidAsAdmin(clientUuid);
+        if (deleted) {
+            redirectAttributes.addFlashAttribute("oauthClientDeleteMessage", "OAuth client deleted.");
+        } else {
+            redirectAttributes.addFlashAttribute("oauthClientDeleteError", "OAuth client was not found.");
+        }
+        return "redirect:/settings/oauth-clients";
     }
 
     @GetMapping("/users")

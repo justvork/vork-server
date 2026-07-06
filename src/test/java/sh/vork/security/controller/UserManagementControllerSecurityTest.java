@@ -1,6 +1,7 @@
 package sh.vork.security.controller;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -18,6 +19,8 @@ import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 
 import sh.vork.security.UserManagementService;
+import sh.vork.security.VorkUser;
+import sh.vork.setup.SetupService;
 
 @WebMvcTest(controllers = UserManagementController.class)
 @Import(UserManagementControllerSecurityTest.MethodSecurityConfig.class)
@@ -31,6 +34,9 @@ class UserManagementControllerSecurityTest {
 
     @MockBean
     private UserManagementService userManagementService;
+
+    @MockBean
+    private SetupService setupService;
 
     @Test
     void listUsers_forbiddenForUserWithoutUsersManage() throws Exception {
@@ -51,7 +57,11 @@ class UserManagementControllerSecurityTest {
     @Test
     @WithMockUser(username = "admin", authorities = {"ROLE_ADMIN", "USERS_MANAGE"})
     void createUser_allowedForUsersManageAuthority() throws Exception {
+        org.mockito.Mockito.when(userManagementService.createUser("bob", "password123", "USER"))
+            .thenReturn(new VorkUser("bob", "hash", "USER", true, 1L, 1L));
+
         mockMvc.perform(post("/api/users")
+                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"bob\",\"password\":\"password123\",\"role\":\"USER\"}"))
                 .andExpect(status().isOk());
@@ -61,6 +71,7 @@ class UserManagementControllerSecurityTest {
     @WithMockUser(username = "alice", authorities = {"ROLE_USER"})
     void createUser_forbiddenWithoutUsersManageAuthority() throws Exception {
         mockMvc.perform(post("/api/users")
+                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"bob\",\"password\":\"password123\",\"role\":\"USER\"}"))
                 .andExpect(status().isForbidden());

@@ -59,11 +59,6 @@ public class SecuredToolCallback implements ToolCallback {
         String toolName = delegate.getToolDefinition().name();
         String effectiveArguments = resolveArguments(arguments, toolContext);
 
-        if (!ruleEngine.isRolePermitted(toolName, username)) {
-            throw new AccessDeniedException(
-                "Current role does not have permission to execute tool: " + toolName);
-        }
-
         if (ruleEngine.requiresAuthorization(toolName, username, "pending-id")) {
             String reasoning = extractReasoning(toolContext);
             String displayArguments = formatForDisplay(effectiveArguments);
@@ -86,6 +81,11 @@ public class SecuredToolCallback implements ToolCallback {
                             new FormAction("ALWAYS", "Always Allow", "success"),
                             new FormAction("DENIED", "Deny", "danger")));
             throw new ToolSuspensionException(toolName, effectiveArguments, reasoning, formSchema);
+        }
+
+        if (!ruleEngine.isRolePermitted(toolName, username)) {
+            throw new AccessDeniedException(
+                "Current role does not have permission to execute tool: " + toolName);
         }
     }
 

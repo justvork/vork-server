@@ -10,6 +10,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
+import sh.vork.ai.security.LoggedToolCallback;
+
 /**
  * In-memory store of session-scoped {@link ToolCallback} instances.
  *
@@ -48,13 +50,16 @@ public class SessionToolStore {
      * @param callback    the tool callback to inject
      */
     public void addTool(String sessionUuid, ToolCallback callback) {
-        String toolName = callback.getToolDefinition().name();
+        ToolCallback effective = callback instanceof LoggedToolCallback
+                ? callback
+                : new LoggedToolCallback(callback);
+        String toolName = effective.getToolDefinition().name();
         store.compute(sessionUuid, (k, existing) -> {
             List<ToolCallback> list = (existing != null) ? existing : new ArrayList<>();
             boolean alreadyPresent = list.stream()
                     .anyMatch(t -> toolName.equals(t.getToolDefinition().name()));
             if (!alreadyPresent) {
-                list.add(callback);
+                list.add(effective);
             }
             return list;
         });

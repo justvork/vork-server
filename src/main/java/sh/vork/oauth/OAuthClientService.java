@@ -25,9 +25,9 @@ import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.function.OAuthConnectRequest;
 import sh.vork.ai.security.encrypt.EncryptionService;
-import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.RepositoryFactory;
 import sh.vork.orm.SearchQuery;
@@ -70,9 +70,15 @@ public class OAuthClientService {
         }
 
         String normalizedClientName = normalizeClientName(req.clientName());
+        String normalizedProfileName = normalizeProfileName(req.profileName());
         String userUuid = username;
-        OAuthClient existing = loadClient(userUuid, normalizedClientName);
-        OAuthClient merged = mergeConfig(existing, userUuid, normalizedClientName, req);
+        OAuthClient existing = selectClientForRequest(userUuid, normalizedClientName, normalizedProfileName);
+        boolean defaultProfile = existing != null
+            ? existing.isDefaultProfile()
+            : !hasAnyProfilesForClient(userUuid, normalizedClientName);
+
+        OAuthClient merged = mergeConfig(existing, userUuid, normalizedClientName,
+            normalizedProfileName, defaultProfile, req);
         if (merged != null) {
             clientRepository.save(merged);
             existing = merged;
@@ -81,7 +87,7 @@ public class OAuthClientService {
         String placeholderToken = accessTokenPlaceholder(normalizedClientName);
         String placeholder = "{{" + placeholderToken + "}}";
 
-        if (!req.isForceReconnect() && existing != null && hasUsableAccessToken(existing)) {
+        if (!req.isForceReconnect() && existing != null) {
             if (shouldRefresh(existing)) {
                 try {
                     existing = refreshAccessToken(existing);
@@ -94,10 +100,29 @@ public class OAuthClientService {
                 return Map.of(
                         "status", "ready",
                         "clientName", normalizedClientName,
+                    "profileName", existing.profileName(),
+                    "isDefaultProfile", existing.isDefaultProfile(),
                         "secretKey", placeholderToken,
                         "placeholder", placeholder,
                         "headerExample", "Authorization: Bearer " + placeholder);
             }
+        }
+
+        if (existing != null && log.isDebugEnabled()) {
+            long now = System.currentTimeMillis();
+            long expiresAt = existing.accessTokenExpiresAt();
+            boolean tokenPresent = notBlank(existing.accessTokenEncrypted());
+            boolean refreshPresent = notBlank(existing.refreshTokenEncrypted());
+            boolean tokenUsable = hasUsableAccessToken(existing);
+            log.debug("oauthConnect requires re-auth [user={}, client={}, profile={}]: tokenUsable={}, tokenPresent={}, refreshPresent={}, expiresAt={}, now={}",
+                    username,
+                    normalizedClientName,
+                    existing.profileName(),
+                    tokenUsable,
+                    tokenPresent,
+                    refreshPresent,
+                    expiresAt,
+                    now);
         }
 
         if (!isConnectConfigPresent(existing)) {
@@ -120,7 +145,10 @@ public class OAuthClientService {
                 state,
                 userUuid,
                 normalizedClientName,
-            aiSessionUuid,
+                normalizedProfileName,
+                defaultProfile,
+                null,
+                aiSessionUuid,
                 encryptionService.encrypt(codeVerifier),
                 existing.redirectUri(),
                 scopes,
@@ -130,6 +158,8 @@ public class OAuthClientService {
         return Map.of(
                 "status", "connect_required",
                 "clientName", normalizedClientName,
+                "profileName", existing.profileName(),
+                "isDefaultProfile", existing.isDefaultProfile(),
                 "secretKey", placeholderToken,
                 "placeholder", placeholder,
                 "authorizationUrl", authorizationUrl,
@@ -160,7 +190,8 @@ public class OAuthClientService {
 
         String normalizedClientName = connectSession.clientName();
 
-        OAuthClient client = loadClient(connectSession.userUuid(), normalizedClientName);
+        OAuthClient client = loadClient(connectSession.userUuid(),
+            normalizedClientName, connectSession.profileName());
         if (client == null) {
             return Map.of("status", "error", "message", "OAuth client config not found");
         }
@@ -183,6 +214,8 @@ public class OAuthClientService {
             return Map.of(
                     "status", "ok",
                     "clientName", normalizedClientName,
+                    "profileName", updated.profileName(),
+                    "isDefaultProfile", updated.isDefaultProfile(),
                     "sessionUuid", connectSession.aiSessionUuid() == null ? "" : connectSession.aiSessionUuid(),
                     "secretKey", accessTokenPlaceholder(normalizedClientName),
                     "placeholder", "{{" + accessTokenPlaceholder(normalizedClientName) + "}}");
@@ -202,13 +235,22 @@ public class OAuthClientService {
         }
 
         String normalizedClientName = normalizeClientName(clientName);
-        String clientUuid = clientUuid(username, normalizedClientName);
 
-        log.debug("ENTER resetClient: user={}, client={}, clientUuid={}", username, normalizedClientName, clientUuid);
+        log.debug("ENTER resetClient: user={}, client={}", username, normalizedClientName);
 
-        OAuthClient existing = clientRepository.get(clientUuid);
-        if (existing != null) {
-            clientRepository.delete(clientUuid);
+        int deletedClients = 0;
+        try (var clients = clientRepository.search(
+                0,
+                Integer.MAX_VALUE,
+                "updatedAt",
+                SortOrder.DESC,
+                SearchQuery.eq("userUuid", username),
+            SearchQuery.eq("clientName", normalizedClientName))) {
+            List<OAuthClient> existing = clients.toList();
+            for (OAuthClient client : existing) {
+                clientRepository.delete(client.uuid());
+                deletedClients++;
+            }
         }
 
         int deletedConnectSessions = 0;
@@ -226,15 +268,83 @@ public class OAuthClientService {
             }
         }
 
-        log.info("EXIT resetClient: user={}, client={}, deletedClient={}, deletedConnectSessions={}",
-                username, normalizedClientName, existing != null, deletedConnectSessions);
+            log.info("EXIT resetClient: user={}, client={}, deletedClients={}, deletedConnectSessions={}",
+                username, normalizedClientName, deletedClients, deletedConnectSessions);
 
         return Map.of(
                 "status", "ok",
                 "clientName", normalizedClientName,
-                "deletedClient", existing != null,
+            "deletedClient", deletedClients > 0,
+                "deletedClients", deletedClients,
                 "deletedConnectSessions", deletedConnectSessions,
                 "message", "OAuth client state cleared. Next oauthConnect call will start from a fresh configuration flow.");
+    }
+
+    public Map<String, Object> discoverProfiles(String username, String clientName) {
+        if (username == null || username.isBlank()) {
+            return Map.of("status", "error", "message", "Authenticated user is required");
+        }
+        if (clientName == null || clientName.isBlank()) {
+            return Map.of("status", "error", "message", "clientName is required");
+        }
+
+        String normalizedClientName = normalizeClientName(clientName);
+        List<OAuthClient> clients = listClients(username, normalizedClientName);
+
+        List<Map<String, Object>> profiles = clients.stream()
+                .sorted((a, b) -> {
+                    if (a.isDefaultProfile() == b.isDefaultProfile()) {
+                        return Long.compare(b.updatedAt(), a.updatedAt());
+                    }
+                    return a.isDefaultProfile() ? -1 : 1;
+                })
+                .map(c -> Map.<String, Object>of(
+                        "name", c.profileName(),
+                        "default", c.isDefaultProfile(),
+                        "connected", hasUsableAccessToken(c),
+                        "tokenExpired", c.accessTokenExpiresAt() > 0 && c.accessTokenExpiresAt() <= System.currentTimeMillis()))
+                .toList();
+
+        return Map.of(
+                "status", "ok",
+                "clientName", normalizedClientName,
+                "profiles", profiles,
+                "count", profiles.size());
+    }
+
+    public boolean deleteClientByUuidAsAdmin(String clientUuid) {
+        log.debug("ENTER deleteClientByUuidAsAdmin: clientUuid={}", clientUuid);
+        if (clientUuid == null || clientUuid.isBlank()) {
+            log.warn("EXIT deleteClientByUuidAsAdmin: missing clientUuid");
+            return false;
+        }
+
+        OAuthClient existing = clientRepository.get(clientUuid);
+        if (existing == null) {
+            log.warn("EXIT deleteClientByUuidAsAdmin: not found clientUuid={}", clientUuid);
+            return false;
+        }
+
+        clientRepository.delete(clientUuid);
+
+        int deletedConnectSessions = 0;
+        try (var sessions = connectSessionRepository.search(
+                0,
+                200,
+                "createdAt",
+                SortOrder.DESC,
+                SearchQuery.eq("userUuid", existing.userUuid()),
+            SearchQuery.eq("clientName", existing.clientName()))) {
+            List<OAuthConnectSession> pending = sessions.toList();
+            for (OAuthConnectSession session : pending) {
+                connectSessionRepository.delete(session.uuid());
+                deletedConnectSessions++;
+            }
+        }
+
+        log.info("EXIT deleteClientByUuidAsAdmin: clientUuid={}, userUuid={}, clientName={}, profileName={}, deletedConnectSessions={}",
+                clientUuid, existing.userUuid(), existing.clientName(), existing.profileName(), deletedConnectSessions);
+        return true;
     }
 
     public List<OAuthClientSummary> listConfiguredClients(String username) {
@@ -293,7 +403,7 @@ public class OAuthClientService {
             return null;
         }
 
-        OAuthClient client = loadClient(username, normalizedClientName);
+        OAuthClient client = selectClientForPlaceholder(username, normalizedClientName);
         if (client == null) {
             return null;
         }
@@ -405,6 +515,9 @@ public class OAuthClientService {
                 client.uuid(),
                 client.userUuid(),
                 client.clientName(),
+            client.profileName(),
+            client.isDefaultProfile(),
+            client.ownerSkillUuid(),
                 client.authorizeEndpoint(),
                 client.tokenEndpoint(),
                 client.clientIdEncrypted(),
@@ -419,13 +532,26 @@ public class OAuthClientService {
                 now);
     }
 
-    private OAuthClient loadClient(String userUuid, String normalizedClientName) {
-        return clientRepository.get(clientUuid(userUuid, normalizedClientName));
+    private OAuthClient loadClient(String userUuid,
+                                   String normalizedClientName,
+                                   String normalizedProfileName) {
+        try (var stream = clientRepository.search(
+                0,
+                1,
+                "updatedAt",
+                SortOrder.DESC,
+                SearchQuery.eq("userUuid", userUuid),
+                SearchQuery.eq("clientName", normalizedClientName),
+                SearchQuery.eq("profileName", normalizedProfileName))) {
+            return stream.findFirst().orElse(null);
+        }
     }
 
     private OAuthClient mergeConfig(OAuthClient existing,
                                     String userUuid,
                                     String normalizedClientName,
+                                    String normalizedProfileName,
+                                    boolean defaultProfile,
                                     OAuthConnectRequest req) {
         String requestedRedirectUri = sanitizeRedirectUri(req.redirectUri());
         boolean hasAnyConfigInput = notBlank(req.authorizeEndpoint())
@@ -465,9 +591,12 @@ public class OAuthClientService {
             : existing != null ? existing.authorizationParams() : Map.of();
 
         return new OAuthClient(
-                existing != null ? existing.uuid() : clientUuid(userUuid, normalizedClientName),
+            existing != null ? existing.uuid() : clientUuid(userUuid, normalizedClientName, normalizedProfileName),
                 userUuid,
                 normalizedClientName,
+            existing != null ? existing.profileName() : normalizedProfileName,
+            existing != null ? existing.isDefaultProfile() : defaultProfile,
+            existing != null ? existing.ownerSkillUuid() : null,
                 authorizeEndpoint,
                 tokenEndpoint,
                 clientIdEncrypted,
@@ -508,6 +637,62 @@ public class OAuthClientService {
 
     private static boolean notBlank(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private static String normalizeProfileName(String raw) {
+        String normalized = normalizeClientName(raw);
+        return normalized == null || normalized.isBlank() ? "default" : normalized;
+    }
+
+    private List<OAuthClient> listClients(String userUuid, String normalizedClientName) {
+        try (var stream = clientRepository.search(
+                0,
+                Integer.MAX_VALUE,
+                "updatedAt",
+                SortOrder.DESC,
+                SearchQuery.eq("userUuid", userUuid),
+                SearchQuery.eq("clientName", normalizedClientName))) {
+            return stream.toList();
+        }
+    }
+
+    private boolean hasAnyProfilesForClient(String userUuid, String normalizedClientName) {
+        return !listClients(userUuid, normalizedClientName).isEmpty();
+    }
+
+    private OAuthClient selectClientForRequest(String userUuid,
+                                               String normalizedClientName,
+                                               String normalizedProfileName) {
+        OAuthClient exact = loadClient(userUuid, normalizedClientName, normalizedProfileName);
+        if (exact != null) {
+            return exact;
+        }
+        List<OAuthClient> candidates = listClients(userUuid, normalizedClientName);
+        if (candidates.size() == 1) {
+            return candidates.getFirst();
+        }
+        for (OAuthClient c : candidates) {
+            if (c.isDefaultProfile()) {
+                return c;
+            }
+        }
+        return null;
+    }
+
+    private OAuthClient selectClientForPlaceholder(String userUuid, String normalizedClientName) {
+        List<OAuthClient> candidates = listClients(userUuid, normalizedClientName);
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        if (candidates.size() == 1) {
+            return candidates.getFirst();
+        }
+        for (OAuthClient c : candidates) {
+            if (c.isDefaultProfile()) {
+                return c;
+            }
+        }
+        return candidates.getFirst();
     }
 
     private static String sanitizeRedirectUri(String redirectUri) {
@@ -646,8 +831,10 @@ public class OAuthClientService {
         return n;
     }
 
-    private static String clientUuid(String userUuid, String normalizedClientName) {
-        return UUID.nameUUIDFromBytes((userUuid + ":oauth:" + normalizedClientName)
+    private static String clientUuid(String userUuid,
+                                     String normalizedClientName,
+                                     String normalizedProfileName) {
+        return UUID.nameUUIDFromBytes((userUuid + ":oauth:" + normalizedClientName + ":" + normalizedProfileName)
                 .getBytes(StandardCharsets.UTF_8)).toString();
     }
 
@@ -704,6 +891,9 @@ public class OAuthClientService {
         return new OAuthClientSummary(
                 client.uuid(),
                 client.clientName(),
+            client.profileName(),
+            client.isDefaultProfile(),
+            client.ownerSkillUuid(),
                 client.authorizeEndpoint(),
                 client.tokenEndpoint(),
                 client.redirectUri(),
@@ -724,6 +914,9 @@ public class OAuthClientService {
     public record OAuthClientSummary(
             String uuid,
             String clientName,
+            String profileName,
+            boolean defaultProfile,
+            String ownerSkillUuid,
             String authorizeEndpoint,
             String tokenEndpoint,
             String redirectUri,

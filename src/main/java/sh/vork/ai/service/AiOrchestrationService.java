@@ -494,7 +494,10 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 + "3. If SKILL DIRECTIVES specify an output format, textResponse MUST follow it exactly.\n"
                 + "4. Do not end a turn without either using a tool or returning FINISHED_TURN with a result.\n"
                 + "5. Mid-turn commentary: call the think tool first, then immediately invoke your next action tool. "
-                +    "Never emit a bare status message without following it with a tool call in the same turn.";
+                +    "Never emit a bare status message without following it with a tool call in the same turn.\n"
+                + "6. For data-retrieval tasks, an empty result set is still a valid final result. "
+                +    "If a query returns zero items, return FINISHED_TURN with that empty result and do NOT repeat the same query "
+                +    "unless the directives explicitly request a broadened or changed search.";
 
         private static final String AVAILABLE_TOOL_DETAILS_CONTEXT_KEY = "__available_tool_details__";
 
@@ -514,32 +517,28 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         if (session.skillStack() != null && !session.skillStack().isEmpty()) {
                                 sh.vork.skill.SkillFrame topFrame = session.skillStack().getLast();
                                 String skillPrompt = topFrame.instructions();
+                                sh.vork.skill.Skill frameSkill = skillRepo.get(topFrame.skillUuid());
+                                skillPrompt = normalizeLegacySkillToolNames(skillPrompt, frameSkill, session);
 
                                 prompt.append("\n\n").append(SKILL_OPERATIONAL_PROTOCOL);
 
                                 if (skillPrompt != null && !skillPrompt.isBlank()) {
                                         prompt.append("\n\n### SKILL DIRECTIVES\n").append(skillPrompt);
                                 }
+
+                                appendActiveSkillInputParameters(prompt, frameSkill, topFrame);
                                 // List sub-skill tools explicitly so the model knows the exact names to call.
                                 // Without this, lite models don't discover sub-skills from function declarations alone.
-                                sh.vork.skill.Skill frameSkill = skillRepo.get(topFrame.skillUuid());
-                                List<sh.vork.skill.Skill> subSkills = resolveEffectiveSubSkills(frameSkill);
+                                List<sh.vork.skill.Skill> subSkills = resolveEffectiveSubSkills(
+                                        frameSkill,
+                                        activeSkillStackUuids(session));
                                 if (!subSkills.isEmpty()) {
                                         if (!subSkills.isEmpty()) {
                                                 prompt.append("\n\n### AVAILABLE SUB-SKILLS\n");
                                                 prompt.append("The following sub-skills are available as tools. ");
                                                 prompt.append("Call them by their tool name — do NOT use executeSkill.\n\n");
                                                 for (sh.vork.skill.Skill sub : subSkills) {
-                                                        prompt.append("- `").append(sub.toolName()).append("`");
-                                                        if (!sub.description().isBlank())
-                                                                prompt.append(": ").append(sub.description());
-                                                        if (!sub.parameters().isEmpty()) {
-                                                                prompt.append(" | Parameters: ");
-                                                                prompt.append(sub.parameters().stream()
-                                                                        .map(p -> p.name() + "(" + p.type() + ")")
-                                                                        .collect(Collectors.joining(", ")));
-                                                        }
-                                                        prompt.append("\n");
+                                                        appendSkillCatalogEntry(prompt, sub);
                                                 }
                                         }
                                 }
@@ -563,6 +562,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
 
                                 // Append skill-specific mandate: FINISHED_TURN is the only exit signal.
                                 appendEnvironmentVariables(prompt, sessionUuid);
+                                appendSkillInputInferenceGuidance(prompt, session);
                                 appendAvailableToolsSection(prompt);
                                 prompt.append(buildResponseMandate(true, false, false, false));
                                 return logAndReturn(prompt, sessionUuid, "SKILL");
@@ -612,10 +612,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                                 prompt.append("Tool visibility is attachment-based: only call tools that are available in this turn ");
                                                 prompt.append("(directly attached to this agent/session, or exposed by the active skill frame):\n\n");
                                                 for (sh.vork.skill.Skill s : skills) {
-                                                        prompt.append("- `").append(s.toolName()).append("`");
-                                                        if (!s.description().isBlank())
-                                                                prompt.append(": ").append(s.description());
-                                                        prompt.append("\n");
+                                                        appendSkillCatalogEntry(prompt, s);
                                                 }
                                         }
                                 }
@@ -637,16 +634,14 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                                 prompt.append("(directly attached to this agent/session, or exposed by the active skill frame):\n\n");
                                         }
                                         for (sh.vork.skill.Skill s : sessionSkills) {
-                                                prompt.append("- `").append(s.toolName()).append("`");
-                                                if (!s.description().isBlank())
-                                                        prompt.append(": ").append(s.description());
-                                                prompt.append("\n");
+                                                appendSkillCatalogEntry(prompt, s);
                                         }
                                 }
                         }
                 }
 
                 appendEnvironmentVariables(prompt, sessionUuid);
+                appendSkillInputInferenceGuidance(prompt, session);
 
                 // Mandate structured output — scope of valid statuses depends on agent capability.
                 appendAvailableToolsSection(prompt);
@@ -746,6 +741,20 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         .map(t -> t.getToolDefinition().name())
                         .collect(Collectors.toCollection(java.util.HashSet::new));
 
+                // oauthConnect frequently expects profile discovery in the same turn.
+                // Ensure discovery is always callable whenever oauthConnect is exposed,
+                // even when agent/skill filtering omitted it.
+                if (presentNames.contains("oauthConnect") && !presentNames.contains("oauthDiscoverProfiles")) {
+                        ToolCallback discoverProfiles = securedToolCallbackMap.get("oauthDiscoverProfiles");
+                        if (discoverProfiles != null) {
+                                merged.add(discoverProfiles);
+                                presentNames.add("oauthDiscoverProfiles");
+                                log.debug("Auto-injected oauthDiscoverProfiles because oauthConnect is available [session={}]", sessionUuid);
+                        } else {
+                                log.warn("oauthConnect is available but oauthDiscoverProfiles callback is missing from secured map [session={}]", sessionUuid);
+                        }
+                }
+
                 // Inject skill tools and concierge tools only when NOT inside a skill frame.
                 if (!inSkillFrame) {
                         // Inject each assigned skill as its own ToolCallback so the AI sees
@@ -757,12 +766,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                         sessionForSkillCheck.getActiveAgentTemplateId());
                                 if (tpl != null && tpl.skillUuids() != null && !tpl.skillUuids().isEmpty()) {
                                         int injected = 0;
-                                        for (String skillUuid : tpl.skillUuids()) {
-                                                sh.vork.skill.Skill skill = skillRepo.get(skillUuid);
-                                                if (skill == null) {
-                                                        log.warn("Agent skill UUID not found in DB — skipping [skillUuid={}]", skillUuid);
-                                                        continue;
-                                                }
+                                        for (sh.vork.skill.Skill skill : expandRootSkillsWithEffectiveSubs(tpl.skillUuids())) {
                                                 ToolCallback skillTool = skillToolCallbackFactory.create(skill);
                                                 String toolName = skillTool.getToolDefinition().name();
                                                 if (presentNames.add(toolName)) {
@@ -770,7 +774,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                                         injected++;
                                                 } else {
                                                         log.warn("Skill tool name collision — skipping [toolName={}, skillUuid={}]",
-                                                                toolName, skillUuid);
+                                                                toolName, skill.uuid());
                                                 }
                                         }
                                         log.debug("Agent skill tools injected [session={}, agent={}, count={}]",
@@ -786,12 +790,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 ? sessionForSkillCheck.sessionSkillUuids() : List.of();
                         if (sessionSkillUuids != null && !sessionSkillUuids.isEmpty()) {
                                 int sessionInjected = 0;
-                                for (String skillUuid : sessionSkillUuids) {
-                                        sh.vork.skill.Skill skill = skillRepo.get(skillUuid);
-                                        if (skill == null) {
-                                                log.warn("Session skill UUID not found in DB — skipping [skillUuid={}]", skillUuid);
-                                                continue;
-                                        }
+                                for (sh.vork.skill.Skill skill : expandRootSkillsWithEffectiveSubs(sessionSkillUuids)) {
                                         ToolCallback skillTool = skillToolCallbackFactory.create(skill);
                                         String toolName = skillTool.getToolDefinition().name();
                                         if (presentNames.add(toolName)) {
@@ -964,7 +963,9 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         }
                         // Inject sub-skill tools from the skill's subSkillUuids
                         sh.vork.skill.Skill frameSkill = skillRepo.get(topFrame.skillUuid());
-                        List<sh.vork.skill.Skill> subSkills = resolveEffectiveSubSkills(frameSkill);
+                        List<sh.vork.skill.Skill> subSkills = resolveEffectiveSubSkills(
+                                frameSkill,
+                                activeSkillStackUuids(session));
                         if (!subSkills.isEmpty()) {
                                 java.util.Set<String> frameNames = frameTools.stream()
                                         .map(t -> t.getToolDefinition().name())
@@ -1020,10 +1021,21 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
 
                 toolNames = expandWithToolDependencies(toolNames);
 
-                ToolCallback[] result = toolNames.stream()
-                        .map(securedToolCallbackMap::get)
-                        .filter(Objects::nonNull)
-                        .toArray(ToolCallback[]::new);
+                List<String> unresolved = new ArrayList<>();
+                List<ToolCallback> resolved = new ArrayList<>();
+                for (String name : toolNames) {
+                        ToolCallback cb = securedToolCallbackMap.get(name);
+                        if (cb != null) {
+                                resolved.add(cb);
+                        } else {
+                                unresolved.add(name);
+                        }
+                }
+                ToolCallback[] result = resolved.toArray(ToolCallback[]::new);
+
+                if (!unresolved.isEmpty()) {
+                        log.warn("Agent tool filtering has unresolved tools [agent={}, unresolved={}]", agentId, unresolved);
+                }
 
                 log.debug("Tool filtering active [agent={}, allowedTools={}, resolved={}]",
                         agentId, template.allowedTools().size(), result.length);
@@ -1047,16 +1059,41 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 return expandWithToolDependencies(List.copyOf(requested));
         }
 
+        private Set<String> activeSkillStackUuids(AiSession session) {
+                if (session == null || session.skillStack() == null || session.skillStack().isEmpty()) {
+                        return Set.of();
+                }
+                LinkedHashSet<String> uuids = new LinkedHashSet<>();
+                session.skillStack().stream()
+                        .map(sh.vork.skill.SkillFrame::skillUuid)
+                        .filter(Objects::nonNull)
+                        .forEach(uuids::add);
+                return uuids;
+        }
+
         private List<sh.vork.skill.Skill> resolveEffectiveSubSkills(sh.vork.skill.Skill frameSkill) {
+                return resolveEffectiveSubSkills(frameSkill, Set.of());
+        }
+
+        private List<sh.vork.skill.Skill> resolveEffectiveSubSkills(
+                sh.vork.skill.Skill frameSkill,
+                Set<String> excludedSkillUuids) {
                 if (frameSkill == null) {
                         return List.of();
                 }
 
+                LinkedHashSet<String> excluded = new LinkedHashSet<>(
+                        excludedSkillUuids == null ? Set.of() : excludedSkillUuids);
+                excluded.add(frameSkill.uuid());
+
                 LinkedHashMap<String, sh.vork.skill.Skill> resolved = new LinkedHashMap<>();
                 if (frameSkill.subSkillUuids() != null) {
                         for (String subUuid : frameSkill.subSkillUuids()) {
+                                if (excluded.contains(subUuid)) {
+                                        continue;
+                                }
                                 sh.vork.skill.Skill sub = skillRepo.get(subUuid);
-                                if (sub != null) {
+                                if (sub != null && !excluded.contains(sub.uuid())) {
                                         resolved.put(sub.uuid(), sub);
                                 }
                         }
@@ -1065,13 +1102,37 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 if (frameSkill.groupUuid() != null && !frameSkill.groupUuid().isBlank()) {
                         try (var stream = skillRepo.list(0, Integer.MAX_VALUE)) {
                                 stream.filter(s -> frameSkill.groupUuid().equals(s.groupUuid()))
-                                        .filter(s -> !s.uuid().equals(frameSkill.uuid()))
-                                        .filter(sh.vork.skill.Skill::autoShareWithinGroup)
+                                        // Auto-share only PRIVATE sibling skills from the same group.
+                                        // PUBLIC skills must be explicitly linked via subSkillUuids.
+                                        .filter(s -> s.visibility() == sh.vork.skill.SkillVisibility.PRIVATE)
+                                        .filter(s -> !excluded.contains(s.uuid()))
                                         .forEach(s -> resolved.putIfAbsent(s.uuid(), s));
                         }
                 }
 
                 return List.copyOf(resolved.values());
+        }
+
+        private List<sh.vork.skill.Skill> expandRootSkillsWithEffectiveSubs(List<String> rootSkillUuids) {
+                if (rootSkillUuids == null || rootSkillUuids.isEmpty()) {
+                        return List.of();
+                }
+
+                LinkedHashMap<String, sh.vork.skill.Skill> expanded = new LinkedHashMap<>();
+                for (String rootUuid : rootSkillUuids) {
+                        sh.vork.skill.Skill root = skillRepo.get(rootUuid);
+                        if (root == null) {
+                                log.warn("Assigned skill UUID not found in DB — skipping [skillUuid={}]", rootUuid);
+                                continue;
+                        }
+                        expanded.put(root.uuid(), root);
+                        for (sh.vork.skill.Skill sub : resolveEffectiveSubSkills(root)) {
+                                if (sub != null) {
+                                        expanded.putIfAbsent(sub.uuid(), sub);
+                                }
+                        }
+                }
+                return List.copyOf(expanded.values());
         }
 
         /**
@@ -1148,24 +1209,24 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                         }
                                 }
 
-                                // Skill wrappers assigned at template level
+                                // Skill wrappers assigned at template level, including effective private dependencies.
                                 if (skillRepo != null && template.skillUuids() != null) {
-                                        for (String skillUuid : template.skillUuids()) {
-                                                sh.vork.skill.Skill s = skillRepo.get(skillUuid);
-                                                if (s != null && s.toolName() != null && !s.toolName().isBlank()) {
-                                                        names.add(s.toolName());
+                                        for (sh.vork.skill.Skill s : expandRootSkillsWithEffectiveSubs(template.skillUuids())) {
+                                                String resolvedName = resolveSkillToolName(s);
+                                                if (resolvedName != null && !resolvedName.isBlank()) {
+                                                        names.add(resolvedName);
                                                 }
                                         }
                                 }
                         }
                 }
 
-                // Session-level skill wrappers
+                // Session-level skill wrappers, including effective private dependencies.
                 if (skillRepo != null && session.sessionSkillUuids() != null) {
-                        for (String skillUuid : session.sessionSkillUuids()) {
-                                sh.vork.skill.Skill s = skillRepo.get(skillUuid);
-                                if (s != null && s.toolName() != null && !s.toolName().isBlank()) {
-                                        names.add(s.toolName());
+                        for (sh.vork.skill.Skill s : expandRootSkillsWithEffectiveSubs(session.sessionSkillUuids())) {
+                                String resolvedName = resolveSkillToolName(s);
+                                if (resolvedName != null && !resolvedName.isBlank()) {
+                                        names.add(resolvedName);
                                 }
                         }
                 }
@@ -1181,6 +1242,66 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 names.add("getDateTime");
 
                 return Set.copyOf(names);
+        }
+
+        /**
+         * Resolves a dynamically-injected callback (skill/session-scoped tool) for a session.
+         * Returns {@code null} when the tool is not visible for the current session context.
+         */
+        public ToolCallback resolveDynamicToolCallbackForSession(String sessionUuid, String toolName) {
+                if (sessionUuid == null || sessionUuid.isBlank() || toolName == null || toolName.isBlank()) {
+                        return null;
+                }
+
+                AiSession session = sessionRepo.get(sessionUuid);
+                if (session == null) {
+                        return null;
+                }
+
+                // Session-scoped tools first (e.g. completeBackgroundTask).
+                for (ToolCallback callback : sessionToolStore.getTools(sessionUuid)) {
+                        if (toolName.equals(callback.getToolDefinition().name())) {
+                                return callback;
+                        }
+                }
+
+                // Skill-frame context: dynamic sub-skill tools are visible.
+                if (session.skillStack() != null && !session.skillStack().isEmpty()) {
+                        sh.vork.skill.SkillFrame topFrame = session.skillStack().getLast();
+                        sh.vork.skill.Skill frameSkill = skillRepo.get(topFrame.skillUuid());
+                        for (sh.vork.skill.Skill sub : resolveEffectiveSubSkills(
+                                frameSkill,
+                                activeSkillStackUuids(session))) {
+                                if (sub == null) continue;
+                                ToolCallback callback = skillToolCallbackFactory.create(sub);
+                                if (toolName.equals(callback.getToolDefinition().name())) {
+                                        return callback;
+                                }
+                        }
+                        return null;
+                }
+
+                // Parent-agent context: root attached skills + effective sub-skills are visible.
+                LinkedHashSet<String> roots = new LinkedHashSet<>();
+                if (session.getActiveAgentTemplateId() != null) {
+                        AgentTemplate template = agentTemplateRepo.get(session.getActiveAgentTemplateId());
+                        if (template != null && template.skillUuids() != null) {
+                                roots.addAll(template.skillUuids());
+                        }
+                }
+                if (session.sessionSkillUuids() != null) {
+                        roots.addAll(session.sessionSkillUuids());
+                }
+
+                for (sh.vork.skill.Skill skill : expandRootSkillsWithEffectiveSubs(List.copyOf(roots))) {
+                        if (skill == null) continue;
+                        ToolCallback callback = skillToolCallbackFactory.create(skill);
+                        if (toolName.equals(callback.getToolDefinition().name())) {
+                                return callback;
+                        }
+                }
+
+                return null;
         }
 
         private void appendEnvironmentVariables(StringBuilder prompt, String sessionUuid) {
@@ -1200,6 +1321,212 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 .append(expectedOutput).append("\n")
                                 .append("You MUST produce this output before invoking completeBackgroundTask. ")
                                 .append("Your report field MUST explicitly confirm whether this requirement was met.\n");
+                }
+        }
+
+        private void appendSkillCatalogEntry(StringBuilder prompt, sh.vork.skill.Skill skill) {
+                if (skill == null) {
+                        return;
+                }
+
+                prompt.append("- `").append(resolveSkillToolName(skill)).append("`");
+                if (!skill.description().isBlank()) {
+                        prompt.append(": ").append(skill.description());
+                }
+                prompt.append("\n");
+
+                if (skill.parameters() == null || skill.parameters().isEmpty()) {
+                        return;
+                }
+
+                List<sh.vork.skill.SkillParameter> aiRequired = skill.parameters().stream()
+                        .filter(Objects::nonNull)
+                        .filter(p -> !p.isSecret())
+                        .filter(p -> p.inputMode() == sh.vork.skill.SkillParameterInputMode.AI_REQUIRED)
+                        .toList();
+
+                List<sh.vork.skill.SkillParameter> aiOptional = skill.parameters().stream()
+                        .filter(Objects::nonNull)
+                        .filter(p -> !p.isSecret())
+                        .filter(p -> p.inputMode() == sh.vork.skill.SkillParameterInputMode.AI_OPTIONAL)
+                        .toList();
+
+                if (aiRequired.isEmpty() && aiOptional.isEmpty()) {
+                        return;
+                }
+
+                prompt.append("\n  Input Parameters:\n");
+                if (!aiRequired.isEmpty()) {
+                        prompt.append("\n  Required by you (infer these values from the LATEST user message in this turn; you MUST provide values):\n\n");
+                        for (sh.vork.skill.SkillParameter parameter : aiRequired) {
+                                prompt.append("  ").append(parameter.name()).append(" | ")
+                                        .append(describeSkillParameter(parameter)).append("\n");
+                        }
+                }
+
+                if (!aiOptional.isEmpty()) {
+                        prompt.append("\n  Optional Parameters you may provide:\n\n");
+                        for (sh.vork.skill.SkillParameter parameter : aiOptional) {
+                                prompt.append("  ").append(parameter.name()).append(" | ")
+                                        .append(describeSkillParameter(parameter)).append("\n");
+                        }
+                }
+
+                prompt.append("\n");
+        }
+
+        private void appendSkillInputInferenceGuidance(StringBuilder prompt, AiSession session) {
+                if (prompt == null || session == null || !hasVisibleAiRequiredSkillInput(session)) {
+                        return;
+                }
+
+                prompt.append("\n\n### SKILL INPUT INFERENCE RULES\n");
+                prompt.append("IMPORTANT: Do NOT reuse required values from previous turns unless the latest user message explicitly asks to keep the same window/filters.\n");
+                prompt.append("IMPORTANT: For relative dates (e.g. tomorrow, next week, next month), resolve them from the latest user message and current date/time, not from prior tool outputs.\n");
+        }
+
+        private boolean hasVisibleAiRequiredSkillInput(AiSession session) {
+                if (session == null) {
+                        return false;
+                }
+
+                LinkedHashMap<String, sh.vork.skill.Skill> visibleSkills = new LinkedHashMap<>();
+
+                if (session.skillStack() != null && !session.skillStack().isEmpty()) {
+                        sh.vork.skill.SkillFrame topFrame = session.skillStack().getLast();
+                        sh.vork.skill.Skill frameSkill = skillRepo.get(topFrame.skillUuid());
+                        if (frameSkill != null) {
+                                visibleSkills.put(frameSkill.uuid(), frameSkill);
+                                for (sh.vork.skill.Skill sub : resolveEffectiveSubSkills(
+                                        frameSkill,
+                                        activeSkillStackUuids(session))) {
+                                        if (sub != null) {
+                                                visibleSkills.putIfAbsent(sub.uuid(), sub);
+                                        }
+                                }
+                        }
+                } else {
+                        LinkedHashSet<String> rootSkillUuids = new LinkedHashSet<>();
+                        if (session.getActiveAgentTemplateId() != null && !session.getActiveAgentTemplateId().isBlank()) {
+                                AgentTemplate template = agentTemplateRepo.get(session.getActiveAgentTemplateId());
+                                if (template != null && template.skillUuids() != null) {
+                                        rootSkillUuids.addAll(template.skillUuids());
+                                }
+                        }
+                        if (session.sessionSkillUuids() != null) {
+                                rootSkillUuids.addAll(session.sessionSkillUuids());
+                        }
+
+                        for (sh.vork.skill.Skill skill : expandRootSkillsWithEffectiveSubs(List.copyOf(rootSkillUuids))) {
+                                if (skill != null) {
+                                        visibleSkills.putIfAbsent(skill.uuid(), skill);
+                                }
+                        }
+                }
+
+                return visibleSkills.values().stream()
+                        .filter(Objects::nonNull)
+                        .anyMatch(skill -> skill.parameters() != null
+                                && skill.parameters().stream()
+                                        .filter(Objects::nonNull)
+                                        .anyMatch(parameter -> !parameter.isSecret()
+                                                && parameter.inputMode() == sh.vork.skill.SkillParameterInputMode.AI_REQUIRED));
+        }
+
+        private String describeSkillParameter(sh.vork.skill.SkillParameter parameter) {
+                if (parameter.description() != null && !parameter.description().isBlank()) {
+                        return parameter.description();
+                }
+                return "Expected type: " + parameter.type();
+        }
+
+        private String resolveSkillToolName(sh.vork.skill.Skill skill) {
+                if (skill == null) {
+                        return "";
+                }
+                return skillToolCallbackFactory.create(skill).getToolDefinition().name();
+        }
+
+        private String normalizeLegacySkillToolNames(String skillPrompt,
+                                                     sh.vork.skill.Skill frameSkill,
+                                                     AiSession session) {
+                if (skillPrompt == null || skillPrompt.isBlank() || frameSkill == null) {
+                        return skillPrompt;
+                }
+
+                String normalized = skillPrompt;
+                List<sh.vork.skill.Skill> allSkills = new ArrayList<>();
+                allSkills.add(frameSkill);
+                allSkills.addAll(resolveEffectiveSubSkills(frameSkill, activeSkillStackUuids(session)));
+
+                for (sh.vork.skill.Skill skill : allSkills) {
+                        if (skill == null) {
+                                continue;
+                        }
+                        String legacy = skill.toolName();
+                        String resolved = resolveSkillToolName(skill);
+                        if (legacy == null || legacy.isBlank() || resolved == null || resolved.isBlank()) {
+                                continue;
+                        }
+                        if (!legacy.equals(resolved)) {
+                                normalized = normalized.replace(legacy, resolved);
+                        }
+                }
+
+                return normalized;
+        }
+
+        private void appendActiveSkillInputParameters(StringBuilder prompt,
+                                                      sh.vork.skill.Skill frameSkill,
+                                                      sh.vork.skill.SkillFrame topFrame) {
+                if (frameSkill == null || topFrame == null) {
+                        return;
+                }
+
+                Map<String, String> values = topFrame.params() == null ? Map.of() : topFrame.params();
+                if (frameSkill.parameters() == null || frameSkill.parameters().isEmpty()) {
+                        return;
+                }
+
+                prompt.append("\n\n### ACTIVE SKILL INPUT PARAMETERS\n");
+                prompt.append("These values are authoritative for this skill invocation. ");
+                prompt.append("Infer missing AI-required values from the current user request/context, then use them consistently in downstream tool calls.\n\n");
+
+                List<String> missingRequired = new ArrayList<>();
+                for (sh.vork.skill.SkillParameter parameter : frameSkill.parameters()) {
+                        if (parameter == null || parameter.isSecret()) {
+                                continue;
+                        }
+
+                        String value = values.get(parameter.name());
+                        boolean required = parameter.inputMode() == sh.vork.skill.SkillParameterInputMode.AI_REQUIRED;
+                        boolean missing = value == null || value.isBlank();
+
+                        if (required && missing) {
+                                missingRequired.add(parameter.name());
+                        }
+
+                        prompt.append("- ").append(parameter.name())
+                                .append(" [")
+                                .append(required ? "AI_REQUIRED" : "AI_OPTIONAL")
+                                .append("]: ");
+                        if (missing) {
+                                prompt.append("<missing>");
+                        } else {
+                                prompt.append(value);
+                        }
+                        if (parameter.description() != null && !parameter.description().isBlank()) {
+                                prompt.append(" | ").append(parameter.description());
+                        }
+                        prompt.append("\n");
+                }
+
+                if (!missingRequired.isEmpty()) {
+                        prompt.append("\nRequired parameters currently missing: ")
+                                .append(String.join(", ", missingRequired))
+                                .append(". Infer these from the user's request before issuing dependent tool calls.\n");
+                } else {
+                        prompt.append("\nAll AI_REQUIRED parameters are present. Use them exactly as request constraints.\n");
                 }
         }
 

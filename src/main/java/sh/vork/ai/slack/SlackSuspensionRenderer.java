@@ -20,14 +20,12 @@ import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.protocol.interaction.FormAction;
 import sh.vork.ai.protocol.interaction.FormField;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
-import sh.vork.ai.telegram.InputFormTokenService;
 import sh.vork.ai.telegram.TelegramChatResumptionService;
 import sh.vork.notification.slack.SlackApiClient;
 import sh.vork.relay.RelayEncryptionService;
 import sh.vork.relay.RelayHttpClient;
 import sh.vork.relay.lib.model.RelaySubmission;
 import sh.vork.setup.SystemSettingsService;
-import sh.vork.web.RequestOriginContext;
 
 /**
  * Decides how to render a {@link ToolSuspensionException} prompt for a Slack DM user
@@ -40,7 +38,7 @@ import sh.vork.web.RequestOriginContext;
  *   <li><b>SINGLE_TEXT</b> – exactly one visible, non-password text field: sends a plain
  *       prompt asking the user to type the value.</li>
  *   <li><b>WEB_FORM</b> – password field or multiple visible fields: sends a link to
- *       the self-hosted {@code /input-form} endpoint, or to the zero-knowledge relay.</li>
+ *       the zero-knowledge relay. Channel flows intentionally use relay for complex forms.</li>
  * </ul>
  */
 @Service
@@ -51,7 +49,6 @@ public class SlackSuspensionRenderer {
     private static final Logger log = LoggerFactory.getLogger(SlackSuspensionRenderer.class);
 
     private final SlackApiClient                slackApiClient;
-    private final InputFormTokenService         formTokenService;
     private final SystemSettingsService         systemSettingsService;
     private final RelayEncryptionService        relayEncryption;
     private final RelayHttpClient               relayHttpClient;
@@ -63,7 +60,6 @@ public class SlackSuspensionRenderer {
     private String configuredRelayHost;
 
     public SlackSuspensionRenderer(SlackApiClient slackApiClient,
-                                    InputFormTokenService formTokenService,
                                     SystemSettingsService systemSettingsService,
                                     RelayEncryptionService relayEncryption,
                                     RelayHttpClient relayHttpClient,
@@ -71,7 +67,6 @@ public class SlackSuspensionRenderer {
                                     DatabaseRepository<AiSession> sessionRepo,
                                     ObjectMapper objectMapper) {
         this.slackApiClient     = slackApiClient;
-        this.formTokenService   = formTokenService;
         this.systemSettingsService = systemSettingsService;
         this.relayEncryption    = relayEncryption;
         this.relayHttpClient    = relayHttpClient;
@@ -189,29 +184,9 @@ public class SlackSuspensionRenderer {
 
     private void renderWebForm(String channelId, String botToken, AiSession session,
                                 UiEventFrame promptEvent, String title, String description) {
-        String requestBaseUrl = resolveRequestBaseUrl(session);
-        if (requestBaseUrl != null) {
-            renderWebFormSelfHosted(channelId, botToken, session, promptEvent,
-                    title, description, requestBaseUrl);
-        } else {
-            renderWebFormRelay(channelId, botToken, session, promptEvent, title, description);
-        }
-    }
-
-    private void renderWebFormSelfHosted(String channelId, String botToken, AiSession session,
-                                          UiEventFrame promptEvent, String title, String description,
-                                          String baseUrl) {
-        String token = formTokenService.generateToken(
-                session.uuid(), promptEvent.eventId(), session.username());
-        String url = baseUrl + "/input-form/" + session.uuid() + "/" + promptEvent.eventId()
-                + "?token=" + token;
-        StringBuilder sb = new StringBuilder();
-        if (!title.isBlank()) sb.append("*").append(title).append("*\n");
-        if (!description.isBlank()) sb.append(description).append("\n");
-        sb.append("\n🔗 Please complete the form: ").append(url);
-        slackApiClient.sendMessage(botToken, channelId, sb.toString().trim());
-        log.debug("Self-hosted form URL sent to Slack [session={}, event={}]",
+        log.debug("Rendering Slack WEB_FORM via relay (channel complex-form policy) [session={}, event={}]",
                 session.uuid(), promptEvent.eventId());
+        renderWebFormRelay(channelId, botToken, session, promptEvent, title, description);
     }
 
     private void renderWebFormRelay(String channelId, String botToken, AiSession session,
@@ -395,20 +370,6 @@ public class SlackSuspensionRenderer {
                     log.warn("Could not parse PROMPT_REQUIRED content [session={}]: {}",
                             session.uuid(), e.getMessage());
                 }
-            }
-        }
-        return null;
-    }
-
-    private String resolveRequestBaseUrl(AiSession session) {
-        String fromCurrentRequest = RequestOriginContext.resolveBaseUrlFromCurrentRequest();
-        if (fromCurrentRequest != null && !fromCurrentRequest.isBlank()) {
-            return trimTrailingSlash(fromCurrentRequest);
-        }
-        if (session != null && session.environmentVariables() != null) {
-            String fromSessionEnv = session.environmentVariables().get("__request_base_url__");
-            if (fromSessionEnv != null && !fromSessionEnv.isBlank()) {
-                return trimTrailingSlash(fromSessionEnv);
             }
         }
         return null;

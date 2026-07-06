@@ -27,6 +27,8 @@ import sh.vork.scheduling.domain.InvocationType;
 import sh.vork.scheduling.domain.ScheduledJob;
 import sh.vork.scheduling.domain.ScheduledJobStatus;
 import sh.vork.scheduling.service.AiSchedulerService;
+import sh.vork.skill.Skill;
+import sh.vork.skill.SkillVisibility;
 
 /**
  * Page and REST API controller for the Jobs management UI.
@@ -42,13 +44,16 @@ public class JobsController {
     private final AiSchedulerService schedulerService;
     private final DatabaseRepository<ScheduledJob> jobRepository;
     private final DatabaseRepository<AiSession> sessionRepository;
+    private final DatabaseRepository<Skill> skillRepository;
 
     public JobsController(AiSchedulerService schedulerService,
                           DatabaseRepository<ScheduledJob> jobRepository,
-                          DatabaseRepository<AiSession> sessionRepository) {
+                          DatabaseRepository<AiSession> sessionRepository,
+                          DatabaseRepository<Skill> skillRepository) {
         this.schedulerService = schedulerService;
         this.jobRepository = jobRepository;
         this.sessionRepository = sessionRepository;
+        this.skillRepository = skillRepository;
     }
 
     // ── Page ──────────────────────────────────────────────────────────────────
@@ -80,6 +85,8 @@ public class JobsController {
         log.debug("ENTER createJob: [user={}, name={}]", user.getUsername(), req.name());
         String err = validateRequest(req);
         if (err != null) return ResponseEntity.badRequest().body(Map.of("error", err));
+        String skillErr = validateAssignableSkillUuids(req.skillUuids());
+        if (skillErr != null) return ResponseEntity.badRequest().body(Map.of("error", skillErr));
 
         ScheduledJob job = new ScheduledJob(
                 null,
@@ -122,6 +129,8 @@ public class JobsController {
 
         String err = validateRequest(req);
         if (err != null) return ResponseEntity.badRequest().body(Map.of("error", err));
+        String skillErr = validateAssignableSkillUuids(req.skillUuids());
+        if (skillErr != null) return ResponseEntity.badRequest().body(Map.of("error", skillErr));
 
         ScheduledJob updated = new ScheduledJob(
                 id,
@@ -255,6 +264,22 @@ public class JobsController {
         } catch (Exception e) {
             return Instant.now();
         }
+    }
+
+    private String validateAssignableSkillUuids(List<String> skillUuids) {
+        if (skillUuids == null || skillUuids.isEmpty()) {
+            return null;
+        }
+        for (String skillUuid : skillUuids) {
+            Skill skill = skillRepository.get(skillUuid);
+            if (skill == null) {
+                return "Unknown skill UUID: " + skillUuid;
+            }
+            if (skill.visibility() == SkillVisibility.PRIVATE) {
+                return "Private skill cannot be attached to jobs: " + skill.name();
+            }
+        }
+        return null;
     }
 
     // ── Request DTO ───────────────────────────────────────────────────────────

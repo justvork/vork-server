@@ -76,7 +76,11 @@ Skills package behaviours into reusable building blocks.
 
 They can call REST APIs, execute Java code, use OAuth providers, query records, invoke other skills and interact with users while respecting security boundaries.
 
-Skills are intended to be shared.
+Skills are shared within their group by default.
+
+Only public skills are visible and assignable to end users.
+
+Private skills remain internal building blocks for skill composition.
 
 Some will be written by the Vork community.
 

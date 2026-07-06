@@ -142,7 +142,11 @@ class BackgroundOrchestrationEngineTest {
                     new ObjectMapper().findAndRegisterModules(),
                     List.<ToolCallback>of(),
                     null,
-                    Runnable::run);
+                    Runnable::run,
+                    null,
+                    null,
+                    null,
+                    null);
             this.sessionRepo = sessionRepo;
             this.context = context;
             this.mode = mode;

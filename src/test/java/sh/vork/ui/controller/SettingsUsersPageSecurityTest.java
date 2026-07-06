@@ -2,8 +2,11 @@ package sh.vork.ui.controller;
 
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.model;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.view;
 
@@ -21,6 +24,7 @@ import sh.vork.ai.provider.AiModelService;
 import sh.vork.ai.registry.ToolRegistry;
 import sh.vork.oauth.OAuthClientService;
 import sh.vork.security.UserManagementService;
+import sh.vork.setup.SetupService;
 import sh.vork.setup.SystemSettingsService;
 import sh.vork.ui.SettingsPageRegistry;
 
@@ -51,6 +55,9 @@ class SettingsUsersPageSecurityTest {
     private OAuthClientService oauthClientService;
 
     @MockBean
+    private SetupService setupService;
+
+    @MockBean
     private UserManagementService userManagementService;
 
     @Test
@@ -70,5 +77,24 @@ class SettingsUsersPageSecurityTest {
                 .andExpect(status().isOk())
                 .andExpect(view().name("settings/users"))
                 .andExpect(model().attributeExists("users"));
+    }
+
+    @Test
+    void deleteOauthClient_forbiddenWithoutUsersManage() throws Exception {
+        mockMvc.perform(post("/settings/oauth-clients/client-123/delete")
+                        .with(csrf())
+                        .with(user("alice").authorities(() -> "ROLE_USER")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void deleteOauthClient_allowedWithUsersManage() throws Exception {
+        when(oauthClientService.deleteClientByUuidAsAdmin("client-123")).thenReturn(true);
+
+        mockMvc.perform(post("/settings/oauth-clients/client-123/delete")
+                        .with(csrf())
+                        .with(user("admin").authorities(() -> "ROLE_ADMIN", () -> "USERS_MANAGE")))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(flash().attribute("oauthClientDeleteMessage", "OAuth client deleted."));
     }
 }

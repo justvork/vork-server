@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 
 /**
@@ -49,8 +50,9 @@ public class SkillController {
 
     @GetMapping("/api/skills")
     @ResponseBody
-    public ResponseEntity<?> listSkills() {
-        return ResponseEntity.ok(skillService.list());
+    public ResponseEntity<?> listSkills(@RequestParam(name = "includePrivate", defaultValue = "false") boolean includePrivate) {
+        boolean allowPrivate = includePrivate && canViewPrivateSkills();
+        return ResponseEntity.ok(skillService.listVisible(allowPrivate));
     }
 
     @GetMapping("/api/skills/{uuid}")
@@ -230,4 +232,13 @@ public class SkillController {
     }
 
     public record SkillGroupView(SkillGroup group, List<Skill> skills) {}
+
+    private static boolean canViewPrivateSkills() {
+        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getAuthorities() == null) {
+            return false;
+        }
+        return auth.getAuthorities().stream()
+                .anyMatch(a -> "SKILLS_WRITE".equals(a.getAuthority()));
+    }
 }

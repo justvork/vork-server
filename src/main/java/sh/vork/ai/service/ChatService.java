@@ -13,6 +13,8 @@ import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
+import javax.crypto.SecretKey;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -24,7 +26,9 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.content.Media;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.security.core.context.SecurityContext;
@@ -49,11 +53,20 @@ import sh.vork.ai.exception.ToolSuspensionException;
 import sh.vork.ai.lifecycle.AgentTemplateSeeder;
 import sh.vork.ai.protocol.StructuredAgentResponse;
 import sh.vork.ai.protocol.UiEventFrame;
+import sh.vork.ai.protocol.interaction.FieldSource;
+import sh.vork.ai.protocol.interaction.FormAction;
+import sh.vork.ai.protocol.interaction.FormField;
+import sh.vork.ai.protocol.interaction.InteractionFormSchema;
+import sh.vork.ai.telegram.TelegramChatResumptionService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.SearchQuery;
 import sh.vork.orm.SortOrder;
+import sh.vork.relay.RelayEncryptionService;
+import sh.vork.relay.RelayHttpClient;
+import sh.vork.relay.lib.model.RelaySubmission;
 import sh.vork.scheduling.service.SystemBackgroundAuthentication;
 import sh.vork.scheduling.service.SystemNotificationService;
+import sh.vork.setup.SystemSettingsService;
 import sh.vork.storage.FileStorageService;
 import sh.vork.storage.StoredFile;
 
@@ -70,6 +83,9 @@ import sh.vork.storage.StoredFile;
 public class ChatService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatService.class);
+    private static final String DEFAULT_RELAY_BASE_URL = "https://relay.vork.sh";
+    private static final String WEB_INPUT_RELAY_ENABLED_ENV = "WEB_INPUT_RELAY_ENABLED";
+    private static final String TOGGLE_INPUT_RELAY_TOOL = "toggleInputRelay";
 
     private final DatabaseRepository<AiSession>     sessionRepo;
     private final DatabaseRepository<AgentTemplate> agentTemplateRepo;
@@ -79,6 +95,13 @@ public class ChatService {
     private final ObjectMapper                  objectMapper;
     private final SystemNotificationService     systemNotificationService;
     private final Executor                      aiBackgroundExecutor;
+    private final RelayEncryptionService        relayEncryptionService;
+    private final RelayHttpClient               relayHttpClient;
+    private final SystemSettingsService         systemSettingsService;
+    private final TelegramChatResumptionService telegramChatResumptionService;
+
+    @Value("${vork.app.base-url:}")
+    private String configuredRelayHost;
 
     private static final String DEFAULT_SESSION_NAME = "Untitled";
 
@@ -91,7 +114,11 @@ public class ChatService {
                        ObjectMapper objectMapper,
                        List<ToolCallback> toolCallbacks,
                        SystemNotificationService systemNotificationService,
-                       @Qualifier("aiBackgroundExecutor") Executor aiBackgroundExecutor) {
+                       @Qualifier("aiBackgroundExecutor") Executor aiBackgroundExecutor,
+                       RelayEncryptionService relayEncryptionService,
+                       RelayHttpClient relayHttpClient,
+                       SystemSettingsService systemSettingsService,
+                       @Lazy TelegramChatResumptionService telegramChatResumptionService) {
         this.sessionRepo = aiSessionRepository;
         this.agentTemplateRepo = agentTemplateRepository;
         this.aiService = aiOrchestrationService;
@@ -100,6 +127,10 @@ public class ChatService {
         this.objectMapper = objectMapper;
         this.systemNotificationService = systemNotificationService;
         this.aiBackgroundExecutor = aiBackgroundExecutor;
+        this.relayEncryptionService = relayEncryptionService;
+        this.relayHttpClient = relayHttpClient;
+        this.systemSettingsService = systemSettingsService;
+        this.telegramChatResumptionService = telegramChatResumptionService;
     }
 
     /**
@@ -117,6 +148,7 @@ public class ChatService {
             if (!username.equals(existing.username())) {
                 throw new IllegalStateException("Access denied for session: " + httpSessionId);
             }
+            existing = ensureWebSessionToggleTool(existing);
             log.debug("Resuming HTTP session-bound AI session [id={}, messages={}]",
                 existing.uuid(), existing.messages().size());
             return existing;
@@ -126,7 +158,7 @@ public class ChatService {
         AiSession session = new AiSession(httpSessionId, provider.name(), SessionOriginMode.WEB,
             username, DEFAULT_SESSION_NAME, System.currentTimeMillis(), 0, List.of(),
             AiSession.defaultEnvironmentVariables(), AiSessionStatus.RUNNING,
-            AgentTemplateSeeder.UUID_CONCIERGE, modelId, null, null, null);
+            AgentTemplateSeeder.UUID_CONCIERGE, modelId, null, null, defaultWebSessionToolIds());
         sessionRepo.save(session);
         log.info("Created HTTP session-bound AI session [id={}, provider={}, model={}, user={}]",
             httpSessionId, provider, modelId, username);
@@ -143,7 +175,7 @@ public class ChatService {
         AiSession session = new AiSession(uuid, provider.name(), SessionOriginMode.WEB,
             username, DEFAULT_SESSION_NAME, System.currentTimeMillis(), 0, List.of(),
             AiSession.defaultEnvironmentVariables(), AiSessionStatus.RUNNING,
-            AgentTemplateSeeder.UUID_CONCIERGE, modelId, null, null, null);
+            AgentTemplateSeeder.UUID_CONCIERGE, modelId, null, null, defaultWebSessionToolIds());
         sessionRepo.save(session);
         log.info("Created AI session [id={}, provider={}, model={}, user={}]", uuid, provider, modelId, username);
         return session;
@@ -205,7 +237,7 @@ public class ChatService {
         if (!username.equals(session.username())) {
             throw new IllegalStateException("Access denied for session: " + sessionUuid);
         }
-        return session;
+        return ensureWebSessionToggleTool(session);
     }
 
     public List<AiSession> listSessionsForCurrentUser() {
@@ -383,9 +415,10 @@ public class ChatService {
             UiEventFrame promptEvent = new UiEventFrame(
                 eventId,
                 "PROMPT_REQUIRED",
-                "AUTHORIZE_TOOL",
+                resolvePromptIntent(ex.getFormSchema()),
                 justification,
                 ex.getFormSchema());
+            promptEvent = maybeRelayWrapPromptEvent(session, promptEvent);
 
             String promptJson;
             try {
@@ -567,9 +600,10 @@ public class ChatService {
                 UiEventFrame promptEvent = new UiEventFrame(
                         eventId,
                         "PROMPT_REQUIRED",
-                        "AUTHORIZE_TOOL",
+                    resolvePromptIntent(ex.getFormSchema()),
                         justification,
                         ex.getFormSchema());
+                promptEvent = maybeRelayWrapPromptEvent(session, promptEvent);
 
                 String promptJson;
                 try {
@@ -674,21 +708,25 @@ public class ChatService {
                 rawResponse = (i == 0 && !media.isEmpty())
                         ? safeGenerateWithHistoryAndMedia(history, currentPrompt, media, provider)
                         : safeGenerateWithHistory(history, currentPrompt, provider);
+                log.debug("Agent loop raw response [session={}, iteration={}, response={}]",
+                    sessionUuid, i, rawResponse);
             } catch (sh.vork.skill.SkillActivatedException ex) {
                 log.info("Skill activated in agent loop [session={}, skill={}, uuid={}]",
                         sessionUuid, ex.getSkillName(), ex.getSkillUuid());
                 String skillOutput = executeSkillSubLoop(sessionUuid, history, ex, provider);
-                String skillResultMsg = "Skill '" + ex.getSkillName() + "' completed. Output: " + skillOutput;
+                String normalizedSkillOutput = extractTextResponse(skillOutput);
+                log.debug("Agent loop skill output [session={}, skill={}, output={}]",
+                    sessionUuid, ex.getSkillName(), normalizedSkillOutput);
+                String skillResultMsg = "Skill '" + ex.getSkillName() + "' completed. Output: " + normalizedSkillOutput;
                 history.add(new AssistantMessage(skillResultMsg));
                 transitionMsgs.add(new AiChatMessage(UUID.randomUUID().toString(), "ASSISTANT",
                         skillResultMsg, System.currentTimeMillis(), null));
-                currentPrompt = "The skill completed successfully. Continue based on the output above.";
+                currentPrompt = skillResultMsg;
                 continue;
             }
 
             StructuredAgentResponse structured = parseStructuredResponse(rawResponse);
-            log.debug("Agent loop response [session={}, status={}, iteration={}]",
-                    sessionUuid, structured.status(), i);
+            log.debug("Agent loop response [session={}, status={}, iteration={}]",                    sessionUuid, structured.status(), i);
 
             if ("CONTINUE_TURN".equals(structured.status())) {
                 String progressText = structured.textResponse() != null && !structured.textResponse().isBlank()
@@ -1032,6 +1070,11 @@ public class ChatService {
         int skillCompleteDepth = (sessionAtStart != null && sessionAtStart.skillStack() != null)
                 ? sessionAtStart.skillStack().size() - 1 : 0;
 
+        // Prevent nested-skill thrashing within the same parent skill turn.
+        // If the model repeatedly calls the same nested skill UUID, reuse the first
+        // result and force continuation with explicit instructions.
+        Map<String, String> nestedSkillResultCache = new HashMap<>();
+
         // Skills are sandboxed executions. Use an empty history so prior conversation turns
         // (including results from previous skill runs on the same targets) cannot bleed into
         // the skill sub-loop and cause the model to recycle stale data instead of running
@@ -1051,7 +1094,50 @@ public class ChatService {
             String rawResponse;
             try {
                 rawResponse = safeGenerateWithHistory(skillHistory, currentPrompt, provider);
+                log.debug("Skill sub-loop raw response [session={}, skill={}, iteration={}, response={}]",
+                        sessionUuid, ex.getSkillName(), i, rawResponse);
             } catch (sh.vork.skill.SkillActivatedException nestedEx) {
+                String nestedSkillUuid = nestedEx.getSkillUuid();
+                String nestedSkillName = nestedEx.getSkillName();
+                String nestedSkillKey = nestedSkillCacheKey(nestedSkillUuid, nestedSkillName);
+                if (nestedSkillKey != null && nestedSkillResultCache.containsKey(nestedSkillKey)) {
+                    String cachedResult = nestedSkillResultCache.get(nestedSkillKey);
+                    log.warn("Nested skill re-invoked in same parent loop — reusing cached result [session={}, outer={}, inner={}, cacheKey={}, cachedMeta={}]",
+                        sessionUuid,
+                        ex.getSkillName(),
+                        nestedEx.getSkillName(),
+                        nestedSkillKey,
+                        summarizeCachedSkillResult(cachedResult));
+
+                    // executeSkill already pushed this nested frame before throwing.
+                    // Because we are short-circuiting recursion, we must pop the frame here
+                    // to keep the skill stack consistent for the parent loop.
+                    AiSession current = sessionRepo.get(sessionUuid);
+                    if (current != null && current.skillStack() != null && !current.skillStack().isEmpty()) {
+                    sh.vork.skill.SkillFrame top = current.skillStack().getLast();
+                    if (nestedSkillUuid.equals(top.skillUuid())) {
+                        List<sh.vork.skill.SkillFrame> poppedStack = new ArrayList<>(current.skillStack());
+                        poppedStack.removeLast();
+                        sessionRepo.save(new AiSession(
+                            current.uuid(), current.provider(), current.originMode(),
+                            current.username(), current.name(), current.createdAt(),
+                            current.currentRoundCount(), current.messages(),
+                            current.environmentVariables(), current.status(),
+                            current.activeAgentTemplateId(), current.modelId(),
+                            List.copyOf(poppedStack), current.sessionSkillUuids(), current.sessionToolIds()));
+                        log.debug("Popped duplicate nested skill frame after cache hit [session={}, skill={}]",
+                            sessionUuid, nestedEx.getSkillName());
+                    }
+                    }
+
+                    skillHistory.add(new AssistantMessage(
+                            "Skill '" + nestedEx.getSkillName() + "' result (cached): " + cachedResult));
+                    currentPrompt = "The nested skill '" + nestedEx.getSkillName() + "' already completed in this turn and returned: "
+                            + cachedResult
+                            + ". Do NOT call that skill again. Continue with the remaining steps now (e.g. execute any required httpRequest using that result).";
+                    continue;
+                }
+
                 // A sub-skill was invoked from within this skill sub-loop.
                 // Check depth before recursing so we can't blow the call stack.
                 AiSession depthCheck = sessionRepo.get(sessionUuid);
@@ -1082,9 +1168,19 @@ public class ChatService {
                 log.debug("Nested skill activated — entering recursive sub-loop [session={}, outer={}, inner={}, depth={}]",
                         sessionUuid, ex.getSkillName(), nestedEx.getSkillName(), currentDepth);
                 String nestedResult = executeSkillSubLoop(sessionUuid, skillHistory, nestedEx, provider);
+                cacheNestedSkillResult(nestedSkillResultCache, nestedSkillUuid, nestedSkillName, nestedResult);
+                log.debug("Nested skill result cached [session={}, outer={}, inner={}, cacheKeyUuid={}, cacheKeyName={}, resultMeta={}]",
+                    sessionUuid,
+                    ex.getSkillName(),
+                    nestedEx.getSkillName(),
+                    nestedSkillCacheKey(nestedSkillUuid, null),
+                    nestedSkillCacheKey(null, nestedSkillName),
+                    summarizeCachedSkillResult(nestedResult));
                 skillHistory.add(new AssistantMessage(
                         "Skill '" + nestedEx.getSkillName() + "' result: " + nestedResult));
-                currentPrompt = "The nested skill completed. Continue with your task.";
+                currentPrompt = "The nested skill '" + nestedEx.getSkillName() + "' completed with result: "
+                    + nestedResult
+                    + ". Continue with the next required steps now and do not re-run that same nested skill unless it explicitly failed.";
                 continue;
             }
 
@@ -1101,6 +1197,8 @@ public class ChatService {
                 String output = storedOutput != null ? storedOutput.toString() : rawResponse;
                 log.info("Skill sub-loop complete via tool call (legacy) [session={}, skill={}, iterations={}]",
                         sessionUuid, ex.getSkillName(), i + 1);
+                log.debug("Skill sub-loop legacy output [session={}, skill={}, output={}]",
+                    sessionUuid, ex.getSkillName(), output);
                 broadcastAndPersistSkillEvent(sessionUuid, "Skill completed: " + ex.getSkillName());
                 return output;
             }
@@ -1125,6 +1223,8 @@ public class ChatService {
                 }
                 log.info("Skill sub-loop complete via FINISHED_TURN [session={}, skill={}, iterations={}, outputLength={}]",
                         sessionUuid, ex.getSkillName(), i + 1, output.length());
+                log.debug("Skill sub-loop FINISHED_TURN output [session={}, skill={}, output={}]",
+                    sessionUuid, ex.getSkillName(), output);
                 broadcastAndPersistSkillEvent(sessionUuid, "Skill completed: " + ex.getSkillName());
                 return output;
             }
@@ -1132,16 +1232,88 @@ public class ChatService {
             // Anything else: treat as finished
             String result = structured.textResponse() != null && !structured.textResponse().isBlank()
                     ? structured.textResponse() : rawResponse;
+            popSkillFrameIfPresent(sessionUuid, ex.getSkillUuid());
             log.info("Skill sub-loop finished (unrecognised status={}) [session={}, skill={}, iterations={}]",
                     structured.status(), sessionUuid, ex.getSkillName(), i + 1);
+                log.debug("Skill sub-loop terminal result [session={}, skill={}, status={}, result={}]",
+                    sessionUuid, ex.getSkillName(), structured.status(), result);
             broadcastAndPersistSkillEvent(sessionUuid, "Skill completed: " + ex.getSkillName());
             return result;
         }
 
-        log.warn("Skill sub-loop exhausted max iterations [session={}, skill={}, max={}]",
-                sessionUuid, ex.getSkillName(), MAX_SKILL_ITERATIONS);
+        popSkillFrameIfPresent(sessionUuid, ex.getSkillUuid());
+        AiSession timeoutSession = sessionRepo.get(sessionUuid);
+        Map<String, String> activeParams = Map.of();
+        if (timeoutSession != null && timeoutSession.skillStack() != null && !timeoutSession.skillStack().isEmpty()) {
+            sh.vork.skill.SkillFrame top = timeoutSession.skillStack().getLast();
+            if (top != null && top.params() != null) {
+                activeParams = top.params();
+            }
+        }
+        log.warn("Skill sub-loop exhausted max iterations [session={}, skill={}, max={}, activeParams={}, nestedCacheKeys={}]",
+                sessionUuid,
+                ex.getSkillName(),
+                MAX_SKILL_ITERATIONS,
+                activeParams,
+                nestedSkillResultCache.keySet());
         broadcastAndPersistSkillEvent(sessionUuid, "Skill timed out: " + ex.getSkillName());
         return "Skill '" + ex.getSkillName() + "' execution timed out.";
+    }
+
+    private void popSkillFrameIfPresent(String sessionUuid, String expectedSkillUuid) {
+        AiSession current = sessionRepo.get(sessionUuid);
+        if (current == null || current.skillStack() == null || current.skillStack().isEmpty()) {
+            return;
+        }
+
+        sh.vork.skill.SkillFrame top = current.skillStack().getLast();
+        if (expectedSkillUuid != null && !expectedSkillUuid.isBlank() && !expectedSkillUuid.equals(top.skillUuid())) {
+            return;
+        }
+
+        List<sh.vork.skill.SkillFrame> poppedStack = new ArrayList<>(current.skillStack());
+        poppedStack.removeLast();
+        sessionRepo.save(new AiSession(
+                current.uuid(), current.provider(), current.originMode(),
+                current.username(), current.name(), current.createdAt(),
+                current.currentRoundCount(), current.messages(),
+                current.environmentVariables(), current.status(),
+                current.activeAgentTemplateId(), current.modelId(),
+                List.copyOf(poppedStack), current.sessionSkillUuids(), current.sessionToolIds()));
+        log.debug("Popped skill frame on terminal path [session={}, skill={}]", sessionUuid, top.skillName());
+    }
+
+    private static String nestedSkillCacheKey(String skillUuid, String skillName) {
+        if (skillUuid != null && !skillUuid.isBlank()) {
+            return "uuid:" + skillUuid;
+        }
+        if (skillName != null && !skillName.isBlank()) {
+            return "name:" + skillName.trim().toLowerCase();
+        }
+        return null;
+    }
+
+    private static void cacheNestedSkillResult(Map<String, String> cache,
+                                               String skillUuid,
+                                               String skillName,
+                                               String result) {
+        String byUuid = nestedSkillCacheKey(skillUuid, null);
+        if (byUuid != null) {
+            cache.putIfAbsent(byUuid, result);
+        }
+        String byName = nestedSkillCacheKey(null, skillName);
+        if (byName != null) {
+            cache.putIfAbsent(byName, result);
+        }
+    }
+
+    private static String summarizeCachedSkillResult(String result) {
+        if (result == null) {
+            return "null";
+        }
+        int length = result.length();
+        String hash = Integer.toHexString(result.hashCode());
+        return "len=" + length + ",hash=" + hash;
     }
 
     private String applyAgentSwitch(String sessionUuid, String agentTemplateId) {
@@ -1150,14 +1322,18 @@ public class ChatService {
             log.warn("applyAgentSwitch: session not found [session={}]", sessionUuid);
             return null;
         }
+        AiSessionStatus nextStatus = session.status() == AiSessionStatus.AWAITING_INPUT
+            ? AiSessionStatus.RUNNING
+            : session.status();
         sessionRepo.save(new AiSession(session.uuid(), session.provider(), session.originMode(),
                 session.username(), session.name(), session.createdAt(), session.currentRoundCount(),
-                session.messages(), session.environmentVariables(), session.status(), agentTemplateId,
+            session.messages(), session.environmentVariables(), nextStatus, agentTemplateId,
                 session.modelId(), session.skillStack(), session.sessionSkillUuids(), session.sessionToolIds()));
         UiEventFrame switchEvent = new UiEventFrame(UUID.randomUUID().toString(),
-                "AGENT_SWITCH", "AGENT_SWITCH", agentTemplateId, null);
+            "MANUAL_AGENT_SWITCH", "MANUAL_AGENT_SWITCH", agentTemplateId, null);
         messaging.convertAndSend("/topic/chat/" + sessionUuid, switchEvent);
-        log.info("Active agent switched [session={}, newAgentId={}]", sessionUuid, agentTemplateId);
+        log.info("Active agent switched [session={}, newAgentId={}, previousStatus={}, newStatus={}]",
+            sessionUuid, agentTemplateId, session.status(), nextStatus);
         return agentTemplateId;
     }
 
@@ -1267,8 +1443,8 @@ public class ChatService {
             }
             return parsed;
         } catch (Exception e) {
-            log.warn("Failed to parse StructuredAgentResponse, treating as FINISHED_TURN [preview={}]",
-                    rawResponse.length() > 200 ? rawResponse.substring(0, 200) : rawResponse);
+            log.warn("Failed to parse StructuredAgentResponse, treating as FINISHED_TURN [rawResponse={}]",
+                    rawResponse);
             return new StructuredAgentResponse("FINISHED_TURN", rawResponse, null, null);
         }
     }
@@ -1350,6 +1526,298 @@ public class ChatService {
             return "Approval is required to compile and register a new Java type so it can be used in later steps.";
         }
         return "Approval is required to run this protected action so your request can continue safely.";
+    }
+
+    private static String resolvePromptIntent(InteractionFormSchema schema) {
+        if (schema != null && schema.intent() != null && !schema.intent().isBlank()) {
+            return schema.intent();
+        }
+        return "AUTHORIZE_TOOL";
+    }
+
+    private AiSession ensureWebSessionToggleTool(AiSession session) {
+        if (session == null || session.originMode() != SessionOriginMode.WEB) {
+            return session;
+        }
+        List<String> tools = session.sessionToolIds() == null
+                ? new ArrayList<>()
+                : new ArrayList<>(session.sessionToolIds());
+        if (tools.contains(TOGGLE_INPUT_RELAY_TOOL)) {
+            return session;
+        }
+        tools.add(TOGGLE_INPUT_RELAY_TOOL);
+        AiSession updated = new AiSession(
+                session.uuid(),
+                session.provider(),
+                session.originMode(),
+                session.username(),
+                session.name(),
+                session.createdAt(),
+                session.currentRoundCount(),
+                session.messages(),
+                session.environmentVariables(),
+                session.status(),
+                session.activeAgentTemplateId(),
+                session.modelId(),
+                session.skillStack(),
+                session.sessionSkillUuids(),
+                List.copyOf(tools));
+        sessionRepo.save(updated);
+        return updated;
+    }
+
+    private static List<String> defaultWebSessionToolIds() {
+        return List.of(TOGGLE_INPUT_RELAY_TOOL);
+    }
+
+    private UiEventFrame maybeRelayWrapPromptEvent(AiSession session, UiEventFrame promptEvent) {
+        if (session == null
+                || promptEvent == null
+                || session.originMode() != SessionOriginMode.WEB
+                || !isWebInputRelayEnabled(session)
+                || promptEvent.formSchema() == null) {
+            return promptEvent;
+        }
+
+        String relaySessionId = promptEvent.eventId();
+        String relayBaseUrl = resolveRelayBaseUrl();
+        RelayEncryptionService.EncryptionResult encrypted;
+        try {
+            String schemaJson = objectMapper.writeValueAsString(promptEvent.formSchema());
+            encrypted = relayEncryptionService.encrypt(schemaJson);
+            int timeoutMins = systemSettingsService.getDefaultOobTimeoutMinutes();
+            relayHttpClient.upload(relayBaseUrl, relaySessionId,
+                    encrypted.ciphertext(), encrypted.nonce(), encrypted.authTag(), timeoutMins);
+        } catch (Exception ex) {
+            log.warn("Web relay wrapping failed; falling back to inline prompt [session={}, event={}]: {}",
+                    session.uuid(), relaySessionId, ex.getMessage());
+            return promptEvent;
+        }
+
+        String authUrl = relayBaseUrl + "/auth/" + relaySessionId + "#k=" + encrypted.keyBase64Url();
+        InteractionFormSchema relaySchema = new InteractionFormSchema(
+                "OAUTH_AUTHORIZE_OUT_OF_BAND",
+                "Secure Relay Input",
+                "Complete the secure form in a separate tab. This chat resumes automatically when submitted.",
+                List.of(
+                        new FormField("authorizationUrl", "HIDDEN", "authorizationUrl", authUrl,
+                                false, FieldSource.CONVERSATION, List.of()),
+                        new FormField("relayUrl", "MARKDOWN", "Relay URL", "```\n" + authUrl + "\n```",
+                                false, FieldSource.CONVERSATION, List.of())),
+                List.of(
+                        new FormAction("OPEN_RELAY", "Open Secure Form", "primary"),
+                        new FormAction("DENIED", "Cancel", "danger")));
+
+        UiEventFrame wrapped = new UiEventFrame(
+                promptEvent.eventId(),
+            promptEvent.type(),
+                "OAUTH_AUTHORIZE_OUT_OF_BAND",
+                promptEvent.textResponse(),
+                relaySchema);
+
+        SecretKey key = encrypted.key();
+        Thread.ofVirtual().name("web-relay-poll-" + relaySessionId).start(() ->
+                pollAndResumeWebRelay(relayBaseUrl, relaySessionId, key, session.username(), session.uuid()));
+
+        log.info("Web relay prompt dispatched [session={}, event={}]", session.uuid(), relaySessionId);
+        return wrapped;
+    }
+
+    private boolean isWebInputRelayEnabled(AiSession session) {
+        if (session == null || session.environmentVariables() == null) {
+            return false;
+        }
+        String value = session.environmentVariables().get(WEB_INPUT_RELAY_ENABLED_ENV);
+        return value != null && Boolean.parseBoolean(value.trim());
+    }
+
+    private void pollAndResumeWebRelay(String relayBaseUrl, String relaySessionId,
+                                       SecretKey key, String username, String sessionUuid) {
+        int consecutiveErrors = 0;
+        while (true) {
+            AiSession current = sessionRepo.get(sessionUuid);
+            if (current == null || current.status() != AiSessionStatus.AWAITING_INPUT) {
+                return;
+            }
+            UiEventFrame latestPrompt = findLatestPromptEvent(current);
+            if (latestPrompt == null || !relaySessionId.equals(latestPrompt.eventId())) {
+                return;
+            }
+
+            RelaySubmission submission;
+            try {
+                submission = relayHttpClient.pollForResponse(relayBaseUrl, relaySessionId, 25_000);
+                consecutiveErrors = 0;
+            } catch (Exception ex) {
+                consecutiveErrors++;
+                log.warn("Web relay poll error [session={}, event={}, attempt={}]: {}",
+                        sessionUuid, relaySessionId, consecutiveErrors, ex.getMessage());
+                if (consecutiveErrors >= 5) {
+                    messaging.convertAndSend("/topic/chat/" + sessionUuid,
+                            new UiEventFrame(UUID.randomUUID().toString(), "ERROR", "ERROR",
+                                    "Relay connection failed. Please try again.", null));
+                    return;
+                }
+                continue;
+            }
+
+            if (submission == null) {
+                continue;
+            }
+
+            String responseJson;
+            try {
+                responseJson = relayEncryptionService.decrypt(
+                        key, submission.encryptedResponse(), submission.nonce(), submission.authTag());
+            } catch (Exception ex) {
+                log.error("Failed to decrypt web relay response [session={}, event={}]: {}",
+                        sessionUuid, relaySessionId, ex.getMessage(), ex);
+                messaging.convertAndSend("/topic/chat/" + sessionUuid,
+                        new UiEventFrame(UUID.randomUUID().toString(), "ERROR", "ERROR",
+                                "Could not decrypt relay response.", null));
+                return;
+            }
+
+            String action;
+            Map<String, String> fields;
+            try {
+                Map<String, Object> responseMap = objectMapper.readValue(responseJson,
+                        new TypeReference<Map<String, Object>>() {});
+                action = String.valueOf(responseMap.getOrDefault("action", "ONCE"));
+                @SuppressWarnings("unchecked")
+                Map<String, Object> rawFields =
+                        (Map<String, Object>) responseMap.getOrDefault("fields", Map.of());
+                fields = new HashMap<>();
+                rawFields.forEach((k, v) -> fields.put(k, v == null ? "" : String.valueOf(v)));
+            } catch (Exception ex) {
+                log.error("Failed to parse web relay response [session={}, event={}]: {}",
+                        sessionUuid, relaySessionId, ex.getMessage(), ex);
+                messaging.convertAndSend("/topic/chat/" + sessionUuid,
+                        new UiEventFrame(UUID.randomUUID().toString(), "ERROR", "ERROR",
+                                "Invalid relay response payload.", null));
+                return;
+            }
+
+            try {
+                String result = telegramChatResumptionService.resumeAndRun(
+                        username, sessionUuid, relaySessionId, action, fields);
+                if (result != null && !result.isBlank()) {
+                    messaging.convertAndSend("/topic/chat/" + sessionUuid,
+                            new UiEventFrame(UUID.randomUUID().toString(), "TEXT_RESPONSE", "CHAT_OUTPUT",
+                                    result, null));
+                }
+            } catch (ToolSuspensionException ex) {
+                AiSession fresh = sessionRepo.get(sessionUuid);
+                if (fresh == null) {
+                    return;
+                }
+                UiEventFrame nextPrompt = findLatestPromptEvent(fresh);
+                if (nextPrompt == null) {
+                    return;
+                }
+                UiEventFrame wrappedNextPrompt = maybeRelayWrapPromptEvent(fresh, nextPrompt);
+                persistLatestPromptEvent(fresh, wrappedNextPrompt);
+                messaging.convertAndSend("/topic/chat/" + sessionUuid, wrappedNextPrompt);
+            } catch (Exception ex) {
+                log.error("Web relay resume failed [session={}, event={}]: {}",
+                        sessionUuid, relaySessionId, ex.getMessage(), ex);
+                messaging.convertAndSend("/topic/chat/" + sessionUuid,
+                        new UiEventFrame(UUID.randomUUID().toString(), "ERROR", "ERROR",
+                                "Failed to process relay response.", null));
+            }
+            return;
+        }
+    }
+
+    private UiEventFrame findLatestPromptEvent(AiSession session) {
+        if (session == null || session.messages() == null) {
+            return null;
+        }
+        List<AiChatMessage> messages = session.messages();
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            AiChatMessage message = messages.get(i);
+            if (!"PROMPT_REQUIRED".equals(message.role())) {
+                continue;
+            }
+            try {
+                return objectMapper.readValue(message.content(), UiEventFrame.class);
+            } catch (Exception ex) {
+                log.warn("Could not parse PROMPT_REQUIRED content [session={}]: {}",
+                        session.uuid(), ex.getMessage());
+            }
+        }
+        return null;
+    }
+
+    private void persistLatestPromptEvent(AiSession session, UiEventFrame promptEvent) {
+        if (session == null || promptEvent == null || session.messages() == null || session.messages().isEmpty()) {
+            return;
+        }
+        String promptJson;
+        try {
+            promptJson = objectMapper.writeValueAsString(promptEvent);
+        } catch (Exception ex) {
+            log.warn("Failed to serialize wrapped prompt event [session={}]: {}",
+                    session.uuid(), ex.getMessage());
+            return;
+        }
+
+        List<AiChatMessage> updated = new ArrayList<>(session.messages());
+        for (int i = updated.size() - 1; i >= 0; i--) {
+            AiChatMessage message = updated.get(i);
+            if (!"PROMPT_REQUIRED".equals(message.role())) {
+                continue;
+            }
+            updated.set(i, new AiChatMessage(
+                    message.uuid(),
+                    message.role(),
+                    promptJson,
+                    message.timestamp(),
+                    message.attachments(),
+                    message.toolCalls(),
+                    message.toolCallId(),
+                    message.toolName()));
+            break;
+        }
+
+        sessionRepo.save(new AiSession(
+                session.uuid(),
+                session.provider(),
+                session.originMode(),
+                session.username(),
+                session.name(),
+                session.createdAt(),
+                session.currentRoundCount(),
+                List.copyOf(updated),
+                session.environmentVariables(),
+                session.status(),
+                session.activeAgentTemplateId(),
+                session.modelId(),
+                session.skillStack(),
+                session.sessionSkillUuids(),
+                session.sessionToolIds()));
+    }
+
+    private String resolveRelayBaseUrl() {
+        var settings = systemSettingsService.getGlobal();
+        if (settings != null && settings.appBaseUrl() != null && !settings.appBaseUrl().isBlank()) {
+            return trimTrailingSlash(settings.appBaseUrl());
+        }
+        if (configuredRelayHost != null && !configuredRelayHost.isBlank()) {
+            return trimTrailingSlash(configuredRelayHost);
+        }
+        return DEFAULT_RELAY_BASE_URL;
+    }
+
+    private static String trimTrailingSlash(String url) {
+        if (url == null) {
+            return null;
+        }
+        String value = url.trim();
+        if (value.isBlank()) {
+            return null;
+        }
+        return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
     }
 
     private static String resolveUsername() {

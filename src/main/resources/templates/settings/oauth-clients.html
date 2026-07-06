@@ -16,6 +16,9 @@
     <h2 class="mb-1"><i class="fa-solid fa-key me-2"></i>OAuth Clients</h2>
     <p class="text-muted mb-4">Configured OAuth clients for your account.</p>
 
+    <div th:if="${oauthClientDeleteMessage != null}" class="alert alert-success" role="alert" th:text="${oauthClientDeleteMessage}"></div>
+    <div th:if="${oauthClientDeleteError != null}" class="alert alert-danger" role="alert" th:text="${oauthClientDeleteError}"></div>
+
     <div class="card" th:if="${oauthClients != null and !#lists.isEmpty(oauthClients)}">
         <div class="card-body p-0">
             <div class="table-responsive">
@@ -28,12 +31,17 @@
                         <th>Expires</th>
                         <th>Scopes</th>
                         <th>Placeholder</th>
+                        <th th:if="${canManageUsers}">Actions</th>
                     </tr>
                     </thead>
                     <tbody>
                     <tr th:each="client : ${oauthClients}">
                         <td>
                             <div class="fw-semibold" th:text="${client.clientName}"></div>
+                            <div class="small text-info">
+                                Profile: <span th:text="${client.profileName}"></span>
+                                <span th:if="${client.defaultProfile}" class="badge bg-info text-dark ms-2">Default</span>
+                            </div>
                             <div class="small text-muted" th:text="${client.redirectUri}"></div>
                         </td>
                         <td>
@@ -58,6 +66,13 @@
                         </td>
                         <td>
                             <code th:text="${client.placeholder}"></code>
+                        </td>
+                        <td th:if="${canManageUsers}">
+                            <form method="post" th:action="@{|/settings/oauth-clients/${client.uuid}/delete|}"
+                                  onsubmit="return confirm('Delete OAuth client ' + this.dataset.clientName + ' / ' + this.dataset.profileName + '?');"
+                                  th:attr="data-client-name=${client.clientName},data-profile-name=${client.profileName}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                            </form>
                         </td>
                     </tr>
                     </tbody>

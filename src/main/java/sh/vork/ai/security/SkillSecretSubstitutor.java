@@ -69,11 +69,19 @@ public class SkillSecretSubstitutor {
                 log.debug("Secret token substituted in tool arguments [key={}, user={}]", key, username);
                 matcher.appendReplacement(sb, Matcher.quoteReplacement(value));
             } else {
-                log.warn("Secret token {{{}}} not found in store for user {} — leaving token unchanged", key, username);
+                if (isOAuthPlaceholderKey(key)) {
+                    log.debug("OAuth placeholder {{{}}} not found in generic secret store for user {} — leaving token unchanged for OAuth resolver", key, username);
+                } else {
+                    log.warn("Secret token {{{}}} not found in store for user {} — leaving token unchanged", key, username);
+                }
                 matcher.appendReplacement(sb, Matcher.quoteReplacement("{{" + key + "}}"));
             }
         }
         matcher.appendTail(sb);
         return sb.toString();
+    }
+
+    private static boolean isOAuthPlaceholderKey(String key) {
+        return key != null && key.startsWith("OAUTH_");
     }
 }

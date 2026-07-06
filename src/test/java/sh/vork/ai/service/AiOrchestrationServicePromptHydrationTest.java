@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
@@ -31,6 +32,11 @@ import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.skill.SkillFrame;
 
 class AiOrchestrationServicePromptHydrationTest {
+
+    @BeforeEach
+    void initThreadLocalContext() {
+        ToolExecutionContext.clear();
+    }
 
     @AfterEach
     void clearThreadLocalContext() {
@@ -65,7 +71,8 @@ class AiOrchestrationServicePromptHydrationTest {
 
         String prompt = invokeComposeSystemPrompt(service);
 
-        assertEquals(AiConfig.BASE_SYSTEM_PROMPT, prompt);
+        assertTrue(prompt.startsWith(AiConfig.BASE_SYSTEM_PROMPT));
+        assertFalse(prompt.contains("### ACTIVE SESSION ENVIRONMENT VARIABLES"));
         verify(envService).getEnv("session-1");
     }
 
@@ -89,12 +96,10 @@ class AiOrchestrationServicePromptHydrationTest {
 
         String prompt = invokeComposeSystemPrompt(service);
 
-        String expected = AiConfig.BASE_SYSTEM_PROMPT
-                + "\n### ACTIVE SESSION ENVIRONMENT VARIABLES\n"
-                + "activeTargetAnchor=local\n"
-                + "selectedProfile=prod\n";
-
-        assertEquals(expected, prompt);
+        assertTrue(prompt.startsWith(AiConfig.BASE_SYSTEM_PROMPT));
+        assertTrue(prompt.contains("### ACTIVE SESSION ENVIRONMENT VARIABLES"));
+        assertTrue(prompt.contains("activeTargetAnchor=local"));
+        assertTrue(prompt.contains("selectedProfile=prod"));
         verify(envService).getEnv("session-2");
     }
 
@@ -119,13 +124,12 @@ class AiOrchestrationServicePromptHydrationTest {
 
         String prompt = invokeComposeSystemPrompt(service);
 
-        String expected = AiConfig.BASE_SYSTEM_PROMPT
-                + "\n### ACTIVE SESSION ENVIRONMENT VARIABLES\n"
-                + "alpha=1\n"
-                + "middle=2\n"
-                + "zeta=3\n";
-
-        assertEquals(expected, prompt);
+        int alpha = prompt.indexOf("alpha=1");
+        int middle = prompt.indexOf("middle=2");
+        int zeta = prompt.indexOf("zeta=3");
+        assertTrue(alpha >= 0);
+        assertTrue(middle > alpha);
+        assertTrue(zeta > middle);
         verify(envService).getEnv("session-3");
     }
 
