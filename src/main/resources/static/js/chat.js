@@ -18,6 +18,7 @@ const fileInput      = document.getElementById('file-input');
 const uploadFilesBtn = document.getElementById('upload-files-btn');
 const logoutBtn      = document.getElementById('logout-btn');
 const logoutForm     = document.getElementById('logout-form');
+const thinkingToggleBtn = document.getElementById('thinking-toggle');
 const sidebarToggle  = document.getElementById('sidebar-toggle');
 const newChatBtn     = document.getElementById('new-chat-btn');
 const sessionListEl  = document.getElementById('chat-session-list');
@@ -29,6 +30,9 @@ let waiting     = false;
 let sessions    = [];
 let editingSessionUuid = null;
 let awaitingPostTerminalResponse = false;
+let thinkingEnabled = true;
+
+const THINKING_TOGGLE_STORAGE_KEY = 'vork.thinking.enabled';
 
 // Populated on page load from /api/chat/models
 let availableModels = [];
@@ -135,6 +139,43 @@ function setAwaitingPostTerminalResponse(on) {
     if (awaitingPostTerminalResponse) {
         setInputEnabled(false);
     }
+}
+
+function readThinkingEnabled() {
+    try {
+        const stored = window.localStorage.getItem(THINKING_TOGGLE_STORAGE_KEY);
+        if (stored === 'off') return false;
+        if (stored === 'on') return true;
+    } catch (_) {
+        // Ignore storage errors and default to enabled.
+    }
+    return true;
+}
+
+function persistThinkingEnabled() {
+    try {
+        window.localStorage.setItem(THINKING_TOGGLE_STORAGE_KEY, thinkingEnabled ? 'on' : 'off');
+    } catch (_) {
+        // Ignore storage errors.
+    }
+}
+
+function syncThinkingToggleUi() {
+    if (!thinkingToggleBtn) return;
+    thinkingToggleBtn.textContent = thinkingEnabled ? 'Thinking ON' : 'Thinking OFF';
+    thinkingToggleBtn.classList.toggle('btn-outline-secondary', thinkingEnabled);
+    thinkingToggleBtn.classList.toggle('btn-outline-warning', !thinkingEnabled);
+}
+
+function initThinkingToggle() {
+    thinkingEnabled = readThinkingEnabled();
+    syncThinkingToggleUi();
+    if (!thinkingToggleBtn) return;
+    thinkingToggleBtn.addEventListener('click', function () {
+        thinkingEnabled = !thinkingEnabled;
+        persistThinkingEnabled();
+        syncThinkingToggleUi();
+    });
 }
 
 function isTerminalToolMessage(msg) {
@@ -373,20 +414,20 @@ function renderSkillEvent(text) {
 }
 
 function renderThinkingEvent(text) {
+    if (!thinkingEnabled) return;
     const row = document.createElement('div');
     row.className = 'thinking-row';
 
-    const details = document.createElement('details');
-    const summary = document.createElement('summary');
-    summary.innerHTML = '<i class="fa-solid fa-brain" aria-hidden="true"></i><span>AI reasoning...</span>';
+    const icon = document.createElement('i');
+    icon.className = 'fa-solid fa-brain';
+    icon.setAttribute('aria-hidden', 'true');
 
     const content = document.createElement('div');
-    content.className = 'thinking-content';
+    content.className = 'thinking-text';
     content.textContent = text || '';
 
-    details.appendChild(summary);
-    details.appendChild(content);
-    row.appendChild(details);
+    row.appendChild(icon);
+    row.appendChild(content);
 
     messagesArea.insertBefore(row, typingEl);
     scrollBottom();
@@ -1922,6 +1963,7 @@ function setupToolSearch() {
 
 setupSkillSearch();
 setupToolSearch();
+initThinkingToggle();
 
 if (newChatBtn) {
     newChatBtn.addEventListener('click', function () {

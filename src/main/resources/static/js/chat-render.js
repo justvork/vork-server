@@ -26,6 +26,7 @@
     const TERMINAL_COLLAPSED_HEIGHT   = '1.6rem';
     const TERMINAL_END_GRACE_MS       = 160;
     const ANSI_ESCAPE_PATTERN         = /\u001B\[[0-9;?]*[ -/]*[@-~]/g;
+    const THINKING_TOGGLE_STORAGE_KEY = 'vork.thinking.enabled';
 
     const textDecoder = new TextDecoder();
     const textEncoder = new TextEncoder();
@@ -38,6 +39,14 @@
         pendingByTerminal: new Map(),
         socketsByTerminal: new Map()
     };
+
+    function isThinkingEnabled() {
+        try {
+            return global.localStorage.getItem(THINKING_TOGGLE_STORAGE_KEY) !== 'off';
+        } catch (_) {
+            return true;
+        }
+    }
 
     // ── Utilities ─────────────────────────────────────────────────────────────
 
@@ -156,19 +165,20 @@
 
     function renderThinkingEvent(text) {
         if (!ctx || !ctx.messagesArea) return;
+        if (!isThinkingEnabled()) return;
         const row = document.createElement('div');
         row.className = 'thinking-row';
-        const details = document.createElement('details');
-        const summary = document.createElement('summary');
-        summary.innerHTML =
-            '<i class="fa-solid fa-brain" aria-hidden="true"></i>' +
-            '<span>AI reasoning…</span>';
+
+        const icon = document.createElement('i');
+        icon.className = 'fa-solid fa-brain';
+        icon.setAttribute('aria-hidden', 'true');
+
         const content = document.createElement('div');
-        content.className = 'thinking-content';
+        content.className = 'thinking-text';
         content.textContent = text;
-        details.appendChild(summary);
-        details.appendChild(content);
-        row.appendChild(details);
+
+        row.appendChild(icon);
+        row.appendChild(content);
         ctx.messagesArea.insertBefore(row, ctx.typingEl);
         scrollBottom();
     }

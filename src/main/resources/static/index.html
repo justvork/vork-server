@@ -10,9 +10,7 @@
     <link rel="stylesheet" href="css/tailwind.css">
     <link rel="stylesheet" href="css/vork.css">
     <link rel="stylesheet" href="packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
-    <link rel="stylesheet" href="packages/npm/xterm/current/css/xterm.css">
     <link rel="stylesheet" href="css/chat.css">
-    <link rel="stylesheet" href="css/console.css">
 </head>
 <body>
 
@@ -114,8 +112,8 @@
             <a href="/settings" class="btn btn-outline-secondary btn-sm" id="settings-btn" title="Settings">
                 <i class="fa-solid fa-gear"></i>
             </a>
-            <button id="console-toggle" type="button" class="btn btn-outline-secondary btn-sm console-toggle-btn">
-                <i class="fa-solid fa-terminal"></i>
+            <button id="thinking-toggle" type="button" class="btn btn-outline-secondary btn-sm" title="Toggle reasoning visibility">
+                Thinking ON
             </button>
             <select id="agent-select" class="form-select form-select-sm agent-select" title="Active agent">
                 <option value="">Default (Concierge)</option>
@@ -178,17 +176,6 @@
 
 </div>
 
-<!-- SSH Console panel (hidden until toggled) -->
-<div id="console-panel">
-    <div class="console-bar">
-        <span class="console-title"><i class="fa-solid fa-terminal"></i>&nbsp; SSH Console</span>
-        <button id="console-close" type="button" class="console-close-btn" title="Close console">
-            <i class="fa-solid fa-xmark"></i>
-        </button>
-    </div>
-    <div id="console-terminal"></div>
-</div>
-
 <!-- Hidden logout form (required for CSRF protection) -->
 <form id="logout-form" action="/logout" method="POST" style="display: none;">
 </form>
@@ -199,12 +186,9 @@
 <script src="packages/npm/sockjs-client/current/dist/sockjs.min.js"></script>
 <script src="packages/npm.stomp/stompjs/current/bundles/stomp.umd.min.js"></script>
 <script src="packages/npm/marked/current/marked.min.js"></script>
-<script src="packages/npm/xterm/current/lib/xterm.js"></script>
-<script src="packages/npm/xterm-addon-fit/current/lib/xterm-addon-fit.js"></script>
 
 <!-- Application -->
 <script src="js/chat.js"></script>
-<script src="js/console.js"></script>
 
 </body>
 </html>

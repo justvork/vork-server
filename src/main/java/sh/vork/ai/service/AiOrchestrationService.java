@@ -64,6 +64,7 @@ import sh.vork.orm.DatabaseRepository;
 public class AiOrchestrationService {
 
     private static final Logger log = LoggerFactory.getLogger(AiOrchestrationService.class);
+        private static final int LOG_INPUT_PREVIEW_LIMIT = 240;
         private static final List<String> SKILL_TYPE_CRUD_TOOL_NAMES = List.of(
                 "getTypeSchema",
                 "saveTypeInstance",
@@ -362,8 +363,12 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         // mutate() seeds a fresh builder from the shared client's config so
         // per-request changes (e.g. additional tools, system prompt override)
         // never bleed into other concurrent calls.
-        log.info("Generating response [provider={}] prompt=\"{}\"...",
-                provider, userPrompt.length() > 120 ? userPrompt.substring(0, 120) + "…" : userPrompt);
+        String promptPreview = sanitizeInputForLog(userPrompt);
+        log.debug("ENTER generate [provider={}, promptChars={}, promptPreview=\"{}\"]",
+                provider,
+                userPrompt == null ? 0 : userPrompt.length(),
+                promptPreview);
+        log.info("Generating response [provider={}] prompt=\"{}\"...", provider, promptPreview);
 
         String effectiveText = withBackgroundDirective(userPrompt, provider);
         String response = callWithFallback(
@@ -374,6 +379,9 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 provider,
                 response == null ? 0 : response.length(),
                 response == null ? "<null>" : (response.length() > 200 ? response.substring(0, 200) + "…" : response));
+        log.debug("EXIT generate [provider={}, responseChars={}]",
+                provider,
+                response == null ? 0 : response.length());
 
         return response;
     }
@@ -425,7 +433,16 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
     public String generateWithHistory(List<Message> conversationHistory, String newUserMessage, AiProvider provider) {
         ChatClient base = resolveClient(provider);
 
-        log.info("Generating chat response [provider={}, history={} msgs]...", provider, conversationHistory.size());
+        String promptPreview = sanitizeInputForLog(newUserMessage);
+        log.debug("ENTER generateWithHistory [provider={}, historyMessages={}, newUserChars={}, newUserPreview=\"{}\"]",
+                provider,
+                conversationHistory == null ? 0 : conversationHistory.size(),
+                newUserMessage == null ? 0 : newUserMessage.length(),
+                promptPreview);
+        log.info("Generating chat response [provider={}, history={} msgs, userInput=\"{}\"]...",
+                provider,
+                conversationHistory.size(),
+                promptPreview);
 
         Message[] historyArray = conversationHistory.toArray(Message[]::new);
         String effectiveUser   = withBackgroundDirective(newUserMessage, provider);
@@ -435,6 +452,9 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
 
         log.info("Chat response received [provider={}, length={}]",
                 provider, response == null ? 0 : response.length());
+        log.debug("EXIT generateWithHistory [provider={}, responseChars={}]",
+                provider,
+                response == null ? 0 : response.length());
 
         return response;
     }
@@ -458,11 +478,22 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                               AiProvider provider) {
         ChatClient base = resolveClient(provider);
 
+        String effectiveUserText = (userText == null || userText.isBlank())
+                ? "Please analyse the attached file(s)."
+                : userText;
+        String promptPreview = sanitizeInputForLog(effectiveUserText);
+
         log.info("Generating chat response with media [provider={}, history={} msgs, media={}]",
                 provider, conversationHistory.size(), media.size());
+        log.debug("ENTER generateWithHistoryAndMedia [provider={}, historyMessages={}, mediaCount={}, userInputChars={}, userInputPreview=\"{}\"]",
+                provider,
+                conversationHistory == null ? 0 : conversationHistory.size(),
+                media == null ? 0 : media.size(),
+                effectiveUserText.length(),
+                promptPreview);
 
         List<Message> allMessages = new ArrayList<>(conversationHistory);
-        String effectiveText = (userText == null || userText.isBlank()) ? "Please analyse the attached file(s)." : userText;
+        String effectiveText = effectiveUserText;
         effectiveText = withBackgroundDirective(effectiveText, provider);
         allMessages.add(UserMessage.builder().text(effectiveText).media(media).build());
 
@@ -473,9 +504,30 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
 
         log.info("Chat response with media received [provider={}, length={}]",
                 provider, response == null ? 0 : response.length());
+        log.debug("EXIT generateWithHistoryAndMedia [provider={}, responseChars={}]",
+                provider,
+                response == null ? 0 : response.length());
 
         return response;
     }
+
+        private static String sanitizeInputForLog(String input) {
+                if (input == null) {
+                        return "<null>";
+                }
+
+                String normalized = input.replaceAll("\\s+", " ").trim();
+                normalized = normalized
+                        .replaceAll("(?i)\\\"(password|passcode|otp|api[_-]?key|token|secret)\\\"\\s*:\\s*\\\"[^\\\"]*\\\"",
+                                "\\\"$1\\\":\\\"<redacted>\\\"")
+                        .replaceAll("(?i)(password|passcode|otp|api[_-]?key|token|secret)\\s*[:=]\\s*\\S+",
+                                "$1=<redacted>");
+
+                if (normalized.length() > LOG_INPUT_PREVIEW_LIMIT) {
+                        return normalized.substring(0, LOG_INPUT_PREVIEW_LIMIT) + "…";
+                }
+                return normalized;
+        }
 
         private static String withBackgroundDirective(String text, AiProvider provider) {
                 String baseText = text == null ? "" : text;

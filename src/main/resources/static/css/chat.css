@@ -510,43 +510,25 @@ body.sidebar-collapsed .sidebar-tab-btn {
 /* ── AI thinking indicator ───────────────────────────────────────────────── */
 
 .thinking-row {
-    margin: 0.1rem 2rem 0.1rem 2.6rem;
-}
-
-.thinking-row details {
-    border-left: 2px solid var(--vork-muted);
-    padding-left: 0.55rem;
-    opacity: 0.65;
-    transition: opacity 0.15s;
-}
-
-.thinking-row details[open] {
-    opacity: 0.85;
-}
-
-.thinking-row summary {
+    margin: 0.15rem 2rem 0.15rem 2.6rem;
     display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    font-size: 0.76rem;
+    align-items: flex-start;
+    gap: 0.4rem;
     color: var(--vork-muted);
-    cursor: pointer;
-    user-select: none;
-    list-style: none;
-    padding: 0.1rem 0;
+    opacity: 0.78;
 }
 
-.thinking-row summary::-webkit-details-marker { display: none; }
-
-.thinking-row summary .fa-brain {
-    font-size: 0.7rem;
+.thinking-row .fa-brain {
+    margin-top: 0.12rem;
+    font-size: 0.72rem;
+    flex-shrink: 0;
 }
 
-.thinking-row .thinking-content {
+.thinking-row .thinking-text {
     font-size: 0.75rem;
     color: var(--vork-muted);
     white-space: pre-wrap;
-    padding: 0.3rem 0 0.15rem;
+    padding: 0;
     line-height: 1.45;
 }
 
