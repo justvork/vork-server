@@ -1005,7 +1005,6 @@ public class ChatService {
      * The sub-loop calls the model in a loop until either:
      * <ul>
      *   <li>The model returns {@code FINISHED_TURN} — the primary exit path (pops frame, uses textResponse), or</li>
-     *   <li>The skill's stack frame is popped by a legacy tool call (backward-compat fallback), or</li>
      *   <li>A {@link ToolSuspensionException} is thrown (propagates to parent session freeze), or</li>
      *   <li>Maximum iterations are exhausted.</li>
      * </ul>
@@ -1014,7 +1013,6 @@ public class ChatService {
                                        sh.vork.skill.SkillActivatedException ex,
                                        AiProvider provider) {
         final int MAX_SKILL_ITERATIONS = 20;
-        final int MAX_SKILL_DEPTH = 5;
         final long MAX_SKILL_RUNTIME_MS = provider == AiProvider.BACKGROUND_SCHEDULER ? 300_000L : 60_000L;
         String currentPrompt = ex.getInitialPrompt();
         long startedAt = System.currentTimeMillis();
@@ -1056,11 +1054,6 @@ public class ChatService {
         int skillCompleteDepth = (sessionAtStart != null && sessionAtStart.skillStack() != null)
                 ? sessionAtStart.skillStack().size() - 1 : 0;
 
-        // Prevent nested-skill thrashing within the same parent skill turn.
-        // If the model repeatedly calls the same nested skill UUID, reuse the first
-        // result and force continuation with explicit instructions.
-        Map<String, String> nestedSkillResultCache = new HashMap<>();
-
         // Skills are sandboxed executions. Use an empty history so prior conversation turns
         // (including results from previous skill runs on the same targets) cannot bleed into
         // the skill sub-loop and cause the model to recycle stale data instead of running
@@ -1084,98 +1077,9 @@ public class ChatService {
             log.debug("Skill sub-loop iteration {} [session={}, skill={}]", i, sessionUuid, ex.getSkillName());
 
             // safeGenerateWithHistory reads the session and applies the skill frame's tools/prompt
-            String rawResponse;
-            try {
-                rawResponse = safeGenerateWithHistory(skillHistory, currentPrompt, provider);
-                log.debug("Skill sub-loop raw response [session={}, skill={}, iteration={}, response={}]",
-                        sessionUuid, ex.getSkillName(), i, rawResponse);
-            } catch (sh.vork.skill.SkillActivatedException nestedEx) {
-                String nestedSkillUuid = nestedEx.getSkillUuid();
-                String nestedSkillName = nestedEx.getSkillName();
-                String nestedSkillKey = nestedSkillCacheKey(nestedSkillUuid, nestedSkillName);
-                if (nestedSkillKey != null && nestedSkillResultCache.containsKey(nestedSkillKey)) {
-                    String cachedResult = nestedSkillResultCache.get(nestedSkillKey);
-                    log.warn("Nested skill re-invoked in same parent loop — reusing cached result [session={}, outer={}, inner={}, cacheKey={}, cachedMeta={}]",
-                        sessionUuid,
-                        ex.getSkillName(),
-                        nestedEx.getSkillName(),
-                        nestedSkillKey,
-                        summarizeCachedSkillResult(cachedResult));
-
-                    // executeSkill already pushed this nested frame before throwing.
-                    // Because we are short-circuiting recursion, we must pop the frame here
-                    // to keep the skill stack consistent for the parent loop.
-                    AiSession current = sessionRepo.get(sessionUuid);
-                    if (current != null && current.skillStack() != null && !current.skillStack().isEmpty()) {
-                    sh.vork.skill.SkillFrame top = current.skillStack().getLast();
-                    if (nestedSkillUuid.equals(top.skillUuid())) {
-                        List<sh.vork.skill.SkillFrame> poppedStack = new ArrayList<>(current.skillStack());
-                        poppedStack.removeLast();
-                        sessionRepo.save(new AiSession(
-                            current.uuid(), current.provider(), current.originMode(),
-                            current.username(), current.name(), current.createdAt(),
-                            current.currentRoundCount(), current.messages(),
-                            current.environmentVariables(), current.status(),
-                            current.activeAgentTemplateId(), current.modelId(),
-                            List.copyOf(poppedStack), current.sessionSkillUuids(), current.sessionToolIds()));
-                        log.debug("Popped duplicate nested skill frame after cache hit [session={}, skill={}]",
-                            sessionUuid, nestedEx.getSkillName());
-                    }
-                    }
-
-                    skillHistory.add(new AssistantMessage(
-                            "Skill '" + nestedEx.getSkillName() + "' result (cached): " + cachedResult));
-                    currentPrompt = "The nested skill '" + nestedEx.getSkillName() + "' already completed in this turn and returned: "
-                            + cachedResult
-                            + ". Do NOT call that skill again. Continue with the remaining steps now (e.g. execute any required httpRequest using that result).";
-                    continue;
-                }
-
-                // A sub-skill was invoked from within this skill sub-loop.
-                // Check depth before recursing so we can't blow the call stack.
-                AiSession depthCheck = sessionRepo.get(sessionUuid);
-                int currentDepth = (depthCheck != null && depthCheck.skillStack() != null)
-                        ? depthCheck.skillStack().size() : 0;
-                if (currentDepth >= MAX_SKILL_DEPTH) {
-                    log.error("Max skill depth ({}) reached — aborting nested skill [session={}, outer={}, inner={}]",
-                            MAX_SKILL_DEPTH, sessionUuid, ex.getSkillName(), nestedEx.getSkillName());
-                    // Pop the spurious frame
-                    AiSession current = sessionRepo.get(sessionUuid);
-                    if (current != null && current.skillStack() != null && current.skillStack().size() > 1) {
-                        List<sh.vork.skill.SkillFrame> poppedStack = new ArrayList<>(current.skillStack());
-                        poppedStack.removeLast();
-                        sessionRepo.save(new AiSession(
-                                current.uuid(), current.provider(), current.originMode(),
-                                current.username(), current.name(), current.createdAt(),
-                                current.currentRoundCount(), current.messages(),
-                                current.environmentVariables(), current.status(),
-                                current.activeAgentTemplateId(), current.modelId(),
-                                List.copyOf(poppedStack), current.sessionSkillUuids(), current.sessionToolIds()));
-                    }
-                    broadcastAndPersistSkillEvent(sessionUuid, "Skill error: " + nestedEx.getSkillName());
-                    String errMsg = "Error: maximum skill nesting depth (" + MAX_SKILL_DEPTH + ") reached. Sub-skill aborted.";
-                    skillHistory.add(new AssistantMessage(errMsg));
-                    currentPrompt = "The nested skill could not run (max depth). Continue without it.";
-                    continue;
-                }
-                log.debug("Nested skill activated — entering recursive sub-loop [session={}, outer={}, inner={}, depth={}]",
-                        sessionUuid, ex.getSkillName(), nestedEx.getSkillName(), currentDepth);
-                String nestedResult = executeSkillSubLoop(sessionUuid, skillHistory, nestedEx, provider);
-                cacheNestedSkillResult(nestedSkillResultCache, nestedSkillUuid, nestedSkillName, nestedResult);
-                log.debug("Nested skill result cached [session={}, outer={}, inner={}, cacheKeyUuid={}, cacheKeyName={}, resultMeta={}]",
-                    sessionUuid,
-                    ex.getSkillName(),
-                    nestedEx.getSkillName(),
-                    nestedSkillCacheKey(nestedSkillUuid, null),
-                    nestedSkillCacheKey(null, nestedSkillName),
-                    summarizeCachedSkillResult(nestedResult));
-                skillHistory.add(new AssistantMessage(
-                        "Skill '" + nestedEx.getSkillName() + "' result: " + nestedResult));
-                currentPrompt = "The nested skill '" + nestedEx.getSkillName() + "' completed with result: "
-                    + nestedResult
-                    + ". Continue with the next required steps now and do not re-run that same nested skill unless it explicitly failed.";
-                continue;
-            }
+            String rawResponse = safeGenerateWithHistory(skillHistory, currentPrompt, provider);
+            log.debug("Skill sub-loop raw response [session={}, skill={}, iteration={}, response={}]",
+                    sessionUuid, ex.getSkillName(), i, rawResponse);
 
                 AiSession afterTurn = sessionRepo.get(sessionUuid);
                 boolean skillFrameMissing = afterTurn == null
@@ -1190,6 +1094,17 @@ public class ChatService {
                 }
 
             StructuredAgentResponse structured = parseStructuredResponse(rawResponse);
+                if ("CONTINUE_TURN".equals(structured.status())) {
+                String progressText = structured.textResponse() != null && !structured.textResponse().isBlank()
+                    ? structured.textResponse()
+                    : rawResponse;
+                skillHistory.add(new AssistantMessage(progressText));
+                currentPrompt = "Continue executing this skill using available tools until complete.";
+                log.debug("Skill sub-loop CONTINUE_TURN [session={}, skill={}, iteration={}]",
+                    sessionUuid, ex.getSkillName(), i + 1);
+                continue;
+                }
+
             if ("FINISHED_TURN".equals(structured.status())) {
                 // Primary exit path: the skill returned FINISHED_TURN with its output in textResponse.
                 String output = structured.textResponse() != null ? structured.textResponse() : rawResponse;
@@ -1236,12 +1151,11 @@ public class ChatService {
                 activeParams = top.params();
             }
         }
-        log.warn("Skill sub-loop exhausted max iterations [session={}, skill={}, max={}, activeParams={}, nestedCacheKeys={}]",
+        log.warn("Skill sub-loop exhausted max iterations [session={}, skill={}, max={}, activeParams={}]",
                 sessionUuid,
                 ex.getSkillName(),
                 MAX_SKILL_ITERATIONS,
-                activeParams,
-                nestedSkillResultCache.keySet());
+            activeParams);
         broadcastAndPersistSkillEvent(sessionUuid, "Skill timed out: " + ex.getSkillName());
         return "Skill '" + ex.getSkillName() + "' execution timed out.";
     }
@@ -1267,39 +1181,6 @@ public class ChatService {
                 current.activeAgentTemplateId(), current.modelId(),
                 List.copyOf(poppedStack), current.sessionSkillUuids(), current.sessionToolIds()));
         log.debug("Popped skill frame on terminal path [session={}, skill={}]", sessionUuid, top.skillName());
-    }
-
-    private static String nestedSkillCacheKey(String skillUuid, String skillName) {
-        if (skillUuid != null && !skillUuid.isBlank()) {
-            return "uuid:" + skillUuid;
-        }
-        if (skillName != null && !skillName.isBlank()) {
-            return "name:" + skillName.trim().toLowerCase();
-        }
-        return null;
-    }
-
-    private static void cacheNestedSkillResult(Map<String, String> cache,
-                                               String skillUuid,
-                                               String skillName,
-                                               String result) {
-        String byUuid = nestedSkillCacheKey(skillUuid, null);
-        if (byUuid != null) {
-            cache.putIfAbsent(byUuid, result);
-        }
-        String byName = nestedSkillCacheKey(null, skillName);
-        if (byName != null) {
-            cache.putIfAbsent(byName, result);
-        }
-    }
-
-    private static String summarizeCachedSkillResult(String result) {
-        if (result == null) {
-            return "null";
-        }
-        int length = result.length();
-        String hash = Integer.toHexString(result.hashCode());
-        return "len=" + length + ",hash=" + hash;
     }
 
     private String applyAgentSwitch(String sessionUuid, String agentTemplateId) {
