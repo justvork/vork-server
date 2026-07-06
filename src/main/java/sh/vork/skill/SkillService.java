@@ -61,7 +61,11 @@ public class SkillService {
     public List<SkillGroup> listGroups() {
         log.debug("ENTER listGroups");
         try (var stream = skillGroupRepo.list(0, Integer.MAX_VALUE)) {
-            return stream.collect(Collectors.toList());
+            return stream
+                    .sorted(Comparator.comparing(
+                            group -> group.name() == null ? "" : group.name(),
+                            String.CASE_INSENSITIVE_ORDER))
+                    .toList();
         }
     }
 

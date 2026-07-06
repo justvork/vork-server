@@ -191,6 +191,9 @@ public class ChatAuthorizationController {
                 incomingFields.keySet());
             log.debug("Resume request conversation fields payload: {}", abbreviate(toJson(conversationFields), 2000));
 
+            Map<String, String> effectiveEnvironmentVariables =
+                    resolveEffectiveEnvironmentVariables(sessionUuid, session);
+
             if ("AUTHORIZE_TOOL".equalsIgnoreCase(request.intent())) {
                 applyAuthorizationAction(action, username, toolName, toolCallId);
             }
@@ -294,7 +297,7 @@ public class ChatAuthorizationController {
                         session.createdAt(),
                         session.currentRoundCount(),
                         List.copyOf(updated),
-                        session.environmentVariables(),
+                        effectiveEnvironmentVariables,
                         AiSessionStatus.RUNNING,
                         session.activeAgentTemplateId(),
                         session.modelId(),
@@ -313,7 +316,7 @@ public class ChatAuthorizationController {
                         session.createdAt(),
                     session.currentRoundCount(),
                         List.copyOf(updated),
-                    session.environmentVariables(),
+                        effectiveEnvironmentVariables,
                     AiSessionStatus.RUNNING,
                     session.activeAgentTemplateId(),
                     session.modelId(),
@@ -323,7 +326,7 @@ public class ChatAuthorizationController {
 
                 aiBackgroundExecutor.execute(() -> {
                     ToolExecutionContext.bindSessionUuid(sessionUuid);
-                    ToolExecutionContext.hydrate(session.environmentVariables());
+                    ToolExecutionContext.hydrate(effectiveEnvironmentVariables);
                     try {
                         SecurityContextHolder.getContext()
                                 .setAuthentication(new SystemBackgroundAuthentication(session.username()));
@@ -347,7 +350,7 @@ public class ChatAuthorizationController {
             log.info("Resuming model call [historyMessages={}]", history.size());
             String finalText = null;
             ToolExecutionContext.bindSessionUuid(sessionUuid);
-            ToolExecutionContext.hydrate(session.environmentVariables());
+            ToolExecutionContext.hydrate(effectiveEnvironmentVariables);
             try {
                 String continuationPrompt = "DENIED".equals(action)
                         ? "The tool call was denied by the user. Do not call tools again for this request."
@@ -475,7 +478,7 @@ public class ChatAuthorizationController {
                     session.createdAt(),
                     session.currentRoundCount(),
                     List.copyOf(updated),
-                    session.environmentVariables(),
+                    effectiveEnvironmentVariables,
                     AiSessionStatus.AWAITING_INPUT,
                     session.activeAgentTemplateId(),
                     session.modelId(),
@@ -523,7 +526,7 @@ public class ChatAuthorizationController {
                     session.createdAt(),
                     session.currentRoundCount(),
                     List.copyOf(updated),
-                    session.environmentVariables(),
+                    effectiveEnvironmentVariables,
                     AiSessionStatus.RUNNING,
                     session.activeAgentTemplateId(),
                     session.modelId(),
@@ -588,7 +591,7 @@ public class ChatAuthorizationController {
                     session.createdAt(),
                     session.currentRoundCount(),
                     List.copyOf(updated),
-                    session.environmentVariables(),
+                    effectiveEnvironmentVariables,
                     AiSessionStatus.RUNNING,
                     session.activeAgentTemplateId(),
                     session.modelId(),
@@ -1156,6 +1159,8 @@ public class ChatAuthorizationController {
             ex.getToolName()));
 
         SessionOriginMode originMode = session.originMode() == null ? SessionOriginMode.WEB : session.originMode();
+        Map<String, String> effectiveEnvironmentVariables =
+            resolveEffectiveEnvironmentVariables(sessionUuid, session);
         sessionRepo.save(new AiSession(
             session.uuid(),
             session.provider(),
@@ -1165,7 +1170,7 @@ public class ChatAuthorizationController {
             session.createdAt(),
             session.currentRoundCount(),
             List.copyOf(suspendedMessages),
-            session.environmentVariables(),
+            effectiveEnvironmentVariables,
             AiSessionStatus.AWAITING_INPUT,
             session.activeAgentTemplateId(),
             session.modelId(),
@@ -1295,6 +1300,19 @@ public class ChatAuthorizationController {
         } catch (Exception e) {
             throw new IllegalStateException("Failed to serialize JSON payload", e);
         }
+    }
+
+    private Map<String, String> resolveEffectiveEnvironmentVariables(String sessionUuid, AiSession session) {
+        if (sessionEnvironmentService != null) {
+            Map<String, String> persisted = sessionEnvironmentService.getEnv(sessionUuid);
+            if (persisted != null && !persisted.isEmpty()) {
+                return persisted;
+            }
+        }
+        if (session != null && session.environmentVariables() != null && !session.environmentVariables().isEmpty()) {
+            return session.environmentVariables();
+        }
+        return Map.of();
     }
 
     private static boolean isOAuthPlaceholderOnly(String text) {

@@ -32,6 +32,7 @@ import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.exception.ToolSuspensionException;
 import sh.vork.ai.function.ExecuteTerminalCommandRequest;
+import sh.vork.ai.memory.RepositorySessionEnvironmentService;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.protocol.interaction.FieldSource;
 import sh.vork.ai.protocol.interaction.FormAction;
@@ -596,6 +597,102 @@ class ChatAuthorizationControllerIsolationTest {
         assertEquals("{\"command\":\"ls -l\",\"host\":\"system@example.com\"}",
                 latest.toolCalls().get(0).arguments());
     }
+
+            @Test
+            void respond_oauthContextProfileName_persistsAcrossResuspension() throws Exception {
+                ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+                MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+
+                String sessionUuid = "session-oauth-profile";
+                String eventId = "evt-oauth-profile";
+                String toolCallId = "pending-oauth-profile";
+
+                java.util.concurrent.ConcurrentHashMap<String, String> env = AiSession.defaultEnvironmentVariables();
+                env.put("profileName", "old-profile");
+
+                UiEventFrame frame = new UiEventFrame(
+                        eventId,
+                        "PROMPT_REQUIRED",
+                        "COLLECT_OAUTH_CONNECT_INPUT",
+                        "Provide OAuth configuration",
+                        new InteractionFormSchema(
+                                "COLLECT_OAUTH_CONNECT_INPUT",
+                                "OAuth Configuration Required",
+                                "Provide OAuth settings",
+                                List.of(new FormField("profileName", "TEXT", "profileName", "old-profile", true, FieldSource.CONTEXT, List.of())),
+                                List.of(new FormAction("ONCE", "Save & Continue", "primary"))));
+
+                AiChatMessage prompt = new AiChatMessage(
+                        "m-" + eventId,
+                        "PROMPT_REQUIRED",
+                        objectMapper.writeValueAsString(frame),
+                        System.currentTimeMillis(),
+                        null,
+                        List.of(new AiChatMessage.ToolCallRef(toolCallId, "FUNCTION", "oauthConnect", "{\"clientName\":\"google_calendar\",\"profileName\":\"old-profile\"}")),
+                        toolCallId,
+                        "oauthConnect");
+
+                sessionRepo.save(new AiSession(
+                        sessionUuid,
+                        AiProvider.GEMINI.name(),
+                        SessionOriginMode.WEB,
+                        "alice",
+                        "Untitled",
+                        System.currentTimeMillis(),
+                        0,
+                        List.of(prompt),
+                        env,
+                        AiSessionStatus.AWAITING_INPUT, null, null, null, null, null));
+
+                InteractionFormSchema consentSchema = new InteractionFormSchema(
+                        "OAUTH_AUTHORIZE_OUT_OF_BAND",
+                        "OAuth Authorization Required",
+                        "Connect your account",
+                        List.of(new FormField("authorizationUrl", "HIDDEN", "authorizationUrl", "https://example.invalid/auth", false, FieldSource.CONTEXT, List.of())),
+                        List.of(new FormAction("ONCE", "Connect", "primary")));
+
+                ToolCallback oauthConnectTool = FunctionToolCallback.builder("oauthConnect",
+                        (DummyCompileToolRequest req) -> {
+                            throw new ToolSuspensionException(
+                                    "oauthConnect",
+                                    "{\"clientName\":\"google_calendar\",\"profileName\":\"old-profile\"}",
+                                    "Complete OAuth consent",
+                                    consentSchema);
+                        })
+                        .description("Test-only oauth connect callback")
+                        .inputType(DummyCompileToolRequest.class)
+                        .build();
+
+                ChatAuthorizationController controller = new ChatAuthorizationController(
+                        sessionRepo,
+                        new AuthorizationRuleEngine(java.util.Set.<String>of()),
+                        new RecordingAiService("unused"),
+                        new SimpMessagingTemplate(new NoOpMessageChannel()),
+                        objectMapper,
+                        List.of(oauthConnectTool),
+                        Runnable::run,
+                        new RecordingSchedulerService(),
+                        null,
+                        null,
+                        mock(SecureCredentialStore.class),
+                        new RepositorySessionEnvironmentService(sessionRepo),
+                        mock(UserService.class));
+
+                ResponseEntity<Map<String, Object>> response = controller.respond(
+                        sessionUuid,
+                        new ChatAuthorizationController.InteractionResponse(
+                                eventId,
+                                "COLLECT_OAUTH_CONNECT_INPUT",
+                                "ONCE",
+                                Map.of("profileName", "work")));
+
+                assertEquals("AWAITING_INPUT", response.getBody().get("status"));
+
+                AiSession saved = sessionRepo.get(sessionUuid);
+                assertNotNull(saved);
+                assertEquals(AiSessionStatus.AWAITING_INPUT, saved.status());
+                assertEquals("work", saved.environmentVariables().get("profileName"));
+            }
 
         @Test
         void respond_collectSkillInput_save_mergesFieldsIntoToolArguments() throws Exception {
