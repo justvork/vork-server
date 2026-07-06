@@ -44,7 +44,6 @@ import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.exception.ToolSuspensionException;
-import sh.vork.skill.SkillActivatedException;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.protocol.StructuredAgentResponse;
 import sh.vork.ai.protocol.interaction.FieldSource;
@@ -206,27 +205,6 @@ public class ChatAuthorizationController {
                 token = toolResponseDataForAction(action, conversationFields, toolName, executionArgumentsJson);
                 } catch (ToolSuspensionException ex) {
                 return handleSuspendedToolExecution(sessionUuid, session, toolCallId, argumentsJson, ex);
-                } catch (SkillActivatedException ex) {
-                if (chatService == null) {
-                    throw ex;
-                }
-                List<Message> activationHistory = hydrateHistory(session.messages());
-                String skillOutput;
-                try {
-                    skillOutput = chatService.executeSkillSubLoop(
-                        sessionUuid,
-                        activationHistory,
-                        ex,
-                        resolveProvider(session.provider()));
-                } catch (ToolSuspensionException nestedEx) {
-                    return handleSuspendedToolExecution(sessionUuid, session, toolCallId, argumentsJson, nestedEx);
-                }
-                token = toJson(Map.of(
-                    "status", "SKILL_COMPLETED",
-                    "skill", ex.getSkillName(),
-                    "result", skillOutput == null ? "" : skillOutput
-                ));
-                log.info("Skill completed from authorization resume [session={}, skill={}]", sessionUuid, ex.getSkillName());
                 }
             ToolResponseMessage.ToolResponse toolResponse =
                 new ToolResponseMessage.ToolResponse(toolCallId, toolName, token);
@@ -379,23 +357,8 @@ public class ChatAuthorizationController {
                 final int MAX_RESUME_ITERATIONS = 10;
                 for (int resumeIter = 0; resumeIter < MAX_RESUME_ITERATIONS; resumeIter++) {
                     String rawResponse;
-                    try {
                         rawResponse = aiService.generateWithHistory(
-                                history, continuationPrompt, resolveProvider(session.provider()));
-                    } catch (SkillActivatedException skillEx) {
-                        log.info("Skill activated during resume [session={}, skill={}]",
-                                sessionUuid, skillEx.getSkillName());
-                        if (chatService == null) {
-                            throw skillEx;
-                        }
-                        String skillOutput = chatService.executeSkillSubLoop(
-                                sessionUuid, history, skillEx, resolveProvider(session.provider()));
-                        String skillResultMsg = "Skill '" + skillEx.getSkillName()
-                                + "' completed. Output: " + skillOutput;
-                        history.add(new AssistantMessage(skillResultMsg));
-                        continuationPrompt = "The skill completed successfully. Continue based on the output above.";
-                        continue;
-                    }
+                            history, continuationPrompt, resolveProvider(session.provider()));
                     StructuredAgentResponse structured = extractStructured(rawResponse);
                     if ("CONTINUE_TURN".equals(structured.status())) {
                         String progressText = structured.textResponse() != null && !structured.textResponse().isBlank()

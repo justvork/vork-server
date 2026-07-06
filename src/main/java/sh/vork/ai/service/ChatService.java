@@ -703,27 +703,11 @@ public class ChatService {
             log.debug("Agent loop iteration {} [session={}, agent={}]",
                     i, sessionUuid, currentSession.getActiveAgentTemplateId());
 
-            String rawResponse;
-            try {
-                rawResponse = (i == 0 && !media.isEmpty())
-                        ? safeGenerateWithHistoryAndMedia(history, currentPrompt, media, provider)
-                        : safeGenerateWithHistory(history, currentPrompt, provider);
+                String rawResponse = (i == 0 && !media.isEmpty())
+                    ? safeGenerateWithHistoryAndMedia(history, currentPrompt, media, provider)
+                    : safeGenerateWithHistory(history, currentPrompt, provider);
                 log.debug("Agent loop raw response [session={}, iteration={}, response={}]",
-                    sessionUuid, i, rawResponse);
-            } catch (sh.vork.skill.SkillActivatedException ex) {
-                log.info("Skill activated in agent loop [session={}, skill={}, uuid={}]",
-                        sessionUuid, ex.getSkillName(), ex.getSkillUuid());
-                String skillOutput = executeSkillSubLoop(sessionUuid, history, ex, provider);
-                String normalizedSkillOutput = extractTextResponse(skillOutput);
-                log.debug("Agent loop skill output [session={}, skill={}, output={}]",
-                    sessionUuid, ex.getSkillName(), normalizedSkillOutput);
-                String skillResultMsg = "Skill '" + ex.getSkillName() + "' completed. Output: " + normalizedSkillOutput;
-                history.add(new AssistantMessage(skillResultMsg));
-                transitionMsgs.add(new AiChatMessage(UUID.randomUUID().toString(), "ASSISTANT",
-                        skillResultMsg, System.currentTimeMillis(), null));
-                currentPrompt = skillResultMsg;
-                continue;
-            }
+                sessionUuid, i, rawResponse);
 
             StructuredAgentResponse structured = parseStructuredResponse(rawResponse);
             log.debug("Agent loop response [session={}, status={}, iteration={}]",                    sessionUuid, structured.status(), i);
@@ -1031,7 +1015,9 @@ public class ChatService {
                                        AiProvider provider) {
         final int MAX_SKILL_ITERATIONS = 20;
         final int MAX_SKILL_DEPTH = 5;
+        final long MAX_SKILL_RUNTIME_MS = provider == AiProvider.BACKGROUND_SCHEDULER ? 300_000L : 60_000L;
         String currentPrompt = ex.getInitialPrompt();
+        long startedAt = System.currentTimeMillis();
 
         broadcastAndPersistSkillEvent(sessionUuid, "Running skill: " + ex.getSkillName());
 
@@ -1082,6 +1068,13 @@ public class ChatService {
         List<Message> skillHistory = new ArrayList<>();
 
         for (int i = 0; i < MAX_SKILL_ITERATIONS; i++) {
+            if (System.currentTimeMillis() - startedAt > MAX_SKILL_RUNTIME_MS) {
+                popSkillFrameIfPresent(sessionUuid, ex.getSkillUuid());
+                log.warn("Skill sub-loop runtime budget exceeded [session={}, skill={}, elapsedMs={}, maxMs={}]",
+                        sessionUuid, ex.getSkillName(), System.currentTimeMillis() - startedAt, MAX_SKILL_RUNTIME_MS);
+                broadcastAndPersistSkillEvent(sessionUuid, "Skill timed out: " + ex.getSkillName());
+                return "Skill '" + ex.getSkillName() + "' execution timed out after " + MAX_SKILL_RUNTIME_MS + " ms.";
+            }
             // Re-bind the session context at the top of every iteration. SecuredToolCallback
             // previously cleared ToolExecutionContext in its finally block after each tool
             // execution; without this rebind the second+ iterations would see sessionUuid=null
@@ -1184,24 +1177,17 @@ public class ChatService {
                 continue;
             }
 
-            // Check if the skill frame was popped by a legacy completeSkillExecution call during this turn.
-            // Skills now exit via FINISHED_TURN, but this guard remains as a safety fallback.
-            AiSession afterTurn = sessionRepo.get(sessionUuid);
-            boolean skillComplete = afterTurn == null
+                AiSession afterTurn = sessionRepo.get(sessionUuid);
+                boolean skillFrameMissing = afterTurn == null
                     || afterTurn.skillStack() == null
                     || afterTurn.skillStack().size() <= skillCompleteDepth;
-
-            if (skillComplete) {
-                // Legacy path: frame was popped by a completeSkillExecution tool call.
-                Object storedOutput = sh.vork.ai.context.ToolExecutionContext.get("__skill_output__");
-                String output = storedOutput != null ? storedOutput.toString() : rawResponse;
-                log.info("Skill sub-loop complete via tool call (legacy) [session={}, skill={}, iterations={}]",
-                        sessionUuid, ex.getSkillName(), i + 1);
-                log.debug("Skill sub-loop legacy output [session={}, skill={}, output={}]",
-                    sessionUuid, ex.getSkillName(), output);
+                if (skillFrameMissing) {
+                log.warn("Skill frame ended unexpectedly before FINISHED_TURN [session={}, skill={}, iteration={}]",
+                    sessionUuid, ex.getSkillName(), i + 1);
+                String output = rawResponse;
                 broadcastAndPersistSkillEvent(sessionUuid, "Skill completed: " + ex.getSkillName());
                 return output;
-            }
+                }
 
             StructuredAgentResponse structured = parseStructuredResponse(rawResponse);
             if ("FINISHED_TURN".equals(structured.status())) {

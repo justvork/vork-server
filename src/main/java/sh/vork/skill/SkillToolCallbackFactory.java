@@ -20,6 +20,8 @@ import java.util.stream.Collectors;
 
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.exception.ToolSuspensionException;
+import sh.vork.ai.service.ChatService;
+import sh.vork.ai.AiProvider;
 import sh.vork.ai.protocol.interaction.FieldSource;
 import sh.vork.ai.protocol.interaction.FormAction;
 import sh.vork.ai.protocol.interaction.FormField;
@@ -36,9 +38,9 @@ import sh.vork.security.SecureCredentialStore;
  * <p>The generated tool name is derived from the skill's human-readable name via
  * {@link Skill#toolName()}.  The input schema is built dynamically from the skill's
  * declared {@link SkillParameter} list.  When the AI invokes the tool, it delegates
- * to {@link SkillService#executeSkill}, which throws
- * {@link SkillActivatedException} — the same propagation path used by the legacy
- * {@code executeSkill} bean.
+ * to {@link SkillService#executeSkill}. Any skill activation is resolved and
+ * completed entirely within this callback so the model receives a direct tool
+ * response in the same turn.
  */
 @Component
 public class SkillToolCallbackFactory {
@@ -54,6 +56,10 @@ public class SkillToolCallbackFactory {
     @Lazy
     @Autowired
     private DatabaseRepository<AiSession> aiSessionRepository;
+
+    @Lazy
+    @Autowired
+    private ChatService chatService;
 
     @Lazy
     @Autowired
@@ -193,9 +199,32 @@ public class SkillToolCallbackFactory {
                         + String.join(", ", missingAiRequired).replace("\"", "'")
                         + ". Re-call this skill with all required parameters.\"}";
                 }
-                // SkillActivatedException is a RuntimeException — Spring AI's DefaultToolCallingManager
-                // does not catch it, so it propagates freely to ChatService.executeAgentLoop.
-                return skillService.executeSkill(skill.uuid(), params);
+                try {
+                    return skillService.executeSkill(skill.uuid(), params);
+                } catch (SkillActivatedException ex) {
+                    String sessionUuid = ToolExecutionContext.getSessionUuid();
+                    if (sessionUuid == null || sessionUuid.isBlank()) {
+                        log.warn("Skill activated without active session context [skill={}]", ex.getSkillName());
+                        return "{\"status\":\"error\",\"message\":\"Cannot execute skill without active session context.\"}";
+                    }
+                    AiSession session = aiSessionRepository.get(sessionUuid);
+                    if (session == null) {
+                        log.warn("Skill activated but session not found [session={}, skill={}]", sessionUuid, ex.getSkillName());
+                        return "{\"status\":\"error\",\"message\":\"Caller session not found: "
+                                + sessionUuid.replace("\"", "'") + "\"}";
+                    }
+                    AiProvider provider = resolveProvider(session.provider());
+                    log.info("Executing skill as direct tool response [session={}, skill={}, provider={}]",
+                            sessionUuid, ex.getSkillName(), provider);
+                    String skillOutput = chatService.executeSkillSubLoop(
+                            sessionUuid,
+                            new ArrayList<>(),
+                            ex,
+                            provider);
+                    return "{\"status\":\"ok\",\"skill\":"
+                            + jsonString(ex.getSkillName())
+                            + ",\"result\":" + jsonString(skillOutput) + "}";
+                }
             }
         };
     }
@@ -452,5 +481,26 @@ public class SkillToolCallbackFactory {
             return null;
         }
         return String.valueOf(value);
+    }
+
+    private static AiProvider resolveProvider(String providerName) {
+        if (providerName == null || providerName.isBlank()) {
+            return AiProvider.GEMINI;
+        }
+        try {
+            return AiProvider.valueOf(providerName.trim().toUpperCase());
+        } catch (Exception ignored) {
+            return AiProvider.GEMINI;
+        }
+    }
+
+    private static String jsonString(String value) {
+        if (value == null) {
+            return "null";
+        }
+        return "\"" + value.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r") + "\"";
     }
 }

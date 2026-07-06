@@ -23,17 +23,21 @@ import org.springframework.ai.tool.ToolCallback;
 import org.springframework.test.util.ReflectionTestUtils;
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.exception.ToolSuspensionException;
+import sh.vork.orm.DatabaseRepository;
 
 class SkillToolCallbackFactoryTest {
 
     private SkillService skillService;
+    private DatabaseRepository<SkillGroup> skillGroupRepository;
     private SkillToolCallbackFactory factory;
 
     @BeforeEach
     void setUp() {
         skillService = Mockito.mock(SkillService.class);
+        skillGroupRepository = Mockito.mock(DatabaseRepository.class);
         factory = new SkillToolCallbackFactory(new ObjectMapper());
         ReflectionTestUtils.setField(factory, "skillService", skillService);
+        ReflectionTestUtils.setField(factory, "skillGroupRepository", skillGroupRepository);
     }
 
     @AfterEach
