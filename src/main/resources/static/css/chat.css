@@ -6,6 +6,19 @@ body {
     overflow: hidden;
 }
 
+.page-layout {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+}
+
+.page-layout > .chat-layout {
+    flex: 1;
+    min-height: 0;
+    height: auto;
+}
+
 .chat-layout {
     display: flex;
     flex-direction: column;
