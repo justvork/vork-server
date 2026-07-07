@@ -74,3 +74,9 @@ Failure Action Policies: Define what happens when a level-1 or level-2 constrain
     RETRY_WITH_CORRECTION: Intercept the error, append a system message back to the LLM context stating "Input X violated security constraint Y. Regenerate arguments within authorized bounds," giving the AI a single attempt to self-correct.
 
 Data Masking & Redaction: Ensure that if a validation check fails on a sensitive argument (such as passwords, private keys, or auth headers), the violating string is completely scrubbed from the public log frame before archiving.
+
+## Skill User Preferences
+
+Some input parameters in Skills should be user preferences. For example in the Schedule Calendar skill it will suggest alternative times if the requested event conflicts with an existing event in the calendar. Currently it uses a 15 min buffer, but that should be configurable per-user. 
+
+This requires implementing a new input parameter type of USER_PREFERENCE and providing a user-interface and/or tool to allow users to set the their permanent default for these inputs. 

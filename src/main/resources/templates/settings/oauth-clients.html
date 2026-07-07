@@ -25,9 +25,9 @@
                 <table class="table table-dark table-striped align-middle mb-0">
                     <thead>
                     <tr>
-                        <th>Client</th>
+                        <th>Profile</th>
+                        <th>Client Name</th>
                         <th>Status</th>
-                        <th>Token</th>
                         <th>Expires</th>
                         <th>Scopes</th>
                         <th>Placeholder</th>
@@ -37,23 +37,16 @@
                     <tbody>
                     <tr th:each="client : ${oauthClients}">
                         <td>
+                            <div class="fw-semibold" th:text="${client.profileName}"></div>
+                            <span th:if="${client.defaultProfile}" class="badge bg-info text-dark mt-1">Default</span>
+                        </td>
+                        <td>
                             <div class="fw-semibold" th:text="${client.clientName}"></div>
-                            <div class="small text-info">
-                                Profile: <span th:text="${client.profileName}"></span>
-                                <span th:if="${client.defaultProfile}" class="badge bg-info text-dark ms-2">Default</span>
-                            </div>
-                            <div class="small text-muted" th:text="${client.redirectUri}"></div>
                         </td>
                         <td>
                             <span th:if="${client.connected}" class="badge bg-success">Connected</span>
                             <span th:if="${!client.connected and client.configComplete}" class="badge bg-warning text-dark">Configured</span>
                             <span th:if="${!client.connected and !client.configComplete}" class="badge bg-secondary">Incomplete</span>
-                        </td>
-                        <td>
-                            <span th:if="${client.hasAccessToken}" class="badge bg-success me-1">Access</span>
-                            <span th:if="${!client.hasAccessToken}" class="badge bg-secondary me-1">None</span>
-                            <span th:if="${client.hasRefreshToken}" class="badge bg-info text-dark">Refresh</span>
-                            <span th:if="${client.tokenExpired}" class="badge bg-danger">Expired</span>
                         </td>
                         <td>
                             <span th:if="${client.accessTokenExpiresAt > 0}"

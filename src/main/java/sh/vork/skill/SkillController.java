@@ -7,10 +7,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -229,6 +231,21 @@ public class SkillController {
             return ResponseEntity.badRequest().body(result);
         }
         return ResponseEntity.ok(result);
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    @ResponseBody
+    public ResponseEntity<?> handleMalformedImportJson(HttpMessageNotReadableException ex) {
+        Throwable root = ex.getMostSpecificCause();
+        String detail = root != null && root.getMessage() != null ? root.getMessage() : ex.getMessage();
+
+        log.warn("Skill import JSON parse failure: {}", detail, ex);
+
+        return ResponseEntity.badRequest().body(Map.of(
+                "status", "error",
+                "message", "Invalid JSON payload for skill-group import.",
+                "detail", detail
+        ));
     }
 
     public record SkillGroupView(SkillGroup group, List<Skill> skills) {}

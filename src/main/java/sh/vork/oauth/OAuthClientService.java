@@ -1,6 +1,7 @@
 package sh.vork.oauth;
 
 import java.net.URI;
+import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -24,6 +25,7 @@ import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.function.OAuthConnectRequest;
@@ -450,6 +452,7 @@ public class OAuthClientService {
         HttpRequest request = HttpRequest.newBuilder(URI.create(client.tokenEndpoint()))
                 .timeout(Duration.ofSeconds(30))
                 .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Accept", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(form.toString()))
                 .build();
 
@@ -458,7 +461,7 @@ public class OAuthClientService {
             throw new IllegalStateException("Refresh token endpoint returned status " + response.statusCode());
         }
 
-        JsonNode tokenJson = objectMapper.readTree(response.body());
+        JsonNode tokenJson = parseTokenResponse(response);
         OAuthClient refreshed = applyTokenPayload(client, tokenJson);
         clientRepository.save(refreshed);
         return refreshed;
@@ -488,6 +491,7 @@ public class OAuthClientService {
         HttpRequest request = HttpRequest.newBuilder(URI.create(client.tokenEndpoint()))
                 .timeout(Duration.ofSeconds(30))
                 .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Accept", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(form.toString()))
                 .build();
 
@@ -497,7 +501,52 @@ public class OAuthClientService {
             String details = body.isBlank() ? "" : (": " + body);
             throw new IllegalStateException("Token endpoint returned status " + response.statusCode() + details);
         }
-        return objectMapper.readTree(response.body());
+        return parseTokenResponse(response);
+    }
+
+    private JsonNode parseTokenResponse(HttpResponse<String> response) throws Exception {
+        String body = response.body() == null ? "" : response.body().trim();
+        String contentType = response.headers().firstValue("Content-Type").orElse("").toLowerCase();
+
+        if (body.isBlank()) {
+            throw new IllegalStateException("Token endpoint returned an empty response body");
+        }
+
+        if (contentType.contains("json") || body.startsWith("{") || body.startsWith("[")) {
+            try {
+                return objectMapper.readTree(body);
+            } catch (Exception ignored) {
+                // Some providers still return URL-encoded token payloads.
+            }
+        }
+
+        ObjectNode tokenJson = objectMapper.createObjectNode();
+        String[] pairs = body.split("&");
+        for (String pair : pairs) {
+            if (pair == null || pair.isBlank()) {
+                continue;
+            }
+            int idx = pair.indexOf('=');
+            String rawKey = idx >= 0 ? pair.substring(0, idx) : pair;
+            String rawVal = idx >= 0 ? pair.substring(idx + 1) : "";
+
+            String key = URLDecoder.decode(rawKey, StandardCharsets.UTF_8);
+            String value = URLDecoder.decode(rawVal, StandardCharsets.UTF_8);
+            if ("expires_in".equals(key)) {
+                try {
+                    tokenJson.put(key, Long.parseLong(value));
+                    continue;
+                } catch (NumberFormatException ignored) {
+                    // Keep non-numeric values as text below.
+                }
+            }
+            tokenJson.put(key, value);
+        }
+
+        if (!tokenJson.has("access_token")) {
+            throw new IllegalStateException("Token response did not include access_token");
+        }
+        return tokenJson;
     }
 
     private OAuthClient applyTokenPayload(OAuthClient client, JsonNode tokenJson) {

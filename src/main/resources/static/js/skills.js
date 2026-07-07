@@ -603,7 +603,8 @@ async function importSkill(input) {
     try {
         pkg = JSON.parse(await file.text());
     } catch (e) {
-        showAlert('Could not parse file — not valid JSON.', 'danger');
+        const detail = (e && e.message) ? (': ' + e.message) : '.';
+        showAlert('Could not parse file — not valid JSON' + detail, 'danger');
         return;
     }
 
@@ -631,7 +632,8 @@ async function importSkill(input) {
             showAlert('Group "' + escapeHtml(pkg.group.name) + '" imported successfully.' + extra, 'success');
             setTimeout(function () { location.reload(); }, 900);
         } else {
-            showAlert('Import failed: ' + escapeHtml(data.message || 'Unknown error'), 'danger');
+            const detail = data.detail ? (' (' + data.detail + ')') : '';
+            showAlert('Import failed: ' + escapeHtml((data.message || 'Unknown error') + detail), 'danger');
         }
     } catch (e) {
         showAlert('Network error during import.', 'danger');
