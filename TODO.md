@@ -9,7 +9,7 @@ There are currently 4 main mechanisms for agents to operate: Web Chat, Telegram,
 ### Forms
 
 Forms should allow for anonymous and/or logged in users to start background processes. This should be flexible enough to include custom HTML and styles, with the platform rendering the form according to the requirements. Submission would feed the input into a new background task, much like Scheduled Tasks.
-- **File Attachment Ingestion:** Provide a mechanism for multi-part form data and file uploads to be parsed and mapped securely into the background task's temporary execution or file context.
+- **File Attachment Ingestion:** Provide a mechanism for multi-part form data and file uploads to be parsed and mapped securely into the background task's temporary execution or file context (see file system requirements).
 
 ### Webhooks
 
@@ -80,3 +80,16 @@ Data Masking & Redaction: Ensure that if a validation check fails on a sensitive
 Some input parameters in Skills should be user preferences. For example in the Schedule Calendar skill it will suggest alternative times if the requested event conflicts with an existing event in the calendar. Currently it uses a 15 min buffer, but that should be configurable per-user. 
 
 This requires implementing a new input parameter type of USER_PREFERENCE and providing a user-interface and/or tool to allow users to set the their permanent default for these inputs. 
+
+## Memory and Knowledge
+
+Agents should have access to organisational memory and be able to update the memory subject to necersary approval flow. Memory will not be dumped into every chat session, instead, agents will be able to search and access the memory when needed.
+
+## File system
+
+Tools for creating & modifying files/folders and general file system maintenance, and the sharing of documents with agentic processes.
+
+- Every session gets a sandbox storage environment. This is where files uploaded or created in the session are stored.
+- Link mechanism for an agent/skill to share a file with the user.
+- Base Storage configuration
+- Document system for sharing files between agent invocations.

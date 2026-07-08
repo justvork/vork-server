@@ -36,6 +36,8 @@ public class SkillService {
     private final DatabaseRepository<SkillGroup> skillGroupRepo;
     private final DatabaseRepository<AiSession> aiSessionRepo;
 
+    private static final Set<String> PARAMETER_TYPES = Set.of("string", "text", "int", "double", "boolean");
+
     @Lazy
     @Autowired
     private DatabaseRepository<AgentTemplate> agentTemplateRepo;
@@ -174,6 +176,8 @@ public class SkillService {
             throw new IllegalArgumentException("Missing sub-skill dependencies: " + String.join(", ", missingDependencies));
         }
 
+        List<SkillParameter> normalizedParameters = normalizeParameters(req.parameters());
+
         long now = System.currentTimeMillis();
         Skill skill = new Skill(
                 UUID.randomUUID().toString(),
@@ -181,7 +185,7 @@ public class SkillService {
                 req.description(),
                 req.groupUuid(),
                 req.visibility() != null ? req.visibility() : SkillVisibility.PUBLIC,
-                req.parameters() != null ? List.copyOf(req.parameters()) : List.of(),
+                normalizedParameters,
                 req.instructions(),
                 req.allowedTools() != null ? List.copyOf(req.allowedTools()) : List.of(),
                 req.allowedTypes() != null ? List.copyOf(req.allowedTypes()) : List.of(),
@@ -209,13 +213,15 @@ public class SkillService {
             throw new IllegalArgumentException("Missing sub-skill dependencies: " + String.join(", ", missingDependencies));
         }
 
+        List<SkillParameter> normalizedParameters = normalizeParameters(req.parameters());
+
         Skill updated = new Skill(
                 uuid,
                 req.name(),
                 req.description(),
                 req.groupUuid(),
                 req.visibility() != null ? req.visibility() : SkillVisibility.PUBLIC,
-                req.parameters() != null ? List.copyOf(req.parameters()) : List.of(),
+            normalizedParameters,
                 req.instructions(),
                 req.allowedTools() != null ? List.copyOf(req.allowedTools()) : List.of(),
                 req.allowedTypes() != null ? List.copyOf(req.allowedTypes()) : List.of(),
@@ -666,6 +672,35 @@ public class SkillService {
             }
         }
         return result;
+    }
+
+    private static List<SkillParameter> normalizeParameters(List<SkillParameter> parameters) {
+        if (parameters == null || parameters.isEmpty()) {
+            return List.of();
+        }
+
+        List<SkillParameter> normalized = new ArrayList<>();
+        for (SkillParameter parameter : parameters) {
+            if (parameter == null) {
+                continue;
+            }
+
+            String type = parameter.type() == null ? "string" : parameter.type().trim().toLowerCase();
+            if ("secret".equals(type)) {
+                throw new IllegalArgumentException("Parameter type 'secret' is not supported. Use the Secrets section instead.");
+            }
+            if (!PARAMETER_TYPES.contains(type)) {
+                throw new IllegalArgumentException("Unsupported parameter type: " + parameter.type());
+            }
+
+            normalized.add(new SkillParameter(
+                    parameter.name(),
+                    type,
+                    parameter.description(),
+                    parameter.inputMode()));
+        }
+
+        return List.copyOf(normalized);
     }
 
     private static String buildInitialPrompt(Skill skill, Map<String, String> params) {

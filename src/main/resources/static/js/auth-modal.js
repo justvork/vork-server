@@ -160,7 +160,7 @@
             ta.className = 'form-control form-control-sm';
             ta.id = inputId;
             ta.dataset.fieldName = field.name;
-            ta.rows = 4;
+            ta.rows = 5;
             if (field.placeholder) ta.placeholder = field.placeholder;
             if (fieldValue) ta.value = fieldValue;
             if (field.required) ta.required = true;

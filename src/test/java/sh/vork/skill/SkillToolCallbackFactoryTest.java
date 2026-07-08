@@ -115,6 +115,37 @@ class SkillToolCallbackFactoryTest {
         assertFalse(params.containsKey("__skill_input_token"));
     }
 
+        @Test
+        void usesTextareaFieldForTextParameterType() {
+        Skill skill = new Skill(
+            "skill-1",
+            "Calendar Skill",
+            "desc",
+            "group-1",
+            SkillVisibility.PUBLIC,
+            List.of(new SkillParameter("query", "text", "Search query", SkillParameterInputMode.USER_ALWAYS_PROMPT)),
+            "instructions",
+            List.of(),
+            List.of(),
+            List.of(),
+            1L,
+            System.currentTimeMillis(),
+            System.currentTimeMillis(),
+            List.of());
+        ToolCallback callback = factory.create(skill);
+
+        ToolSuspensionException ex = assertThrows(
+            ToolSuspensionException.class,
+            () -> callback.call("{}"));
+
+        var queryField = ex.getFormSchema().fields().stream()
+            .filter(field -> "query".equals(field.name()))
+            .findFirst()
+            .orElseThrow();
+
+        assertEquals("textarea", queryField.type());
+        }
+
     private static Skill skillWithInputMode(SkillParameterInputMode inputMode) {
         return new Skill(
                 "skill-1",

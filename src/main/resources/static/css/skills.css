@@ -115,6 +115,27 @@
     flex: none;
 }
 
+.secret-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.secret-row .secret-name {
+    flex: 1.2;
+    min-width: 0;
+}
+
+.secret-row .secret-desc {
+    flex: 2.8;
+    min-width: 0;
+}
+
+.secret-row .btn-remove-secret {
+    flex: none;
+}
+
 @media (max-width: 575.98px) {
     .truncate-desc { max-width: 100%; }
 
@@ -125,6 +146,15 @@
     .param-row .param-type,
     .param-row .param-input-mode,
     .param-row .param-desc {
+        flex: 1 1 100%;
+        max-width: 100%;
+    }
+
+    .secret-row {
+        flex-wrap: wrap;
+    }
+    .secret-row .secret-name,
+    .secret-row .secret-desc {
         flex: 1 1 100%;
         max-width: 100%;
     }

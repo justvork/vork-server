@@ -1,7 +1,7 @@
 /* skills.js — Vork Skills management page */
 /* jshint esversion: 6 */
 
-const PARAM_TYPES = ['string', 'int', 'double', 'boolean', 'secret'];
+const PARAM_TYPES = ['string', 'text', 'int', 'double', 'boolean'];
 
 let skillModal;
 let groupModal;
@@ -16,6 +16,7 @@ let modalTools      = [];
 let modalTypes      = [];
 let modalSubSkills  = [];
 let modalParams     = []; // [{name, type, description, inputMode}]
+let modalSecrets    = []; // [{name, description}]
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function () {
@@ -194,11 +195,13 @@ function openCreate() {
     modalTypes      = [];
     modalSubSkills  = [];
     modalParams     = [];
+    modalSecrets    = [];
     clearAlert('skill-modal-alert');
     renderToolPills();
     renderTypePills();
     renderSubSkillPills();
     renderParams();
+    renderSecrets();
     skillModal.show();
 }
 
@@ -221,11 +224,18 @@ function openEdit(id) {
         let inputMode = p.inputMode || 'AI_REQUIRED';
         if (!p.inputMode && p.forceUserInput === true) inputMode = 'USER_ALWAYS_PROMPT';
         if (!p.inputMode && p.forceUserInput === false) inputMode = 'AI_REQUIRED';
+        const normalizedType = (p.type || 'string').toLowerCase() === 'secret' ? 'string' : (p.type || 'string');
         return {
             name: p.name || '',
-            type: p.type || 'string',
+            type: normalizedType,
             description: p.description || '',
             inputMode: inputMode
+        };
+    }) : [];
+    modalSecrets = skill.secrets ? skill.secrets.map(function (s) {
+        return {
+            name: s.name || '',
+            description: s.description || ''
         };
     }) : [];
     clearAlert('skill-modal-alert');
@@ -233,6 +243,7 @@ function openEdit(id) {
     renderTypePills();
     renderSubSkillPills();
     renderParams();
+    renderSecrets();
     skillModal.show();
 }
 
@@ -318,6 +329,62 @@ function updateParam(el) {
     if (el.classList.contains('param-type'))  modalParams[idx].type        = el.value;
     if (el.classList.contains('param-input-mode'))  modalParams[idx].inputMode = el.value;
     if (el.classList.contains('param-desc'))  modalParams[idx].description = el.value;
+}
+
+// ── Skill secrets rows ───────────────────────────────────────────────────────
+function addSecret() {
+    modalSecrets.push({ name: '', description: '' });
+    renderSecrets();
+    const list = document.getElementById('secret-list');
+    const last = list.querySelector('.secret-row:last-child .secret-name');
+    if (last) last.focus();
+}
+
+function removeSecret(idx) {
+    modalSecrets.splice(idx, 1);
+    renderSecrets();
+}
+
+function renderSecrets() {
+    const list = document.getElementById('secret-list');
+    if (!list) return;
+
+    list.innerHTML = '';
+    if (modalSecrets.length === 0) {
+        list.innerHTML = '<p class="text-muted small mb-0">No secrets defined. Add names to enable secure {{SECRET_NAME}} placeholder substitution.</p>';
+        return;
+    }
+
+    const hdr = document.createElement('div');
+    hdr.className = 'secret-row mb-1';
+    hdr.innerHTML =
+        '<span class="secret-name text-muted small">Name</span>' +
+        '<span class="secret-desc text-muted small">Description (optional)</span>' +
+        '<span style="width:32px"></span>';
+    list.appendChild(hdr);
+
+    modalSecrets.forEach(function (s, idx) {
+        const row = document.createElement('div');
+        row.className = 'secret-row';
+        row.innerHTML =
+            '<input type="text" class="form-control form-control-sm secret-name" ' +
+                   'placeholder="API_KEY" value="' + escapeHtml(s.name) + '" ' +
+                   'data-idx="' + idx + '" oninput="updateSecret(this)">' +
+            '<input type="text" class="form-control form-control-sm secret-desc" ' +
+                   'placeholder="What this secret is used for…" value="' + escapeHtml(s.description) + '" ' +
+                   'data-idx="' + idx + '" oninput="updateSecret(this)">' +
+            '<button type="button" class="btn btn-sm btn-outline-danger btn-remove-secret" ' +
+                    'onclick="removeSecret(' + idx + ')" title="Remove secret">' +
+            '  <i class="fa-solid fa-xmark"></i>' +
+            '</button>';
+        list.appendChild(row);
+    });
+}
+
+function updateSecret(el) {
+    const idx = parseInt(el.dataset.idx, 10);
+    if (el.classList.contains('secret-name')) modalSecrets[idx].name = el.value;
+    if (el.classList.contains('secret-desc')) modalSecrets[idx].description = el.value;
 }
 
 // ── Tool pills ────────────────────────────────────────────────────────────────
@@ -535,6 +602,25 @@ async function saveSkill() {
         }
     }
 
+    const secretPattern = /^[A-Z][A-Z0-9_]*$/;
+    const seenSecretNames = new Set();
+    for (let i = 0; i < modalSecrets.length; i++) {
+        const name = (modalSecrets[i].name || '').trim();
+        if (!name) {
+            showAlertIn('skill-modal-alert', 'All secrets must have a name (row ' + (i + 1) + ').', 'warning');
+            return;
+        }
+        if (!secretPattern.test(name)) {
+            showAlertIn('skill-modal-alert', 'Secret names must be UPPER_SNAKE_CASE (row ' + (i + 1) + ').', 'warning');
+            return;
+        }
+        if (seenSecretNames.has(name)) {
+            showAlertIn('skill-modal-alert', 'Secret names must be unique (' + name + ').', 'warning');
+            return;
+        }
+        seenSecretNames.add(name);
+    }
+
     const body = {
         name:           name,
         description:    description,
@@ -551,7 +637,13 @@ async function saveSkill() {
         instructions:   instructions,
         allowedTools:   modalTools.slice(),
         allowedTypes:   modalTypes.slice(),
-        subSkillUuids:  modalSubSkills.slice()
+        subSkillUuids:  modalSubSkills.slice(),
+        secrets:        modalSecrets.map(function (s) {
+            return {
+                name: (s.name || '').trim(),
+                description: s.description || ''
+            };
+        })
     };
 
     const btn = document.getElementById('btn-save-skill');

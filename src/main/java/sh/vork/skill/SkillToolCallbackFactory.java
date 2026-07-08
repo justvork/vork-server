@@ -469,6 +469,7 @@ public class SkillToolCallbackFactory {
             return "text";
         }
         return switch (paramType.toLowerCase()) {
+            case "text" -> "textarea";
             case "int", "double", "float" -> "number";
             case "boolean" -> "checkbox";
             default -> "text";

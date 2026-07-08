@@ -43,7 +43,7 @@
 
                         <textarea th:if="${field.type == 'TEXTAREA'}"
                                   th:id="${field.name}" th:name="${field.name}"
-                                  rows="4" th:placeholder="${field.placeholder}"
+                                  rows="5" th:placeholder="${field.placeholder}"
                                   class="w-full bg-zinc-950 border border-zinc-700 text-zinc-100 rounded-lg px-3 py-2 text-sm resize-y
                                          placeholder:text-zinc-600 focus:outline-none focus:border-[#fdaa02] focus:ring-2 focus:ring-[#fdaa02]/25 transition-colors"
                                   th:text="${field.value != null ? field.value : field.placeholder}"></textarea>

@@ -117,6 +117,17 @@
                 </div>
 
                 <div class="mb-3">
+                    <label class="form-label">Secrets</label>
+                    <div class="form-text mb-2">
+                        Define secret placeholders for this skill. Use names like <code>API_KEY</code> and reference them as <code>{{API_KEY}}</code> in tool arguments.
+                    </div>
+                    <div id="secret-list" class="mb-2"></div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addSecret()">
+                        <i class="fa-solid fa-plus me-1"></i>Add Secret
+                    </button>
+                </div>
+
+                <div class="mb-3">
                     <label class="form-label" for="skill-instructions">Instructions</label>
                     <textarea id="skill-instructions" class="form-control font-monospace" rows="8"
                               placeholder="Detailed instructions for the AI: what to do, how to do it, constraints, output format…"></textarea>
