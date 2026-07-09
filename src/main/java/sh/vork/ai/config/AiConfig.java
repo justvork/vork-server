@@ -24,6 +24,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.function.FunctionToolCallback;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.context.annotation.Bean;
@@ -48,9 +49,12 @@ import sh.vork.ai.function.CreateSkillRequest;
 import sh.vork.ai.function.DesignSkillRequest;
 import sh.vork.ai.function.CreateMongoDbConnectionRequest;
 import sh.vork.ai.function.CreateSessionTextFileRequest;
+import sh.vork.ai.function.CreateFolderRequest;
+import sh.vork.ai.function.CreatePdfRequest;
 import sh.vork.ai.function.DeleteSshConnectionRequest;
 import sh.vork.ai.function.DeleteMongoDbDocumentsRequest;
 import sh.vork.ai.function.DeleteTypeInstanceRequest;
+import sh.vork.ai.function.DownloadFolderAsZipRequest;
 import sh.vork.ai.function.DiscoverExportableTypesRequest;
 import sh.vork.ai.function.DisconnectSshRequest;
 import sh.vork.ai.function.DownloadFileRequest;
@@ -68,6 +72,7 @@ import sh.vork.ai.function.ListAgentTemplatesRequest;
 import sh.vork.ai.function.ListAvailableToolsRequest;
 import sh.vork.ai.function.ListEnumValuesRequest;
 import sh.vork.ai.function.ListJavaTypesRequest;
+import sh.vork.ai.function.ListFilesRequest;
 import sh.vork.ai.function.ListMongoDbCollectionsRequest;
 import sh.vork.ai.function.ListNotificationProvidersRequest;
 import sh.vork.ai.function.ListSshConnectionsRequest;
@@ -84,9 +89,11 @@ import sh.vork.ai.function.SendNotificationRequest;
 import sh.vork.ai.function.SetSshAliasRequest;
 import sh.vork.ai.function.SshConnectRequest;
 import sh.vork.ai.function.SshCreateConnectionRequest;
+import sh.vork.ai.function.ReadFileRequest;
 import sh.vork.ai.function.UpdateMongoDbDocumentsRequest;
 import sh.vork.ai.function.UploadFileRequest;
 import sh.vork.ai.function.UploadTextFileRequest;
+import sh.vork.ai.function.WriteFileRequest;
 import sh.vork.ai.mongo.MongoToolService;
 import sh.vork.ai.skill.SkillAuthoringService;
 import sh.vork.ai.registry.Hidden;
@@ -109,6 +116,7 @@ import sh.vork.ai.tool.CompleteSkillExecutionRequest;
 import sh.vork.ai.tool.CreateSessionTextFileTool;
 import sh.vork.ai.tool.MemoryRequest;
 import sh.vork.ai.tool.RecordProgressRequest;
+import sh.vork.ai.tool.SessionFileToolSuite;
 import sh.vork.ai.tool.ThinkRequest;
 import sh.vork.ai.tool.ToggleInputRelayRequest;
 import sh.vork.ai.protocol.UiEventFrame;
@@ -400,9 +408,10 @@ the protocol and will break the system. Do not converse. Execute.
      */
     @Bean
     @ToolCategory("Skills")
-    public ToolCallback designSkillFromRequest(SkillAuthoringService skillAuthoringService) {
+    public ToolCallback designSkillFromRequest(ObjectProvider<SkillAuthoringService> skillAuthoringServiceProvider) {
         return FunctionToolCallback
                 .builder("designSkillFromRequest", (DesignSkillRequest req) -> {
+                    SkillAuthoringService skillAuthoringService = skillAuthoringServiceProvider.getObject();
                     SkillAuthoringService.SkillAuthoringResult result =
                             skillAuthoringService.designSkillFromRequest(resolveUsername(), req);
                     try {
@@ -951,6 +960,7 @@ the protocol and will break the system. Do not converse. Execute.
     }
 
     @Bean
+    @Hidden
     @ToolCategory("Files")
     public ToolCallback createSessionTextFile(CreateSessionTextFileTool createSessionTextFileTool) {
         return FunctionToolCallback
@@ -959,8 +969,101 @@ the protocol and will break the system. Do not converse. Execute.
                     Create a UTF-8 text file in either the per-session sandbox (default) or the shared area.
                     Returns a download URL that can be rendered in chat attachments.
                     Use area=SESSION for files scoped to the current chat session, or area=SHARED for cross-session exchange.
+                    Response guidance: do not paste raw download URLs in assistant text; generated files are auto-attached to the chat message.
                     """.stripIndent())
                 .inputType(CreateSessionTextFileRequest.class)
+                .build();
+    }
+
+    @Bean
+    @Hidden
+    @ToolCategory("Files")
+    public ToolCallback writeFile(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("writeFile", sessionFileToolSuite::writeFile)
+                .description("""
+                    Write a UTF-8 file into the current session sandbox (default) or shared area.
+                    Returns a direct download URL that can be rendered in chat attachments.
+                    Use this for generating markdown, text, JSON, code, or configuration files.
+                    Set attachToChat=false for intermediate files that should not appear in the assistant attachment list.
+                    Response guidance: do not paste raw download URLs in assistant text; generated files are auto-attached to the chat message.
+                    """.stripIndent())
+                .inputType(WriteFileRequest.class)
+                .build();
+    }
+
+    @Bean
+    @Hidden
+    @ToolCategory("Files")
+    public ToolCallback readFile(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("readFile", sessionFileToolSuite::readFile)
+                .description("""
+                    Read a file from the current session sandbox (default) or shared area.
+                    Returns UTF-8 text content for text files and base64 for binary files.
+                    """.stripIndent())
+                .inputType(ReadFileRequest.class)
+                .build();
+    }
+
+    @Bean
+    @Hidden
+    @ToolCategory("Files")
+    public ToolCallback createFolder(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("createFolder", sessionFileToolSuite::createFolder)
+                .description("""
+                    Create a directory in the current session sandbox (default) or shared area.
+                    Creates intermediate directories when necessary.
+                    """.stripIndent())
+                .inputType(CreateFolderRequest.class)
+                .build();
+    }
+
+    @Bean
+    @Hidden
+    @ToolCategory("Files")
+    public ToolCallback listFiles(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("listFiles", sessionFileToolSuite::listFiles)
+                .description("""
+                    List files/folders for a directory in the current session sandbox (default) or shared area.
+                    File entries include download URLs.
+                    """.stripIndent())
+                .inputType(ListFilesRequest.class)
+                .build();
+    }
+
+    @Bean
+    @Hidden
+    @ToolCategory("Files")
+    public ToolCallback downloadFolderAsZip(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("downloadFolderAsZip", sessionFileToolSuite::downloadFolderAsZip)
+                .description("""
+                    Zip a folder in the current session sandbox (default) or shared area and return a download URL.
+                    Use this when the user asks to download a directory as a single archive.
+                    By default attachOnlyZip=true, so intermediate generated files are removed from the attachment list and only the zip is attached.
+                    Set attachToChat=false if the zip should be generated without any chat attachment.
+                    Response guidance: do not paste raw download URLs in assistant text; generated files are auto-attached to the chat message.
+                    """.stripIndent())
+                .inputType(DownloadFolderAsZipRequest.class)
+                .build();
+    }
+
+    @Bean
+    @Hidden
+    @ToolCategory("Files")
+    public ToolCallback createPdf(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("createPdf", sessionFileToolSuite::createPdf)
+                .description("""
+                    Create a PDF file from MARKDOWN (default) or HTML content, store it in the session/shared file area,
+                    and return a direct download URL.
+                    Set attachToChat=false to generate the PDF without adding a chat attachment.
+                    Response guidance: do not paste raw download URLs in assistant text; generated files are auto-attached to the chat message.
+                    """.stripIndent())
+                .inputType(CreatePdfRequest.class)
                 .build();
     }
 

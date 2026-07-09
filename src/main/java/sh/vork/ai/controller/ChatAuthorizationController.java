@@ -77,6 +77,7 @@ public class ChatAuthorizationController {
 
     private static final Logger log = LoggerFactory.getLogger(ChatAuthorizationController.class);
     private static final int TERMINAL_HISTORY_OUTPUT_MAX_CHARS = 24_000;
+    private static final String GENERATED_ATTACHMENTS_CONTEXT_KEY = "generated.session.attachments";
         private static final Pattern OAUTH_ACCESS_PLACEHOLDER_PATTERN =
             Pattern.compile("\\{\\{OAUTH_[A-Z0-9_]+_ACCESS_TOKEN\\}\\}");
 
@@ -344,10 +345,12 @@ public class ChatAuthorizationController {
                         log.error("Background resume failed [session={}]: {}", sessionUuid, ex.getMessage(), ex);
                     } finally {
                         SecurityContextHolder.clearContext();
+                        ToolExecutionContext.remove(GENERATED_ATTACHMENTS_CONTEXT_KEY);
                         ToolExecutionContext.clear();
                     }
                 });
 
+                    ToolExecutionContext.remove(GENERATED_ATTACHMENTS_CONTEXT_KEY);
                     ToolExecutionContext.clear();
 
                 return ResponseEntity.ok(Map.of(
@@ -498,6 +501,7 @@ public class ChatAuthorizationController {
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, suspendedPromptEvent);
                 log.info("Resumed call suspended again [tool={}, session={}]", ex.getToolName(), sessionUuid);
 
+                ToolExecutionContext.remove(GENERATED_ATTACHMENTS_CONTEXT_KEY);
                 ToolExecutionContext.clear();
 
                 return ResponseEntity.ok(Map.of(
@@ -544,6 +548,7 @@ public class ChatAuthorizationController {
                     session.sessionToolIds()));
 
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, errorEvent);
+                ToolExecutionContext.remove(GENERATED_ATTACHMENTS_CONTEXT_KEY);
                 ToolExecutionContext.clear();
 
                 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
@@ -574,22 +579,20 @@ public class ChatAuthorizationController {
                 log.debug("Skill completion event broadcast during resume [session={}, skill={}]", sessionUuid, skName);
             }
 
-            UiEventFrame textEvent = new UiEventFrame(
+                List<AiChatMessage.AttachmentRef> assistantAttachments = extractRuntimeGeneratedAttachments();
+                if (assistantAttachments.isEmpty() && attachments != null && !attachments.isEmpty()) {
+                assistantAttachments = List.copyOf(attachments);
+                }
+                AiChatMessage assistantMessage = new AiChatMessage(
                     UUID.randomUUID().toString(),
-                    "TEXT_RESPONSE",
-                    "CHAT_OUTPUT",
+                    "ASSISTANT",
                     finalText == null ? "" : finalText,
-                    null);
-
-            updated.add(new AiChatMessage(
-                    UUID.randomUUID().toString(),
-                    "TEXT_RESPONSE",
-                    toJson(textEvent),
                     System.currentTimeMillis(),
+                    assistantAttachments.isEmpty() ? null : List.copyOf(assistantAttachments),
                     null,
                     null,
-                    null,
-                    null));
+                    null);
+                updated.add(assistantMessage);
 
             sessionRepo.save(new AiSession(
                     session.uuid(),
@@ -615,15 +618,93 @@ public class ChatAuthorizationController {
             log.info("Resumption completed [finalTextLength={}]", finalText == null ? 0 : finalText.length());
             log.debug("Resumption final text: {}", abbreviate(finalText == null ? "" : finalText, 4000));
 
-            messaging.convertAndSend("/topic/chat/" + sessionUuid, textEvent);
+            messaging.convertAndSend("/topic/chat/" + sessionUuid, assistantMessage);
 
+            ToolExecutionContext.remove(GENERATED_ATTACHMENTS_CONTEXT_KEY);
             ToolExecutionContext.clear();
 
             return ResponseEntity.ok(Map.of(
                     "status", "WEB_RESUMED",
-                    "eventType", textEvent.type(),
-                    "eventId", textEvent.eventId()
+                    "eventType", assistantMessage.role(),
+                    "eventId", assistantMessage.uuid()
             ));
+        }
+    }
+
+    private List<AiChatMessage.AttachmentRef> extractRuntimeGeneratedAttachments() {
+        Map<String, Object> ctx = ToolExecutionContext.snapshot();
+        if (ctx == null || ctx.isEmpty()) {
+            return List.of();
+        }
+        Object rawObj = ctx.get(GENERATED_ATTACHMENTS_CONTEXT_KEY);
+        if (rawObj == null) {
+            return List.of();
+        }
+        try {
+            List<Map<String, Object>> items;
+            if (rawObj instanceof List<?> list) {
+                items = new ArrayList<>();
+                for (Object entry : list) {
+                    if (entry instanceof Map<?, ?> map) {
+                        Map<String, Object> converted = new LinkedHashMap<>();
+                        for (Map.Entry<?, ?> e : map.entrySet()) {
+                            converted.put(String.valueOf(e.getKey()), e.getValue());
+                        }
+                        items.add(converted);
+                    }
+                }
+            } else {
+                String raw = String.valueOf(rawObj);
+                if (raw.isBlank()) {
+                    return List.of();
+                }
+                items = objectMapper.readValue(raw, new TypeReference<List<Map<String, Object>>>() {});
+            }
+
+            List<AiChatMessage.AttachmentRef> refs = new ArrayList<>();
+            for (Map<String, Object> item : items) {
+                if (item == null) {
+                    continue;
+                }
+                Object pathObj = item.get("path");
+                String path = pathObj == null ? "" : String.valueOf(pathObj);
+                String name = inferFileNameFromPath(path);
+
+                Object mimeObj = item.get("mimeType");
+                String mime = (mimeObj instanceof String m && !m.isBlank()) ? m : inferMimeType(name);
+
+                Object urlObj = item.get("downloadUrl");
+                String url = (urlObj instanceof String u && !u.isBlank())
+                        ? u
+                        : "/api/session-files/download?area=SESSION&path=" + encodePath(path);
+
+                refs.add(new AiChatMessage.AttachmentRef(url, name, mime, url));
+            }
+            if (log.isDebugEnabled()) {
+                log.debug("Extracted runtime-generated attachments during resume [count={}]", refs.size());
+            }
+            return refs;
+        } catch (Exception ex) {
+            log.debug("Failed to parse runtime-generated attachments during resume: {}", ex.getMessage());
+            return List.of();
+        }
+    }
+
+    private String inferFileNameFromPath(String path) {
+        if (path == null || path.isBlank()) {
+            return "generated-file";
+        }
+        String normalized = path.replace('\\', '/');
+        int idx = normalized.lastIndexOf('/');
+        String name = idx >= 0 ? normalized.substring(idx + 1) : normalized;
+        return name == null || name.isBlank() ? "generated-file" : name;
+    }
+
+    private String encodePath(String path) {
+        try {
+            return java.net.URLEncoder.encode(path == null ? "" : path, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception ignored) {
+            return path == null ? "" : path;
         }
     }
 

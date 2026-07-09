@@ -254,6 +254,20 @@
             <version>8.13.49</version>
         </dependency>
 
+        <!-- Markdown parsing for createPdf tool -->
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark</artifactId>
+            <version>0.22.0</version>
+        </dependency>
+
+        <!-- HTML to PDF rendering for createPdf tool -->
+        <dependency>
+            <groupId>com.openhtmltopdf</groupId>
+            <artifactId>openhtmltopdf-pdfbox</artifactId>
+            <version>1.0.10</version>
+        </dependency>
+
         <!-- acme4j: Let's Encrypt / ACME protocol client -->
         <dependency>
             <groupId>org.shredzone.acme4j</groupId>

@@ -376,8 +376,12 @@ function renderAttachmentsHtml(attachments) {
         } else {
             html += '<a class="bubble-file-link" href="' + href + '"'
                   + ' download="' + escapeHtml(att.name) + '" target="_blank">'
-                  + '<i class="fa-solid ' + mimeIcon(att.mimeType) + '"></i>'
+                  + '<span class="bubble-file-link-icon">'
+                  + '<i class="fa-solid fa-download"></i>'
+                  + '</span>'
+                  + '<span class="bubble-file-link-name" title="' + escapeHtml(att.name) + '">'
                   + escapeHtml(att.name)
+                  + '</span>'
                   + '</a>';
         }
     }

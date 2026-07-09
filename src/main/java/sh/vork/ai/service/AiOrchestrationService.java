@@ -2,6 +2,7 @@ package sh.vork.ai.service;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -77,6 +78,14 @@ public class AiOrchestrationService {
         private static final String BACKGROUND_OPERATIONAL_PROTOCOL = """
 BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated background thread. You must perform all necessary analysis and tool calls across multiple message rounds without expecting further human input. Once you have validated that the requested objective is entirely satisfied (e.g., your types compile successfully and records are saved), you MUST invoke the completeBackgroundTask tool to cleanly finalize the run. You MUST provide a boolean 'success' value and a 'report' string summarising what was done and produced. Do not exit without invoking this tool.
                         """.stripIndent();
+        private static final List<String> ALWAYS_ON_HIDDEN_FILE_TOOL_BEAN_NAMES = List.of(
+                "createSessionTextFile",
+                "writeFile",
+                "readFile",
+                "createFolder",
+                "listFiles",
+                "downloadFolderAsZip",
+                "createPdf");
 
         /**
          * Builds the structured-output mandate injected at the end of every system prompt.
@@ -793,6 +802,15 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         .map(t -> t.getToolDefinition().name())
                         .collect(Collectors.toCollection(java.util.HashSet::new));
 
+                // Always provide hidden session filesystem tools for all agents.
+                // They remain hidden from listAvailableTools / UI because the beans are @Hidden.
+                for (ToolCallback hiddenFsTool : resolveAlwaysOnHiddenFileTools()) {
+                        String name = hiddenFsTool.getToolDefinition().name();
+                        if (presentNames.add(name)) {
+                                merged.add(hiddenFsTool);
+                        }
+                }
+
                 // oauthConnect frequently expects profile discovery in the same turn.
                 // Ensure discovery is always callable whenever oauthConnect is exposed,
                 // even when agent/skill filtering omitted it.
@@ -919,6 +937,24 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 }
 
                 return builder;
+        }
+
+        private List<ToolCallback> resolveAlwaysOnHiddenFileTools() {
+                if (beanFactory == null) {
+                        return Collections.emptyList();
+                }
+                List<ToolCallback> callbacks = new ArrayList<>();
+                for (String beanName : ALWAYS_ON_HIDDEN_FILE_TOOL_BEAN_NAMES) {
+                        try {
+                                ToolCallback callback = beanFactory.getBean(beanName, ToolCallback.class);
+                                if (callback != null) {
+                                        callbacks.add(callback);
+                                }
+                        } catch (Exception ex) {
+                                log.debug("Hidden filesystem tool bean not available [bean={}]: {}", beanName, ex.getMessage());
+                        }
+                }
+                return callbacks;
         }
 
         /**

@@ -371,13 +371,7 @@ public class ChatController {
             AiChatMessage response = chatService.sendMessageAsUser(
                 username, request.sessionUuid(), request.content(), request.attachmentUuids(), provider);
             if (response != null) {
-                UiEventFrame frame = new UiEventFrame(
-                    UUID.randomUUID().toString(),
-                    "TEXT_RESPONSE",
-                    "CHAT_OUTPUT",
-                    response.content(),
-                    null);
-                messaging.convertAndSend("/topic/chat/" + request.sessionUuid(), frame);
+                messaging.convertAndSend("/topic/chat/" + request.sessionUuid(), response);
             }
             } catch (Exception ex) {
             log.error("Chat error: {}", ex.getMessage(), ex);

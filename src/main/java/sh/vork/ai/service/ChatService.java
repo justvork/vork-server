@@ -91,7 +91,8 @@ public class ChatService {
     private static final String DEFAULT_RELAY_BASE_URL = "https://relay.vork.sh";
     private static final String WEB_INPUT_RELAY_ENABLED_ENV = "WEB_INPUT_RELAY_ENABLED";
     private static final String TOGGLE_INPUT_RELAY_TOOL = "toggleInputRelay";
-        private static final Pattern SESSION_FILE_DOWNLOAD_URL_PATTERN =
+    private static final String GENERATED_ATTACHMENTS_CONTEXT_KEY = "generated.session.attachments";
+    private static final Pattern SESSION_FILE_DOWNLOAD_URL_PATTERN =
             Pattern.compile("(/api/session-files/download\\?[^\\s\"'<>]+)");
 
     private final DatabaseRepository<AiSession>     sessionRepo;
@@ -484,6 +485,7 @@ public class ChatService {
                     ex.getToolName(), sessionUuid);
             return null;
         } finally {
+            ToolExecutionContext.remove(GENERATED_ATTACHMENTS_CONTEXT_KEY);
             ToolExecutionContext.clear();
         }
     }
@@ -656,6 +658,7 @@ public class ChatService {
                 return null;
             }
         } finally {
+            ToolExecutionContext.remove(GENERATED_ATTACHMENTS_CONTEXT_KEY);
             ToolExecutionContext.clear();
         }
     }
@@ -949,30 +952,44 @@ public class ChatService {
             dedup.putIfAbsent(attachmentKey(ref), ref);
         }
 
-        if (session != null && session.messages() != null) {
-            int scanned = 0;
-            for (int i = session.messages().size() - 1; i >= 0 && scanned < 12; i--) {
-                AiChatMessage message = session.messages().get(i);
-                if (!"TOOL".equals(message.role())) {
-                    continue;
-                }
-                scanned++;
-
-                if (message.attachments() != null) {
-                    for (AttachmentRef ref : message.attachments()) {
-                        if (ref != null) {
-                            dedup.putIfAbsent(attachmentKey(ref), ref);
-                        }
-                    }
-                }
-
-                for (AttachmentRef ref : extractSessionFileAttachments(message.content())) {
-                    dedup.putIfAbsent(attachmentKey(ref), ref);
-                }
-            }
+        for (AttachmentRef ref : extractRuntimeGeneratedAttachments()) {
+            dedup.putIfAbsent(attachmentKey(ref), ref);
+        }
+        if (log.isDebugEnabled()) {
+            log.debug("Assistant attachment assembly [session={}, userRefs={}, extractedFromText={}, extractedRuntime={}, total={}]",
+                    session == null ? null : session.uuid(),
+                    userRefs == null ? 0 : userRefs.size(),
+                    extractSessionFileAttachments(finalText).size(),
+                    extractRuntimeGeneratedAttachments().size(),
+                    dedup.size());
         }
 
         return dedup.isEmpty() ? null : new ArrayList<>(dedup.values());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<AttachmentRef> extractRuntimeGeneratedAttachments() {
+        Object value = ToolExecutionContext.get(GENERATED_ATTACHMENTS_CONTEXT_KEY);
+        if (!(value instanceof List<?> list) || list.isEmpty()) {
+            return List.of();
+        }
+        List<AttachmentRef> refs = new ArrayList<>();
+        for (Object entry : list) {
+            if (!(entry instanceof Map<?, ?> map)) {
+                continue;
+            }
+            Object urlObj = map.get("downloadUrl");
+            if (!(urlObj instanceof String rawUrl) || rawUrl.isBlank()) {
+                continue;
+            }
+            Object pathObj = map.get("path");
+            String path = (pathObj instanceof String s && !s.isBlank()) ? s : queryParam(rawUrl, "path");
+            String name = inferFileName(path);
+            Object mimeObj = map.get("mimeType");
+            String mime = (mimeObj instanceof String m && !m.isBlank()) ? m : inferMimeType(name);
+            refs.add(new AttachmentRef(rawUrl, name, mime, rawUrl));
+        }
+        return refs;
     }
 
     private static String attachmentKey(AttachmentRef ref) {

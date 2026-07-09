@@ -4,10 +4,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
+import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.function.CreateSessionTextFileRequest;
 import sh.vork.filesystem.FileArea;
 import sh.vork.filesystem.FileDescriptor;
 import sh.vork.filesystem.SessionFileSystem;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Creates a UTF-8 text file in the current session sandbox or shared area.
@@ -16,6 +22,7 @@ import sh.vork.filesystem.SessionFileSystem;
 public class CreateSessionTextFileTool {
 
     private static final Logger log = LoggerFactory.getLogger(CreateSessionTextFileTool.class);
+    private static final String GENERATED_ATTACHMENTS_CONTEXT_KEY = "generated.session.attachments";
 
     private final SessionFileSystem sessionFileSystem;
 
@@ -34,10 +41,12 @@ public class CreateSessionTextFileTool {
 
         FileArea area = parseArea(req.area());
         String sessionUuid = resolveSessionUuid();
+        ToolExecutionContext.bindSessionUuid(sessionUuid);
         String owner = area == FileArea.SESSION ? sessionUuid : null;
 
         try {
             FileDescriptor descriptor = sessionFileSystem.writeText(area, owner, req.path(), req.content());
+                recordGeneratedAttachment(descriptor.path(), "text/plain", descriptor.downloadUrl());
             log.debug("EXIT execute: area={}, session={}, path={}, size={}",
                     descriptor.area(), descriptor.sessionUuid(), descriptor.path(), descriptor.sizeBytes());
             return "{\"status\":\"ok\","
@@ -84,10 +93,35 @@ public class CreateSessionTextFileTool {
     }
 
     private static String resolveSessionUuid() {
-        String sessionUuid = MDC.get("sessionUuid");
+        String sessionUuid = ToolExecutionContext.getSessionUuid();
+        if (sessionUuid != null && !sessionUuid.isBlank()) {
+            return sessionUuid;
+        }
+        sessionUuid = MDC.get("sessionUuid");
         if (sessionUuid == null || sessionUuid.isBlank() || "<null>".equals(sessionUuid)) {
             throw new IllegalStateException("No sessionUuid available in execution context");
         }
         return sessionUuid;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void recordGeneratedAttachment(String path, String mimeType, String downloadUrl) {
+        if (downloadUrl == null || downloadUrl.isBlank()) {
+            return;
+        }
+        Object existing = ToolExecutionContext.get(GENERATED_ATTACHMENTS_CONTEXT_KEY);
+        List<Map<String, String>> items;
+        if (existing instanceof List<?> list) {
+            items = (List<Map<String, String>>) list;
+        } else {
+            items = new ArrayList<>();
+            ToolExecutionContext.put(GENERATED_ATTACHMENTS_CONTEXT_KEY, items);
+        }
+
+        Map<String, String> entry = new LinkedHashMap<>();
+        entry.put("path", path == null ? "" : path);
+        entry.put("mimeType", mimeType == null ? "application/octet-stream" : mimeType);
+        entry.put("downloadUrl", downloadUrl);
+        items.add(entry);
     }
 }

@@ -63,6 +63,18 @@ public final class ToolExecutionContext {
         return CONTEXT.get().get(key);
     }
 
+    public static void remove(String key) {
+        if (key == null || key.isBlank()) {
+            return;
+        }
+
+        CONTEXT.get().remove(key);
+        String sessionUuid = SESSION_UUID.get();
+        if (sessionUuid != null && !sessionUuid.isBlank()) {
+            PERSISTED_CONTEXTS.put(sessionUuid, CONTEXT.get());
+        }
+    }
+
     public static Map<String, Object> snapshot() {
         return Map.copyOf(CONTEXT.get());
     }
