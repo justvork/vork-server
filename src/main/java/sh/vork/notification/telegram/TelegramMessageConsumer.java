@@ -25,6 +25,9 @@ public interface TelegramMessageConsumer {
      * @param callbackData    callback_data payload sent by the pressed button (non-null when isCallback())
      * @param voiceFileId     Telegram file_id of an attached voice note (non-null when message contains audio)
      * @param voiceMimeType   MIME type of the voice note (e.g. {@code "audio/ogg"}); non-null when voiceFileId is non-null
+         * @param fileId          Telegram file_id of a non-audio attachment (document/photo/video)
+         * @param fileMimeType    MIME type for fileId when known (may be null)
+         * @param fileName        original file name when available (may be null)
      */
     record IncomingMessage(
             String configId,
@@ -39,7 +42,10 @@ public interface TelegramMessageConsumer {
             String callbackQueryId,
             String callbackData,
             String voiceFileId,
-            String voiceMimeType) {
+            String voiceMimeType,
+            String fileId,
+            String fileMimeType,
+            String fileName) {
 
         /** Returns {@code true} when this update is a callback query (inline keyboard button press). */
         public boolean isCallback() {
@@ -54,6 +60,11 @@ public interface TelegramMessageConsumer {
         /** Returns {@code true} when this message contains a voice note to be transcribed. */
         public boolean isVoice() {
             return voiceFileId != null;
+        }
+
+        /** Returns {@code true} when this message carries a non-audio attachment. */
+        public boolean isFile() {
+            return fileId != null;
         }
     }
 

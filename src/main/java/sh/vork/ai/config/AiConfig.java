@@ -47,6 +47,7 @@ import sh.vork.ai.function.CompileTypeRequest;
 import sh.vork.ai.function.CreateSkillRequest;
 import sh.vork.ai.function.DesignSkillRequest;
 import sh.vork.ai.function.CreateMongoDbConnectionRequest;
+import sh.vork.ai.function.CreateSessionTextFileRequest;
 import sh.vork.ai.function.DeleteSshConnectionRequest;
 import sh.vork.ai.function.DeleteMongoDbDocumentsRequest;
 import sh.vork.ai.function.DeleteTypeInstanceRequest;
@@ -105,6 +106,7 @@ import sh.vork.ai.protocol.interaction.FormField;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
 import sh.vork.ai.tool.CompleteBackgroundTaskRequest;
 import sh.vork.ai.tool.CompleteSkillExecutionRequest;
+import sh.vork.ai.tool.CreateSessionTextFileTool;
 import sh.vork.ai.tool.MemoryRequest;
 import sh.vork.ai.tool.RecordProgressRequest;
 import sh.vork.ai.tool.ThinkRequest;
@@ -945,6 +947,20 @@ the protocol and will break the system. Do not converse. Execute.
                     Requires an active SSH connection established with connectSsh."""
                         .stripIndent())
                 .inputType(UploadTextFileRequest.class)
+                .build();
+    }
+
+    @Bean
+    @ToolCategory("Files")
+    public ToolCallback createSessionTextFile(CreateSessionTextFileTool createSessionTextFileTool) {
+        return FunctionToolCallback
+                .builder("createSessionTextFile", createSessionTextFileTool::execute)
+                .description("""
+                    Create a UTF-8 text file in either the per-session sandbox (default) or the shared area.
+                    Returns a download URL that can be rendered in chat attachments.
+                    Use area=SESSION for files scoped to the current chat session, or area=SHARED for cross-session exchange.
+                    """.stripIndent())
+                .inputType(CreateSessionTextFileRequest.class)
                 .build();
     }
 

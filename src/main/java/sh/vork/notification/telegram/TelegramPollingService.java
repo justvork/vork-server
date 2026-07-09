@@ -172,7 +172,8 @@ public class TelegramPollingService {
                     TelegramMessageConsumer.IncomingMessage msg =
                             new TelegramMessageConsumer.IncomingMessage(
                                     configId, botToken, chatId, "", "private", firstName, username,
-                                    null, updateId, callbackQueryId, callbackData, null, null);
+                                null, updateId, callbackQueryId, callbackData, null, null,
+                                null, null, null);
                     dispatch(msg);
                     offset.accumulateAndGet(updateId + 1, Math::max);
                     continue;
@@ -203,10 +204,53 @@ public class TelegramPollingService {
                 String voiceFileId   = voiceNode.isMissingNode() ? null : voiceNode.path("file_id").asText(null);
                 String voiceMimeType = voiceNode.isMissingNode() ? null : voiceNode.path("mime_type").asText("audio/ogg");
 
+                // Generic file/document/photo/video attachment (non-audio)
+                String fileId = null;
+                String fileMimeType = null;
+                String fileName = null;
+
+                JsonNode documentNode = msgNode.path("document");
+                if (!documentNode.isMissingNode() && !documentNode.isNull()) {
+                    fileId = documentNode.path("file_id").asText(null);
+                    fileMimeType = documentNode.path("mime_type").asText(null);
+                    fileName = documentNode.path("file_name").asText(null);
+                }
+
+                if (fileId == null) {
+                    JsonNode videoNode = msgNode.path("video");
+                    if (!videoNode.isMissingNode() && !videoNode.isNull()) {
+                        fileId = videoNode.path("file_id").asText(null);
+                        fileMimeType = videoNode.path("mime_type").asText("video/mp4");
+                        fileName = videoNode.path("file_name").asText("video.mp4");
+                    }
+                }
+
+                if (fileId == null) {
+                    JsonNode photoNode = msgNode.path("photo");
+                    if (photoNode.isArray() && !photoNode.isEmpty()) {
+                        JsonNode largest = photoNode.get(photoNode.size() - 1);
+                        fileId = largest.path("file_id").asText(null);
+                        fileMimeType = "image/jpeg";
+                        fileName = "photo.jpg";
+                    }
+                }
+
+                if (fileId != null && fileMimeType != null && fileMimeType.startsWith("audio/")) {
+                    // Treat audio documents as voice to preserve transcription behavior.
+                    if (voiceFileId == null) {
+                        voiceFileId = fileId;
+                        voiceMimeType = fileMimeType;
+                    }
+                    fileId = null;
+                    fileMimeType = null;
+                    fileName = null;
+                }
+
                 TelegramMessageConsumer.IncomingMessage msg =
                         new TelegramMessageConsumer.IncomingMessage(
                                 configId, botToken, chatId, chatTitle, chatType, firstName, username,
-                                text, updateId, null, null, voiceFileId, voiceMimeType);
+                                text, updateId, null, null, voiceFileId, voiceMimeType,
+                                fileId, fileMimeType, fileName);
                 dispatch(msg);
                 offset.accumulateAndGet(updateId + 1, Math::max);
             }

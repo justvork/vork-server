@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.io.InputStream;
+import java.net.URLDecoder;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -263,6 +264,14 @@ public class ChatAuthorizationController {
                         log.error("Failed to resolve terminal output attachment metadata [fileUuid={}]: {}", fileUuid, ex.getMessage(), ex);
                     }
                 }
+            }
+
+            List<AiChatMessage.AttachmentRef> responseDataAttachments = extractSessionFileAttachmentsFromResponseData(toolResponse.responseData());
+            if (!responseDataAttachments.isEmpty()) {
+                if (attachments == null) {
+                    attachments = new ArrayList<>();
+                }
+                attachments.addAll(responseDataAttachments);
             }
 
             AiChatMessage toolMessage = new AiChatMessage(
@@ -616,6 +625,61 @@ public class ChatAuthorizationController {
                     "eventId", textEvent.eventId()
             ));
         }
+    }
+
+    private List<AiChatMessage.AttachmentRef> extractSessionFileAttachmentsFromResponseData(String responseData) {
+        if (responseData == null || responseData.isBlank()) {
+            return List.of();
+        }
+        try {
+            Map<String, Object> payload = objectMapper.readValue(responseData, new TypeReference<Map<String, Object>>() {});
+            Object urlObj = payload.get("downloadUrl");
+            if (urlObj == null) {
+                return List.of();
+            }
+            String url = String.valueOf(urlObj);
+            if (!url.startsWith("/api/session-files/download")) {
+                return List.of();
+            }
+            String name = inferFileNameFromDownloadUrl(url);
+            return List.of(new AiChatMessage.AttachmentRef(url, name, inferMimeType(name), url));
+        } catch (Exception ignored) {
+            return List.of();
+        }
+    }
+
+    private String inferFileNameFromDownloadUrl(String url) {
+        int q = url.indexOf('?');
+        if (q < 0 || q == url.length() - 1) {
+            return "generated-file";
+        }
+        String query = url.substring(q + 1);
+        for (String token : query.split("&")) {
+            String[] pair = token.split("=", 2);
+            if (pair.length == 2 && "path".equals(pair[0])) {
+                String decoded = URLDecoder.decode(pair[1], java.nio.charset.StandardCharsets.UTF_8);
+                String normalized = decoded.replace('\\', '/');
+                int idx = normalized.lastIndexOf('/');
+                String name = idx >= 0 ? normalized.substring(idx + 1) : normalized;
+                return name == null || name.isBlank() ? "generated-file" : name;
+            }
+        }
+        return "generated-file";
+    }
+
+    private String inferMimeType(String fileName) {
+        String lower = fileName == null ? "" : fileName.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".png")) return "image/png";
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        if (lower.endsWith(".gif")) return "image/gif";
+        if (lower.endsWith(".webp")) return "image/webp";
+        if (lower.endsWith(".pdf")) return "application/pdf";
+        if (lower.endsWith(".txt") || lower.endsWith(".md") || lower.endsWith(".json")
+                || lower.endsWith(".yaml") || lower.endsWith(".yml") || lower.endsWith(".csv")
+                || lower.endsWith(".log")) {
+            return "text/plain";
+        }
+        return "application/octet-stream";
     }
 
         /**

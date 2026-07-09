@@ -2,6 +2,7 @@ package sh.vork.ai.service;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URLDecoder;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -12,6 +13,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.crypto.SecretKey;
 
@@ -67,6 +70,8 @@ import sh.vork.relay.lib.model.RelaySubmission;
 import sh.vork.scheduling.service.SystemBackgroundAuthentication;
 import sh.vork.scheduling.service.SystemNotificationService;
 import sh.vork.setup.SystemSettingsService;
+import sh.vork.filesystem.FileArea;
+import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.storage.FileStorageService;
 import sh.vork.storage.StoredFile;
 
@@ -86,11 +91,14 @@ public class ChatService {
     private static final String DEFAULT_RELAY_BASE_URL = "https://relay.vork.sh";
     private static final String WEB_INPUT_RELAY_ENABLED_ENV = "WEB_INPUT_RELAY_ENABLED";
     private static final String TOGGLE_INPUT_RELAY_TOOL = "toggleInputRelay";
+        private static final Pattern SESSION_FILE_DOWNLOAD_URL_PATTERN =
+            Pattern.compile("(/api/session-files/download\\?[^\\s\"'<>]+)");
 
     private final DatabaseRepository<AiSession>     sessionRepo;
     private final DatabaseRepository<AgentTemplate> agentTemplateRepo;
     private final AiOrchestrationService            aiService;
     private final FileStorageService            fileStorageService;
+    private final SessionFileSystem             sessionFileSystem;
     private final SimpMessagingTemplate         messaging;
     private final ObjectMapper                  objectMapper;
     private final SystemNotificationService     systemNotificationService;
@@ -110,6 +118,7 @@ public class ChatService {
                        DatabaseRepository<AgentTemplate> agentTemplateRepository,
                        AiOrchestrationService aiOrchestrationService,
                        FileStorageService fileStorageService,
+                       SessionFileSystem sessionFileSystem,
                        SimpMessagingTemplate messaging,
                        ObjectMapper objectMapper,
                        List<ToolCallback> toolCallbacks,
@@ -123,6 +132,7 @@ public class ChatService {
         this.agentTemplateRepo = agentTemplateRepository;
         this.aiService = aiOrchestrationService;
         this.fileStorageService = fileStorageService;
+        this.sessionFileSystem = sessionFileSystem;
         this.messaging = messaging;
         this.objectMapper = objectMapper;
         this.systemNotificationService = systemNotificationService;
@@ -131,6 +141,36 @@ public class ChatService {
         this.relayHttpClient = relayHttpClient;
         this.systemSettingsService = systemSettingsService;
         this.telegramChatResumptionService = telegramChatResumptionService;
+    }
+
+    // Test/backward-compatible constructor (no SessionFileSystem support).
+    public ChatService(DatabaseRepository<AiSession> aiSessionRepository,
+                       DatabaseRepository<AgentTemplate> agentTemplateRepository,
+                       AiOrchestrationService aiOrchestrationService,
+                       FileStorageService fileStorageService,
+                       SimpMessagingTemplate messaging,
+                       ObjectMapper objectMapper,
+                       List<ToolCallback> toolCallbacks,
+                       SystemNotificationService systemNotificationService,
+                       Executor aiBackgroundExecutor,
+                       RelayEncryptionService relayEncryptionService,
+                       RelayHttpClient relayHttpClient,
+                       SystemSettingsService systemSettingsService,
+                       TelegramChatResumptionService telegramChatResumptionService) {
+        this(aiSessionRepository,
+                agentTemplateRepository,
+                aiOrchestrationService,
+                fileStorageService,
+                null,
+                messaging,
+                objectMapper,
+                toolCallbacks,
+                systemNotificationService,
+                aiBackgroundExecutor,
+                relayEncryptionService,
+                relayHttpClient,
+                systemSettingsService,
+                telegramChatResumptionService);
     }
 
     /**
@@ -340,33 +380,8 @@ public class ChatService {
         List<String>        textParts = new ArrayList<>();
 
         if (attachmentUuids != null) {
-            for (String fileUuid : attachmentUuids) {
-                StoredFile meta = fileStorageService.getMetadata(fileUuid);
-                if (meta == null) {
-                    log.warn("Attachment not found, skipping [uuid={}]", fileUuid);
-                    continue;
-                }
-                refs.add(new AttachmentRef(meta.uuid(), meta.originalName(), meta.mimeType()));
-
-                String mime = meta.mimeType().toLowerCase();
-                if (mime.startsWith("text/")) {
-                    try (InputStream in = fileStorageService.getContent(fileUuid)) {
-                        String text = new String(in.readAllBytes());
-                        textParts.add("[Attached file: " + meta.originalName() + "]\n" + text);
-                    } catch (IOException ex) {
-                        log.error("Failed to read text attachment [uuid={}]: {}", fileUuid, ex.getMessage());
-                    }
-                } else if (FileStorageService.isAiSupported(mime)) {
-                    try (InputStream in = fileStorageService.getContent(fileUuid)) {
-                        byte[] bytes = in.readAllBytes();
-                        media.add(new Media(MimeType.valueOf(meta.mimeType()), new ByteArrayResource(bytes)));
-                    } catch (IOException ex) {
-                        log.error("Failed to read media attachment [uuid={}]: {}", fileUuid, ex.getMessage());
-                    }
-                } else {
-                    log.info("Attachment MIME type not AI-supported, skipping [uuid={}, mime={}]",
-                            fileUuid, meta.mimeType());
-                }
+            for (String attachmentId : attachmentUuids) {
+                resolveAttachmentContent(sessionUuid, attachmentId, refs, media, textParts);
             }
         }
 
@@ -543,32 +558,8 @@ public class ChatService {
             List<String> textParts = new ArrayList<>();
 
             if (attachmentUuids != null) {
-                for (String fileUuid : attachmentUuids) {
-                    StoredFile meta = fileStorageService.getMetadata(fileUuid);
-                    if (meta == null) {
-                        continue;
-                    }
-                    refs.add(new AttachmentRef(meta.uuid(), meta.originalName(), meta.mimeType()));
-
-                    String mime = meta.mimeType().toLowerCase();
-                    if (mime.startsWith("text/")) {
-                        try (InputStream in = fileStorageService.getContent(fileUuid)) {
-                            String text = new String(in.readAllBytes());
-                            textParts.add("[Attached file: " + meta.originalName() + "]\n" + text);
-                        } catch (IOException ex) {
-                            log.error("Failed to read text attachment [uuid={}]: {}", fileUuid, ex.getMessage());
-                        }
-                    } else if (FileStorageService.isAiSupported(mime)) {
-                        try (InputStream in = fileStorageService.getContent(fileUuid)) {
-                            byte[] bytes = in.readAllBytes();
-                            media.add(new Media(MimeType.valueOf(meta.mimeType()), new ByteArrayResource(bytes)));
-                        } catch (IOException ex) {
-                            log.error("Failed to read media attachment [uuid={}]: {}", fileUuid, ex.getMessage());
-                        }
-                    } else {
-                        log.info("Attachment MIME type not AI-supported, skipping [uuid={}, mime={}]",
-                                fileUuid, meta.mimeType());
-                    }
+                for (String attachmentId : attachmentUuids) {
+                    resolveAttachmentContent(sessionUuid, attachmentId, refs, media, textParts);
                 }
             }
 
@@ -802,10 +793,11 @@ public class ChatService {
                 }
                 }
 
+                List<AttachmentRef> assistantAttachments = buildAssistantAttachments(latest, refs, finalText);
                 AiChatMessage aiMsg = new AiChatMessage(
                     UUID.randomUUID().toString(), "ASSISTANT",
                     finalText, System.currentTimeMillis(),
-                    refs.isEmpty() ? null : Collections.unmodifiableList(refs));
+                    assistantAttachments == null ? null : Collections.unmodifiableList(assistantAttachments));
 
             List<AiChatMessage> updated = new ArrayList<>(latest.messages());
             if (persistUserMessage) {
@@ -860,6 +852,189 @@ public class ChatService {
                 latest.activeAgentTemplateId(), latest.modelId(),
                 latest.skillStack(), latest.sessionSkillUuids(), latest.sessionToolIds()));
         return aiMsg;
+    }
+
+    private void resolveAttachmentContent(String currentSessionUuid,
+                                          String attachmentId,
+                                          List<AttachmentRef> refs,
+                                          List<Media> media,
+                                          List<String> textParts) {
+        if (attachmentId == null || attachmentId.isBlank()) {
+            return;
+        }
+
+        if (attachmentId.startsWith("session-url:") || attachmentId.startsWith("/api/session-files/download?")) {
+            if (sessionFileSystem == null) {
+                log.warn("SessionFileSystem not configured; skipping session attachment [id={}]", attachmentId);
+                return;
+            }
+            String downloadUrl = attachmentId.startsWith("session-url:")
+                    ? attachmentId.substring("session-url:".length())
+                    : attachmentId;
+            String path = queryParam(downloadUrl, "path");
+            String areaRaw = queryParam(downloadUrl, "area");
+            String targetSession = queryParam(downloadUrl, "sessionUuid");
+            if (targetSession == null || targetSession.isBlank()) {
+                targetSession = currentSessionUuid;
+            }
+
+            FileArea area;
+            try {
+                area = (areaRaw == null || areaRaw.isBlank())
+                        ? FileArea.SESSION
+                        : FileArea.valueOf(areaRaw.trim().toUpperCase());
+            } catch (Exception ex) {
+                log.warn("Unknown session attachment area [id={}, area={}]", attachmentId, areaRaw);
+                return;
+            }
+
+            String name = inferFileName(path);
+            String mime = inferMimeType(name);
+            refs.add(new AttachmentRef(attachmentId, name, mime, downloadUrl));
+
+            try (InputStream in = sessionFileSystem.read(area, targetSession, path)) {
+                if (mime.startsWith("text/")) {
+                    String text = new String(in.readAllBytes());
+                    textParts.add("[Attached file: " + name + "]\n" + text);
+                } else if (FileStorageService.isAiSupported(mime)) {
+                    byte[] bytes = in.readAllBytes();
+                    media.add(new Media(MimeType.valueOf(mime), new ByteArrayResource(bytes)));
+                }
+            } catch (Exception ex) {
+                log.warn("Failed to read session attachment [id={}, path={}]: {}", attachmentId, path, ex.getMessage());
+            }
+            return;
+        }
+
+        StoredFile meta = fileStorageService.getMetadata(attachmentId);
+        if (meta == null) {
+            log.warn("Attachment not found, skipping [id={}]", attachmentId);
+            return;
+        }
+        refs.add(new AttachmentRef(meta.uuid(), meta.originalName(), meta.mimeType()));
+
+        String mime = meta.mimeType().toLowerCase();
+        if (mime.startsWith("text/")) {
+            try (InputStream in = fileStorageService.getContent(attachmentId)) {
+                String text = new String(in.readAllBytes());
+                textParts.add("[Attached file: " + meta.originalName() + "]\n" + text);
+            } catch (IOException ex) {
+                log.error("Failed to read text attachment [id={}]: {}", attachmentId, ex.getMessage());
+            }
+        } else if (FileStorageService.isAiSupported(mime)) {
+            try (InputStream in = fileStorageService.getContent(attachmentId)) {
+                byte[] bytes = in.readAllBytes();
+                media.add(new Media(MimeType.valueOf(meta.mimeType()), new ByteArrayResource(bytes)));
+            } catch (IOException ex) {
+                log.error("Failed to read media attachment [id={}]: {}", attachmentId, ex.getMessage());
+            }
+        } else {
+            log.info("Attachment MIME type not AI-supported, skipping [id={}, mime={}]", attachmentId, meta.mimeType());
+        }
+    }
+
+    private List<AttachmentRef> buildAssistantAttachments(AiSession session,
+                                                          List<AttachmentRef> userRefs,
+                                                          String finalText) {
+        Map<String, AttachmentRef> dedup = new java.util.LinkedHashMap<>();
+        if (userRefs != null) {
+            for (AttachmentRef ref : userRefs) {
+                if (ref != null) {
+                    dedup.put(attachmentKey(ref), ref);
+                }
+            }
+        }
+
+        for (AttachmentRef ref : extractSessionFileAttachments(finalText)) {
+            dedup.putIfAbsent(attachmentKey(ref), ref);
+        }
+
+        if (session != null && session.messages() != null) {
+            int scanned = 0;
+            for (int i = session.messages().size() - 1; i >= 0 && scanned < 12; i--) {
+                AiChatMessage message = session.messages().get(i);
+                if (!"TOOL".equals(message.role())) {
+                    continue;
+                }
+                scanned++;
+
+                if (message.attachments() != null) {
+                    for (AttachmentRef ref : message.attachments()) {
+                        if (ref != null) {
+                            dedup.putIfAbsent(attachmentKey(ref), ref);
+                        }
+                    }
+                }
+
+                for (AttachmentRef ref : extractSessionFileAttachments(message.content())) {
+                    dedup.putIfAbsent(attachmentKey(ref), ref);
+                }
+            }
+        }
+
+        return dedup.isEmpty() ? null : new ArrayList<>(dedup.values());
+    }
+
+    private static String attachmentKey(AttachmentRef ref) {
+        if (ref.url() != null && !ref.url().isBlank()) {
+            return "url:" + ref.url();
+        }
+        return "uuid:" + (ref.uuid() == null ? "" : ref.uuid());
+    }
+
+    private static List<AttachmentRef> extractSessionFileAttachments(String text) {
+        if (text == null || text.isBlank()) {
+            return List.of();
+        }
+        List<AttachmentRef> refs = new ArrayList<>();
+        Matcher matcher = SESSION_FILE_DOWNLOAD_URL_PATTERN.matcher(text);
+        while (matcher.find()) {
+            String rawUrl = matcher.group(1);
+            String path = queryParam(rawUrl, "path");
+            String name = inferFileName(path);
+            String mime = inferMimeType(name);
+            refs.add(new AttachmentRef(rawUrl, name, mime, rawUrl));
+        }
+        return refs;
+    }
+
+    private static String queryParam(String url, String key) {
+        int q = url.indexOf('?');
+        if (q < 0 || q == url.length() - 1) {
+            return "";
+        }
+        String query = url.substring(q + 1);
+        for (String part : query.split("&")) {
+            String[] split = part.split("=", 2);
+            if (split.length == 2 && key.equals(split[0])) {
+                return URLDecoder.decode(split[1], java.nio.charset.StandardCharsets.UTF_8);
+            }
+        }
+        return "";
+    }
+
+    private static String inferFileName(String path) {
+        if (path == null || path.isBlank()) {
+            return "generated-file";
+        }
+        String normalized = path.replace('\\', '/');
+        int idx = normalized.lastIndexOf('/');
+        String name = idx >= 0 ? normalized.substring(idx + 1) : normalized;
+        return name.isBlank() ? "generated-file" : name;
+    }
+
+    private static String inferMimeType(String name) {
+        String lower = name == null ? "" : name.toLowerCase();
+        if (lower.endsWith(".png")) return "image/png";
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        if (lower.endsWith(".gif")) return "image/gif";
+        if (lower.endsWith(".webp")) return "image/webp";
+        if (lower.endsWith(".pdf")) return "application/pdf";
+        if (lower.endsWith(".md") || lower.endsWith(".txt") || lower.endsWith(".log") || lower.endsWith(".json")
+                || lower.endsWith(".yaml") || lower.endsWith(".yml") || lower.endsWith(".csv")) {
+            return "text/plain";
+        }
+        return "application/octet-stream";
     }
 
     /**

@@ -41,6 +41,9 @@ public interface SlackMessageConsumer {
      * @param eventTs       Slack event timestamp (e.g. {@code "1609459200.000001"})
      * @param voiceFileUrl  {@code url_private} of an attached audio file, or {@code null}
      * @param voiceMimeType MIME type of the audio file (e.g. {@code "audio/ogg"}); non-null when voiceFileUrl is non-null
+         * @param fileUrl       {@code url_private} of a non-audio file attachment, or {@code null}
+         * @param fileMimeType  MIME type of {@code fileUrl}, or {@code null}
+         * @param fileName      original file name when available, or {@code null}
      */
     record IncomingSlackMessage(
             String configId,
@@ -51,7 +54,10 @@ public interface SlackMessageConsumer {
             String text,
             String eventTs,
             String voiceFileUrl,
-            String voiceMimeType
+            String voiceMimeType,
+            String fileUrl,
+            String fileMimeType,
+            String fileName
     ) {
         /**
          * Returns {@code true} when this message arrived in a direct-message conversation.
@@ -63,6 +69,11 @@ public interface SlackMessageConsumer {
         /** Returns {@code true} when this message contains an audio file to be transcribed. */
         public boolean isVoice() {
             return voiceFileUrl != null;
+        }
+
+        /** Returns {@code true} when this message contains a non-audio file attachment. */
+        public boolean isFile() {
+            return fileUrl != null;
         }
     }
 }

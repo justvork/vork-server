@@ -13,7 +13,7 @@
 
     <groupId>sh.vork</groupId>
     <artifactId>vork</artifactId>
-    <version>0.0.2-SNAPSHOT</version>
+    <version>0.0.3-SNAPSHOT</version>
     <name>vork</name>
     <description>Vork — generic MongoDB repository layer for Spring Boot</description>
 

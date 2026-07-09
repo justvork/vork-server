@@ -73,6 +73,7 @@ public class SecurityConfig {
                         "/api/notifications/**", "/api/user/**", "/api/types/**",
                     "/api/transcription/**", "/api/ssl/**", "/api/skills/**", "/api/skill-groups/**",
                         "/api/jobs/**",
+                        "/api/session-files/**",
                         "/api/v1/relay/**")
             )
             .sessionManagement(session -> session

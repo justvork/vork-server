@@ -257,16 +257,29 @@ public class SlackSocketModeService {
             // Extract first audio file attachment if present
             String voiceFileUrl  = null;
             String voiceMimeType = null;
+            String fileUrl = null;
+            String fileMimeType = null;
+            String fileName = null;
             Object filesObj = event.get("files");
             if (filesObj instanceof List<?> filesList) {
                 for (Object f : filesList) {
                     if (!(f instanceof Map<?, ?> rawMap)) continue;
                     Map<String, Object> fileMap = (Map<String, Object>) rawMap;
                     String mime = String.valueOf(fileMap.getOrDefault("mimetype", ""));
+                    String urlPrivate = String.valueOf(fileMap.getOrDefault("url_private", ""));
+                    String name = String.valueOf(fileMap.getOrDefault("name", "slack-file"));
+                    if (urlPrivate == null || urlPrivate.isBlank()) {
+                        continue;
+                    }
                     if (mime.startsWith("audio/")) {
-                        voiceFileUrl  = String.valueOf(fileMap.getOrDefault("url_private", ""));
+                        voiceFileUrl  = urlPrivate;
                         voiceMimeType = mime.contains(";") ? mime.substring(0, mime.indexOf(';')).trim() : mime;
-                        break;
+                        continue;
+                    }
+                    if (fileUrl == null) {
+                        fileUrl = urlPrivate;
+                        fileMimeType = mime == null || mime.isBlank() ? "application/octet-stream" : mime;
+                        fileName = name == null || name.isBlank() ? "slack-file" : name;
                     }
                 }
             }
@@ -274,7 +287,8 @@ public class SlackSocketModeService {
             SlackMessageConsumer.IncomingSlackMessage msg =
                     new SlackMessageConsumer.IncomingSlackMessage(
                             configId, botToken, channelId, channelType,
-                            userId, text, eventTs, voiceFileUrl, voiceMimeType);
+                            userId, text, eventTs, voiceFileUrl, voiceMimeType,
+                            fileUrl, fileMimeType, fileName);
 
             log.debug("Dispatching Slack message [configId={}, channel={}, type={}, from={}]",
                     configId, channelId, channelType, userId);

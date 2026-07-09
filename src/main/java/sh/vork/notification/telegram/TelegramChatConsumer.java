@@ -24,9 +24,14 @@ import sh.vork.ai.telegram.TelegramSessionRegistry;
 import sh.vork.ai.telegram.TelegramSuspensionRenderer;
 import sh.vork.notification.NotificationMediaType;
 import sh.vork.notification.user.UserNotificationMedia;
+import sh.vork.storage.FileStorageService;
+import sh.vork.storage.StoredFile;
 import sh.vork.transcription.AudioTranscriptionService;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.io.ByteArrayInputStream;
+import java.util.ArrayList;
 
 /**
  * Catch-all Telegram message consumer that routes incoming chat text and callback
@@ -64,6 +69,7 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
     private final TelegramApiClient                        telegramApiClient;
     private final ObjectMapper                             objectMapper;
     private final AudioTranscriptionService                audioTranscriptionService;
+    private final FileStorageService                       fileStorageService;
 
     public TelegramChatConsumer(ChatService chatService,
                                  DatabaseRepository<AiSession> sessionRepo,
@@ -73,7 +79,8 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
                                  TelegramSuspensionRenderer suspensionRenderer,
                                  TelegramApiClient telegramApiClient,
                                  ObjectMapper objectMapper,
-                                 AudioTranscriptionService audioTranscriptionService) {
+                                 AudioTranscriptionService audioTranscriptionService,
+                                 FileStorageService fileStorageService) {
         this.chatService              = chatService;
         this.sessionRepo              = sessionRepo;
         this.mediaRepo                = mediaRepo;
@@ -83,6 +90,7 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
         this.telegramApiClient        = telegramApiClient;
         this.objectMapper             = objectMapper;
         this.audioTranscriptionService = audioTranscriptionService;
+        this.fileStorageService = fileStorageService;
     }
 
     // ── TelegramMessageConsumer ───────────────────────────────────────────────
@@ -120,13 +128,21 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
         String chatId   = message.chatId();
         String botToken = message.botToken();
         String text     = message.text();
+        List<String> attachmentUuids = new ArrayList<>();
 
         // Voice note: transcribe to text before routing
         if ((text == null || text.isBlank()) && message.isVoice()) {
             text = transcribeVoice(message);
         }
 
-        if (text == null || text.isBlank()) {
+        if (message.isFile()) {
+            String attachmentUuid = ingestAttachment(message, botToken, chatId);
+            if (attachmentUuid != null) {
+                attachmentUuids.add(attachmentUuid);
+            }
+        }
+
+        if ((text == null || text.isBlank()) && attachmentUuids.isEmpty()) {
             log.debug("Ignoring empty text from chatId={}", chatId);
             return;
         }
@@ -155,8 +171,12 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
 
         log.debug("Sending Telegram message to session [sessionUuid={}, user={}]", sessionUuid, username);
 
+        String effectiveText = (text == null || text.isBlank())
+            ? "Please analyze the attached file."
+            : text;
+
         AiChatMessage response = chatService.sendMessageAsUser(
-                username, sessionUuid, text, List.of(), null);
+            username, sessionUuid, effectiveText, attachmentUuids, null);
 
         if (response == null) {
             // Session suspended — render the suspension prompt
@@ -168,6 +188,38 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
             }
         }
     }
+
+        private String ingestAttachment(TelegramMessageConsumer.IncomingMessage message,
+                        String botToken,
+                        String chatId) {
+        String fileId = message.fileId();
+        String mimeType = message.fileMimeType() == null || message.fileMimeType().isBlank()
+            ? "application/octet-stream"
+            : message.fileMimeType();
+        String name = message.fileName() == null || message.fileName().isBlank()
+            ? "telegram-file"
+            : message.fileName();
+
+        byte[] bytes = telegramApiClient.downloadFile(botToken, fileId);
+        if (bytes == null || bytes.length == 0) {
+            log.warn("Failed to download Telegram file attachment [chatId={}, fileId={}]", chatId, fileId);
+            telegramApiClient.sendText(botToken, chatId,
+                "Sorry, I could not download your file. Please try again.");
+            return null;
+        }
+
+        try {
+            StoredFile stored = fileStorageService.uploadRaw(new ByteArrayInputStream(bytes), name, mimeType, bytes.length);
+            log.info("Telegram file attached to chat turn [chatId={}, fileUuid={}, name={}]",
+                chatId, stored.uuid(), stored.originalName());
+            return stored.uuid();
+        } catch (Exception ex) {
+            log.warn("Failed to persist Telegram attachment [chatId={}, fileId={}]: {}", chatId, fileId, ex.getMessage());
+            telegramApiClient.sendText(botToken, chatId,
+                "Sorry, I could not process your file. Please try again.");
+            return null;
+        }
+        }
 
     /**
      * Downloads and transcribes the voice note in {@code message}.

@@ -345,19 +345,36 @@ function mimeIcon(mime) {
     return 'fa-file';
 }
 
+function resolveAttachmentHref(att) {
+    if (!att) return '';
+    if (att.url) return att.url;
+    if (att.token && att.token.startsWith('session-url:')) {
+        return att.token.substring('session-url:'.length);
+    }
+    if (att.uuid && att.uuid.startsWith('/api/session-files/download?')) {
+        return att.uuid;
+    }
+    if (att.uuid) {
+        // Legacy persisted attachments from FileStorageService.
+        return '/api/files/' + att.uuid;
+    }
+    return '';
+}
+
 // ── Render a single message bubble ───────────────────────────────────────────
 
 function renderAttachmentsHtml(attachments) {
     if (!attachments || attachments.length === 0) return '';
     let html = '<div class="bubble-attachments">';
     for (const att of attachments) {
+        const href = resolveAttachmentHref(att);
         if (isImage(att.mimeType)) {
-            html += '<img class="bubble-img-thumb" src="/api/files/' + att.uuid + '"'
+            html += '<img class="bubble-img-thumb" src="' + href + '"'
                   + ' alt="' + escapeHtml(att.name) + '"'
-                  + ' data-src="/api/files/' + att.uuid + '"'
+                  + ' data-src="' + href + '"'
                   + ' title="' + escapeHtml(att.name) + '">';
         } else {
-            html += '<a class="bubble-file-link" href="/api/files/' + att.uuid + '"'
+            html += '<a class="bubble-file-link" href="' + href + '"'
                   + ' download="' + escapeHtml(att.name) + '" target="_blank">'
                   + '<i class="fa-solid ' + mimeIcon(att.mimeType) + '"></i>'
                   + escapeHtml(att.name)
@@ -987,7 +1004,7 @@ function attachTerminalHeaderFile(view, attachment) {
 
     const link = document.createElement('a');
     link.className = 'terminal-stream-attachment-btn';
-    link.href = '/api/files/' + attachment.uuid;
+    link.href = resolveAttachmentHref(attachment);
     link.download = attachment.name || 'terminal-output.txt';
     link.target = '_blank';
     link.title = attachment.name || 'Download terminal output';
@@ -1074,7 +1091,10 @@ async function loadReplayOutputFromAttachment(attachmentUuid, fallbackOutput) {
         return buildReplayOutput(fallbackOutput || '');
     }
     try {
-        const resp = await fetch('/api/files/' + attachmentUuid, { method: 'GET' });
+        const href = (typeof attachmentUuid === 'string' && attachmentUuid.startsWith('/api/session-files/download?'))
+            ? attachmentUuid
+            : '/api/files/' + attachmentUuid;
+        const resp = await fetch(href, { method: 'GET' });
         if (!resp.ok) {
             return buildReplayOutput(fallbackOutput || '');
         }
@@ -1676,23 +1696,50 @@ function uploadFile(file) {
     const tempId = 'tmp-' + Math.random().toString(36).slice(2);
     const chip   = createChip(tempId, file.name);
 
+    if (!sessionUuid) {
+        markChipError(chip, file.name);
+        return;
+    }
+
     const formData = new FormData();
     formData.append('file', file);
 
-    fetch('/api/files', { method: 'POST', body: formData })
+    const uploadUrl = '/api/session-files/upload?area=SESSION&sessionUuid=' + encodeURIComponent(sessionUuid)
+        + '&path=' + encodeURIComponent(file.name);
+    fetch(uploadUrl, { method: 'POST', body: formData })
         .then(function (resp) {
-            if (!resp.ok) { return resp.json().then(function (b) { throw new Error(b.message || resp.statusText); }); }
+            if (!resp.ok) {
+                return resp.text().then(function (rawBody) {
+                    let message = '';
+                    try {
+                        const parsed = rawBody ? JSON.parse(rawBody) : null;
+                        message = parsed && typeof parsed.message === 'string' ? parsed.message : '';
+                    } catch (_) {
+                        message = rawBody || '';
+                    }
+                    if (!message || !message.trim()) {
+                        message = resp.statusText || ('HTTP ' + resp.status);
+                    }
+                    throw new Error(message);
+                });
+            }
             return resp.json();
         })
         .then(function (data) {
+            const downloadUrl = data.downloadUrl || data.url;
+            const attachmentToken = downloadUrl ? ('session-url:' + downloadUrl) : null;
             const attachment = {
-                uuid:        data.uuid,
-                name:        data.name,
-                mimeType:    data.mimeType,
-                url:         data.url,
-                aiSupported: data.aiSupported,
+                uuid:        data.uuid || tempId,
+                token:       attachmentToken,
+                name:        data.name || file.name,
+                mimeType:    data.mimeType || file.type || 'application/octet-stream',
+                url:         downloadUrl,
+                aiSupported: data.aiSupported !== false,
                 chipEl:      chip
             };
+            if (!attachment.token && attachment.url) {
+                attachment.token = 'session-url:' + attachment.url;
+            }
             stagedAttachments.push(attachment);
             finaliseChip(chip, attachment);
         })
@@ -2379,11 +2426,13 @@ chatForm.addEventListener('submit', function (e) {
         role: 'USER',
         content: content,
         attachments: attachmentSnapshot.map(function (a) {
-            return { uuid: a.uuid, name: a.name, mimeType: a.mimeType };
+            return { uuid: a.uuid, name: a.name, mimeType: a.mimeType, url: a.url };
         })
     });
 
-    const attachmentUuids = attachmentSnapshot.map(function (a) { return a.uuid; });
+    const attachmentUuids = attachmentSnapshot
+        .map(function (a) { return a.token || a.uuid; })
+        .filter(function (id) { return !!id; });
 
     // Clear input + staged attachments
     messageInput.value = '';

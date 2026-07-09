@@ -20,11 +20,15 @@ import sh.vork.ai.slack.SlackSuspensionRenderer;
 import sh.vork.ai.telegram.TelegramChatResumptionService;
 import sh.vork.notification.NotificationMediaType;
 import sh.vork.notification.user.UserNotificationMedia;
+import sh.vork.storage.FileStorageService;
+import sh.vork.storage.StoredFile;
 import sh.vork.transcription.AudioTranscriptionService;
 
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.io.ByteArrayInputStream;
+import java.util.ArrayList;
 
 /**
  * {@link SlackMessageConsumer} that handles AI chat sessions in Slack DMs.
@@ -58,6 +62,7 @@ public class SlackChatConsumer implements SlackMessageConsumer {
     private final SlackSuspensionRenderer                 suspensionRenderer;
     private final SlackApiClient                          slackApiClient;
     private final AudioTranscriptionService               audioTranscriptionService;
+    private final FileStorageService                      fileStorageService;
 
     /** DM channelId → pending single-field capture */
     private final ConcurrentHashMap<String, PendingCapture>       pendingCaptures = new ConcurrentHashMap<>();
@@ -72,7 +77,8 @@ public class SlackChatConsumer implements SlackMessageConsumer {
                               SlackSuspensionRenderer suspensionRenderer,
                               SlackApiClient slackApiClient,
                               ObjectMapper objectMapper,
-                              AudioTranscriptionService audioTranscriptionService) {
+                              AudioTranscriptionService audioTranscriptionService,
+                              FileStorageService fileStorageService) {
         this.chatService              = chatService;
         this.sessionRepo              = sessionRepo;
         this.mediaRepo                = mediaRepo;
@@ -81,6 +87,7 @@ public class SlackChatConsumer implements SlackMessageConsumer {
         this.suspensionRenderer       = suspensionRenderer;
         this.slackApiClient           = slackApiClient;
         this.audioTranscriptionService = audioTranscriptionService;
+        this.fileStorageService = fileStorageService;
     }
 
     // ── SlackMessageConsumer ──────────────────────────────────────────────────
@@ -96,6 +103,7 @@ public class SlackChatConsumer implements SlackMessageConsumer {
         String botToken  = message.botToken();
         String configId  = message.configId();
         String text      = message.text();
+        List<String> attachmentUuids = new ArrayList<>();
 
         log.debug("ENTER SlackChatConsumer.process: [channel={}, userId={}]",
                 channelId, message.userId());
@@ -106,7 +114,14 @@ public class SlackChatConsumer implements SlackMessageConsumer {
                 text = transcribeVoice(message);
             }
 
-            if (text == null || text.isBlank()) {
+            if (message.isFile()) {
+                String attachmentUuid = ingestAttachment(message, botToken, channelId);
+                if (attachmentUuid != null) {
+                    attachmentUuids.add(attachmentUuid);
+                }
+            }
+
+            if ((text == null || text.isBlank()) && attachmentUuids.isEmpty()) {
                 log.debug("Ignoring empty text from channel={}", channelId);
                 return true;
             }
@@ -144,8 +159,12 @@ public class SlackChatConsumer implements SlackMessageConsumer {
             log.debug("Sending Slack message to session [sessionUuid={}, user={}]",
                     sessionUuid, username);
 
+                String effectiveText = (text == null || text.isBlank())
+                    ? "Please analyze the attached file."
+                    : text;
+
             AiChatMessage response = chatService.sendMessageAsUser(
-                    username, sessionUuid, text, List.of(), null);
+                    username, sessionUuid, effectiveText, attachmentUuids, null);
 
             if (response == null) {
                 renderLatestSuspension(sessionUuid, channelId, botToken);
@@ -162,6 +181,39 @@ public class SlackChatConsumer implements SlackMessageConsumer {
         }
         return true;
     }
+
+        private String ingestAttachment(IncomingSlackMessage message,
+                        String botToken,
+                        String channelId) {
+        String fileUrl = message.fileUrl();
+        String mimeType = message.fileMimeType() == null || message.fileMimeType().isBlank()
+            ? "application/octet-stream"
+            : message.fileMimeType();
+        String fileName = message.fileName() == null || message.fileName().isBlank()
+            ? "slack-file"
+            : message.fileName();
+
+        byte[] bytes = slackApiClient.downloadFile(botToken, fileUrl);
+        if (bytes == null || bytes.length == 0) {
+            log.warn("Failed to download Slack file attachment [channel={}, url={}]", channelId, fileUrl);
+            slackApiClient.sendMessage(botToken, channelId,
+                "Sorry, I could not download your file. Please try again.");
+            return null;
+        }
+
+        try {
+            StoredFile stored = fileStorageService.uploadRaw(new ByteArrayInputStream(bytes), fileName, mimeType, bytes.length);
+            log.info("Slack file attached to chat turn [channel={}, fileUuid={}, name={}]",
+                channelId, stored.uuid(), stored.originalName());
+            return stored.uuid();
+        } catch (Exception ex) {
+            log.warn("Failed to persist Slack attachment [channel={}, file={}]: {}",
+                channelId, fileName, ex.getMessage());
+            slackApiClient.sendMessage(botToken, channelId,
+                "Sorry, I could not process your file. Please try again.");
+            return null;
+        }
+        }
 
     /**
      * Downloads and transcribes the audio file attached to {@code message}.

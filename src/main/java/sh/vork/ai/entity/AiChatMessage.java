@@ -43,13 +43,18 @@ public record AiChatMessage(
     }
 
     /**
-     * Slim reference to a stored file embedded in a chat message.
+     * Slim reference to a file embedded in a chat message.
      *
-     * @param uuid     the {@link sh.vork.storage.StoredFile} UUID
+     * @param uuid     the {@link sh.vork.storage.StoredFile} UUID when available
      * @param name     original filename
      * @param mimeType MIME type of the file
+     * @param url      optional direct download URL override
      */
-    public record AttachmentRef(String uuid, String name, String mimeType) {}
+    public record AttachmentRef(String uuid, String name, String mimeType, String url) {
+        public AttachmentRef(String uuid, String name, String mimeType) {
+            this(uuid, name, mimeType, null);
+        }
+    }
 
     /**
      * Reference to a model-requested tool call, stored for conversation replay.
