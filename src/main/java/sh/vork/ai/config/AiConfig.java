@@ -59,6 +59,7 @@ import sh.vork.ai.function.DiscoverExportableTypesRequest;
 import sh.vork.ai.function.DisconnectSshRequest;
 import sh.vork.ai.function.DownloadFileRequest;
 import sh.vork.ai.function.ExecuteTerminalCommandRequest;
+import sh.vork.ai.function.ExecuteCommandAndOutputRequest;
 import sh.vork.ai.function.ExportAllJavaTypeDataRequest;
 import sh.vork.ai.function.ExportJavaTypeRequest;
 import sh.vork.ai.function.ExportJavaTypeSourceRequest;
@@ -90,6 +91,11 @@ import sh.vork.ai.function.SetSshAliasRequest;
 import sh.vork.ai.function.SshConnectRequest;
 import sh.vork.ai.function.SshCreateConnectionRequest;
 import sh.vork.ai.function.ReadFileRequest;
+import sh.vork.ai.function.StartProcessRequest;
+import sh.vork.ai.function.CheckProcessRequest;
+import sh.vork.ai.function.WriteProcessRequest;
+import sh.vork.ai.function.ReadProcessRequest;
+import sh.vork.ai.function.StopProcessRequest;
 import sh.vork.ai.function.UpdateMongoDbDocumentsRequest;
 import sh.vork.ai.function.UploadFileRequest;
 import sh.vork.ai.function.UploadTextFileRequest;
@@ -125,6 +131,12 @@ import sh.vork.ai.tool.DeleteSshConnectionTool;
 import sh.vork.ai.tool.DisconnectSshTool;
 import sh.vork.ai.tool.DownloadFileTool;
 import sh.vork.ai.tool.ExecuteTerminalCommandTool;
+import sh.vork.ai.tool.ExecuteCommandAndOutputTool;
+import sh.vork.ai.tool.StartProcessTool;
+import sh.vork.ai.tool.CheckProcessTool;
+import sh.vork.ai.tool.WriteProcessTool;
+import sh.vork.ai.tool.ReadProcessTool;
+import sh.vork.ai.tool.StopProcessTool;
 import sh.vork.ai.tool.ListSshConnectionsTool;
 import sh.vork.ai.tool.SetSshAliasTool;
 import sh.vork.ai.tool.SshConnectTool;
@@ -872,6 +884,66 @@ the protocol and will break the system. Do not converse. Execute.
                 .build();
 
             return new VisualizableToolCallback(delegate, terminalTool::formatAuthorizationDetails);
+            }
+
+            @Bean
+            @ToolCategory("Command Execution")
+            public ToolCallback executeCommandAndOutputTool(ExecuteCommandAndOutputTool tool) {
+            return FunctionToolCallback
+                .builder("executeCommandAndOutputTool", tool::execute)
+                .description("Executes a synchronous shell command, waits for it to complete, and returns the full output.")
+                .inputType(ExecuteCommandAndOutputRequest.class)
+                .build();
+            }
+
+            @Bean
+            @ToolCategory("Command Execution")
+            public ToolCallback startProcessTool(StartProcessTool tool) {
+            return FunctionToolCallback
+                .builder("startProcessTool", tool::execute)
+                .description("Starts a long-running background process and returns a reference PID to interact with it later.")
+                .inputType(StartProcessRequest.class)
+                .build();
+            }
+
+            @Bean
+            @ToolCategory("Command Execution")
+            public ToolCallback checkProcessTool(CheckProcessTool tool) {
+            return FunctionToolCallback
+                .builder("checkProcessTool", tool::execute)
+                .description("Checks if a background process is still running.")
+                .inputType(CheckProcessRequest.class)
+                .build();
+            }
+
+            @Bean
+            @ToolCategory("Command Execution")
+            public ToolCallback writeProcessTool(WriteProcessTool tool) {
+            return FunctionToolCallback
+                .builder("writeProcessTool", tool::execute)
+                .description("Writes input text to the stdin of a running background process.")
+                .inputType(WriteProcessRequest.class)
+                .build();
+            }
+
+            @Bean
+            @ToolCategory("Command Execution")
+            public ToolCallback readProcessTool(ReadProcessTool tool) {
+            return FunctionToolCallback
+                .builder("readProcessTool", tool::execute)
+                .description("Reads and drains available unread output from a background process.")
+                .inputType(ReadProcessRequest.class)
+                .build();
+            }
+
+            @Bean
+            @ToolCategory("Command Execution")
+            public ToolCallback stopProcessTool(StopProcessTool tool) {
+            return FunctionToolCallback
+                .builder("stopProcessTool", tool::execute)
+                .description("Terminates a background process and cleans up its memory footprint.")
+                .inputType(StopProcessRequest.class)
+                .build();
             }
 
     @Bean
