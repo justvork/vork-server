@@ -88,8 +88,7 @@ class ChatAuthorizationControllerIsolationTest {
                 directExecutor,
                 schedulerService,
                 null,
-                null,
-                mock(SecureCredentialStore.class),
+                                mock(SecureCredentialStore.class),
                         null,
                         mock(UserService.class));
 
@@ -105,7 +104,7 @@ class ChatAuthorizationControllerIsolationTest {
         assertNotNull(saved);
         assertEquals(SessionOriginMode.WEB, saved.originMode());
         assertEquals(AiSessionStatus.RUNNING, saved.status());
-        assertEquals("TEXT_RESPONSE", saved.messages().get(saved.messages().size() - 1).role());
+                assertEquals("ASSISTANT", saved.messages().get(saved.messages().size() - 1).role());
     }
 
     @Test
@@ -144,8 +143,7 @@ class ChatAuthorizationControllerIsolationTest {
                 directExecutor,
                 schedulerService,
                 null,
-                null,
-                mock(SecureCredentialStore.class),
+                                mock(SecureCredentialStore.class),
                         null,
                         mock(UserService.class));
 
@@ -198,8 +196,7 @@ class ChatAuthorizationControllerIsolationTest {
                 directExecutor,
                 schedulerService,
                 null,
-                null,
-                mock(SecureCredentialStore.class),
+                                mock(SecureCredentialStore.class),
                         null,
                         mock(UserService.class));
 
@@ -253,8 +250,7 @@ class ChatAuthorizationControllerIsolationTest {
                 Runnable::run,
                 new RecordingSchedulerService(),
                 null,
-                null,
-                mock(SecureCredentialStore.class),
+                                mock(SecureCredentialStore.class),
                 null,
                 mock(UserService.class));
 
@@ -314,8 +310,7 @@ class ChatAuthorizationControllerIsolationTest {
                 Runnable::run,
                 new RecordingSchedulerService(),
                 null,
-                null,
-                mock(SecureCredentialStore.class),
+                                mock(SecureCredentialStore.class),
                 null,
                 mock(UserService.class));
 
@@ -378,8 +373,7 @@ class ChatAuthorizationControllerIsolationTest {
                 Runnable::run,
                 new RecordingSchedulerService(),
                 null,
-                null,
-                mock(SecureCredentialStore.class),
+                                mock(SecureCredentialStore.class),
                 null,
                 mock(UserService.class));
 
@@ -442,8 +436,7 @@ class ChatAuthorizationControllerIsolationTest {
                 Runnable::run,
                 new RecordingSchedulerService(),
                 null,
-                null,
-                mock(SecureCredentialStore.class),
+                                mock(SecureCredentialStore.class),
                 null,
                 mock(UserService.class));
 
@@ -504,8 +497,7 @@ class ChatAuthorizationControllerIsolationTest {
                 Runnable::run,
                 new RecordingSchedulerService(),
                 null,
-                null,
-                mock(SecureCredentialStore.class),
+                                mock(SecureCredentialStore.class),
                 null,
                 mock(UserService.class));
 
@@ -575,8 +567,7 @@ class ChatAuthorizationControllerIsolationTest {
                 Runnable::run,
                 new RecordingSchedulerService(),
                 null,
-                null,
-                mock(SecureCredentialStore.class),
+                                mock(SecureCredentialStore.class),
                 null,
                 mock(UserService.class));
 
@@ -673,8 +664,7 @@ class ChatAuthorizationControllerIsolationTest {
                         Runnable::run,
                         new RecordingSchedulerService(),
                         null,
-                        null,
-                        mock(SecureCredentialStore.class),
+                                                mock(SecureCredentialStore.class),
                         new RepositorySessionEnvironmentService(sessionRepo),
                         mock(UserService.class));
 
@@ -779,8 +769,7 @@ class ChatAuthorizationControllerIsolationTest {
                                 Runnable::run,
                                 new RecordingSchedulerService(),
                                 null,
-                                null,
-                                mock(SecureCredentialStore.class),
+                                                                mock(SecureCredentialStore.class),
                                 null,
                                 mock(UserService.class));
 

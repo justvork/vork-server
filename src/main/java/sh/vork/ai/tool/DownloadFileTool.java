@@ -5,6 +5,10 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.util.Collections;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.UUID;
 
 import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
@@ -17,20 +21,23 @@ import sh.vork.ai.protocol.interaction.FieldSource;
 import sh.vork.ai.protocol.interaction.FormAction;
 import sh.vork.ai.protocol.interaction.FormField;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
+import sh.vork.ai.context.ToolExecutionContext;
+import sh.vork.filesystem.FileArea;
+import sh.vork.filesystem.FileDescriptor;
+import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.ssh.VirtualSshService;
-import sh.vork.storage.FileStorageService;
-import sh.vork.storage.StoredFile;
 
 @Component
 public class DownloadFileTool {
 
     private final VirtualSshService virtualSshService;
-    private final FileStorageService fileStorageService;
+    private final SessionFileSystem sessionFileSystem;
+    private static final String GENERATED_ATTACHMENTS_CONTEXT_KEY = "generated.session.attachments";
 
     public DownloadFileTool(VirtualSshService virtualSshService,
-                            FileStorageService fileStorageService) {
+                            SessionFileSystem sessionFileSystem) {
         this.virtualSshService = virtualSshService;
-        this.fileStorageService = fileStorageService;
+        this.sessionFileSystem = sessionFileSystem;
     }
 
     public String execute(DownloadFileRequest req) {
@@ -59,22 +66,32 @@ public class DownloadFileTool {
             if (hasLocalPath) {
                 // Save to local filesystem (authorization already confirmed above)
                 File localFile = new File(req.localPath());
-                localFile.getParentFile().mkdirs();
+                File parent = localFile.getParentFile();
+                if (parent != null) {
+                    parent.mkdirs();
+                }
                 try (FileOutputStream out = new FileOutputStream(localFile)) {
                     sftp.get(req.remotePath(), out);
                 }
                 return "{\"status\":\"ok\",\"location\":\"local\",\"path\":\"" + localFile.getAbsolutePath() + "\"}";
             } else {
-                // Save to Vork file storage service
+                // Save to session file system
                 ByteArrayOutputStream buffer = new ByteArrayOutputStream();
                 sftp.get(req.remotePath(), buffer);
                 byte[] bytes = buffer.toByteArray();
-                String mimeType = "application/octet-stream";
-                StoredFile stored = fileStorageService.uploadRaw(
-                        new java.io.ByteArrayInputStream(bytes), filename, mimeType, bytes.length);
-                return "{\"status\":\"ok\",\"location\":\"storage\",\"uuid\":\"" + stored.uuid()
-                        + "\",\"name\":\"" + stored.originalName() + "\","
-                        + "\"size\":" + stored.sizeBytes() + "}";
+                String relativePath = "downloads/" + UUID.randomUUID() + "-" + sanitizeFileName(filename);
+                FileDescriptor descriptor = sessionFileSystem.write(
+                        FileArea.SESSION,
+                        sessionId,
+                        relativePath,
+                        new java.io.ByteArrayInputStream(bytes),
+                        bytes.length);
+                recordGeneratedAttachment(descriptor.path(), "application/octet-stream", descriptor.downloadUrl());
+                return "{\"status\":\"ok\",\"location\":\"session\",\"path\":\"" + descriptor.path()
+                        + "\",\"name\":\"" + extractFilename(descriptor.path()) + "\","
+                        + "\"size\":" + descriptor.sizeBytes() + ","
+                        + "\"downloadUrl\":\"" + descriptor.downloadUrl() + "\","
+                        + "\"attachmentRef\":\"session-url:" + descriptor.downloadUrl() + "\"}";
             }
         } catch (ToolSuspensionException e) {
             throw e;
@@ -114,5 +131,33 @@ public class DownloadFileTool {
             throw new IllegalStateException("No sessionUuid available in execution context");
         }
         return sessionUuid;
+    }
+
+    private static String sanitizeFileName(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return "download";
+        }
+        return fileName.replace("\\", "_").replace("/", "_");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void recordGeneratedAttachment(String path, String mimeType, String downloadUrl) {
+        if (downloadUrl == null || downloadUrl.isBlank()) {
+            return;
+        }
+        Object existing = ToolExecutionContext.get(GENERATED_ATTACHMENTS_CONTEXT_KEY);
+        List<Map<String, String>> items;
+        if (existing instanceof List<?> list) {
+            items = (List<Map<String, String>>) list;
+        } else {
+            items = new ArrayList<>();
+            ToolExecutionContext.put(GENERATED_ATTACHMENTS_CONTEXT_KEY, items);
+        }
+
+        Map<String, String> entry = new LinkedHashMap<>();
+        entry.put("path", path == null ? "" : path);
+        entry.put("mimeType", mimeType == null ? "application/octet-stream" : mimeType);
+        entry.put("downloadUrl", downloadUrl);
+        items.add(entry);
     }
 }

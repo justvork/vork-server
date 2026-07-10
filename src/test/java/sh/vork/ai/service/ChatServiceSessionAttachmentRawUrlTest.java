@@ -15,7 +15,6 @@ import sh.vork.relay.RelayEncryptionService;
 import sh.vork.relay.RelayHttpClient;
 import sh.vork.scheduling.service.SystemNotificationService;
 import sh.vork.setup.SystemSettingsService;
-import sh.vork.storage.FileStorageService;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
@@ -35,7 +34,6 @@ class ChatServiceSessionAttachmentRawUrlTest {
     void sendMessageAsUser_acceptsRawSessionDownloadUrlAttachmentId() throws Exception {
         MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
         AiOrchestrationService aiService = mock(AiOrchestrationService.class);
-        FileStorageService fileStorageService = mock(FileStorageService.class);
         SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
 
         String sessionUuid = "session-attachment-raw-url";
@@ -67,7 +65,6 @@ class ChatServiceSessionAttachmentRawUrlTest {
                 sessionRepo,
                 null,
                 aiService,
-                fileStorageService,
                 sessionFileSystem,
                 mock(SimpMessagingTemplate.class),
                 new ObjectMapper().findAndRegisterModules(),

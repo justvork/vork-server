@@ -16,7 +16,6 @@ import sh.vork.relay.RelayEncryptionService;
 import sh.vork.relay.RelayHttpClient;
 import sh.vork.scheduling.service.SystemNotificationService;
 import sh.vork.setup.SystemSettingsService;
-import sh.vork.storage.FileStorageService;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
@@ -38,7 +37,6 @@ class ChatServiceSessionAttachmentTokenTest {
     void sendMessageAsUser_resolvesSessionUrlAttachmentAndInjectsTextIntoPrompt() throws Exception {
         MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
         AiOrchestrationService aiService = mock(AiOrchestrationService.class);
-        FileStorageService fileStorageService = mock(FileStorageService.class);
         SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
 
         String sessionUuid = "session-attachment-token";
@@ -72,7 +70,6 @@ class ChatServiceSessionAttachmentTokenTest {
                 sessionRepo,
                 null,
                 aiService,
-                fileStorageService,
                 sessionFileSystem,
                 mock(SimpMessagingTemplate.class),
                 new ObjectMapper().findAndRegisterModules(),
@@ -110,5 +107,9 @@ class ChatServiceSessionAttachmentTokenTest {
         assertEquals(1, user.attachments().size());
         assertEquals("note.txt", user.attachments().get(0).name());
         assertEquals(downloadUrl, user.attachments().get(0).url());
+
+                AiChatMessage assistant = saved.messages().get(1);
+                assertEquals("ASSISTANT", assistant.role());
+                assertEquals(null, assistant.attachments());
     }
 }

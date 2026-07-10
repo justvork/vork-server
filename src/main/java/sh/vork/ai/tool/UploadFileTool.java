@@ -3,7 +3,8 @@ package sh.vork.ai.tool;
 import java.io.InputStream;
 import java.util.Collections;
 import java.util.List;
-import java.util.stream.Stream;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 
 import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
@@ -17,26 +18,20 @@ import sh.vork.ai.protocol.interaction.FieldSource;
 import sh.vork.ai.protocol.interaction.FormAction;
 import sh.vork.ai.protocol.interaction.FormField;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
-import sh.vork.orm.DatabaseRepository;
-import sh.vork.orm.SearchQuery;
-import sh.vork.orm.SortOrder;
+import sh.vork.filesystem.FileArea;
+import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.ssh.VirtualSshService;
-import sh.vork.storage.FileStorageService;
-import sh.vork.storage.StoredFile;
 
 @Component
 public class UploadFileTool {
 
     private final VirtualSshService virtualSshService;
-    private final FileStorageService fileStorageService;
-    private final DatabaseRepository<StoredFile> storedFileRepository;
+    private final SessionFileSystem sessionFileSystem;
 
     public UploadFileTool(VirtualSshService virtualSshService,
-                          FileStorageService fileStorageService,
-                          DatabaseRepository<StoredFile> storedFileRepository) {
+                          SessionFileSystem sessionFileSystem) {
         this.virtualSshService = virtualSshService;
-        this.fileStorageService = fileStorageService;
-        this.storedFileRepository = storedFileRepository;
+        this.sessionFileSystem = sessionFileSystem;
     }
 
     public String execute(UploadFileRequest req) {
@@ -50,19 +45,17 @@ public class UploadFileTool {
         String sessionId = resolveSessionUuid();
         String filename = req.filename().trim();
 
-        // Try to locate the file in the storage service (by UUID first, then by name)
-        StoredFile storedFile = resolveStoredFile(filename);
+        SessionFileRef sessionRef = resolveSessionFileRef(sessionId, filename);
 
-        if (storedFile != null) {
-            // File is in Vork's storage — upload immediately, no authorization needed
+        if (sessionRef != null) {
             try {
                 SftpClient sftp = virtualSshService.getSftpClient(sessionId, req.hostOrAlias());
-                String remoteDest = resolveRemotePath(req.remotePath(), storedFile.originalName());
-                try (InputStream in = fileStorageService.getContent(storedFile.uuid())) {
+                String remoteDest = resolveRemotePath(req.remotePath(), sessionRef.name());
+                try (InputStream in = sessionFileSystem.read(sessionRef.area(), sessionRef.sessionUuid(), sessionRef.path())) {
                     sftp.put(in, remoteDest, null);
                 }
-                return "{\"status\":\"ok\",\"source\":\"storage\",\"uuid\":\"" + storedFile.uuid()
-                        + "\",\"remote\":\"" + remoteDest + "\"}";
+                return "{\"status\":\"ok\",\"source\":\"session\",\"path\":\""
+                        + json(sessionRef.path()) + "\",\"remote\":\"" + json(remoteDest) + "\"}";
             } catch (ToolSuspensionException e) {
                 throw e;
             } catch (Exception e) {
@@ -95,20 +88,86 @@ public class UploadFileTool {
         }
     }
 
-    /**
-     * Tries to find the file in storage by UUID (direct lookup), then by original name.
-     */
-    private StoredFile resolveStoredFile(String filename) {
-        // Try exact UUID lookup first
-        StoredFile byUuid = fileStorageService.getMetadata(filename);
-        if (byUuid != null) return byUuid;
-
-        // Try by original name
-        try (Stream<StoredFile> stream = storedFileRepository.search(
-                0, 1, "uploadedAt", SortOrder.DESC,
-                SearchQuery.eq("originalName", filename))) {
-            return stream.findFirst().orElse(null);
+    private SessionFileRef resolveSessionFileRef(String currentSessionUuid, String filename) {
+        SessionFileRef parsed = parseSessionDownloadRef(filename, currentSessionUuid);
+        if (parsed != null) {
+            return parsed;
         }
+
+        try {
+            sessionFileSystem.read(FileArea.SESSION, currentSessionUuid, filename).close();
+            return new SessionFileRef(FileArea.SESSION, currentSessionUuid, filename, extractFileName(filename));
+        } catch (Exception ignored) {
+            // fall through to local-path authorization flow
+            return null;
+        }
+    }
+
+    private static SessionFileRef parseSessionDownloadRef(String value, String defaultSessionUuid) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String raw = value;
+        if (raw.startsWith("session-url:")) {
+            raw = raw.substring("session-url:".length());
+        }
+        if (!raw.startsWith("/api/session-files/download?")) {
+            return null;
+        }
+        String path = queryParam(raw, "path");
+        if (path == null || path.isBlank()) {
+            return null;
+        }
+        String areaRaw = queryParam(raw, "area");
+        FileArea area = parseArea(areaRaw);
+        String sessionUuid = queryParam(raw, "sessionUuid");
+        if ((sessionUuid == null || sessionUuid.isBlank()) && area == FileArea.SESSION) {
+            sessionUuid = defaultSessionUuid;
+        }
+        return new SessionFileRef(area, area == FileArea.SESSION ? sessionUuid : null, path, extractFileName(path));
+    }
+
+    private static String queryParam(String url, String key) {
+        int q = url.indexOf('?');
+        if (q < 0 || q == url.length() - 1) {
+            return "";
+        }
+        String query = url.substring(q + 1);
+        for (String token : query.split("&")) {
+            String[] pair = token.split("=", 2);
+            if (pair.length == 2 && key.equals(pair[0])) {
+                return URLDecoder.decode(pair[1], StandardCharsets.UTF_8);
+            }
+        }
+        return "";
+    }
+
+    private static FileArea parseArea(String areaRaw) {
+        if (areaRaw == null || areaRaw.isBlank()) {
+            return FileArea.SESSION;
+        }
+        try {
+            return FileArea.valueOf(areaRaw.trim().toUpperCase());
+        } catch (Exception ignored) {
+            return FileArea.SESSION;
+        }
+    }
+
+    private static String extractFileName(String path) {
+        if (path == null || path.isBlank()) {
+            return "file";
+        }
+        String normalized = path.replace('\\', '/');
+        int idx = normalized.lastIndexOf('/');
+        String name = idx >= 0 ? normalized.substring(idx + 1) : normalized;
+        return name.isBlank() ? "file" : name;
+    }
+
+    private static String json(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     private static String resolveRemotePath(String remotePath, String localName) {
@@ -150,4 +209,6 @@ public class UploadFileTool {
         }
         return sessionUuid;
     }
+
+    private record SessionFileRef(FileArea area, String sessionUuid, String path, String name) {}
 }

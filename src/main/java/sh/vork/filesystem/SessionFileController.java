@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.multipart.MultipartFile;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.storage.AiMimeTypeSupport;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -136,7 +137,7 @@ public class SessionFileController {
             payload.put("path", descriptor.path());
             payload.put("name", fileName(descriptor.path()));
             payload.put("mimeType", mimeType);
-            payload.put("aiSupported", sh.vork.storage.FileStorageService.isAiSupported(mimeType));
+            payload.put("aiSupported", AiMimeTypeSupport.isAiSupported(mimeType));
             payload.put("sizeBytes", descriptor.sizeBytes());
             payload.put("downloadUrl", descriptor.downloadUrl());
             log.debug("EXIT upload: area={}, sessionUuid={}, path={}, size={}",

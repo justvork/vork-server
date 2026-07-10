@@ -45,7 +45,7 @@ public record AiChatMessage(
     /**
      * Slim reference to a file embedded in a chat message.
      *
-     * @param uuid     the {@link sh.vork.storage.StoredFile} UUID when available
+        * @param uuid     file identifier or download reference when available
      * @param name     original filename
      * @param mimeType MIME type of the file
      * @param url      optional direct download URL override

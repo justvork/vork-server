@@ -30,7 +30,6 @@ import sh.vork.ai.security.VisualizableToolCallback;
 import sh.vork.orm.mock.MapDatabaseRepository;
 import sh.vork.relay.RelayEncryptionService;
 import sh.vork.relay.RelayHttpClient;
-import sh.vork.storage.FileStorageService;
 import sh.vork.scheduling.service.SystemNotificationService;
 import sh.vork.setup.SystemSettingsService;
 
@@ -40,7 +39,6 @@ class ChatServiceSuspensionPersistenceTest {
     void sendMessage_whenToolSuspended_persistsAwaitingAuthorizationSnapshot() throws Exception {
         MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
         AiOrchestrationService aiService = mock(AiOrchestrationService.class);
-        FileStorageService fileStorageService = mock(FileStorageService.class);
         SimpMessagingTemplate messaging = mock(SimpMessagingTemplate.class);
         ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
@@ -88,7 +86,6 @@ class ChatServiceSuspensionPersistenceTest {
             sessionRepo,
             null,
             aiService,
-            fileStorageService,
             messaging,
             objectMapper,
             List.of(compileTool),

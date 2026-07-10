@@ -13,6 +13,6 @@ public record DownloadFileRequest(
         String remotePath,
 
         @JsonProperty(required = false, value = "localPath")
-        @JsonPropertyDescription("Optional local filesystem path to save the downloaded file. If omitted or blank, the file is stored in Vork's file storage service with no extra authorisation needed.")
+        @JsonPropertyDescription("Optional local filesystem path to save the downloaded file. If omitted or blank, the file is saved in the current session file area and returned with a session download URL.")
         String localPath
 ) {}

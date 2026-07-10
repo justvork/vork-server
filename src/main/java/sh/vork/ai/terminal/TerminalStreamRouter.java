@@ -170,10 +170,10 @@ public class TerminalStreamRouter {
         String outputFileUuid = null;
         if (terminalOutputStore != null && outputWriter != null) {
             try {
-                sh.vork.storage.StoredFile storedFile = terminalOutputStore.finalize(outputWriter);
+                sh.vork.filesystem.FileDescriptor storedFile = terminalOutputStore.finalize(outputWriter);
                 if (storedFile != null) {
-                    outputFileUuid = storedFile.uuid();
-                    log.info("Terminal output file stored [command={}, uuid={}]", command, outputFileUuid);
+                    outputFileUuid = storedFile.downloadUrl();
+                    log.info("Terminal output file stored [command={}, path={}]", command, storedFile.path());
                 }
             } catch (Exception ex) {
                 log.error("Failed to finalize terminal output file: {}", ex.getMessage(), ex);

@@ -4,10 +4,13 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.io.ByteArrayOutputStream;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -157,6 +160,39 @@ public class TelegramApiClient {
         post(botToken, "answerCallbackQuery", payload);
     }
 
+    /**
+     * Sends a binary file as a Telegram document.
+     */
+    public void sendDocument(String botToken,
+                             String chatId,
+                             String fileName,
+                             String mimeType,
+                             byte[] bytes,
+                             String caption) {
+        if (bytes == null || bytes.length == 0) {
+            log.warn("sendDocument skipped empty payload [chatId={}, file={}]", chatId, fileName);
+            return;
+        }
+        String boundary = "----vork-telegram-" + UUID.randomUUID();
+        try {
+            byte[] body = buildMultipartDocumentPayload(boundary, chatId, fileName, mimeType, bytes, caption);
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create(API_BASE + botToken + "/sendDocument"))
+                    .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                    .timeout(Duration.ofSeconds(30))
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(body))
+                    .build();
+            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
+                log.warn("Telegram sendDocument returned HTTP {} [body={}]",
+                        resp.statusCode(), truncate(resp.body(), 300));
+            }
+        } catch (Exception e) {
+            log.warn("Telegram sendDocument failed [chatId={}, file={}, error={}]",
+                    chatId, fileName, e.getMessage());
+        }
+    }
+
     // ── Internals ─────────────────────────────────────────────────────────────
 
     private void post(String botToken, String method, Object payload) {
@@ -181,5 +217,45 @@ public class TelegramApiClient {
     private static String truncate(String text, int max) {
         if (text == null) return "";
         return text.length() <= max ? text : text.substring(0, max - 3) + "...";
+    }
+
+    private static byte[] buildMultipartDocumentPayload(String boundary,
+                                                        String chatId,
+                                                        String fileName,
+                                                        String mimeType,
+                                                        byte[] bytes,
+                                                        String caption) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        writeFormPart(out, boundary, "chat_id", chatId);
+        if (caption != null && !caption.isBlank()) {
+            writeFormPart(out, boundary, "caption", truncate(caption, 1000));
+        }
+
+        out.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
+        out.write(("Content-Disposition: form-data; name=\"document\"; filename=\""
+                + escapeHeaderValue(fileName) + "\"\r\n").getBytes(StandardCharsets.UTF_8));
+        out.write(("Content-Type: " + (mimeType == null || mimeType.isBlank()
+                ? "application/octet-stream" : mimeType) + "\r\n\r\n")
+                .getBytes(StandardCharsets.UTF_8));
+        out.write(bytes);
+        out.write("\r\n".getBytes(StandardCharsets.UTF_8));
+
+        out.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+        return out.toByteArray();
+    }
+
+    private static void writeFormPart(ByteArrayOutputStream out,
+                                      String boundary,
+                                      String name,
+                                      String value) throws Exception {
+        out.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
+        out.write(("Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n")
+                .getBytes(StandardCharsets.UTF_8));
+        out.write((value == null ? "" : value).getBytes(StandardCharsets.UTF_8));
+        out.write("\r\n".getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String escapeHeaderValue(String value) {
+        return value == null ? "attachment" : value.replace("\"", "'").replace("\n", "").replace("\r", "");
     }
 }

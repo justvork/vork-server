@@ -34,7 +34,7 @@ class SkillToolCallbackFactoryTest {
     @BeforeEach
     void setUp() {
         skillService = Mockito.mock(SkillService.class);
-        skillGroupRepository = Mockito.mock(DatabaseRepository.class);
+        skillGroupRepository = mockSkillGroupRepository();
         factory = new SkillToolCallbackFactory(new ObjectMapper());
         ReflectionTestUtils.setField(factory, "skillService", skillService);
         ReflectionTestUtils.setField(factory, "skillGroupRepository", skillGroupRepository);
@@ -74,7 +74,7 @@ class SkillToolCallbackFactoryTest {
                 .filter(field -> "query".equals(field.name()))
                 .findFirst()
                 .orElseThrow();
-            assertEquals("", queryField.value());
+        assertEquals("", queryField.value());
 
         var tokenField = ex.getFormSchema().fields().stream()
                 .filter(field -> "__skill_input_token".equals(field.name()))
@@ -115,36 +115,41 @@ class SkillToolCallbackFactoryTest {
         assertFalse(params.containsKey("__skill_input_token"));
     }
 
-        @Test
-        void usesTextareaFieldForTextParameterType() {
+    @Test
+    void usesTextareaFieldForTextParameterType() {
         Skill skill = new Skill(
-            "skill-1",
-            "Calendar Skill",
-            "desc",
-            "group-1",
-            SkillVisibility.PUBLIC,
-            List.of(new SkillParameter("query", "text", "Search query", SkillParameterInputMode.USER_ALWAYS_PROMPT)),
-            "instructions",
-            List.of(),
-            List.of(),
-            List.of(),
-            1L,
-            System.currentTimeMillis(),
-            System.currentTimeMillis(),
-            List.of());
+                "skill-1",
+                "Calendar Skill",
+                "desc",
+                "group-1",
+                SkillVisibility.PUBLIC,
+                List.of(new SkillParameter("query", "text", "Search query", SkillParameterInputMode.USER_ALWAYS_PROMPT)),
+                "instructions",
+                List.of(),
+                List.of(),
+                List.of(),
+                1L,
+                System.currentTimeMillis(),
+                System.currentTimeMillis(),
+                List.of());
         ToolCallback callback = factory.create(skill);
 
         ToolSuspensionException ex = assertThrows(
-            ToolSuspensionException.class,
-            () -> callback.call("{}"));
+                ToolSuspensionException.class,
+                () -> callback.call("{}"));
 
         var queryField = ex.getFormSchema().fields().stream()
-            .filter(field -> "query".equals(field.name()))
-            .findFirst()
-            .orElseThrow();
+                .filter(field -> "query".equals(field.name()))
+                .findFirst()
+                .orElseThrow();
 
         assertEquals("textarea", queryField.type());
-        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static DatabaseRepository<SkillGroup> mockSkillGroupRepository() {
+        return (DatabaseRepository<SkillGroup>) Mockito.mock(DatabaseRepository.class);
+    }
 
     private static Skill skillWithInputMode(SkillParameterInputMode inputMode) {
         return new Skill(

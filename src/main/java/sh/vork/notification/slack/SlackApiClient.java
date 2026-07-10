@@ -6,11 +6,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Thin HTTP client for the Slack Web API.
@@ -141,6 +144,51 @@ public class SlackApiClient {
         }
     }
 
+    /**
+     * Uploads a binary file to a channel/DM using {@code files.upload}.
+     *
+     * @param botToken       {@code xoxb-...} bot token
+     * @param channelId      Slack conversation ID
+     * @param fileName       file name shown in Slack
+     * @param mimeType       MIME type for the uploaded file
+     * @param bytes          file content
+     * @param initialComment optional message shown with the file
+     */
+    public void sendFile(String botToken,
+                         String channelId,
+                         String fileName,
+                         String mimeType,
+                         byte[] bytes,
+                         String initialComment) {
+        log.debug("ENTER sendFile: [channel={}, file={}, bytes={}]",
+                channelId, fileName, bytes == null ? 0 : bytes.length);
+        if (bytes == null || bytes.length == 0) {
+            throw new SlackApiException("Cannot upload empty file content");
+        }
+
+        String boundary = "----vork-slack-" + UUID.randomUUID();
+        byte[] body = buildMultipartFileUpload(boundary, channelId, fileName, mimeType, bytes, initialComment);
+
+        try {
+            HttpRequest req = HttpRequest.newBuilder(URI.create(SLACK_API + "files.upload"))
+                    .header("Authorization", "Bearer " + botToken)
+                    .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(body))
+                    .build();
+            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() != 200) {
+                throw new SlackApiException("Slack files.upload returned HTTP " + resp.statusCode());
+            }
+            Map<String, Object> response = objectMapper.readValue(resp.body(), new TypeReference<>() {});
+            requireOk(response, "files.upload");
+            log.debug("EXIT sendFile: [channel={}, file={}]", channelId, fileName);
+        } catch (SlackApiException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new SlackApiException("Slack file upload failed", e);
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private Map<String, Object> postJson(String token, String method, String jsonBody) {
@@ -169,5 +217,49 @@ public class SlackApiClient {
             String error = (String) response.getOrDefault("error", "unknown_error");
             throw new SlackApiException("Slack " + method + " error: " + error);
         }
+    }
+
+    private static byte[] buildMultipartFileUpload(String boundary,
+                                                   String channelId,
+                                                   String fileName,
+                                                   String mimeType,
+                                                   byte[] fileBytes,
+                                                   String initialComment) {
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            writeFormPart(out, boundary, "channels", channelId);
+            writeFormPart(out, boundary, "filename", fileName);
+            if (initialComment != null && !initialComment.isBlank()) {
+                writeFormPart(out, boundary, "initial_comment", initialComment);
+            }
+
+            out.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
+            out.write(("Content-Disposition: form-data; name=\"file\"; filename=\""
+                    + escapeHeaderValue(fileName) + "\"\r\n").getBytes(StandardCharsets.UTF_8));
+            out.write(("Content-Type: " + (mimeType == null || mimeType.isBlank()
+                    ? "application/octet-stream" : mimeType) + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+            out.write(fileBytes);
+            out.write("\r\n".getBytes(StandardCharsets.UTF_8));
+
+            out.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+            return out.toByteArray();
+        } catch (Exception e) {
+            throw new SlackApiException("Failed to build multipart payload", e);
+        }
+    }
+
+    private static void writeFormPart(ByteArrayOutputStream out,
+                                      String boundary,
+                                      String name,
+                                      String value) throws Exception {
+        out.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
+        out.write(("Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n")
+                .getBytes(StandardCharsets.UTF_8));
+        out.write((value == null ? "" : value).getBytes(StandardCharsets.UTF_8));
+        out.write("\r\n".getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String escapeHeaderValue(String value) {
+        return value == null ? "attachment" : value.replace("\"", "'").replace("\n", "").replace("\r", "");
     }
 }

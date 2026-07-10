@@ -103,17 +103,31 @@
         return 'fa-file';
     }
 
+    function resolveAttachmentHref(att) {
+        if (!att) return '';
+        if (att.url) return att.url;
+        if (att.token && att.token.startsWith('session-url:')) {
+            return att.token.substring('session-url:'.length);
+        }
+        if (att.uuid && att.uuid.startsWith('/api/session-files/download?')) {
+            return att.uuid;
+        }
+        return '';
+    }
+
     function renderAttachmentsHtml(attachments) {
         if (!attachments || attachments.length === 0) return '';
         let html = '<div class="bubble-attachments">';
         for (const att of attachments) {
+            const href = resolveAttachmentHref(att);
+            if (!href) continue;
             if (isImage(att.mimeType)) {
-                html += '<img class="bubble-img-thumb" src="/api/files/' + att.uuid + '"'
+                html += '<img class="bubble-img-thumb" src="' + href + '"'
                       + ' alt="' + escapeHtml(att.name) + '"'
-                      + ' data-src="/api/files/' + att.uuid + '"'
+                      + ' data-src="' + href + '"'
                       + ' title="' + escapeHtml(att.name) + '">';
             } else {
-                html += '<a class="bubble-file-link" href="/api/files/' + att.uuid + '"'
+                html += '<a class="bubble-file-link" href="' + href + '"'
                       + ' download="' + escapeHtml(att.name) + '" target="_blank">'
                       + '<i class="fa-solid ' + mimeIcon(att.mimeType) + '"></i>'
                       + escapeHtml(att.name)

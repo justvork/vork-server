@@ -14,21 +14,25 @@ import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.exception.ToolSuspensionException;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.protocol.interaction.FormAction;
+import sh.vork.filesystem.FileDescriptor;
 import sh.vork.ai.service.ChatService;
 import sh.vork.ai.slack.SlackSessionRegistry;
 import sh.vork.ai.slack.SlackSuspensionRenderer;
 import sh.vork.ai.telegram.TelegramChatResumptionService;
+import sh.vork.filesystem.FileArea;
+import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.notification.NotificationMediaType;
 import sh.vork.notification.user.UserNotificationMedia;
-import sh.vork.storage.FileStorageService;
-import sh.vork.storage.StoredFile;
 import sh.vork.transcription.AudioTranscriptionService;
 
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.UUID;
 
 /**
  * {@link SlackMessageConsumer} that handles AI chat sessions in Slack DMs.
@@ -62,7 +66,7 @@ public class SlackChatConsumer implements SlackMessageConsumer {
     private final SlackSuspensionRenderer                 suspensionRenderer;
     private final SlackApiClient                          slackApiClient;
     private final AudioTranscriptionService               audioTranscriptionService;
-    private final FileStorageService                      fileStorageService;
+    private final SessionFileSystem                       sessionFileSystem;
 
     /** DM channelId → pending single-field capture */
     private final ConcurrentHashMap<String, PendingCapture>       pendingCaptures = new ConcurrentHashMap<>();
@@ -78,7 +82,7 @@ public class SlackChatConsumer implements SlackMessageConsumer {
                               SlackApiClient slackApiClient,
                               ObjectMapper objectMapper,
                               AudioTranscriptionService audioTranscriptionService,
-                              FileStorageService fileStorageService) {
+                              SessionFileSystem sessionFileSystem) {
         this.chatService              = chatService;
         this.sessionRepo              = sessionRepo;
         this.mediaRepo                = mediaRepo;
@@ -87,7 +91,7 @@ public class SlackChatConsumer implements SlackMessageConsumer {
         this.suspensionRenderer       = suspensionRenderer;
         this.slackApiClient           = slackApiClient;
         this.audioTranscriptionService = audioTranscriptionService;
-        this.fileStorageService = fileStorageService;
+        this.sessionFileSystem = sessionFileSystem;
     }
 
     // ── SlackMessageConsumer ──────────────────────────────────────────────────
@@ -103,7 +107,7 @@ public class SlackChatConsumer implements SlackMessageConsumer {
         String botToken  = message.botToken();
         String configId  = message.configId();
         String text      = message.text();
-        List<String> attachmentUuids = new ArrayList<>();
+        List<String> attachmentRefs = new ArrayList<>();
 
         log.debug("ENTER SlackChatConsumer.process: [channel={}, userId={}]",
                 channelId, message.userId());
@@ -114,14 +118,7 @@ public class SlackChatConsumer implements SlackMessageConsumer {
                 text = transcribeVoice(message);
             }
 
-            if (message.isFile()) {
-                String attachmentUuid = ingestAttachment(message, botToken, channelId);
-                if (attachmentUuid != null) {
-                    attachmentUuids.add(attachmentUuid);
-                }
-            }
-
-            if ((text == null || text.isBlank()) && attachmentUuids.isEmpty()) {
+            if ((text == null || text.isBlank()) && !message.isFile()) {
                 log.debug("Ignoring empty text from channel={}", channelId);
                 return true;
             }
@@ -159,12 +156,24 @@ public class SlackChatConsumer implements SlackMessageConsumer {
             log.debug("Sending Slack message to session [sessionUuid={}, user={}]",
                     sessionUuid, username);
 
+            if (message.isFile()) {
+                String attachmentRef = ingestAttachment(message, botToken, channelId, sessionUuid);
+                if (attachmentRef != null) {
+                    attachmentRefs.add(attachmentRef);
+                }
+            }
+
+            if ((text == null || text.isBlank()) && attachmentRefs.isEmpty()) {
+                log.debug("Ignoring empty text/file after ingest failure from channel={}", channelId);
+                return true;
+            }
+
                 String effectiveText = (text == null || text.isBlank())
                     ? "Please analyze the attached file."
                     : text;
 
             AiChatMessage response = chatService.sendMessageAsUser(
-                    username, sessionUuid, effectiveText, attachmentUuids, null);
+                    username, sessionUuid, effectiveText, attachmentRefs, null);
 
             if (response == null) {
                 renderLatestSuspension(sessionUuid, channelId, botToken);
@@ -173,6 +182,7 @@ public class SlackChatConsumer implements SlackMessageConsumer {
                 if (reply != null && !reply.isBlank()) {
                     slackApiClient.sendMessage(botToken, channelId, reply);
                 }
+                sendAiAttachments(response, sessionUuid, botToken, channelId);
             }
         } catch (Exception e) {
             log.warn("Error processing Slack message [channel={}]: {}", channelId, e.getMessage(), e);
@@ -182,13 +192,131 @@ public class SlackChatConsumer implements SlackMessageConsumer {
         return true;
     }
 
-        private String ingestAttachment(IncomingSlackMessage message,
-                        String botToken,
-                        String channelId) {
+    private void sendAiAttachments(AiChatMessage response,
+                                   String defaultSessionUuid,
+                                   String botToken,
+                                   String channelId) {
+        if (response == null || response.attachments() == null || response.attachments().isEmpty()) {
+            return;
+        }
+        for (AiChatMessage.AttachmentRef ref : response.attachments()) {
+            try {
+                OutboundAttachment attachment = resolveOutboundAttachment(ref, defaultSessionUuid);
+                if (attachment == null || attachment.bytes() == null || attachment.bytes().length == 0) {
+                    continue;
+                }
+                slackApiClient.sendFile(
+                        botToken,
+                        channelId,
+                        attachment.name(),
+                        attachment.mimeType(),
+                        attachment.bytes(),
+                        null);
+                log.info("Sent AI attachment to Slack [channel={}, file={}, bytes={}]",
+                        channelId, attachment.name(), attachment.bytes().length);
+            } catch (Exception ex) {
+                log.warn("Failed to send AI attachment to Slack [channel={}, ref={}]: {}",
+                        channelId, ref == null ? null : ref.name(), ex.getMessage());
+            }
+        }
+    }
+
+    private OutboundAttachment resolveOutboundAttachment(AiChatMessage.AttachmentRef ref,
+                                                         String defaultSessionUuid) {
+        if (ref == null) {
+            return null;
+        }
+        String directUrl = normalizeSessionDownloadUrl(ref.url());
+        if (directUrl == null) {
+            directUrl = normalizeSessionDownloadUrl(ref.uuid());
+        }
+
+        if (directUrl != null) {
+            String path = queryParam(directUrl, "path");
+            if (path == null || path.isBlank()) {
+                return null;
+            }
+            String sessionUuid = queryParam(directUrl, "sessionUuid");
+            if (sessionUuid == null || sessionUuid.isBlank()) {
+                sessionUuid = defaultSessionUuid;
+            }
+            String areaRaw = queryParam(directUrl, "area");
+            FileArea area = parseArea(areaRaw);
+            try (InputStream in = sessionFileSystem.read(area, sessionUuid, path)) {
+                byte[] bytes = in.readAllBytes();
+                String name = ref.name() != null && !ref.name().isBlank()
+                        ? ref.name()
+                        : inferFileName(path);
+                String mime = ref.mimeType() != null && !ref.mimeType().isBlank()
+                        ? ref.mimeType()
+                        : "application/octet-stream";
+                return new OutboundAttachment(name, mime, bytes);
+            } catch (Exception ex) {
+                log.warn("Failed to read session attachment [path={}, session={}]: {}",
+                        path, sessionUuid, ex.getMessage());
+                return null;
+            }
+        }
+
+        log.debug("Skipping outbound Slack attachment without session URL [refName={}]",
+                ref.name());
+        return null;
+    }
+
+    private static String normalizeSessionDownloadUrl(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String v = value;
+        if (v.startsWith("session-url:")) {
+            v = v.substring("session-url:".length());
+        }
+        return v.startsWith("/api/session-files/download?") ? v : null;
+    }
+
+    private static String queryParam(String url, String key) {
+        int q = url.indexOf('?');
+        if (q < 0 || q == url.length() - 1) {
+            return "";
+        }
+        String query = url.substring(q + 1);
+        for (String token : query.split("&")) {
+            String[] pair = token.split("=", 2);
+            if (pair.length == 2 && key.equals(pair[0])) {
+                return URLDecoder.decode(pair[1], StandardCharsets.UTF_8);
+            }
+        }
+        return "";
+    }
+
+    private static FileArea parseArea(String areaRaw) {
+        if (areaRaw == null || areaRaw.isBlank()) {
+            return FileArea.SESSION;
+        }
+        try {
+            return FileArea.valueOf(areaRaw.trim().toUpperCase());
+        } catch (Exception ignored) {
+            return FileArea.SESSION;
+        }
+    }
+
+    private static String inferFileName(String path) {
+        if (path == null || path.isBlank()) {
+            return "attachment";
+        }
+        String normalized = path.replace('\\', '/');
+        int idx = normalized.lastIndexOf('/');
+        String name = idx >= 0 ? normalized.substring(idx + 1) : normalized;
+        return name.isBlank() ? "attachment" : name;
+    }
+
+    private record OutboundAttachment(String name, String mimeType, byte[] bytes) {}
+
+    private String ingestAttachment(IncomingSlackMessage message,
+                    String botToken,
+                    String channelId,
+                    String sessionUuid) {
         String fileUrl = message.fileUrl();
-        String mimeType = message.fileMimeType() == null || message.fileMimeType().isBlank()
-            ? "application/octet-stream"
-            : message.fileMimeType();
         String fileName = message.fileName() == null || message.fileName().isBlank()
             ? "slack-file"
             : message.fileName();
@@ -202,10 +330,16 @@ public class SlackChatConsumer implements SlackMessageConsumer {
         }
 
         try {
-            StoredFile stored = fileStorageService.uploadRaw(new ByteArrayInputStream(bytes), fileName, mimeType, bytes.length);
-            log.info("Slack file attached to chat turn [channel={}, fileUuid={}, name={}]",
-                channelId, stored.uuid(), stored.originalName());
-            return stored.uuid();
+            String targetPath = "incoming/slack/" + UUID.randomUUID() + "-" + sanitizeFileName(fileName);
+            FileDescriptor descriptor = sessionFileSystem.write(
+                    FileArea.SESSION,
+                    sessionUuid,
+                    targetPath,
+                    new java.io.ByteArrayInputStream(bytes),
+                    bytes.length);
+            log.info("Slack file attached to chat turn [channel={}, session={}, path={}]",
+                channelId, sessionUuid, descriptor.path());
+            return "session-url:" + descriptor.downloadUrl();
         } catch (Exception ex) {
             log.warn("Failed to persist Slack attachment [channel={}, file={}]: {}",
                 channelId, fileName, ex.getMessage());
@@ -213,7 +347,14 @@ public class SlackChatConsumer implements SlackMessageConsumer {
                 "Sorry, I could not process your file. Please try again.");
             return null;
         }
+    }
+
+    private static String sanitizeFileName(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return "attachment";
         }
+        return fileName.replace("\\", "_").replace("/", "_");
+    }
 
     /**
      * Downloads and transcribes the audio file attached to {@code message}.

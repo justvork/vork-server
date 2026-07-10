@@ -1,31 +1,34 @@
 package sh.vork.ai.controller;
 
+import java.net.URLDecoder;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.io.InputStream;
-import java.net.URLDecoder;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Executor;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.ai.tool.ToolCallback;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -33,40 +36,34 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import sh.vork.ai.AiProvider;
+import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.exception.ToolSuspensionException;
-import sh.vork.ai.protocol.UiEventFrame;
+import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.ai.protocol.StructuredAgentResponse;
+import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.protocol.interaction.FieldSource;
 import sh.vork.ai.protocol.interaction.FormAction;
 import sh.vork.ai.protocol.interaction.FormField;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
-import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.security.AuthorizationRuleEngine;
 import sh.vork.ai.security.VisualizableTool;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
-import sh.vork.ai.memory.SessionEnvironmentService;
-import sh.vork.scheduling.service.AiSchedulerService;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.scheduling.service.AiSchedulerService;
 import sh.vork.scheduling.service.SystemBackgroundAuthentication;
-
-import java.util.concurrent.Executor;
-
 import sh.vork.security.SecureCredentialStore;
 import sh.vork.security.UserService;
 import sh.vork.security.VorkUser;
-import sh.vork.storage.FileStorageService;
 
 /**
  * Accepts structured user responses to PROMPT_REQUIRED frames and resumes chat execution.
@@ -89,7 +86,6 @@ public class ChatAuthorizationController {
     private final Map<String, ToolCallback> toolCallbacksByName;
     private final Executor aiBackgroundExecutor;
     private final AiSchedulerService aiSchedulerService;
-    private final FileStorageService fileStorageService;
     private final ChatService chatService;
     private final SecureCredentialStore secureCredentialStore;
     private final SessionEnvironmentService sessionEnvironmentService;
@@ -104,7 +100,6 @@ public class ChatAuthorizationController {
                                        List<ToolCallback> toolCallbacks,
                                        @Qualifier("aiBackgroundExecutor") Executor aiBackgroundExecutor,
                                        AiSchedulerService aiSchedulerService,
-                                       FileStorageService fileStorageService,
                                        ChatService chatService,
                                        SecureCredentialStore secureCredentialStore,
                                        SessionEnvironmentService sessionEnvironmentService,
@@ -113,7 +108,6 @@ public class ChatAuthorizationController {
         this.authorizationRuleEngine = authorizationRuleEngine;
         this.aiService = aiService;
         this.messaging = messaging;
-        this.fileStorageService = fileStorageService;
         this.objectMapper = objectMapper;
         this.aiBackgroundExecutor = aiBackgroundExecutor;
         this.aiSchedulerService = aiSchedulerService;
@@ -242,29 +236,6 @@ public class ChatAuthorizationController {
                 payload.put("fields", conversationFields);
                 payload.put("terminalTranscript", terminalTranscript);
                 toolPayloadJson = toJson(payload);
-                
-                // Extract file attachment if present
-                Object fileUuidObj = terminalTranscript.get("outputFileUuid");
-                if (fileUuidObj != null && fileStorageService != null) {
-                    String fileUuid = String.valueOf(fileUuidObj);
-                    try {
-                        sh.vork.storage.StoredFile storedFile = fileStorageService.getMetadata(fileUuid);
-                        if (storedFile != null) {
-                            attachments = List.of(
-                                new AiChatMessage.AttachmentRef(
-                                    storedFile.uuid(),
-                                    storedFile.originalName(),
-                                    storedFile.mimeType()
-                                )
-                            );
-                            log.info("Terminal output file attached [fileUuid={}, fileName={}]", fileUuid, storedFile.originalName());
-                        } else {
-                            log.warn("Terminal output metadata not found for attachment [fileUuid={}]", fileUuid);
-                        }
-                    } catch (Exception ex) {
-                        log.error("Failed to resolve terminal output attachment metadata [fileUuid={}]: {}", fileUuid, ex.getMessage(), ex);
-                    }
-                }
             }
 
             List<AiChatMessage.AttachmentRef> responseDataAttachments = extractSessionFileAttachmentsFromResponseData(toolResponse.responseData());
@@ -1097,12 +1068,6 @@ public class ChatAuthorizationController {
         } else {
             String rawOutput = payload.get("rawOutput") instanceof String s ? s : unwrapTerminalToolResult(toolResult);
 
-            // If the tool output was routed to a stored file, load it into history
-            // so the model can reason over real command output on resumed calls.
-            if ((rawOutput == null || rawOutput.isBlank()) && outputFileUuid != null && fileStorageService != null) {
-                rawOutput = readTerminalOutputFile(outputFileUuid);
-            }
-
             String displayOutput = normalizeTerminalTranscript(command, rawOutput);
             payload.put("rawOutput", compactTerminalHistoryOutput(rawOutput, outputFileUuid));
             payload.put("displayOutput", compactTerminalHistoryOutput(displayOutput, outputFileUuid));
@@ -1124,20 +1089,6 @@ public class ChatAuthorizationController {
             return "[terminal output truncated; full output in attachment " + outputFileUuid + "]\n\n" + tail;
         }
         return "[terminal output truncated]\n\n" + tail;
-    }
-
-    private String readTerminalOutputFile(String fileUuid) {
-        try (InputStream in = fileStorageService.getContent(fileUuid)) {
-            byte[] bytes = in.readAllBytes();
-            String text = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-            if (text.length() > 200_000) {
-                return text.substring(0, 200_000) + "\n... [truncated, full output in attachment " + fileUuid + "]";
-            }
-            return text;
-        } catch (Exception ex) {
-            log.warn("Failed to read terminal output attachment for history [fileUuid={}]: {}", fileUuid, ex.getMessage());
-            return "";
-        }
     }
 
     private String unwrapTerminalToolResult(String toolResult) {

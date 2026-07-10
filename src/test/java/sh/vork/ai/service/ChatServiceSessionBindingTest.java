@@ -23,7 +23,6 @@ import sh.vork.relay.RelayEncryptionService;
 import sh.vork.relay.RelayHttpClient;
 import sh.vork.scheduling.service.SystemNotificationService;
 import sh.vork.setup.SystemSettingsService;
-import sh.vork.storage.FileStorageService;
 
 class ChatServiceSessionBindingTest {
 
@@ -42,7 +41,6 @@ class ChatServiceSessionBindingTest {
                 sessionRepo,
                 null,
                 mock(AiOrchestrationService.class),
-                mock(FileStorageService.class),
                 mock(SimpMessagingTemplate.class),
                 new ObjectMapper().findAndRegisterModules(),
                 List.of(),
@@ -87,7 +85,6 @@ class ChatServiceSessionBindingTest {
                 sessionRepo,
                 null,
                 mock(AiOrchestrationService.class),
-                mock(FileStorageService.class),
                 mock(SimpMessagingTemplate.class),
                 new ObjectMapper().findAndRegisterModules(),
                 List.of(),

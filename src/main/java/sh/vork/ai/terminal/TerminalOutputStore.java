@@ -4,8 +4,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import sh.vork.storage.StoredFile;
-import sh.vork.storage.FileStorageService;
+import sh.vork.filesystem.FileArea;
+import sh.vork.filesystem.FileDescriptor;
+import sh.vork.filesystem.SessionFileSystem;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -16,7 +17,7 @@ import java.util.UUID;
 
 /**
  * Manages terminal output storage on disk.
- * Writes command output to temp files, then uploads them to the file store
+ * Writes command output to temp files, then persists them into the session file system
  * for attachment to chat messages.
  */
 @Service
@@ -24,12 +25,12 @@ public class TerminalOutputStore {
 
     private static final Logger log = LoggerFactory.getLogger(TerminalOutputStore.class);
 
-    private final FileStorageService fileStorageService;
+    private final SessionFileSystem sessionFileSystem;
     private final Path tempDir;
 
-    public TerminalOutputStore(FileStorageService fileStorageService,
+    public TerminalOutputStore(SessionFileSystem sessionFileSystem,
                                 @Value("${java.io.tmpdir}") String tmpDirPath) {
-        this.fileStorageService = fileStorageService;
+        this.sessionFileSystem = sessionFileSystem;
         this.tempDir = Paths.get(tmpDirPath, "vork-terminal-output");
         ensureTempDir();
     }
@@ -53,13 +54,13 @@ public class TerminalOutputStore {
     }
 
     /**
-     * Finalizes a terminal output writer: flushes to disk and uploads to file store.
-     * Returns a {@link StoredFile} record or null if upload fails.
+     * Finalizes a terminal output writer: flushes to disk and uploads to session storage.
+     * Returns a {@link FileDescriptor} record or null if upload fails.
      */
-    public StoredFile finalize(TerminalOutputWriter writer) {
+    public FileDescriptor finalize(TerminalOutputWriter writer) {
         try {
             writer.close();
-            return uploadToStore(writer.getFile(), writer.getCommand());
+            return uploadToStore(writer.getSessionUuid(), writer.getFile(), writer.getCommand());
         } catch (Exception ex) {
             log.error("Failed to finalize terminal output [session={}, command={}]: {}",
                     writer.getSessionUuid(), writer.getCommand(), ex.getMessage(), ex);
@@ -68,9 +69,9 @@ public class TerminalOutputStore {
     }
 
     /**
-     * Uploads a terminal output file to the file store.
+     * Uploads a terminal output file to session storage.
      */
-    private StoredFile uploadToStore(Path file, String command) throws IOException {
+    private FileDescriptor uploadToStore(String sessionUuid, Path file, String command) throws IOException {
         if (!Files.exists(file)) {
             throw new FileNotFoundException("Terminal output file not found: " + file);
         }
@@ -79,15 +80,18 @@ public class TerminalOutputStore {
         byte[] bytes = Files.readAllBytes(file);
 
         try {
-            String mimeType = "text/plain";
-            String originalName = "terminal-output-" + UUID.randomUUID() + ".txt";
+            String outputPath = "terminal/" + UUID.randomUUID() + ".txt";
 
-            // Wrap bytes in a mock MultipartFile for upload
             ByteArrayInputStream stream = new ByteArrayInputStream(bytes);
-            StoredFile stored = fileStorageService.uploadRaw(stream, originalName, mimeType, sizeBytes);
+            FileDescriptor stored = sessionFileSystem.write(
+                FileArea.SESSION,
+                    sessionUuid,
+                outputPath,
+                stream,
+                sizeBytes);
 
-            log.info("Uploaded terminal output [command={}, sizeBytes={}, uuid={}]",
-                    command, sizeBytes, stored.uuid());
+            log.info("Uploaded terminal output [command={}, sizeBytes={}, path={}]",
+                command, sizeBytes, stored.path());
 
             // Clean up temp file
             try {
@@ -98,7 +102,7 @@ public class TerminalOutputStore {
 
             return stored;
         } catch (Exception ex) {
-            throw new IOException("Failed to upload terminal output to file store", ex);
+            throw new IOException("Failed to upload terminal output to session storage", ex);
         }
     }
 

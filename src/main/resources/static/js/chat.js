@@ -354,10 +354,6 @@ function resolveAttachmentHref(att) {
     if (att.uuid && att.uuid.startsWith('/api/session-files/download?')) {
         return att.uuid;
     }
-    if (att.uuid) {
-        // Legacy persisted attachments from FileStorageService.
-        return '/api/files/' + att.uuid;
-    }
     return '';
 }
 
@@ -1097,7 +1093,10 @@ async function loadReplayOutputFromAttachment(attachmentUuid, fallbackOutput) {
     try {
         const href = (typeof attachmentUuid === 'string' && attachmentUuid.startsWith('/api/session-files/download?'))
             ? attachmentUuid
-            : '/api/files/' + attachmentUuid;
+            : null;
+        if (!href) {
+            return buildReplayOutput(fallbackOutput || '');
+        }
         const resp = await fetch(href, { method: 'GET' });
         if (!resp.ok) {
             return buildReplayOutput(fallbackOutput || '');

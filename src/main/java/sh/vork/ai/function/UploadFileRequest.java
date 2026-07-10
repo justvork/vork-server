@@ -9,7 +9,7 @@ public record UploadFileRequest(
         String hostOrAlias,
 
         @JsonProperty(required = true, value = "filename")
-        @JsonPropertyDescription("UUID or filename of a file already in Vork's file storage service, or an absolute local filesystem path. Storage-service files are uploaded immediately; local paths require explicit authorisation.")
+        @JsonPropertyDescription("Session file reference to upload (accepts 'session-url:/api/session-files/download?...', direct '/api/session-files/download?...', or a relative path in the current session area), or an absolute local filesystem path. Local paths require explicit authorisation.")
         String filename,
 
         @JsonProperty(required = false, value = "remotePath")

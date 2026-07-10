@@ -1,6 +1,5 @@
 package sh.vork.ai.service;
 
-import java.io.IOException;
 import java.io.InputStream;
 import java.net.URLDecoder;
 import java.util.ArrayList;
@@ -12,9 +11,9 @@ import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executor;
-import java.util.stream.Collectors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import javax.crypto.SecretKey;
 
@@ -29,8 +28,8 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.content.Media;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -61,6 +60,8 @@ import sh.vork.ai.protocol.interaction.FormAction;
 import sh.vork.ai.protocol.interaction.FormField;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
 import sh.vork.ai.telegram.TelegramChatResumptionService;
+import sh.vork.filesystem.FileArea;
+import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.SearchQuery;
 import sh.vork.orm.SortOrder;
@@ -70,10 +71,7 @@ import sh.vork.relay.lib.model.RelaySubmission;
 import sh.vork.scheduling.service.SystemBackgroundAuthentication;
 import sh.vork.scheduling.service.SystemNotificationService;
 import sh.vork.setup.SystemSettingsService;
-import sh.vork.filesystem.FileArea;
-import sh.vork.filesystem.SessionFileSystem;
-import sh.vork.storage.FileStorageService;
-import sh.vork.storage.StoredFile;
+import sh.vork.skill.SkillFrame;
 
 /**
  * Manages AI chat sessions and conversation history.
@@ -98,7 +96,6 @@ public class ChatService {
     private final DatabaseRepository<AiSession>     sessionRepo;
     private final DatabaseRepository<AgentTemplate> agentTemplateRepo;
     private final AiOrchestrationService            aiService;
-    private final FileStorageService            fileStorageService;
     private final SessionFileSystem             sessionFileSystem;
     private final SimpMessagingTemplate         messaging;
     private final ObjectMapper                  objectMapper;
@@ -118,7 +115,6 @@ public class ChatService {
     public ChatService(DatabaseRepository<AiSession> aiSessionRepository,
                        DatabaseRepository<AgentTemplate> agentTemplateRepository,
                        AiOrchestrationService aiOrchestrationService,
-                       FileStorageService fileStorageService,
                        SessionFileSystem sessionFileSystem,
                        SimpMessagingTemplate messaging,
                        ObjectMapper objectMapper,
@@ -132,7 +128,6 @@ public class ChatService {
         this.sessionRepo = aiSessionRepository;
         this.agentTemplateRepo = agentTemplateRepository;
         this.aiService = aiOrchestrationService;
-        this.fileStorageService = fileStorageService;
         this.sessionFileSystem = sessionFileSystem;
         this.messaging = messaging;
         this.objectMapper = objectMapper;
@@ -148,7 +143,6 @@ public class ChatService {
     public ChatService(DatabaseRepository<AiSession> aiSessionRepository,
                        DatabaseRepository<AgentTemplate> agentTemplateRepository,
                        AiOrchestrationService aiOrchestrationService,
-                       FileStorageService fileStorageService,
                        SimpMessagingTemplate messaging,
                        ObjectMapper objectMapper,
                        List<ToolCallback> toolCallbacks,
@@ -161,7 +155,6 @@ public class ChatService {
         this(aiSessionRepository,
                 agentTemplateRepository,
                 aiOrchestrationService,
-                fileStorageService,
                 null,
                 messaging,
                 objectMapper,
@@ -796,7 +789,7 @@ public class ChatService {
                 }
                 }
 
-                List<AttachmentRef> assistantAttachments = buildAssistantAttachments(latest, refs, finalText);
+                List<AttachmentRef> assistantAttachments = buildAssistantAttachments(latest, finalText);
                 AiChatMessage aiMsg = new AiChatMessage(
                     UUID.randomUUID().toString(), "ASSISTANT",
                     finalText, System.currentTimeMillis(),
@@ -899,7 +892,7 @@ public class ChatService {
                 if (mime.startsWith("text/")) {
                     String text = new String(in.readAllBytes());
                     textParts.add("[Attached file: " + name + "]\n" + text);
-                } else if (FileStorageService.isAiSupported(mime)) {
+                } else if (isAiSupportedMime(mime)) {
                     byte[] bytes = in.readAllBytes();
                     media.add(new Media(MimeType.valueOf(mime), new ByteArrayResource(bytes)));
                 }
@@ -908,45 +901,12 @@ public class ChatService {
             }
             return;
         }
-
-        StoredFile meta = fileStorageService.getMetadata(attachmentId);
-        if (meta == null) {
-            log.warn("Attachment not found, skipping [id={}]", attachmentId);
-            return;
-        }
-        refs.add(new AttachmentRef(meta.uuid(), meta.originalName(), meta.mimeType()));
-
-        String mime = meta.mimeType().toLowerCase();
-        if (mime.startsWith("text/")) {
-            try (InputStream in = fileStorageService.getContent(attachmentId)) {
-                String text = new String(in.readAllBytes());
-                textParts.add("[Attached file: " + meta.originalName() + "]\n" + text);
-            } catch (IOException ex) {
-                log.error("Failed to read text attachment [id={}]: {}", attachmentId, ex.getMessage());
-            }
-        } else if (FileStorageService.isAiSupported(mime)) {
-            try (InputStream in = fileStorageService.getContent(attachmentId)) {
-                byte[] bytes = in.readAllBytes();
-                media.add(new Media(MimeType.valueOf(meta.mimeType()), new ByteArrayResource(bytes)));
-            } catch (IOException ex) {
-                log.error("Failed to read media attachment [id={}]: {}", attachmentId, ex.getMessage());
-            }
-        } else {
-            log.info("Attachment MIME type not AI-supported, skipping [id={}, mime={}]", attachmentId, meta.mimeType());
-        }
+        log.warn("Skipping non-session attachment reference [id={}]", attachmentId);
     }
 
     private List<AttachmentRef> buildAssistantAttachments(AiSession session,
-                                                          List<AttachmentRef> userRefs,
                                                           String finalText) {
         Map<String, AttachmentRef> dedup = new java.util.LinkedHashMap<>();
-        if (userRefs != null) {
-            for (AttachmentRef ref : userRefs) {
-                if (ref != null) {
-                    dedup.put(attachmentKey(ref), ref);
-                }
-            }
-        }
 
         for (AttachmentRef ref : extractSessionFileAttachments(finalText)) {
             dedup.putIfAbsent(attachmentKey(ref), ref);
@@ -956,9 +916,8 @@ public class ChatService {
             dedup.putIfAbsent(attachmentKey(ref), ref);
         }
         if (log.isDebugEnabled()) {
-            log.debug("Assistant attachment assembly [session={}, userRefs={}, extractedFromText={}, extractedRuntime={}, total={}]",
+                log.debug("Assistant attachment assembly [session={}, extractedFromText={}, extractedRuntime={}, total={}]",
                     session == null ? null : session.uuid(),
-                    userRefs == null ? 0 : userRefs.size(),
                     extractSessionFileAttachments(finalText).size(),
                     extractRuntimeGeneratedAttachments().size(),
                     dedup.size());
@@ -967,7 +926,6 @@ public class ChatService {
         return dedup.isEmpty() ? null : new ArrayList<>(dedup.values());
     }
 
-    @SuppressWarnings("unchecked")
     private static List<AttachmentRef> extractRuntimeGeneratedAttachments() {
         Object value = ToolExecutionContext.get(GENERATED_ATTACHMENTS_CONTEXT_KEY);
         if (!(value instanceof List<?> list) || list.isEmpty()) {
@@ -1052,6 +1010,18 @@ public class ChatService {
             return "text/plain";
         }
         return "application/octet-stream";
+    }
+
+    private static boolean isAiSupportedMime(String mimeType) {
+        if (mimeType == null || mimeType.isBlank()) {
+            return false;
+        }
+        String mime = mimeType.toLowerCase();
+        return mime.equals("application/pdf")
+                || mime.startsWith("image/")
+                || mime.startsWith("audio/")
+                || mime.startsWith("video/")
+                || mime.startsWith("text/");
     }
 
     /**

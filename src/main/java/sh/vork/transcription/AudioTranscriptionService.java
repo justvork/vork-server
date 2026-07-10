@@ -7,12 +7,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import sh.vork.storage.FileStorageService;
-import sh.vork.storage.StoredFile;
+import sh.vork.filesystem.FileArea;
+import sh.vork.filesystem.FileDescriptor;
+import sh.vork.filesystem.SessionFileSystem;
+
+import java.util.UUID;
 
 /**
  * Orchestrates audio transcription: stores the raw audio file via
- * {@link FileStorageService} and delegates transcription to the active
+ * {@link SessionFileSystem} and delegates transcription to the active
  * {@link TranscriptionProvider}.
  *
  * <p>The raw audio is stored regardless of whether transcription succeeds so
@@ -24,12 +27,12 @@ public class AudioTranscriptionService {
 
     private static final Logger log = LoggerFactory.getLogger(AudioTranscriptionService.class);
 
-    private final FileStorageService fileStorageService;
+    private final SessionFileSystem sessionFileSystem;
     private final TranscriptionConfigService transcriptionConfigService;
 
-    public AudioTranscriptionService(FileStorageService fileStorageService,
+    public AudioTranscriptionService(SessionFileSystem sessionFileSystem,
                                      TranscriptionConfigService transcriptionConfigService) {
-        this.fileStorageService       = fileStorageService;
+        this.sessionFileSystem       = sessionFileSystem;
         this.transcriptionConfigService = transcriptionConfigService;
     }
 
@@ -49,7 +52,7 @@ public class AudioTranscriptionService {
                 mimeType, audioBytes.length, filename);
 
         // Store the audio file first so it is always reachable from the session
-        StoredFile storedFile = storeAudio(audioBytes, mimeType, filename);
+        FileDescriptor storedFile = storeAudio(audioBytes, mimeType, filename);
 
         // Resolve active transcription provider
         TranscriptionProvider provider = transcriptionConfigService.resolveProvider();
@@ -64,9 +67,9 @@ public class AudioTranscriptionService {
                 cfg != null ? cfg.settings() : java.util.Map.of());
 
         log.debug("EXIT transcribe: [storedFileUuid={}, transcriptLength={}]",
-                storedFile.uuid(), transcript == null ? 0 : transcript.length());
+                storedFile.downloadUrl(), transcript == null ? 0 : transcript.length());
 
-        return new TranscriptionResult(transcript, storedFile.uuid());
+            return new TranscriptionResult(transcript, storedFile.downloadUrl());
     }
 
     /**
@@ -82,20 +85,21 @@ public class AudioTranscriptionService {
      * Result of a successful transcription.
      *
      * @param transcript    plain-text transcript of the audio
-     * @param storedFileUuid UUID of the audio file persisted via {@link FileStorageService}
+    * @param storedFileUuid download URL of the persisted audio file
      */
     public record TranscriptionResult(String transcript, String storedFileUuid) {}
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private StoredFile storeAudio(byte[] audioBytes, String mimeType, String filename) {
+    private FileDescriptor storeAudio(byte[] audioBytes, String mimeType, String filename) {
         try {
             String safeName = (filename != null && !filename.isBlank()) ? filename : "voice_note";
-            String safeMime = (mimeType  != null && !mimeType.isBlank())  ? mimeType  : "application/octet-stream";
-            return fileStorageService.uploadRaw(
+            String path = "transcription/" + UUID.randomUUID() + "-" + safeName;
+            return sessionFileSystem.write(
+                    FileArea.SHARED,
+                    null,
+                    path,
                     new ByteArrayInputStream(audioBytes),
-                    safeName,
-                    safeMime,
                     audioBytes.length);
         } catch (IOException e) {
             log.error("Failed to store audio file: {}", e.getMessage(), e);

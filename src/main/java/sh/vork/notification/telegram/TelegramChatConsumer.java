@@ -22,16 +22,20 @@ import sh.vork.ai.service.ChatService;
 import sh.vork.ai.telegram.TelegramChatResumptionService;
 import sh.vork.ai.telegram.TelegramSessionRegistry;
 import sh.vork.ai.telegram.TelegramSuspensionRenderer;
+import sh.vork.filesystem.FileArea;
+import sh.vork.filesystem.FileDescriptor;
+import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.notification.NotificationMediaType;
 import sh.vork.notification.user.UserNotificationMedia;
-import sh.vork.storage.FileStorageService;
-import sh.vork.storage.StoredFile;
 import sh.vork.transcription.AudioTranscriptionService;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.UUID;
 
 /**
  * Catch-all Telegram message consumer that routes incoming chat text and callback
@@ -69,7 +73,7 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
     private final TelegramApiClient                        telegramApiClient;
     private final ObjectMapper                             objectMapper;
     private final AudioTranscriptionService                audioTranscriptionService;
-    private final FileStorageService                       fileStorageService;
+    private final SessionFileSystem                        sessionFileSystem;
 
     public TelegramChatConsumer(ChatService chatService,
                                  DatabaseRepository<AiSession> sessionRepo,
@@ -80,7 +84,7 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
                                  TelegramApiClient telegramApiClient,
                                  ObjectMapper objectMapper,
                                  AudioTranscriptionService audioTranscriptionService,
-                                 FileStorageService fileStorageService) {
+                                 SessionFileSystem sessionFileSystem) {
         this.chatService              = chatService;
         this.sessionRepo              = sessionRepo;
         this.mediaRepo                = mediaRepo;
@@ -90,7 +94,7 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
         this.telegramApiClient        = telegramApiClient;
         this.objectMapper             = objectMapper;
         this.audioTranscriptionService = audioTranscriptionService;
-        this.fileStorageService = fileStorageService;
+        this.sessionFileSystem = sessionFileSystem;
     }
 
     // ── TelegramMessageConsumer ───────────────────────────────────────────────
@@ -128,21 +132,14 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
         String chatId   = message.chatId();
         String botToken = message.botToken();
         String text     = message.text();
-        List<String> attachmentUuids = new ArrayList<>();
+        List<String> attachmentRefs = new ArrayList<>();
 
         // Voice note: transcribe to text before routing
         if ((text == null || text.isBlank()) && message.isVoice()) {
             text = transcribeVoice(message);
         }
 
-        if (message.isFile()) {
-            String attachmentUuid = ingestAttachment(message, botToken, chatId);
-            if (attachmentUuid != null) {
-                attachmentUuids.add(attachmentUuid);
-            }
-        }
-
-        if ((text == null || text.isBlank()) && attachmentUuids.isEmpty()) {
+        if ((text == null || text.isBlank()) && !message.isFile()) {
             log.debug("Ignoring empty text from chatId={}", chatId);
             return;
         }
@@ -171,12 +168,24 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
 
         log.debug("Sending Telegram message to session [sessionUuid={}, user={}]", sessionUuid, username);
 
+        if (message.isFile()) {
+            String attachmentRef = ingestAttachment(message, botToken, chatId, sessionUuid);
+            if (attachmentRef != null) {
+                attachmentRefs.add(attachmentRef);
+            }
+        }
+
+        if ((text == null || text.isBlank()) && attachmentRefs.isEmpty()) {
+            log.debug("Ignoring empty text/file after ingest failure from chatId={}", chatId);
+            return;
+        }
+
         String effectiveText = (text == null || text.isBlank())
             ? "Please analyze the attached file."
             : text;
 
         AiChatMessage response = chatService.sendMessageAsUser(
-            username, sessionUuid, effectiveText, attachmentUuids, null);
+            username, sessionUuid, effectiveText, attachmentRefs, null);
 
         if (response == null) {
             // Session suspended — render the suspension prompt
@@ -186,16 +195,135 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
             if (reply != null && !reply.isBlank()) {
                 telegramApiClient.sendText(botToken, chatId, reply);
             }
+            sendAiAttachments(response, sessionUuid, botToken, chatId);
         }
     }
 
-        private String ingestAttachment(TelegramMessageConsumer.IncomingMessage message,
-                        String botToken,
-                        String chatId) {
+    private void sendAiAttachments(AiChatMessage response,
+                                   String defaultSessionUuid,
+                                   String botToken,
+                                   String chatId) {
+        if (response == null || response.attachments() == null || response.attachments().isEmpty()) {
+            return;
+        }
+        for (AiChatMessage.AttachmentRef ref : response.attachments()) {
+            try {
+                OutboundAttachment attachment = resolveOutboundAttachment(ref, defaultSessionUuid);
+                if (attachment == null || attachment.bytes() == null || attachment.bytes().length == 0) {
+                    continue;
+                }
+                telegramApiClient.sendDocument(
+                        botToken,
+                        chatId,
+                        attachment.name(),
+                        attachment.mimeType(),
+                        attachment.bytes(),
+                        null);
+                log.info("Sent AI attachment to Telegram [chatId={}, file={}, bytes={}]",
+                        chatId, attachment.name(), attachment.bytes().length);
+            } catch (Exception ex) {
+                log.warn("Failed to send AI attachment to Telegram [chatId={}, ref={}]: {}",
+                        chatId, ref == null ? null : ref.name(), ex.getMessage());
+            }
+        }
+    }
+
+    private OutboundAttachment resolveOutboundAttachment(AiChatMessage.AttachmentRef ref,
+                                                         String defaultSessionUuid) {
+        if (ref == null) {
+            return null;
+        }
+        String directUrl = normalizeSessionDownloadUrl(ref.url());
+        if (directUrl == null) {
+            directUrl = normalizeSessionDownloadUrl(ref.uuid());
+        }
+
+        if (directUrl != null) {
+            String path = queryParam(directUrl, "path");
+            if (path == null || path.isBlank()) {
+                return null;
+            }
+            String sessionUuid = queryParam(directUrl, "sessionUuid");
+            if (sessionUuid == null || sessionUuid.isBlank()) {
+                sessionUuid = defaultSessionUuid;
+            }
+            String areaRaw = queryParam(directUrl, "area");
+            FileArea area = parseArea(areaRaw);
+            try (InputStream in = sessionFileSystem.read(area, sessionUuid, path)) {
+                byte[] bytes = in.readAllBytes();
+                String name = ref.name() != null && !ref.name().isBlank()
+                        ? ref.name()
+                        : inferFileName(path);
+                String mime = ref.mimeType() != null && !ref.mimeType().isBlank()
+                        ? ref.mimeType()
+                        : "application/octet-stream";
+                return new OutboundAttachment(name, mime, bytes);
+            } catch (Exception ex) {
+                log.warn("Failed to read session attachment [path={}, session={}]: {}",
+                        path, sessionUuid, ex.getMessage());
+                return null;
+            }
+        }
+
+        log.debug("Skipping outbound Telegram attachment without session URL [refName={}]",
+                ref.name());
+        return null;
+    }
+
+    private static String normalizeSessionDownloadUrl(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String v = value;
+        if (v.startsWith("session-url:")) {
+            v = v.substring("session-url:".length());
+        }
+        return v.startsWith("/api/session-files/download?") ? v : null;
+    }
+
+    private static String queryParam(String url, String key) {
+        int q = url.indexOf('?');
+        if (q < 0 || q == url.length() - 1) {
+            return "";
+        }
+        String query = url.substring(q + 1);
+        for (String token : query.split("&")) {
+            String[] pair = token.split("=", 2);
+            if (pair.length == 2 && key.equals(pair[0])) {
+                return URLDecoder.decode(pair[1], StandardCharsets.UTF_8);
+            }
+        }
+        return "";
+    }
+
+    private static FileArea parseArea(String areaRaw) {
+        if (areaRaw == null || areaRaw.isBlank()) {
+            return FileArea.SESSION;
+        }
+        try {
+            return FileArea.valueOf(areaRaw.trim().toUpperCase());
+        } catch (Exception ignored) {
+            return FileArea.SESSION;
+        }
+    }
+
+    private static String inferFileName(String path) {
+        if (path == null || path.isBlank()) {
+            return "attachment";
+        }
+        String normalized = path.replace('\\', '/');
+        int idx = normalized.lastIndexOf('/');
+        String name = idx >= 0 ? normalized.substring(idx + 1) : normalized;
+        return name.isBlank() ? "attachment" : name;
+    }
+
+    private record OutboundAttachment(String name, String mimeType, byte[] bytes) {}
+
+    private String ingestAttachment(TelegramMessageConsumer.IncomingMessage message,
+                    String botToken,
+                    String chatId,
+                    String sessionUuid) {
         String fileId = message.fileId();
-        String mimeType = message.fileMimeType() == null || message.fileMimeType().isBlank()
-            ? "application/octet-stream"
-            : message.fileMimeType();
         String name = message.fileName() == null || message.fileName().isBlank()
             ? "telegram-file"
             : message.fileName();
@@ -209,17 +337,30 @@ public class TelegramChatConsumer implements TelegramMessageConsumer {
         }
 
         try {
-            StoredFile stored = fileStorageService.uploadRaw(new ByteArrayInputStream(bytes), name, mimeType, bytes.length);
-            log.info("Telegram file attached to chat turn [chatId={}, fileUuid={}, name={}]",
-                chatId, stored.uuid(), stored.originalName());
-            return stored.uuid();
+            String targetPath = "incoming/telegram/" + UUID.randomUUID() + "-" + sanitizeFileName(name);
+            FileDescriptor descriptor = sessionFileSystem.write(
+                    FileArea.SESSION,
+                    sessionUuid,
+                    targetPath,
+                    new java.io.ByteArrayInputStream(bytes),
+                    bytes.length);
+            log.info("Telegram file attached to chat turn [chatId={}, session={}, path={}]",
+                chatId, sessionUuid, descriptor.path());
+            return "session-url:" + descriptor.downloadUrl();
         } catch (Exception ex) {
             log.warn("Failed to persist Telegram attachment [chatId={}, fileId={}]: {}", chatId, fileId, ex.getMessage());
             telegramApiClient.sendText(botToken, chatId,
                 "Sorry, I could not process your file. Please try again.");
             return null;
         }
+    }
+
+    private static String sanitizeFileName(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return "attachment";
         }
+        return fileName.replace("\\", "_").replace("/", "_");
+    }
 
     /**
      * Downloads and transcribes the voice note in {@code message}.

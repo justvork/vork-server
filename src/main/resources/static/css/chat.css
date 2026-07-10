@@ -1134,6 +1134,24 @@ body.sidebar-collapsed .sidebar-tab-btn {
     color: var(--vork-text);
 }
 
+/* User bubble needs inverted contrast so pills do not blend into orange background. */
+.message-row.user .bubble-file-link {
+    background: rgba(12, 16, 22, 0.92);
+    border-color: rgba(255, 255, 255, 0.26);
+    color: #f3f6fb;
+}
+
+.message-row.user .bubble-file-link-icon {
+    background: rgba(255, 255, 255, 0.14);
+    color: #f7fafc;
+}
+
+.message-row.user .bubble-file-link:hover {
+    background: rgba(7, 10, 14, 0.96);
+    border-color: rgba(255, 255, 255, 0.42);
+    color: #ffffff;
+}
+
 /* ── Lightbox overlay ─────────────────────────────────────────────────────── */
 
 #lightbox {

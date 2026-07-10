@@ -299,6 +299,13 @@
                     </compilerArgs>
                 </configuration>
             </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>-Dnet.bytebuddy.experimental=true</argLine>
+                </configuration>
+            </plugin>
             <!-- Tailwind CSS: install Node, run npm install, then compile CSS -->
             <plugin>
                 <groupId>com.github.eirslett</groupId>
