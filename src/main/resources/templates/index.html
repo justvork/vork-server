@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vork AI Chat</title>
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png?v=20260704">
+    <link rel="shortcut icon" href="/images/Vork-Faviconx128.png?v=20260704">
+    <link rel="stylesheet" href="/css/tailwind.css">
+    <link rel="stylesheet" href="/css/vork.css">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css">
+    <link rel="stylesheet" href="/css/chat.css">
+</head>
+<body>
+
+<!-- Splash screen -->
+<div id="splash">
+    <img src="/images/Vork.png" alt="Vork">
+    <div id="splash-tagline"><span id="splash-typed"></span><span id="splash-cursor"></span></div>
+</div>
+
+<div class="page-layout">
+
+<div class="chat-layout">
+
+<div class="chat-shell">
+
+    <aside id="chat-sidebar" class="chat-sidebar">
+        <!-- Vertical icon-tab strip -->
+        <div class="sidebar-tabs">
+            <button class="sidebar-tab-btn active" data-tab="chats" title="Chats">
+                <i class="fa-solid fa-comments"></i>
+            </button>
+            <button class="sidebar-tab-btn" data-tab="skills" title="Skills &amp; Tools">
+                <i class="fa-solid fa-puzzle-piece"></i>
+            </button>
+            <div class="sidebar-tabs-spacer"></div>
+            <button id="sidebar-toggle-side" data-role="sidebar-toggle" class="sidebar-tab-btn" type="button" title="Collapse menu">
+                <i class="fa-solid fa-bars"></i>
+            </button>
+        </div>
+        <!-- Chats tab content -->
+        <div class="sidebar-tab-content" id="tab-chats">
+            <div class="sidebar-top">
+                <button id="new-chat-btn" type="button" class="btn btn-outline-secondary btn-sm sidebar-action">
+                    <i class="fa-solid fa-pen-to-square me-1"></i>
+                    <span class="sidebar-label">New Chat</span>
+                </button>
+            </div>
+            <div class="sidebar-section-title">Chats</div>
+            <div id="chat-session-list" class="chat-session-list"></div>
+        </div>
+        <!-- Skills &amp; Tools tab content -->
+        <div class="sidebar-tab-content d-none" id="tab-skills">
+            <div class="skills-panel">
+                <!-- Agent skills (read-only) -->
+                <div class="sidebar-section-title">Agent Skills</div>
+                <div id="agent-skills-list" class="skills-pill-list">
+                    <span class="text-muted small">Loading&hellip;</span>
+                </div>
+                <!-- Session skills (removable + add) -->
+                <div class="sidebar-section-title mt-2">Session Skills</div>
+                <div id="session-skills-list" class="skills-pill-list"></div>
+                <div class="skills-search-box mt-1">
+                    <input id="skill-search-input" type="text" class="form-control form-control-sm"
+                           placeholder="Add skill&hellip;" autocomplete="off">
+                    <div id="skill-search-results" class="skills-search-dropdown d-none"></div>
+                </div>
+                <!-- Agent tools (read-only) -->
+                <div class="sidebar-section-title mt-2">Agent Tools</div>
+                <div id="agent-tools-list" class="skills-pill-list">
+                    <span class="text-muted small">Loading&hellip;</span>
+                </div>
+                <!-- Session tools (removable + add) -->
+                <div class="sidebar-section-title mt-2">Session Tools</div>
+                <div id="session-tools-list" class="skills-pill-list"></div>
+                <div class="skills-search-box mt-1">
+                    <input id="tool-search-input" type="text" class="form-control form-control-sm"
+                           placeholder="Add tool&hellip;" autocomplete="off">
+                    <div id="tool-search-results" class="skills-search-dropdown d-none"></div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <div class="chat-main">
+
+    <!-- Header -->
+    <div th:replace="~{fragments/header :: header}"></div>
+
+    <!-- Pending-input alert (shown by chat.js when off-channel sessions need input) -->
+    <div id="pending-sessions-alert" class="d-none pending-sessions-alert" role="alert"></div>
+
+    <!-- Messages -->
+    <main id="messages-area" class="chat-messages">
+
+        <div id="typing-indicator" class="message-row d-none">
+            <div class="avatar assistant"><i class="fa-solid fa-robot"></i></div>
+            <div class="bubble assistant typing-bubble">
+                <span class="typing-dot"></span>
+                <span class="typing-dot"></span>
+                <span class="typing-dot"></span>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Hidden file input (outside form — not submitted) -->
+    <input type="file" id="file-input" class="d-none" multiple>
+
+    <!-- Input area -->
+    <div class="chat-input-area">
+        <!-- Attachment preview strip (hidden until files are staged) -->
+        <div id="attachment-strip" class="attachment-strip d-none"></div>
+        <form id="chat-form" class="d-flex gap-2 align-items-end">
+            <button type="button" id="upload-files-btn" class="btn btn-secondary attach-btn" title="Attach files">
+                <i class="fa-solid fa-paperclip"></i>
+            </button>
+            <textarea
+                id="message-input"
+                class="form-control"
+                rows="1"
+                placeholder="Message Vork&hellip; (Enter to send &middot; Shift+Enter for new line)"
+                autocomplete="off"></textarea>
+            <button type="submit" id="send-btn" class="btn btn-primary send-btn">
+                <i class="fa-solid fa-paper-plane"></i>
+            </button>
+        </form>
+        <div class="text-secondary mt-1 session-label">
+            Session: <code id="session-display">initialising&hellip;</code>
+        </div>
+    </div>
+
+    </div>
+
+</div>
+
+</div>
+
+<!-- Hidden logout form (required by chat.js) -->
+<form id="logout-form" action="/logout" method="POST" style="display: none;"></form>
+
+</div><!-- /.page-layout -->
+
+<!-- CDN dependencies -->
+<script src="/packages/npm/sockjs-client/current/dist/sockjs.min.js"></script>
+<script src="/packages/npm.stomp/stompjs/current/bundles/stomp.umd.min.js"></script>
+<script src="/packages/npm/marked/current/marked.min.js"></script>
+
+<!-- Application -->
+<script src="/js/chat.js"></script>
+
+</body>
+</html>

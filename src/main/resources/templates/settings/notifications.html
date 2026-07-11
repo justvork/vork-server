@@ -12,8 +12,8 @@
     <link rel="stylesheet" href="/css/settings.css" th:href="@{/css/settings.css}">
 </head>
 <body class="bg-zinc-950 text-zinc-100">
+<div th:replace="~{fragments/header :: header}"></div>
 <div class="container py-5" style="max-width: 760px;">
-    <div th:replace="~{fragments/settings-navigation :: backToSettings}"></div>
     <h2 class="mb-1"><i class="fa-solid fa-bell me-2"></i>Notifications</h2>
     <p class="text-muted mb-4">Configure notification providers for sending alerts and messages.</p>
 

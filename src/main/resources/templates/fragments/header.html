@@ -1,41 +1,70 @@
-<header class="flex items-center justify-between px-4 py-2 bg-zinc-950 border-b border-zinc-800">
-    <a href="/" th:href="@{/}" class="flex items-center gap-2 no-underline group">
-        <img src="/images/Vork-Faviconx128.png" th:src="@{/images/Vork-Faviconx128.png}" alt="Vork" width="28" height="28">
-        <span class="font-bold text-[#fdaa02] text-base tracking-tight">Vork</span>
-    </a>
-    <nav class="flex items-center gap-1">
+<header class="d-flex align-items-center justify-content-between px-4 py-2 bg-zinc-950 border-bottom border-zinc-800">
+    <div class="d-flex align-items-center gap-2">
+        <a href="/" th:href="@{/}" class="flex items-center gap-2 no-underline group">
+            <img src="/images/Vork-Faviconx128.png" th:src="@{/images/Vork-Faviconx128.png}" alt="Vork" width="28" height="28">
+            <span class="font-bold text-[#fdaa02] text-base tracking-tight">Vork</span>
+        </a>
+        <span th:if="${isChatPage}" class="text-secondary small ps-1">AI Chat</span>
+        <span th:if="${isChatPage}" id="status-dot" class="status-dot connecting ms-1" title="Connecting&hellip;"></span>
+    </div>
+    <nav class="d-flex align-items-center gap-2">
+        <button th:if="${isChatPage}" id="sidebar-toggle" data-role="sidebar-toggle" type="button"
+                class="btn btn-outline-secondary btn-sm d-flex align-items-center justify-content-center"
+                title="Toggle chat sidebar">
+                <i class="fa-solid fa-bars"></i>
+        </button>
+        <a th:unless="${isChatPage}" href="/index.html" th:href="@{/index.html}" title="Back to chat"
+           class="btn btn-outline-secondary btn-sm d-flex align-items-center justify-content-center">
+            <i class="fa-solid fa-comments"></i>
+        </a>
+
+        <button th:if="${isChatPage}" id="thinking-toggle" type="button" class="btn btn-outline-secondary btn-sm" title="Toggle reasoning visibility">
+            Thinking ON
+        </button>
+        <select th:if="${isChatPage}" id="agent-select" class="form-select form-select-sm" title="Active agent" style="width:auto; min-width: 180px;">
+            <option value="">Default (Concierge)</option>
+        </select>
+        <select th:if="${isChatPage}" id="provider-select" class="form-select form-select-sm" title="AI Provider / Model" style="width:auto; min-width: 220px;">
+            <option value="GEMINI:gemini-2.5-flash" selected>Gemini — Flash 2.5</option>
+        </select>
+
         <a href="/notifications" th:href="@{/notifications}" title="My Notifications"
-           class="w-8 h-8 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors">
-            <i class="fa-solid fa-bell text-sm"></i>
+           class="btn btn-outline-secondary btn-sm">
+            <i class="fa-solid fa-bell"></i>
         </a>
         <a href="/agents" th:href="@{/agents}" title="Agents"
-           class="w-8 h-8 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors">
-            <i class="fa-solid fa-robot text-sm"></i>
+           class="btn btn-outline-secondary btn-sm">
+            <i class="fa-solid fa-robot"></i>
         </a>
         <a href="/skills" th:href="@{/skills}" title="Skills"
-           class="w-8 h-8 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors">
-            <i class="fa-solid fa-bolt text-sm"></i>
+           class="btn btn-outline-secondary btn-sm">
+            <i class="fa-solid fa-bolt"></i>
         </a>
         <a href="/jobs" th:href="@{/jobs}" title="Jobs"
-           class="w-8 h-8 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors">
-            <i class="fa-solid fa-clock-rotate-left text-sm"></i>
+           class="btn btn-outline-secondary btn-sm">
+            <i class="fa-solid fa-clock-rotate-left"></i>
         </a>
         <a href="/pending-sessions" th:href="@{/pending-sessions}" title="Pending Input"
-           class="w-8 h-8 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors">
-            <i class="fa-solid fa-inbox text-sm"></i>
+           class="btn btn-outline-secondary btn-sm">
+            <i class="fa-solid fa-inbox"></i>
         </a>
         <a href="/data-inspector" th:href="@{/data-inspector}" title="Data Inspector"
-           class="w-8 h-8 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors">
-            <i class="fa-solid fa-table-list text-sm"></i>
+           class="btn btn-outline-secondary btn-sm">
+            <i class="fa-solid fa-table-list"></i>
         </a>
         <a href="/settings" th:href="@{/settings}" title="Settings"
-           class="w-8 h-8 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors">
-            <i class="fa-solid fa-gear text-sm"></i>
+           id="settings-btn"
+           class="btn btn-outline-secondary btn-sm">
+            <i class="fa-solid fa-gear"></i>
         </a>
-        <form id="logout-form" method="post" action="/logout" th:action="@{/logout}" class="contents">
+        <button th:if="${isChatPage}" id="logout-btn" type="button" title="Logout"
+                class="btn btn-outline-secondary btn-sm">
+            <i class="fa-solid fa-right-from-bracket"></i>
+        </button>
+        <form th:unless="${isChatPage}" id="logout-form" method="post" action="/logout" th:action="@{/logout}" class="contents">
             <button type="submit" title="Logout"
-                    class="w-8 h-8 flex items-center justify-center rounded text-zinc-400 hover:text-red-400 hover:bg-zinc-800 transition-colors border-0 bg-transparent cursor-pointer">
-                <i class="fa-solid fa-right-from-bracket text-sm"></i>
+                    class="btn btn-outline-secondary btn-sm hover:text-red-400">
+                <i class="fa-solid fa-right-from-bracket"></i>
             </button>
         </form>
     </nav>

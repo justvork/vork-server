@@ -7,21 +7,12 @@ import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.AuthenticationException;
-import org.springframework.security.core.context.SecurityContext;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.ResponseBody;
 
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpSession;
 import sh.vork.ai.AiProvider;
 import sh.vork.ai.discovery.DiscoveredModel;
 import sh.vork.ai.discovery.ModelDiscoveryOrchestrator;
@@ -47,22 +38,19 @@ public class SetupController {
     private final AiChatClientFactory       clientFactory;
     private final ModelDiscoveryOrchestrator orchestrator;
     private final SystemSettingsService     systemSettingsService;
-    private final AuthenticationManager     authenticationManager;
 
     public SetupController(SetupService setupService,
                            DatabaseSetupService databaseSetupService,
                            AiProviderConfigService configService,
                            AiChatClientFactory clientFactory,
                            ModelDiscoveryOrchestrator orchestrator,
-                           SystemSettingsService systemSettingsService,
-                           AuthenticationManager authenticationManager) {
+                           SystemSettingsService systemSettingsService) {
         this.setupService          = setupService;
         this.databaseSetupService  = databaseSetupService;
         this.configService         = configService;
         this.clientFactory         = clientFactory;
         this.orchestrator          = orchestrator;
         this.systemSettingsService = systemSettingsService;
-        this.authenticationManager = authenticationManager;
     }
 
     // ── Page endpoint ─────────────────────────────────────────────────────────
@@ -85,7 +73,9 @@ public class SetupController {
         return Map.of(
                 "setupRequired",          setupService.isSetupRequired(),
                 "databaseConfigured",     databaseSetupService.isDatabaseConfigured(),
-                "geminiApiKeyConfigured",  configService.getConfig(AiProvider.GEMINI) != null
+                "accountConfigured",      setupService.isAccountConfigured(),
+                "aiConfigured",           setupService.isAiProviderConfigured(),
+                "geminiApiKeyConfigured", configService.getConfig(AiProvider.GEMINI) != null
         );
     }
 
@@ -191,12 +181,11 @@ public class SetupController {
 
     /**
      * Creates the initial admin account.
-     * On success the user is automatically logged into the current HTTP session.
+        * On success the wizard redirects the user to the login page.
      */
     @PostMapping("/api/setup/account")
     @ResponseBody
-    public ResponseEntity<?> createAccount(@RequestBody AccountRequest req,
-                                           HttpServletRequest httpRequest) {
+    public ResponseEntity<?> createAccount(@RequestBody AccountRequest req) {
         log.debug("ENTER createAccount: [username={}]", req.username());
         if (!setupService.isSetupRequired()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Setup is already complete."));
@@ -215,8 +204,6 @@ public class SetupController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
-        // Auto-login so subsequent wizard steps use the authenticated session
-        autoLogin(req.username(), req.password(), httpRequest);
         log.info("Admin account created during setup: [username={}]", req.username());
         return ResponseEntity.ok(Map.of("ok", true));
     }
@@ -275,22 +262,6 @@ public class SetupController {
             return (p == AiProvider.BACKGROUND_SCHEDULER || p == AiProvider.ANTHROPIC) ? null : p;
         } catch (IllegalArgumentException e) {
             return null;
-        }
-    }
-
-    private void autoLogin(String username, String password, HttpServletRequest request) {
-        try {
-            Authentication auth = authenticationManager.authenticate(
-                    new UsernamePasswordAuthenticationToken(username, password));
-            SecurityContext context = SecurityContextHolder.createEmptyContext();
-            context.setAuthentication(auth);
-            SecurityContextHolder.setContext(context);
-            HttpSession session = request.getSession(true);
-            session.setAttribute(
-                    HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, context);
-            log.debug("Auto-login succeeded for setup user: {}", username);
-        } catch (AuthenticationException e) {
-            log.warn("Auto-login failed after account creation (user will log in manually): {}", e.getMessage());
         }
     }
 

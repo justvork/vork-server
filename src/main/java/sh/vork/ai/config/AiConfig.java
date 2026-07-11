@@ -4,6 +4,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
+import java.io.ByteArrayInputStream;
 import java.net.URI;
 import java.util.Locale;
 import java.net.http.HttpClient;
@@ -58,8 +59,11 @@ import sh.vork.ai.function.DownloadFolderAsZipRequest;
 import sh.vork.ai.function.DiscoverExportableTypesRequest;
 import sh.vork.ai.function.DisconnectSshRequest;
 import sh.vork.ai.function.DownloadFileRequest;
+import sh.vork.ai.function.ExtractZipRequest;
 import sh.vork.ai.function.ExecuteTerminalCommandRequest;
 import sh.vork.ai.function.ExecuteCommandAndOutputRequest;
+import sh.vork.ai.function.FileExistsRequest;
+import sh.vork.ai.function.FolderExistsRequest;
 import sh.vork.ai.function.ExportAllJavaTypeDataRequest;
 import sh.vork.ai.function.ExportJavaTypeRequest;
 import sh.vork.ai.function.ExportJavaTypeSourceRequest;
@@ -69,6 +73,8 @@ import sh.vork.ai.function.GetTypeInstanceRequest;
 import sh.vork.ai.function.GetTypeSchemaRequest;
 import sh.vork.ai.function.HttpRequestToolRequest;
 import sh.vork.ai.function.InsertMongoDbDocumentRequest;
+import sh.vork.ai.function.InstallCommandRequest;
+import sh.vork.ai.function.IsCommandInstalledRequest;
 import sh.vork.ai.function.ListAgentTemplatesRequest;
 import sh.vork.ai.function.ListAvailableToolsRequest;
 import sh.vork.ai.function.ListEnumValuesRequest;
@@ -91,6 +97,7 @@ import sh.vork.ai.function.SetSshAliasRequest;
 import sh.vork.ai.function.SshConnectRequest;
 import sh.vork.ai.function.SshCreateConnectionRequest;
 import sh.vork.ai.function.ReadFileRequest;
+import sh.vork.ai.function.ResolveArchitectureRequest;
 import sh.vork.ai.function.StartProcessRequest;
 import sh.vork.ai.function.CheckProcessRequest;
 import sh.vork.ai.function.WriteProcessRequest;
@@ -147,6 +154,9 @@ import sh.vork.notification.service.DirectNotificationService;
 import sh.vork.oauth.OAuthClientService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.SortOrder;
+import sh.vork.filesystem.FileArea;
+import sh.vork.filesystem.FileDescriptor;
+import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.scheduling.domain.JobResult;
 import sh.vork.scheduling.service.BackgroundExecutionContext;
 import sh.vork.security.SecureCredentialStore;
@@ -888,7 +898,7 @@ the protocol and will break the system. Do not converse. Execute.
 
             @Bean
             @ToolCategory("Command Execution")
-            public ToolCallback executeCommandAndOutputTool(ExecuteCommandAndOutputTool tool) {
+            public ToolCallback executeCommandAndOutputToolCallback(ExecuteCommandAndOutputTool tool) {
             return FunctionToolCallback
                 .builder("executeCommandAndOutputTool", tool::execute)
                 .description("Executes a synchronous shell command, waits for it to complete, and returns the full output.")
@@ -898,7 +908,7 @@ the protocol and will break the system. Do not converse. Execute.
 
             @Bean
             @ToolCategory("Command Execution")
-            public ToolCallback startProcessTool(StartProcessTool tool) {
+            public ToolCallback startProcessToolCallback(StartProcessTool tool) {
             return FunctionToolCallback
                 .builder("startProcessTool", tool::execute)
                 .description("Starts a long-running background process and returns a reference PID to interact with it later.")
@@ -908,7 +918,7 @@ the protocol and will break the system. Do not converse. Execute.
 
             @Bean
             @ToolCategory("Command Execution")
-            public ToolCallback checkProcessTool(CheckProcessTool tool) {
+            public ToolCallback checkProcessToolCallback(CheckProcessTool tool) {
             return FunctionToolCallback
                 .builder("checkProcessTool", tool::execute)
                 .description("Checks if a background process is still running.")
@@ -918,7 +928,7 @@ the protocol and will break the system. Do not converse. Execute.
 
             @Bean
             @ToolCategory("Command Execution")
-            public ToolCallback writeProcessTool(WriteProcessTool tool) {
+            public ToolCallback writeProcessToolCallback(WriteProcessTool tool) {
             return FunctionToolCallback
                 .builder("writeProcessTool", tool::execute)
                 .description("Writes input text to the stdin of a running background process.")
@@ -928,7 +938,7 @@ the protocol and will break the system. Do not converse. Execute.
 
             @Bean
             @ToolCategory("Command Execution")
-            public ToolCallback readProcessTool(ReadProcessTool tool) {
+            public ToolCallback readProcessToolCallback(ReadProcessTool tool) {
             return FunctionToolCallback
                 .builder("readProcessTool", tool::execute)
                 .description("Reads and drains available unread output from a background process.")
@@ -938,7 +948,7 @@ the protocol and will break the system. Do not converse. Execute.
 
             @Bean
             @ToolCategory("Command Execution")
-            public ToolCallback stopProcessTool(StopProcessTool tool) {
+            public ToolCallback stopProcessToolCallback(StopProcessTool tool) {
             return FunctionToolCallback
                 .builder("stopProcessTool", tool::execute)
                 .description("Terminates a background process and cleans up its memory footprint.")
@@ -1136,6 +1146,67 @@ the protocol and will break the system. Do not converse. Execute.
                     Response guidance: do not paste raw download URLs in assistant text; generated files are auto-attached to the chat message.
                     """.stripIndent())
                 .inputType(CreatePdfRequest.class)
+                .build();
+    }
+
+    @Bean
+    @ToolCategory("Files")
+    public ToolCallback fileExists(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("fileExists", sessionFileToolSuite::fileExists)
+                .description("Check whether a file exists in the session/shared file area.")
+                .inputType(FileExistsRequest.class)
+                .build();
+    }
+
+    @Bean
+    @ToolCategory("Files")
+    public ToolCallback folderExists(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("folderExists", sessionFileToolSuite::folderExists)
+                .description("Check whether a folder exists in the session/shared file area.")
+                .inputType(FolderExistsRequest.class)
+                .build();
+    }
+
+    @Bean
+    @ToolCategory("Files")
+    public ToolCallback extractZip(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("extractZip", sessionFileToolSuite::extractZip)
+                .description("Extract a zip archive into the session/shared file area with safe path validation.")
+                .inputType(ExtractZipRequest.class)
+                .build();
+    }
+
+    @Bean
+    @ToolCategory("Command Execution")
+    public ToolCallback installCommand(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("installCommand", sessionFileToolSuite::installCommand)
+                .description("Register a command binary directory under the session tools environment so local process execution can resolve it via PATH.")
+                .inputType(InstallCommandRequest.class)
+                .build();
+    }
+
+    @Bean
+    @ToolCategory("Command Execution")
+    public ToolCallback isCommandInstalled(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("isCommandInstalled", sessionFileToolSuite::isCommandInstalled)
+                .description("Check whether a command is available in registered session command paths.")
+                .inputType(IsCommandInstalledRequest.class)
+                .build();
+    }
+
+    @Bean
+    @Hidden
+    @ToolCategory("Command Execution")
+    public ToolCallback resolveArchitecture(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("resolveArchitecture", sessionFileToolSuite::resolveArchitecture)
+                .description("Detect the runtime architecture for the current execution environment. No arguments required.")
+                .inputType(ResolveArchitectureRequest.class)
                 .build();
     }
 
@@ -1708,7 +1779,8 @@ the protocol and will break the system. Do not converse. Execute.
      */
     @Bean
     @ToolCategory("Web")
-    public ToolCallback httpRequest(OAuthClientService oauthClientService) {
+    public ToolCallback httpRequest(OAuthClientService oauthClientService,
+                                    SessionFileSystem sessionFileSystem) {
         return FunctionToolCallback
                 .builder("httpRequest", (HttpRequestToolRequest req) -> {
                     if (req == null || req.url() == null || req.url().isBlank()) {
@@ -1750,6 +1822,52 @@ the protocol and will break the system. Do not converse. Execute.
 
                         builder.method(method, bodyPublisher);
 
+                        boolean binaryMode = req.responseMode() != null
+                                && "BINARY".equalsIgnoreCase(req.responseMode().trim());
+
+                        if (binaryMode) {
+                            HttpResponse<byte[]> response = HttpClient.newHttpClient()
+                                    .send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
+
+                            if (req.saveToPath() == null || req.saveToPath().isBlank()) {
+                                return "{\"status\":\"error\",\"message\":\"saveToPath is required when responseMode=BINARY\"}";
+                            }
+
+                            FileArea area = parseFileArea(req.area());
+                            String sessionUuid = resolveSessionUuid();
+                            if (area == FileArea.SESSION && (sessionUuid == null || sessionUuid.isBlank() || "system".equals(sessionUuid))) {
+                                return "{\"status\":\"error\",\"message\":\"Session context is required for SESSION binary downloads\"}";
+                            }
+                            String owner = area == FileArea.SESSION ? sessionUuid : null;
+
+                            byte[] bodyBytes = response.body() == null ? new byte[0] : response.body();
+                            FileDescriptor descriptor = sessionFileSystem.write(
+                                    area,
+                                    owner,
+                                    req.saveToPath(),
+                                    new ByteArrayInputStream(bodyBytes),
+                                    bodyBytes.length);
+
+                            Map<String, Object> responseHeaders = new java.util.LinkedHashMap<>();
+                            response.headers().map().forEach((k, vals) -> {
+                                if (vals.size() == 1) {
+                                    responseHeaders.put(k, vals.get(0));
+                                } else {
+                                    responseHeaders.put(k, vals);
+                                }
+                            });
+
+                            Map<String, Object> result = new java.util.LinkedHashMap<>();
+                            result.put("statusCode", response.statusCode());
+                            result.put("headers", responseHeaders);
+                            result.put("saved", true);
+                            result.put("area", descriptor.area().name());
+                            result.put("path", descriptor.path());
+                            result.put("sizeBytes", descriptor.sizeBytes());
+                            result.put("downloadUrl", descriptor.downloadUrl());
+                            return objectMapper.writeValueAsString(result);
+                        }
+
                         HttpResponse<String> response = HttpClient.newHttpClient()
                                 .send(builder.build(), HttpResponse.BodyHandlers.ofString());
 
@@ -1786,6 +1904,7 @@ the protocol and will break the system. Do not converse. Execute.
                     Use this to interact with REST APIs, fetch web pages, or submit forms.
                     For GET requests put query parameters in the URL.
                     For POST/PUT/PATCH supply the body as a string and set the Content-Type header.
+                    Set responseMode=BINARY with saveToPath to download binary content into session/shared storage.
                     The response body is truncated to 20 000 characters.
                     """.stripIndent())
                 .inputType(HttpRequestToolRequest.class)
@@ -2751,6 +2870,17 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
             return null;
         }
         return auth.getName();
+    }
+
+    private static FileArea parseFileArea(String rawArea) {
+        if (rawArea == null || rawArea.isBlank()) {
+            return FileArea.SESSION;
+        }
+        try {
+            return FileArea.valueOf(rawArea.trim().toUpperCase(Locale.ROOT));
+        } catch (Exception ignored) {
+            return FileArea.SESSION;
+        }
     }
 
 }

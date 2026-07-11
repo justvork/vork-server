@@ -15,14 +15,20 @@ import org.springframework.stereotype.Component;
 public class ProcessManager {
 
     private static final Logger log = LoggerFactory.getLogger(ProcessManager.class);
+    private final ProcessExecutionConfigResolver processExecutionConfigResolver;
 
     private final ConcurrentHashMap<String, ConcurrentHashMap<String, ProcessContext>> sessions = new ConcurrentHashMap<>();
+
+    public ProcessManager(ProcessExecutionConfigResolver processExecutionConfigResolver) {
+        this.processExecutionConfigResolver = processExecutionConfigResolver;
+    }
 
     public String start(String sessionUuid, String command) throws IOException {
         log.debug("ENTER start: session={}, command={}", sessionUuid, command);
         String pid = UUID.randomUUID().toString();
         ProcessBuilder builder = ShellCommandProcessBuilder.from(command);
         builder.redirectErrorStream(true);
+        processExecutionConfigResolver.apply(builder, sessionUuid);
 
         Process process = builder.start();
         ProcessContext context = new ProcessContext(pid, process);

@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import sh.vork.ai.function.ExecuteCommandAndOutputRequest;
+import sh.vork.ai.process.ProcessExecutionConfigResolver;
 import sh.vork.ai.process.ShellCommandProcessBuilder;
 
 @Component
@@ -22,9 +23,12 @@ public class ExecuteCommandAndOutputTool extends AbstractProcessTool {
 
     private static final Logger log = LoggerFactory.getLogger(ExecuteCommandAndOutputTool.class);
     private static final int TIMEOUT_SECONDS = 60;
+    private final ProcessExecutionConfigResolver processExecutionConfigResolver;
 
-    public ExecuteCommandAndOutputTool(ObjectMapper objectMapper) {
+    public ExecuteCommandAndOutputTool(ObjectMapper objectMapper,
+                                       ProcessExecutionConfigResolver processExecutionConfigResolver) {
         super(objectMapper);
+        this.processExecutionConfigResolver = processExecutionConfigResolver;
     }
 
     public String execute(ExecuteCommandAndOutputRequest req) {
@@ -34,8 +38,10 @@ public class ExecuteCommandAndOutputTool extends AbstractProcessTool {
         }
 
         try {
+            String sessionUuid = resolveSessionUuid();
             ProcessBuilder builder = ShellCommandProcessBuilder.from(req.command());
             builder.redirectErrorStream(true);
+            processExecutionConfigResolver.apply(builder, sessionUuid);
             Process process = builder.start();
 
             ByteArrayOutputStream output = new ByteArrayOutputStream();

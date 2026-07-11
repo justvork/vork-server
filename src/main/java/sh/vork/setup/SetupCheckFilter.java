@@ -38,7 +38,6 @@ public class SetupCheckFilter extends OncePerRequestFilter {
             "/css/",
             "/js/",
             "/images/",
-            "/login",
             "/logout",
             "/actuator",
             "/ws/",

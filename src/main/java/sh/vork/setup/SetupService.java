@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import sh.vork.ai.AiProvider;
+import sh.vork.ai.provider.AiProviderConfigService;
 import sh.vork.orm.DatabaseRepository;
 
 import sh.vork.security.VorkUser;
@@ -25,16 +27,19 @@ public class SetupService {
     private final DatabaseRepository<VorkUser> userRepo;
     private final PasswordEncoder passwordEncoder;
     private final DatabaseSetupService databaseSetupService;
+    private final AiProviderConfigService aiProviderConfigService;
 
     /** Cached flag — flipped to {@code true} once setup is confirmed complete. */
     private volatile boolean setupComplete = false;
 
     public SetupService(DatabaseRepository<VorkUser> userRepo,
                         PasswordEncoder passwordEncoder,
-                        DatabaseSetupService databaseSetupService) {
+                        DatabaseSetupService databaseSetupService,
+                        AiProviderConfigService aiProviderConfigService) {
         this.userRepo = userRepo;
         this.passwordEncoder = passwordEncoder;
         this.databaseSetupService = databaseSetupService;
+        this.aiProviderConfigService = aiProviderConfigService;
     }
 
     /**
@@ -68,13 +73,31 @@ public class SetupService {
             return true;
         }
         try {
-            boolean required = userRepo.count() == 0;
+            boolean accountConfigured = isAccountConfigured();
+            boolean aiConfigured = isAiProviderConfigured();
+            boolean required = !accountConfigured || !aiConfigured;
             if (!required) setupComplete = true;
             return required;
         } catch (Exception e) {
             log.warn("Setup check failed, assuming complete: {}", e.getMessage());
             return false;
         }
+    }
+
+    public boolean isAccountConfigured() {
+        try {
+            return userRepo.count() > 0;
+        } catch (Exception ex) {
+            log.warn("Account setup check failed: {}", ex.getMessage());
+            return false;
+        }
+    }
+
+    public boolean isAiProviderConfigured() {
+        return aiProviderConfigService.getConfig(AiProvider.GEMINI) != null
+                || aiProviderConfigService.getConfig(AiProvider.OPENAI) != null
+                || aiProviderConfigService.getConfig(AiProvider.OLLAMA) != null
+                || aiProviderConfigService.getConfig(AiProvider.GROQ) != null;
     }
 
     /**
@@ -97,7 +120,6 @@ public class SetupService {
                 now,
                 now);
         userRepo.save(admin);
-        setupComplete = true;
         log.info("Admin user created during setup: [username={}]", username);
     }
 }

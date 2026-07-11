@@ -21,6 +21,7 @@ import sh.vork.ai.function.ReadProcessRequest;
 import sh.vork.ai.function.StartProcessRequest;
 import sh.vork.ai.function.StopProcessRequest;
 import sh.vork.ai.function.WriteProcessRequest;
+import sh.vork.ai.process.ProcessExecutionConfigResolver;
 import sh.vork.ai.process.ProcessManager;
 
 class BackgroundProcessToolsTest {
@@ -28,9 +29,11 @@ class BackgroundProcessToolsTest {
     private static final String SESSION_UUID = "process-session-1";
 
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final ProcessManager processManager = new ProcessManager();
+        private final ProcessManager processManager = new ProcessManager(new ProcessExecutionConfigResolver());
 
-    private final ExecuteCommandAndOutputTool executeSyncTool = new ExecuteCommandAndOutputTool(objectMapper);
+        private final ExecuteCommandAndOutputTool executeSyncTool = new ExecuteCommandAndOutputTool(
+            objectMapper,
+            new ProcessExecutionConfigResolver());
     private final StartProcessTool startProcessTool = new StartProcessTool(processManager, objectMapper);
     private final CheckProcessTool checkProcessTool = new CheckProcessTool(processManager, objectMapper);
     private final WriteProcessTool writeProcessTool = new WriteProcessTool(processManager, objectMapper);

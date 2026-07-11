@@ -19,7 +19,7 @@ const uploadFilesBtn = document.getElementById('upload-files-btn');
 const logoutBtn      = document.getElementById('logout-btn');
 const logoutForm     = document.getElementById('logout-form');
 const thinkingToggleBtn = document.getElementById('thinking-toggle');
-const sidebarToggle  = document.getElementById('sidebar-toggle');
+const sidebarToggles = document.querySelectorAll('[data-role="sidebar-toggle"]');
 const newChatBtn     = document.getElementById('new-chat-btn');
 const sessionListEl  = document.getElementById('chat-session-list');
 
@@ -1803,9 +1803,11 @@ sidebarTabBtns.forEach(function (btn) {
     });
 });
 
-if (sidebarToggle) {
-    sidebarToggle.addEventListener('click', function () {
-        document.body.classList.toggle('sidebar-collapsed');
+if (sidebarToggles && sidebarToggles.length > 0) {
+    sidebarToggles.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            document.body.classList.toggle('sidebar-collapsed');
+        });
     });
 }
 

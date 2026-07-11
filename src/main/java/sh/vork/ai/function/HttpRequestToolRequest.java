@@ -21,6 +21,9 @@ import java.util.Map;
  *       Authorization).</li>
  *   <li>{@code body}    — Optional request body as a string (JSON, form-encoded, plain
  *       text, etc.). Ignored for GET and HEAD.</li>
+ *   <li>{@code responseMode} — Optional response handling mode. TEXT (default) or BINARY.</li>
+ *   <li>{@code area} — Optional target storage area when responseMode=BINARY. SESSION (default) or SHARED.</li>
+ *   <li>{@code saveToPath} — Optional destination file path when responseMode=BINARY.</li>
  * </ul>
  */
 public record HttpRequestToolRequest(
@@ -39,7 +42,19 @@ public record HttpRequestToolRequest(
 
         @JsonProperty(value = "body")
         @JsonPropertyDescription("Optional request body as a string. For JSON APIs supply a JSON string. Ignored for GET and HEAD requests.")
-        String body
+        String body,
+
+        @JsonProperty(value = "responseMode")
+        @JsonPropertyDescription("Response mode: TEXT (default) or BINARY.")
+        String responseMode,
+
+        @JsonProperty(value = "area")
+        @JsonPropertyDescription("When responseMode=BINARY, target file area: SESSION (default) or SHARED.")
+        String area,
+
+        @JsonProperty(value = "saveToPath")
+        @JsonPropertyDescription("When responseMode=BINARY, destination file path to write response bytes.")
+        String saveToPath
 
 ) {
 
@@ -50,8 +65,18 @@ public record HttpRequestToolRequest(
                         @JsonProperty("method") String method,
                         @JsonProperty("url") String url,
                         @JsonProperty("headers") Object headers,
-                        @JsonProperty("body") String body) {
-                return new HttpRequestToolRequest(method, url, normalizeHeaders(headers), body);
+                        @JsonProperty("body") String body,
+                        @JsonProperty("responseMode") String responseMode,
+                        @JsonProperty("area") String area,
+                        @JsonProperty("saveToPath") String saveToPath) {
+                return new HttpRequestToolRequest(
+                        method,
+                        url,
+                        normalizeHeaders(headers),
+                        body,
+                        responseMode,
+                        area,
+                        saveToPath);
         }
 
         private static Map<String, String> normalizeHeaders(Object headers) {

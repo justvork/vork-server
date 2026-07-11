@@ -8,13 +8,22 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
+import sh.vork.ai.function.ExtractZipRequest;
+import sh.vork.ai.function.FileExistsRequest;
+import sh.vork.ai.function.FolderExistsRequest;
+import sh.vork.ai.function.InstallCommandRequest;
+import sh.vork.ai.function.IsCommandInstalledRequest;
 import sh.vork.ai.function.CreatePdfRequest;
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.function.CreateFolderRequest;
 import sh.vork.ai.function.DownloadFolderAsZipRequest;
 import sh.vork.ai.function.ListFilesRequest;
 import sh.vork.ai.function.ReadFileRequest;
+import sh.vork.ai.function.ResolveArchitectureRequest;
 import sh.vork.ai.function.WriteFileRequest;
+import sh.vork.ai.memory.SessionEnvironmentService;
+import sh.vork.ai.process.ProcessExecutionConfigResolver;
+import sh.vork.ai.process.SessionPathResolver;
 import sh.vork.filesystem.FileArea;
 import sh.vork.filesystem.FileDescriptor;
 import sh.vork.filesystem.FileNode;
@@ -23,6 +32,8 @@ import sh.vork.filesystem.SessionFileSystem;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -33,6 +44,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.zip.ZipInputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -45,14 +58,25 @@ public class SessionFileToolSuite {
     private static final Logger log = LoggerFactory.getLogger(SessionFileToolSuite.class);
     private static final int DEFAULT_MAX_READ_BYTES = 200_000;
     private static final String GENERATED_ATTACHMENTS_CONTEXT_KEY = "generated.session.attachments";
+    private static final Pattern PATH_SPLIT_PATTERN = Pattern.compile(Pattern.quote(java.io.File.pathSeparator));
+        private static final boolean WINDOWS = System.getProperty("os.name", "")
+            .toLowerCase(Locale.ROOT)
+            .contains("win");
     private static final Parser MARKDOWN_PARSER = Parser.builder().build();
     private static final HtmlRenderer MARKDOWN_RENDERER = HtmlRenderer.builder().build();
 
     private final SessionFileSystem sessionFileSystem;
+    private final SessionEnvironmentService sessionEnvironmentService;
+    private final SessionPathResolver sessionPathResolver;
     private final ObjectMapper objectMapper;
 
-    public SessionFileToolSuite(SessionFileSystem sessionFileSystem, ObjectMapper objectMapper) {
+    public SessionFileToolSuite(SessionFileSystem sessionFileSystem,
+                                SessionEnvironmentService sessionEnvironmentService,
+                                SessionPathResolver sessionPathResolver,
+                                ObjectMapper objectMapper) {
         this.sessionFileSystem = sessionFileSystem;
+        this.sessionEnvironmentService = sessionEnvironmentService;
+        this.sessionPathResolver = sessionPathResolver;
         this.objectMapper = objectMapper;
     }
 
@@ -313,6 +337,275 @@ public class SessionFileToolSuite {
         }
     }
 
+    public String fileExists(FileExistsRequest req) {
+        log.debug("ENTER fileExists: area={}, path={}", req == null ? null : req.area(), req == null ? null : req.path());
+        if (req == null || req.path() == null || req.path().isBlank()) {
+            return error("path is required");
+        }
+
+        FileArea area = parseArea(req.area());
+        String sessionUuid = resolveSessionUuid();
+        ToolExecutionContext.bindSessionUuid(sessionUuid);
+        String owner = area == FileArea.SESSION ? sessionUuid : null;
+
+        boolean exists;
+        try (InputStream in = sessionFileSystem.read(area, owner, req.path())) {
+            exists = in != null;
+        } catch (Exception ex) {
+            exists = false;
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("status", "ok");
+        payload.put("area", area.name());
+        payload.put("path", req.path());
+        payload.put("exists", exists);
+        log.debug("EXIT fileExists: area={}, path={}, exists={}", area, req.path(), exists);
+        return json(payload);
+    }
+
+    public String folderExists(FolderExistsRequest req) {
+        log.debug("ENTER folderExists: area={}, path={}", req == null ? null : req.area(), req == null ? null : req.path());
+        if (req == null || req.path() == null || req.path().isBlank()) {
+            return error("path is required");
+        }
+
+        FileArea area = parseArea(req.area());
+        String sessionUuid = resolveSessionUuid();
+        ToolExecutionContext.bindSessionUuid(sessionUuid);
+        String owner = area == FileArea.SESSION ? sessionUuid : null;
+
+        boolean exists;
+        try {
+            sessionFileSystem.list(area, owner, req.path());
+            exists = true;
+        } catch (Exception ex) {
+            exists = false;
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("status", "ok");
+        payload.put("area", area.name());
+        payload.put("path", req.path());
+        payload.put("exists", exists);
+        log.debug("EXIT folderExists: area={}, path={}, exists={}", area, req.path(), exists);
+        return json(payload);
+    }
+
+    public String extractZip(ExtractZipRequest req) {
+        log.debug("ENTER extractZip: area={}, archivePath={}, destinationPath={}",
+                req == null ? null : req.area(),
+                req == null ? null : req.archivePath(),
+                req == null ? null : req.destinationPath());
+        if (req == null || req.archivePath() == null || req.archivePath().isBlank()) {
+            return error("archivePath is required");
+        }
+        if (req.destinationPath() == null || req.destinationPath().isBlank()) {
+            return error("destinationPath is required");
+        }
+
+        FileArea area = parseArea(req.area());
+        String sessionUuid = resolveSessionUuid();
+        ToolExecutionContext.bindSessionUuid(sessionUuid);
+        String owner = area == FileArea.SESSION ? sessionUuid : null;
+        String destinationRoot = normalizePath(req.destinationPath());
+
+        int fileCount = 0;
+        int dirCount = 0;
+        try (InputStream zipIn = sessionFileSystem.read(area, owner, req.archivePath());
+             ZipInputStream zis = new ZipInputStream(zipIn, StandardCharsets.UTF_8)) {
+
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                String entryName = sanitizeZipEntry(entry.getName());
+                if (entryName.isBlank()) {
+                    zis.closeEntry();
+                    continue;
+                }
+
+                String destinationPath = destinationRoot + "/" + entryName;
+                String normalizedDestination = normalizePath(destinationPath);
+                if (!normalizedDestination.startsWith(destinationRoot + "/")
+                        && !normalizedDestination.equals(destinationRoot)) {
+                    throw new IllegalArgumentException("Zip entry escapes destination root: " + entry.getName());
+                }
+
+                if (entry.isDirectory()) {
+                    sessionFileSystem.createDirectory(area, owner, normalizedDestination);
+                    dirCount++;
+                    zis.closeEntry();
+                    continue;
+                }
+
+                String parent = parentPath(normalizedDestination);
+                if (parent != null && !parent.isBlank()) {
+                    sessionFileSystem.createDirectory(area, owner, parent);
+                }
+
+                ByteArrayOutputStream entryBytes = new ByteArrayOutputStream();
+                zis.transferTo(entryBytes);
+                byte[] bytes = entryBytes.toByteArray();
+                FileDescriptor descriptor = sessionFileSystem.write(
+                        area,
+                        owner,
+                        normalizedDestination,
+                        new ByteArrayInputStream(bytes),
+                        bytes.length);
+                fileCount++;
+
+                boolean attachToChat = req.attachToChat() != null && req.attachToChat();
+                if (attachToChat) {
+                    recordGeneratedAttachment(descriptor.path(), inferMimeType(descriptor.path()), descriptor.downloadUrl());
+                }
+                zis.closeEntry();
+            }
+
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("status", "ok");
+            payload.put("area", area.name());
+            payload.put("archivePath", req.archivePath());
+            payload.put("destinationPath", destinationRoot);
+            payload.put("filesExtracted", fileCount);
+            payload.put("directoriesCreated", dirCount);
+            log.debug("EXIT extractZip: area={}, archivePath={}, files={}, dirs={}",
+                    area, req.archivePath(), fileCount, dirCount);
+            return json(payload);
+        } catch (Exception ex) {
+            log.warn("extractZip failed [archivePath={}]: {}", req.archivePath(), ex.getMessage());
+            return error(ex.getMessage());
+        }
+    }
+
+    public String installCommand(InstallCommandRequest req) {
+        log.debug("ENTER installCommand: area={}, binPath={}, command={}",
+                req == null ? null : req.area(),
+                req == null ? null : req.binPath(),
+                req == null ? null : req.command());
+        if (req == null || req.binPath() == null || req.binPath().isBlank()) {
+            return error("binPath is required");
+        }
+
+        FileArea area = parseArea(req.area());
+        String sessionUuid = resolveSessionUuid();
+        ToolExecutionContext.bindSessionUuid(sessionUuid);
+        String owner = area == FileArea.SESSION ? sessionUuid : null;
+
+        try {
+            Path binAbsolute = sessionPathResolver.resolveAreaPath(area, owner, req.binPath());
+            if (!Files.isDirectory(binAbsolute)) {
+                return error("binPath must reference an existing directory");
+            }
+
+            Path requiredRoot = area == FileArea.SESSION
+                    ? sessionPathResolver.toolsRoot(sessionUuid)
+                    : sessionPathResolver.resolveAreaPath(FileArea.SHARED, null, "tools");
+            if (!binAbsolute.startsWith(requiredRoot)) {
+                return error("binPath must be under the tools folder");
+            }
+
+            if (req.command() != null && !req.command().isBlank()) {
+                if (!commandExistsInDirectory(binAbsolute, req.command())) {
+                    return error("command was not found in binPath");
+                }
+            }
+
+            Map<String, String> env = sessionEnvironmentService.getEnv(sessionUuid);
+            String existingPaths = env.getOrDefault(ProcessExecutionConfigResolver.ENV_COMMAND_PATHS, "");
+            String updated = ProcessExecutionConfigResolver.normalizeCommandPathList(existingPaths, binAbsolute.toString());
+
+            sessionEnvironmentService.setEnv(sessionUuid, ProcessExecutionConfigResolver.ENV_TOOLS_HOME,
+                    sessionPathResolver.toolsRoot(sessionUuid).toString());
+            sessionEnvironmentService.setEnv(sessionUuid, ProcessExecutionConfigResolver.ENV_COMMAND_PATHS, updated);
+
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("status", "ok");
+            payload.put("sessionUuid", sessionUuid);
+            payload.put("registeredBinPath", binAbsolute.toString());
+            payload.put("command", req.command());
+            payload.put("commandPaths", splitPathList(updated));
+            log.debug("EXIT installCommand: session={}, registeredBinPath={}", sessionUuid, binAbsolute);
+            return json(payload);
+        } catch (Exception ex) {
+            log.warn("installCommand failed [binPath={}]: {}", req.binPath(), ex.getMessage());
+            return error(ex.getMessage());
+        }
+    }
+
+    public String isCommandInstalled(IsCommandInstalledRequest req) {
+        log.debug("ENTER isCommandInstalled: command={}", req == null ? null : req.command());
+        if (req == null || req.command() == null || req.command().isBlank()) {
+            return error("command is required");
+        }
+
+        String sessionUuid = resolveSessionUuid();
+        ToolExecutionContext.bindSessionUuid(sessionUuid);
+
+        Map<String, String> env = sessionEnvironmentService.getEnv(sessionUuid);
+        String configuredPaths = env.getOrDefault(ProcessExecutionConfigResolver.ENV_COMMAND_PATHS, "");
+
+        String normalizedCommand = ProcessExecutionConfigResolver.normalizeCommandName(req.command());
+        Path matchedDirectory = null;
+        Path matchedExecutable = null;
+
+        for (String token : splitPathList(configuredPaths)) {
+            try {
+                Path directory = Path.of(token).toAbsolutePath().normalize();
+                if (!directory.startsWith(sessionPathResolver.sessionRoot(sessionUuid))) {
+                    continue;
+                }
+                Path executable = findExecutablePath(directory, normalizedCommand);
+                if (executable != null) {
+                    matchedDirectory = directory;
+                    matchedExecutable = executable;
+                    break;
+                }
+            } catch (Exception ignored) {
+                // Ignore malformed path entries.
+            }
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("status", "ok");
+        payload.put("command", normalizedCommand);
+        payload.put("installed", matchedExecutable != null);
+        payload.put("searchPaths", splitPathList(configuredPaths));
+        if (matchedDirectory != null) {
+            payload.put("matchedPath", matchedDirectory.toString());
+        }
+        if (matchedExecutable != null) {
+            payload.put("executable", matchedExecutable.toString());
+        }
+
+        log.debug("EXIT isCommandInstalled: command={}, installed={}", normalizedCommand, matchedExecutable != null);
+        return json(payload);
+    }
+
+    public String resolveArchitecture(ResolveArchitectureRequest req) {
+        log.debug("ENTER resolveArchitecture");
+
+        String hostOsName = System.getProperty("os.name", "");
+        String hostOsArch = System.getProperty("os.arch", "");
+        String targetArchEnv = System.getenv("TARGETARCH");
+        String detected = normalizeArchitecture(hostOsArch);
+        String targetArchitecture = normalizeArchitecture(targetArchEnv);
+
+        if ("unknown".equals(targetArchitecture)) {
+            targetArchitecture = detected;
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("status", "ok");
+        payload.put("hostOs", hostOsName);
+        payload.put("hostArchitecture", hostOsArch);
+        payload.put("detectedArchitecture", detected);
+        payload.put("targetArchitecture", targetArchitecture);
+        payload.put("targetArchitectureEnv", targetArchEnv);
+        payload.put("inDocker", isRunningInDocker());
+
+        log.debug("EXIT resolveArchitecture: detectedArchitecture={}, targetArchitecture={}", detected, targetArchitecture);
+        return json(payload);
+    }
+
     private static String renderMarkdown(String markdown) {
         return MARKDOWN_RENDERER.render(MARKDOWN_PARSER.parse(markdown));
     }
@@ -409,6 +702,111 @@ public class SessionFileToolSuite {
             normalized = normalized.substring(0, normalized.length() - 1);
         }
         return normalized;
+    }
+
+    private static String sanitizeZipEntry(String entryName) {
+        if (entryName == null || entryName.isBlank()) {
+            return "";
+        }
+
+        String normalized = entryName.replace('\\', '/').trim();
+        while (normalized.startsWith("/")) {
+            normalized = normalized.substring(1);
+        }
+
+        if (normalized.contains("..") || normalized.contains(":") || normalized.startsWith("/")) {
+            throw new IllegalArgumentException("Invalid zip entry path: " + entryName);
+        }
+        return normalizePath(normalized);
+    }
+
+    private static String parentPath(String path) {
+        int idx = path.lastIndexOf('/');
+        if (idx <= 0) {
+            return "";
+        }
+        return path.substring(0, idx);
+    }
+
+    private static List<String> splitPathList(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+
+        List<String> result = new ArrayList<>();
+        for (String token : PATH_SPLIT_PATTERN.split(raw)) {
+            String normalized = token == null ? "" : token.trim();
+            if (!normalized.isBlank()) {
+                result.add(normalized);
+            }
+        }
+        return result;
+    }
+
+    private static boolean commandExistsInDirectory(Path directory, String command) {
+        return findExecutablePath(directory, command) != null;
+    }
+
+    private static Path findExecutablePath(Path directory, String command) {
+        if (directory == null || command == null || command.isBlank()) {
+            return null;
+        }
+        if (!Files.isDirectory(directory)) {
+            return null;
+        }
+
+        String normalized = ProcessExecutionConfigResolver.normalizeCommandName(command);
+        for (String candidate : executableCandidates(normalized)) {
+            Path resolved = directory.resolve(candidate).normalize();
+            if (!resolved.startsWith(directory)) {
+                continue;
+            }
+            if (Files.exists(resolved) && Files.isRegularFile(resolved)) {
+                return resolved;
+            }
+        }
+        return null;
+    }
+
+    private static List<String> executableCandidates(String normalizedCommand) {
+        if (!WINDOWS) {
+            return List.of(normalizedCommand);
+        }
+
+        List<String> candidates = new ArrayList<>();
+        candidates.add(normalizedCommand);
+        if (!normalizedCommand.endsWith(".exe")) {
+            candidates.add(normalizedCommand + ".exe");
+        }
+        if (!normalizedCommand.endsWith(".cmd")) {
+            candidates.add(normalizedCommand + ".cmd");
+        }
+        if (!normalizedCommand.endsWith(".bat")) {
+            candidates.add(normalizedCommand + ".bat");
+        }
+        return candidates;
+    }
+
+    private static String normalizeArchitecture(String rawArch) {
+        if (rawArch == null || rawArch.isBlank()) {
+            return "unknown";
+        }
+        String normalized = rawArch.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "x64", "amd64", "x86_64" -> "amd64";
+            case "arm64", "aarch64" -> "arm64";
+            case "arm", "armv7", "armv7l" -> "arm";
+            case "386", "x86", "i386", "i686" -> "386";
+            default -> "unknown";
+        };
+    }
+
+    private static boolean isRunningInDocker() {
+        try {
+            return Files.exists(Path.of("/.dockerenv"));
+        } catch (Exception ex) {
+            return false;
+        }
     }
 
     private static FileArea parseArea(String rawArea) {

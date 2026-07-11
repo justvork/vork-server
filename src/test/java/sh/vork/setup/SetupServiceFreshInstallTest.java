@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import sh.vork.ai.provider.AiProviderConfigService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.security.VorkUser;
 
@@ -19,11 +20,12 @@ class SetupServiceFreshInstallTest {
         DatabaseRepository<VorkUser> userRepo = mock(DatabaseRepository.class);
         PasswordEncoder encoder = mock(PasswordEncoder.class);
         DatabaseSetupService databaseSetupService = mock(DatabaseSetupService.class);
+        AiProviderConfigService aiProviderConfigService = mock(AiProviderConfigService.class);
 
         when(databaseSetupService.isDatabaseConfigured()).thenReturn(false);
         when(userRepo.count()).thenReturn(0L);
 
-        SetupService setupService = new SetupService(userRepo, encoder, databaseSetupService);
+        SetupService setupService = new SetupService(userRepo, encoder, databaseSetupService, aiProviderConfigService);
 
         assertTrue(setupService.isSetupRequired(),
                 "Fresh install should require setup when database is not configured and no users exist");
@@ -35,13 +37,31 @@ class SetupServiceFreshInstallTest {
         DatabaseRepository<VorkUser> userRepo = mock(DatabaseRepository.class);
         PasswordEncoder encoder = mock(PasswordEncoder.class);
         DatabaseSetupService databaseSetupService = mock(DatabaseSetupService.class);
+        AiProviderConfigService aiProviderConfigService = mock(AiProviderConfigService.class);
 
         when(databaseSetupService.isDatabaseConfigured()).thenReturn(false);
         when(userRepo.count()).thenReturn(1L);
 
-        SetupService setupService = new SetupService(userRepo, encoder, databaseSetupService);
+        SetupService setupService = new SetupService(userRepo, encoder, databaseSetupService, aiProviderConfigService);
 
         assertFalse(setupService.isSetupRequired(),
                 "Legacy install with existing users should not be redirected into setup");
+    }
+
+    @Test
+    void isSetupRequired_whenDatabaseAndAccountConfiguredButAiMissing_returnsTrue() {
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<VorkUser> userRepo = mock(DatabaseRepository.class);
+        PasswordEncoder encoder = mock(PasswordEncoder.class);
+        DatabaseSetupService databaseSetupService = mock(DatabaseSetupService.class);
+        AiProviderConfigService aiProviderConfigService = mock(AiProviderConfigService.class);
+
+        when(databaseSetupService.isDatabaseConfigured()).thenReturn(true);
+        when(userRepo.count()).thenReturn(1L);
+
+        SetupService setupService = new SetupService(userRepo, encoder, databaseSetupService, aiProviderConfigService);
+
+        assertTrue(setupService.isSetupRequired(),
+                "Setup should remain required until an AI provider is configured");
     }
 }
