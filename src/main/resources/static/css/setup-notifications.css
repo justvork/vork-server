@@ -1,0 +1,94 @@
+/* setup-notifications.css */
+
+body {
+    background: var(--bs-body-bg);
+}
+
+.wizard-wrapper {
+    min-height: 100vh;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 2rem 1rem;
+}
+
+.wizard-card {
+    width: 100%;
+    max-width: 520px;
+}
+
+.step-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+    gap: 0;
+}
+
+.step-dot {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    font-weight: 600;
+    background: var(--bs-secondary-bg);
+    color: var(--bs-secondary-color);
+    border: 2px solid var(--bs-border-color);
+    transition: background 0.2s, border-color 0.2s, color 0.2s;
+    flex-shrink: 0;
+}
+
+.step-dot.active {
+    background: #0d6efd;
+    color: #fff;
+    border-color: #0d6efd;
+}
+
+.step-dot.done {
+    background: #198754;
+    color: #fff;
+    border-color: #198754;
+}
+
+.step-line {
+    flex: 1;
+    height: 2px;
+    background: var(--bs-border-color);
+    max-width: 64px;
+    min-width: 16px;
+}
+
+.step-panel {
+    display: none;
+}
+
+.step-panel.active {
+    display: block;
+}
+
+.media-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: var(--bs-secondary-bg);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 20px;
+    padding: 0.25rem 0.65rem;
+    font-size: 0.8rem;
+    margin: 0.2rem;
+}
+
+.media-chip .remove-chip {
+    cursor: pointer;
+    color: var(--bs-secondary-color);
+    font-size: 0.75rem;
+    line-height: 1;
+}
+
+.media-chip .remove-chip:hover {
+    color: #dc3545;
+}

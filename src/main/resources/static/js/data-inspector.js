@@ -68,7 +68,7 @@
         var fqn = typeSelect.value;
         if (!fqn) {
             showState('initial');
-            typeActions.classList.add('d-none');
+            typeActions.classList.add('hidden');
             currentFqn = null;
             currentSchema = null;
             activeQuery = '';
@@ -83,7 +83,7 @@
         if (searchQuery) searchQuery.value = '';
         if (searchQueryType) searchQueryType.value = 'SQL';
         showState('loading');
-        typeActions.classList.add('d-none');
+        typeActions.classList.add('hidden');
 
         loadSchema(fqn).then(function (schema) {
             currentSchema = schema;
@@ -139,7 +139,7 @@
 
             var baseCountLabel = totalCount + ' record' + (totalCount !== 1 ? 's' : '');
             typeCountBadge.textContent = hasActiveSearch() ? (baseCountLabel + ' (filtered)') : baseCountLabel;
-            typeActions.classList.remove('d-none');
+            typeActions.classList.remove('hidden');
 
             if (items.length === 0 && page === 0) {
                 showState('empty');
@@ -270,7 +270,7 @@
     function buildEditBtn(item) {
         var btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'btn btn-sm btn-outline-secondary';
+        btn.className = 'rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800';
         btn.title = 'Edit';
         btn.innerHTML = '<i class="fa-solid fa-pen"></i>';
         btn.addEventListener('click', function () { openModal(item); });
@@ -282,7 +282,7 @@
 
         var btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'btn btn-sm btn-outline-danger';
+        btn.className = 'rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15';
         btn.title = 'Delete';
         btn.innerHTML = '<i class="fa-solid fa-trash"></i>';
 
@@ -308,14 +308,14 @@
                 btn.dataset.confirming = '1';
                 btn.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i>';
                 btn.title = 'Click again to confirm delete';
-                btn.classList.remove('btn-outline-danger');
-                btn.classList.add('btn-danger');
+                btn.classList.remove('border-rose-500/40', 'text-rose-300');
+                btn.classList.add('border-rose-500', 'bg-rose-600/20', 'text-rose-200');
                 setTimeout(function () {
                     delete btn.dataset.confirming;
                     btn.innerHTML = '<i class="fa-solid fa-trash"></i>';
                     btn.title = 'Delete';
-                    btn.classList.remove('btn-danger');
-                    btn.classList.add('btn-outline-danger');
+                    btn.classList.remove('border-rose-500', 'bg-rose-600/20', 'text-rose-200');
+                    btn.classList.add('border-rose-500/40', 'text-rose-300');
                 }, 3000);
             }
         });
@@ -330,7 +330,7 @@
     // ── Modal ─────────────────────────────────────────────────────────────────
 
     function openModal(existingItem) {
-        modalError.classList.add('d-none');
+        modalError.classList.add('hidden');
         modalError.textContent = '';
 
         var isEdit = existingItem !== null && existingItem !== undefined;
@@ -350,7 +350,7 @@
 
     // Save handler
     modalSaveBtn.addEventListener('click', function () {
-        modalError.classList.add('d-none');
+        modalError.classList.add('hidden');
         modalSaveBtn.disabled = true;
 
         var formData = collectFormData(modalBody);
@@ -372,13 +372,13 @@
                     loadPage(currentFqn, currentPage);
                 } else {
                     modalError.textContent = res.message || 'Save failed';
-                    modalError.classList.remove('d-none');
+                    modalError.classList.remove('hidden');
                     modalSaveBtn.disabled = false;
                 }
             })
             .catch(function (err) {
                 modalError.textContent = 'Request failed: ' + err;
-                modalError.classList.remove('d-none');
+                modalError.classList.remove('hidden');
                 modalSaveBtn.disabled = false;
             });
     });
@@ -434,12 +434,12 @@
         wrapper.className = 'mb-0';
 
         var label = document.createElement('label');
-        label.className = 'form-label mb-1 text-muted';
+        label.className = 'mb-1 block text-xs text-zinc-500';
         label.textContent = 'ID';
         wrapper.appendChild(label);
 
         var display = document.createElement('div');
-        display.className = 'form-control form-control-sm uuid-readonly';
+        display.className = 'uuid-readonly rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-200';
         display.textContent = value || '';
         display.title = value || '';
         wrapper.appendChild(display);
@@ -461,11 +461,11 @@
         wrapper.className = 'mb-0';
 
         var label = document.createElement('label');
-        label.className = 'form-label mb-1';
+        label.className = 'mb-1 block text-sm font-medium text-zinc-300';
         label.textContent = field.label || field.name;
         if (field.required) {
             var req = document.createElement('span');
-            req.className = 'text-danger ms-1';
+            req.className = 'ml-1 text-rose-400';
             req.textContent = '*';
             label.appendChild(req);
         }
@@ -476,10 +476,10 @@
 
         if (inputType === 'checkbox') {
             var checkWrapper = document.createElement('div');
-            checkWrapper.className = 'form-check';
+            checkWrapper.className = 'flex items-center';
             var check = document.createElement('input');
             check.type = 'checkbox';
-            check.className = 'form-check-input';
+            check.className = 'h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-[#fdaa02] focus:ring-[#fdaa02]/30';
             check.name = inputName;
             check.value = 'true';
             if (value === true || value === 'true') check.checked = true;
@@ -487,7 +487,7 @@
             wrapper.appendChild(checkWrapper);
         } else if (inputType === 'textarea') {
             var ta = document.createElement('textarea');
-            ta.className = 'form-control form-control-sm';
+            ta.className = 'w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25';
             ta.name = inputName;
             ta.rows = 3;
             if (field.placeholder) ta.placeholder = field.placeholder;
@@ -496,7 +496,7 @@
             wrapper.appendChild(ta);
         } else if (inputType === 'select' && Array.isArray(field.options)) {
             var sel = document.createElement('select');
-            sel.className = 'form-select form-select-sm';
+            sel.className = 'w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25';
             sel.name = inputName;
             if (field.required) sel.required = true;
             var emptyOpt = document.createElement('option');
@@ -514,7 +514,7 @@
         } else {
             var input = document.createElement('input');
             input.type = inputType;
-            input.className = 'form-control form-control-sm';
+            input.className = 'w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25';
             input.name = inputName;
             if (field.placeholder) input.placeholder = field.placeholder;
             if (field.required) input.required = true;
@@ -556,7 +556,7 @@
         var wrapper = document.createElement('div');
 
         var label = document.createElement('label');
-        label.className = 'form-label mb-1';
+        label.className = 'mb-1 block text-sm font-medium text-zinc-300';
         label.textContent = field.label || field.name;
         wrapper.appendChild(label);
 
@@ -579,8 +579,8 @@
 
         var addBtn = document.createElement('button');
         addBtn.type = 'button';
-        addBtn.className = 'btn btn-sm btn-outline-secondary repeater-add-btn';
-        addBtn.innerHTML = '<i class="fa-solid fa-plus me-1"></i>Add row';
+        addBtn.className = 'repeater-add-btn rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800';
+        addBtn.innerHTML = '<i class="fa-solid fa-plus mr-1"></i>Add row';
         addBtn.addEventListener('click', function () {
             var rowCount = container.querySelectorAll('.repeater-row').length;
             addRepeaterRow(container, field, null, rowCount);
@@ -613,7 +613,7 @@
             var inputType = inferInputTypeFromSchema(field);
             var input = document.createElement('input');
             input.type = inputType === 'checkbox' ? 'text' : inputType;
-            input.className = 'form-control form-control-sm';
+            input.className = 'w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25';
             input.name = baseName;
             if (values !== null && values !== undefined) input.value = String(values);
             inputsDiv.appendChild(input);
@@ -621,7 +621,7 @@
 
         var removeBtn = document.createElement('button');
         removeBtn.type = 'button';
-        removeBtn.className = 'btn btn-sm btn-outline-danger repeater-remove-btn';
+        removeBtn.className = 'repeater-remove-btn rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15';
         removeBtn.innerHTML = '<i class="fa-solid fa-minus"></i>';
         removeBtn.addEventListener('click', function () {
             row.remove();
@@ -671,7 +671,7 @@
     function showState(name) {
         ['initial', 'loading', 'empty', 'error', 'table'].forEach(function (s) {
             var el = document.getElementById('state-' + s);
-            if (el) el.classList.toggle('d-none', s !== name);
+            if (el) el.classList.toggle('hidden', s !== name);
         });
     }
 

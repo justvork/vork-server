@@ -88,7 +88,7 @@
         actions.forEach(function (action) {
             var btn = document.createElement('button');
             btn.type = 'button';
-            btn.className = 'btn btn-' + ((action.style || '').toLowerCase() || 'primary');
+            btn.className = _actionButtonClasses((action.style || '').toLowerCase() || 'primary');
             btn.textContent = action.label || action.name;
             btn.addEventListener('click', function () {
                 var values = _collectFields(fields);
@@ -109,6 +109,22 @@
         _bsModal.show();
     }
 
+    function _actionButtonClasses(style) {
+        if (style === 'danger') {
+            return 'rounded-lg border border-rose-500/40 px-3 py-1.5 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-500/15';
+        }
+        if (style === 'warning') {
+            return 'rounded-lg border border-amber-500/40 px-3 py-1.5 text-xs font-medium text-amber-300 transition-colors hover:bg-amber-500/15';
+        }
+        if (style === 'success') {
+            return 'rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-emerald-500';
+        }
+        if (style === 'secondary') {
+            return 'rounded-lg border border-zinc-600 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800';
+        }
+        return 'rounded-lg bg-[#fdaa02] px-3 py-1.5 text-xs font-semibold text-black transition-colors hover:bg-[#e89a02]';
+    }
+
     // ── Field builder ─────────────────────────────────────────────────────────
 
     function _buildField(field, sessionUuid) {
@@ -117,12 +133,6 @@
         var fieldValue = (field.value != null)
             ? String(field.value)
             : ((field.defaultValue != null) ? String(field.defaultValue) : '');
-
-        var label = document.createElement('label');
-        label.className = 'form-label mb-1';
-        label.htmlFor = inputId;
-        label.textContent = field.label || field.name;
-        wrapper.appendChild(label);
 
         var type = (field.type || 'text').toLowerCase();
 
@@ -134,9 +144,17 @@
             return wrapper;
         }
 
+        if (type !== 'checkbox') {
+            var label = document.createElement('label');
+            label.className = 'mb-1 block text-sm font-medium text-zinc-300';
+            label.htmlFor = inputId;
+            label.textContent = field.label || field.name;
+            wrapper.appendChild(label);
+        }
+
         if (type === 'select' && Array.isArray(field.options)) {
             var sel = document.createElement('select');
-            sel.className = 'form-select form-select-sm';
+            sel.className = 'w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25';
             sel.id = inputId;
             sel.dataset.fieldName = field.name;
             if (field.required) sel.required = true;
@@ -157,7 +175,7 @@
             wrapper.appendChild(sel);
         } else if (type === 'textarea') {
             var ta = document.createElement('textarea');
-            ta.className = 'form-control form-control-sm';
+            ta.className = 'w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25';
             ta.id = inputId;
             ta.dataset.fieldName = field.name;
             ta.rows = 5;
@@ -166,25 +184,24 @@
             if (field.required) ta.required = true;
             wrapper.appendChild(ta);
         } else if (type === 'checkbox') {
+            wrapper.className = 'flex items-center gap-2';
             var chk = document.createElement('input');
-            chk.className = 'form-check-input';
+            chk.className = 'h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-[#fdaa02] focus:ring-[#fdaa02]/30';
             chk.type = 'checkbox';
             chk.id = inputId;
             chk.dataset.fieldName = field.name;
             chk.checked = fieldValue.toLowerCase() === 'true';
             if (field.required) chk.required = true;
-
-            wrapper.className = 'form-check';
             wrapper.appendChild(chk);
 
             var checkLabel = document.createElement('label');
-            checkLabel.className = 'form-check-label ms-2';
+            checkLabel.className = 'text-sm text-zinc-300';
             checkLabel.htmlFor = inputId;
             checkLabel.textContent = field.label || field.name;
             wrapper.appendChild(checkLabel);
         } else {
             var inp = document.createElement('input');
-            inp.className = 'form-control form-control-sm';
+            inp.className = 'w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25';
             inp.type = type === 'password' ? 'password' : 'text';
             inp.id = inputId;
             inp.dataset.fieldName = field.name;

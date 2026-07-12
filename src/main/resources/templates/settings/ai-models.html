@@ -8,29 +8,33 @@
     <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
     <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
     <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
     <link rel="stylesheet" href="/css/settings.css" th:href="@{/css/settings.css}">
 </head>
 <body class="bg-zinc-950 text-zinc-100">
 <div th:replace="~{fragments/header :: header}"></div>
-<div class="container py-5" style="max-width: 700px;">
-    <h2 class="mb-1"><i class="fa-solid fa-robot me-2"></i>AI Models</h2>
-    <p class="text-muted mb-4">Configure AI providers. The selected provider and model are stored per session.</p>
-
-    <div id="alert-area"></div>
-
-    <!-- Global Default card -->
-    <div class="card mb-4 border-primary">
-        <div class="card-header d-flex align-items-center gap-2">
-            <i class="fa-solid fa-star text-primary"></i>
-            <span class="fw-semibold">Global Default</span>
-            <span class="text-muted small ms-1">— used for all new sessions unless overridden</span>
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
+        <div>
+            <h2 class="flex items-center gap-2 text-2xl font-bold text-zinc-100"><i class="fa-solid fa-robot text-[#fdaa02]"></i>AI Models</h2>
+            <p class="vork-page-subtitle">Configure AI providers. The selected provider and model are stored per session.</p>
         </div>
-        <div class="card-body">
+    </div>
+
+    <div class="vork-content-stack">
+        <div id="alert-area"></div>
+
+        <!-- Global Default card -->
+        <div class="rounded-xl border border-cyan-700/40 bg-zinc-900">
+        <div class="flex items-center gap-2 border-b border-zinc-800 px-4 py-3">
+            <i class="fa-solid fa-star text-cyan-400"></i>
+            <span class="font-semibold text-zinc-100">Global Default</span>
+            <span class="text-xs text-zinc-400">— used for all new sessions unless overridden</span>
+        </div>
+        <div class="p-4">
             <th:block th:with="hasAny=${#lists.isEmpty(providers) == false and providers.?[configured == true and not #lists.isEmpty(models)].size() > 0}">
                 <div th:if="${hasAny}">
-                    <label class="form-label" for="global-default-select">Provider &amp; Model</label>
-                    <select id="global-default-select" class="form-select mb-3">
+                    <label class="mb-1.5 block text-sm font-medium text-zinc-300" for="global-default-select">Provider &amp; Model</label>
+                    <select id="global-default-select" class="mb-3 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25">
                         <option value="">— none selected —</option>
                         <th:block th:each="group : ${providers}" th:if="${group.configured() and not #lists.isEmpty(group.models())}">
                             <optgroup th:label="${group.providerLabel()}">
@@ -42,55 +46,55 @@
                             </optgroup>
                         </th:block>
                     </select>
-                    <button class="btn btn-primary btn-sm" onclick="saveGlobalDefault()">
-                        <i class="fa-solid fa-save me-1"></i>Save Global Default
+                    <button class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-xs font-semibold text-black transition-colors hover:bg-[#e89a02]" onclick="saveGlobalDefault()">
+                        <i class="fa-solid fa-save mr-1"></i>Save Global Default
                     </button>
                 </div>
-                <div th:unless="${hasAny}" class="text-muted small">
-                    <i class="fa-solid fa-circle-info me-1"></i>
+                <div th:unless="${hasAny}" class="text-xs text-zinc-400">
+                    <i class="fa-solid fa-circle-info mr-1"></i>
                     Configure at least one AI provider above to set a global default.
                 </div>
             </th:block>
         </div>
-    </div>
+        </div>
 
-    <!-- Provider cards rendered from server-side model -->
-    <div th:each="group : ${providers}" class="card mb-4" th:id="'card-' + ${group.providerKey()}">
-        <div class="card-header d-flex align-items-center justify-content-between">
-            <div class="d-flex align-items-center gap-2">
-                <span class="fw-semibold" th:text="${group.providerLabel()}"></span>
-                <span th:if="${group.configured()}" class="badge bg-success">Configured</span>
-                <span th:unless="${group.configured()}" class="badge bg-secondary">Not configured</span>
+        <!-- Provider cards rendered from server-side model -->
+        <div th:each="group : ${providers}" class="rounded-xl border border-zinc-800 bg-zinc-900" th:id="'card-' + ${group.providerKey()}">
+        <div class="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+            <div class="flex items-center gap-2">
+                <span class="font-semibold text-zinc-100" th:text="${group.providerLabel()}"></span>
+                <span th:if="${group.configured()}" class="inline-flex rounded-md bg-emerald-600/20 px-2 py-0.5 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-500/30">Configured</span>
+                <span th:unless="${group.configured()}" class="inline-flex rounded-md bg-zinc-700/30 px-2 py-0.5 text-xs font-semibold text-zinc-300 ring-1 ring-zinc-600">Not configured</span>
             </div>
-            <button class="btn btn-sm btn-outline-secondary"
+            <button class="rounded-md border border-zinc-600 px-2 py-1 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800"
                     th:attr="data-provider=${group.providerKey()}"
                     onclick="toggleForm(this.dataset.provider)"
                     th:disabled="${group.providerKey() == 'BACKGROUND_SCHEDULER'}">
-                <i class="fa-solid fa-gear me-1"></i>Configure
+                <i class="fa-solid fa-gear mr-1"></i>Configure
             </button>
         </div>
 
-        <div th:id="'form-' + ${group.providerKey()}" class="card-body" style="display:none;">
+        <div th:id="'form-' + ${group.providerKey()}" class="hidden p-4">
             <form th:attr="data-provider=${group.providerKey()}"
                   onsubmit="saveConfig(event, this.dataset.provider); return false;">
 
                 <!-- API Key (not for Ollama) -->
                 <div class="mb-3" th:unless="${group.providerKey() == 'OLLAMA'}">
-                    <label class="form-label">API Key</label>
+                      <label class="mb-1.5 block text-sm font-medium text-zinc-300">API Key</label>
                     <input type="password"
-                           class="form-control"
+                          class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"
                            th:id="'apiKey-' + ${group.providerKey()}"
                            th:name="'apiKey-' + ${group.providerKey()}"
                            placeholder="Leave blank to keep existing key"
                            autocomplete="off">
-                    <div class="form-text" th:if="${group.configured()}">A key is already stored. Enter a new one to replace it.</div>
+                      <div class="mt-1 text-xs text-zinc-500" th:if="${group.configured()}">A key is already stored. Enter a new one to replace it.</div>
                 </div>
 
                 <!-- Base URL (Ollama only) -->
                 <div class="mb-3" th:if="${group.providerKey() == 'OLLAMA'}">
-                    <label class="form-label">Ollama Base URL</label>
+                      <label class="mb-1.5 block text-sm font-medium text-zinc-300">Ollama Base URL</label>
                     <input type="url"
-                           class="form-control"
+                          class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"
                            th:id="'baseUrl-' + ${group.providerKey()}"
                            th:name="'baseUrl-' + ${group.providerKey()}"
                            th:placeholder="'http://localhost:11434'"
@@ -99,8 +103,8 @@
 
                 <!-- Default model — only shown when provider is configured and models were discovered -->
                 <div class="mb-3" th:if="${group.configured() and not #lists.isEmpty(group.models())}">
-                    <label class="form-label">Default Model</label>
-                    <select class="form-select" th:id="'model-' + ${group.providerKey()}">
+                    <label class="mb-1.5 block text-sm font-medium text-zinc-300">Default Model</label>
+                    <select class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" th:id="'model-' + ${group.providerKey()}">
                         <option value="">— use provider default —</option>
                         <option th:each="m : ${group.models()}"
                                 th:value="${m.modelId()}"
@@ -111,252 +115,57 @@
                 </div>
                 <!-- Placeholder shown before credentials are saved -->
                 <div class="mb-3" th:unless="${group.configured()}">
-                    <label class="form-label">Default Model</label>
-                    <p class="text-muted small mb-0">
-                        <i class="fa-solid fa-circle-info me-1"></i>Save your credentials above to discover available models.
+                    <label class="mb-1.5 block text-sm font-medium text-zinc-300">Default Model</label>
+                    <p class="configure-hint m-0 text-xs text-zinc-400">
+                        <i class="fa-solid fa-circle-info mr-1"></i>Save your credentials above to discover available models.
                     </p>
                     <!-- Hidden select kept so JS can populate it after an inline save -->
-                    <select class="form-select mt-2 d-none" th:id="'model-' + ${group.providerKey()}">
+                    <select class="mt-2 hidden w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" th:id="'model-' + ${group.providerKey()}">
                         <option value="">— models will appear after configuring —</option>
                     </select>
                 </div>
 
                 <!-- Enable toggle (not for Gemini) -->
-                <div class="mb-3 form-switch" th:unless="${group.providerKey() == 'GEMINI' or group.providerKey() == 'BACKGROUND_SCHEDULER'}">
-                    <input type="checkbox" class="form-check-input"
+                <div class="mb-3 flex items-center gap-2" th:unless="${group.providerKey() == 'GEMINI' or group.providerKey() == 'BACKGROUND_SCHEDULER'}">
+                    <input type="checkbox" class="h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-[#fdaa02] focus:ring-[#fdaa02]/30"
                            th:id="'enabled-' + ${group.providerKey()}"
                            th:checked="${group.configured()}">
-                    <label class="form-check-label" th:for="'enabled-' + ${group.providerKey()}">Enabled</label>
+                    <label class="text-sm text-zinc-300" th:for="'enabled-' + ${group.providerKey()}">Enabled</label>
                 </div>
 
-                <div class="d-flex gap-2">
-                    <button type="submit" class="btn btn-primary btn-sm">
-                        <i class="fa-solid fa-save me-1"></i>Save
+                <div class="flex flex-wrap gap-2">
+                    <button type="submit" class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-xs font-semibold text-black transition-colors hover:bg-[#e89a02]">
+                        <i class="fa-solid fa-save mr-1"></i>Save
                     </button>
-                    <button type="button" class="btn btn-outline-danger btn-sm"
+                    <button type="button" class="rounded-lg border border-rose-500/40 px-3 py-1.5 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-500/15"
                             th:unless="${group.providerKey() == 'GEMINI' or group.providerKey() == 'BACKGROUND_SCHEDULER'}"
                             th:attr="data-provider=${group.providerKey()}"
                             onclick="deleteConfig(this.dataset.provider)"
                     >
-                        <i class="fa-solid fa-trash me-1"></i>Remove
+                        <i class="fa-solid fa-trash mr-1"></i>Remove
                     </button>
                 </div>
             </form>
         </div>
 
         <!-- Model list summary -->
-        <div class="card-footer">
-            <div th:if="${group.configured() and not #lists.isEmpty(group.models())}" class="d-flex flex-wrap gap-1">
-                <span th:each="m : ${group.models()}" class="badge bg-secondary" th:text="${m.label()}"></span>
+        <div class="card-footer border-t border-zinc-800 px-4 py-3 text-sm text-zinc-300">
+            <div th:if="${group.configured() and not #lists.isEmpty(group.models())}" class="flex flex-wrap gap-1">
+                <span th:each="m : ${group.models()}" class="inline-flex rounded-md bg-zinc-700/30 px-2 py-0.5 text-xs font-semibold text-zinc-300 ring-1 ring-zinc-600" th:text="${m.label()}"></span>
             </div>
             <span th:if="${group.configured() and #lists.isEmpty(group.models())}">
-                <i class="fa-solid fa-spinner fa-spin me-1"></i>No models discovered yet — try refreshing after saving credentials.
+                <i class="fa-solid fa-spinner fa-spin mr-1"></i>No models discovered yet — try refreshing after saving credentials.
             </span>
             <span th:unless="${group.configured()}">
-                <i class="fa-solid fa-lock me-1"></i>Configure credentials to discover available models.
+                <i class="fa-solid fa-lock mr-1"></i>Configure credentials to discover available models.
             </span>
+        </div>
         </div>
     </div>
 </div>
 
-<script>
-    function saveGlobalDefault() {
-        const sel = document.getElementById('global-default-select');
-        const val = sel ? sel.value : '';
-        if (!val) { showAlert('Please select a provider and model.', 'warning'); return; }
-        const sep = val.indexOf(':');
-        const provider = val.substring(0, sep);
-        const modelId  = val.substring(sep + 1);
-        // Pre-read current settings to preserve relayHost and defaultOobTimeoutMinutes
-        fetch('/api/system/settings')
-            .then(r => r.json())
-            .then(current => fetch('/api/system/settings', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    defaultProvider:          provider,
-                    defaultModelId:           modelId,
-                    relayHost:                current.relayHost || '',
-                    defaultOobTimeoutMinutes: current.defaultOobTimeoutMinutes || 15
-                })
-            }))
-            .then(r => r.json())
-            .then(data => {
-                if (data.ok) {
-                    showAlert('Global default saved: ' + val.replace(':', ' — '), 'success');
-                } else {
-                    showAlert('Error: ' + (data.error || 'Unknown error'), 'danger');
-                }
-            })
-            .catch(() => showAlert('Network error saving global default.', 'danger'));
-    }
-
-    function toggleForm(providerKey) {
-        const form = document.getElementById('form-' + providerKey);
-        if (!form) return;
-        const visible = form.style.display !== 'none';
-        form.style.display = visible ? 'none' : 'block';
-        // When opening: load current config values and refresh model list
-        if (!visible) {
-            loadConfig(providerKey);
-            loadDiscoveredModels(providerKey);
-        }
-    }
-
-    function loadConfig(providerKey) {
-        fetch('/api/ai/providers/' + providerKey + '/config')
-            .then(r => r.json())
-            .then(data => {
-                const baseUrlEl = document.getElementById('baseUrl-' + providerKey);
-                const modelEl   = document.getElementById('model-' + providerKey);
-                const enabledEl = document.getElementById('enabled-' + providerKey);
-                if (baseUrlEl && data.baseUrl) baseUrlEl.value = data.baseUrl;
-                if (modelEl && data.defaultModel) modelEl.value = data.defaultModel;
-                if (enabledEl) enabledEl.checked = data.enabled !== false;
-            })
-            .catch(() => {});
-    }
-
-    function loadDiscoveredModels(providerKey) {
-        const modelEl = document.getElementById('model-' + providerKey);
-        if (!modelEl) return Promise.resolve();
-        return fetch('/api/ai/models/' + providerKey.toLowerCase())
-            .then(r => r.ok ? r.json() : Promise.reject())
-            .then(models => {
-                if (!models || models.length === 0) return;
-                // Build options preserving current selection
-                const current = modelEl.value;
-                modelEl.innerHTML = '<option value="">— use provider default —</option>';
-                models.forEach(m => {
-                    const opt = document.createElement('option');
-                    opt.value = m.id;
-                    opt.textContent = m.displayName || m.id;
-                    if (m.id === current) opt.selected = true;
-                    modelEl.appendChild(opt);
-                });
-                // Make the select visible if it was hidden
-                modelEl.classList.remove('d-none');
-                // Hide the "configure first" message
-                const hint = modelEl.closest('.mb-3')?.querySelector('p.text-muted');
-                if (hint) hint.classList.add('d-none');
-            })
-            .catch(() => {});
-    }
-
-    function saveConfig(event, providerKey) {
-        event.preventDefault();
-        const apiKeyEl  = document.getElementById('apiKey-'  + providerKey);
-        const baseUrlEl = document.getElementById('baseUrl-' + providerKey);
-        const modelEl   = document.getElementById('model-'   + providerKey);
-        const enabledEl = document.getElementById('enabled-' + providerKey);
-
-        const body = {
-            apiKey:       apiKeyEl  ? apiKeyEl.value.trim()  : null,
-            baseUrl:      baseUrlEl ? baseUrlEl.value.trim() : null,
-            defaultModel: modelEl   ? modelEl.value          : null,
-            enabled:      enabledEl ? enabledEl.checked      : true
-        };
-
-        fetch('/api/ai/providers/' + providerKey + '/config', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        })
-        .then(r => r.json())
-        .then(data => {
-            if (data.status === 'OK') {
-                showAlert('Provider configuration saved.', 'success');
-                // Refresh the model dropdown for this provider without a full page reload
-                loadDiscoveredModels(providerKey).then(() => location.reload());
-            } else {
-                showAlert('Error: ' + (data.message || 'Unknown error'), 'danger');
-            }
-        })
-        .catch(() => showAlert('Network error saving configuration.', 'danger'));
-    }
-
-    function deleteConfig(providerKey) {
-        if (!confirm('Remove configuration for ' + providerKey + '? This will disconnect the provider.')) return;
-        fetch('/api/ai/providers/' + providerKey + '/config', { method: 'DELETE' })
-            .then(r => r.json())
-            .then(data => {
-                if (data.status === 'OK') {
-                    showAlert('Provider configuration removed.', 'warning');
-                    location.reload();
-                } else {
-                    showAlert('Error: ' + (data.message || 'Unknown error'), 'danger');
-                }
-            })
-            .catch(() => showAlert('Network error removing configuration.', 'danger'));
-    }
-
-    function showAlert(message, type) {
-        const area = document.getElementById('alert-area');
-        area.innerHTML = `<div class="alert alert-${type} alert-dismissible fade show py-2 small" role="alert">
-            ${message}
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>`;
-    }
-
-    // ── Transcription provider checkboxes ─────────────────────────────────────
-
-    async function initTranscription() {
-        try {
-            const [tpList, cfg] = await Promise.all([
-                fetch('/api/transcription/providers').then(r => r.json()),
-                fetch('/api/transcription/config').then(r => r.ok ? r.json() : {configured: false})
-            ]);
-            const currentKey = cfg.configured ? cfg.providerKey : null;
-            tpList.forEach(tp => {
-                if (!tp.backedByAiProvider) return;
-                const card = document.getElementById('card-' + tp.backedByAiProvider);
-                if (!card) return;
-                const footer = card.querySelector('.card-footer');
-                if (!footer) return;
-                const wrap = document.createElement('div');
-                wrap.className = 'px-3 py-2';
-                wrap.innerHTML = `<div class="form-switch">
-                    <input class="form-check-input" type="checkbox" role="switch"
-                           id="transcription-${tp.backedByAiProvider}"
-                           data-provider-key="${tp.providerKey}"
-                           ${currentKey === tp.providerKey ? 'checked' : ''}
-                           onchange="toggleTranscriptionProvider(this)">
-                    <label class="form-check-label small" for="transcription-${tp.backedByAiProvider}">
-                        Use ${tp.displayName} to transcribe audio messages
-                    </label>
-                </div>`;
-                footer.before(wrap);
-            });
-        } catch (e) {
-            // Non-critical — transcription checkboxes are optional UI
-        }
-    }
-
-    async function toggleTranscriptionProvider(checkbox) {
-        if (checkbox.checked) {
-            document.querySelectorAll('[id^="transcription-"]').forEach(cb => {
-                if (cb !== checkbox) cb.checked = false;
-            });
-            const resp = await fetch('/api/transcription/config', {
-                method: 'PUT',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({providerKey: checkbox.dataset.providerKey, settings: {}})
-            }).then(r => r.json());
-            if (resp.status === 'OK') {
-                showAlert('Transcription provider set to ' + checkbox.dataset.providerKey + '.', 'success');
-            } else {
-                checkbox.checked = false;
-                showAlert('Error: ' + (resp.message || 'Could not save transcription config'), 'danger');
-            }
-        } else {
-            await fetch('/api/transcription/config', {method: 'DELETE'});
-            showAlert('Transcription provider cleared.', 'warning');
-        }
-    }
-
-    document.addEventListener('DOMContentLoaded', initTranscription);
-</script>
 <script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
 <script src="/js/settings.js" th:src="@{/js/settings.js}"></script>
+<script src="/js/settings-ai-models.js" th:src="@{/js/settings-ai-models.js}"></script>
 </body>
 </html>

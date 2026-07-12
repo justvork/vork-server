@@ -42,8 +42,8 @@
         <!-- Chats tab content -->
         <div class="sidebar-tab-content" id="tab-chats">
             <div class="sidebar-top">
-                <button id="new-chat-btn" type="button" class="btn btn-outline-secondary btn-sm sidebar-action">
-                    <i class="fa-solid fa-pen-to-square me-1"></i>
+                <button id="new-chat-btn" type="button" class="sidebar-action inline-flex items-center rounded-lg border border-zinc-700 px-2.5 py-1.5 text-sm text-zinc-200 transition-colors hover:bg-zinc-800">
+                    <i class="fa-solid fa-pen-to-square mr-1"></i>
                     <span class="sidebar-label">New Chat</span>
                 </button>
             </div>
@@ -51,33 +51,33 @@
             <div id="chat-session-list" class="chat-session-list"></div>
         </div>
         <!-- Skills &amp; Tools tab content -->
-        <div class="sidebar-tab-content d-none" id="tab-skills">
+        <div class="sidebar-tab-content hidden" id="tab-skills">
             <div class="skills-panel">
                 <!-- Agent skills (read-only) -->
                 <div class="sidebar-section-title">Agent Skills</div>
                 <div id="agent-skills-list" class="skills-pill-list">
-                    <span class="text-muted small">Loading&hellip;</span>
+                    <span class="text-xs text-zinc-500">Loading&hellip;</span>
                 </div>
                 <!-- Session skills (removable + add) -->
                 <div class="sidebar-section-title mt-2">Session Skills</div>
                 <div id="session-skills-list" class="skills-pill-list"></div>
                 <div class="skills-search-box mt-1">
-                    <input id="skill-search-input" type="text" class="form-control form-control-sm"
+                    <input id="skill-search-input" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"
                            placeholder="Add skill&hellip;" autocomplete="off">
-                    <div id="skill-search-results" class="skills-search-dropdown d-none"></div>
+                    <div id="skill-search-results" class="skills-search-dropdown hidden"></div>
                 </div>
                 <!-- Agent tools (read-only) -->
                 <div class="sidebar-section-title mt-2">Agent Tools</div>
                 <div id="agent-tools-list" class="skills-pill-list">
-                    <span class="text-muted small">Loading&hellip;</span>
+                    <span class="text-xs text-zinc-500">Loading&hellip;</span>
                 </div>
                 <!-- Session tools (removable + add) -->
                 <div class="sidebar-section-title mt-2">Session Tools</div>
                 <div id="session-tools-list" class="skills-pill-list"></div>
                 <div class="skills-search-box mt-1">
-                    <input id="tool-search-input" type="text" class="form-control form-control-sm"
+                    <input id="tool-search-input" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"
                            placeholder="Add tool&hellip;" autocomplete="off">
-                    <div id="tool-search-results" class="skills-search-dropdown d-none"></div>
+                    <div id="tool-search-results" class="skills-search-dropdown hidden"></div>
                 </div>
             </div>
         </div>
@@ -89,12 +89,12 @@
     <div th:replace="~{fragments/header :: header}"></div>
 
     <!-- Pending-input alert (shown by chat.js when off-channel sessions need input) -->
-    <div id="pending-sessions-alert" class="d-none pending-sessions-alert" role="alert"></div>
+    <div id="pending-sessions-alert" class="hidden pending-sessions-alert" role="alert"></div>
 
     <!-- Messages -->
     <main id="messages-area" class="chat-messages">
 
-        <div id="typing-indicator" class="message-row d-none">
+        <div id="typing-indicator" class="message-row hidden">
             <div class="avatar assistant"><i class="fa-solid fa-robot"></i></div>
             <div class="bubble assistant typing-bubble">
                 <span class="typing-dot"></span>
@@ -106,27 +106,27 @@
     </main>
 
     <!-- Hidden file input (outside form — not submitted) -->
-    <input type="file" id="file-input" class="d-none" multiple>
+    <input type="file" id="file-input" class="hidden" multiple>
 
     <!-- Input area -->
     <div class="chat-input-area">
         <!-- Attachment preview strip (hidden until files are staged) -->
-        <div id="attachment-strip" class="attachment-strip d-none"></div>
-        <form id="chat-form" class="d-flex gap-2 align-items-end">
-            <button type="button" id="upload-files-btn" class="btn btn-secondary attach-btn" title="Attach files">
+        <div id="attachment-strip" class="attachment-strip hidden"></div>
+        <form id="chat-form" class="flex items-end gap-2">
+            <button type="button" id="upload-files-btn" class="attach-btn inline-flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-200 transition-colors hover:bg-zinc-800" title="Attach files">
                 <i class="fa-solid fa-paperclip"></i>
             </button>
             <textarea
                 id="message-input"
-                class="form-control"
+                class="min-h-[2.5rem] flex-1 resize-none rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"
                 rows="1"
                 placeholder="Message Vork&hellip; (Enter to send &middot; Shift+Enter for new line)"
                 autocomplete="off"></textarea>
-            <button type="submit" id="send-btn" class="btn btn-primary send-btn">
+            <button type="submit" id="send-btn" class="send-btn inline-flex h-10 w-10 items-center justify-center rounded-lg bg-[#fdaa02] text-black transition-colors hover:bg-[#e89a02]">
                 <i class="fa-solid fa-paper-plane"></i>
             </button>
         </form>
-        <div class="text-secondary mt-1 session-label">
+        <div class="mt-1 text-xs text-zinc-500 session-label">
             Session: <code id="session-display">initialising&hellip;</code>
         </div>
     </div>
@@ -138,7 +138,7 @@
 </div>
 
 <!-- Hidden logout form (required by chat.js) -->
-<form id="logout-form" action="/logout" method="POST" style="display: none;"></form>
+<form id="logout-form" action="/logout" method="POST" class="hidden"></form>
 
 </div><!-- /.page-layout -->
 

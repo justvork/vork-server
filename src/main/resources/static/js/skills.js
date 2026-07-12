@@ -29,9 +29,9 @@ document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('tool-search').value        = '';
         document.getElementById('type-search').value        = '';
         document.getElementById('subskill-search').value    = '';
-        document.getElementById('tool-dropdown').style.display     = 'none';
-        document.getElementById('type-dropdown').style.display     = 'none';
-        document.getElementById('subskill-dropdown').style.display = 'none';
+        document.getElementById('tool-dropdown').classList.add('hidden');
+        document.getElementById('type-dropdown').classList.add('hidden');
+        document.getElementById('subskill-dropdown').classList.add('hidden');
     });
 
     document.getElementById('groupModal').addEventListener('hidden.bs.modal', function () {
@@ -39,13 +39,13 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     document.addEventListener('click', function (e) {
         if (!e.target.closest('#tool-search') && !e.target.closest('#tool-dropdown')) {
-            document.getElementById('tool-dropdown').style.display = 'none';
+            document.getElementById('tool-dropdown').classList.add('hidden');
         }
         if (!e.target.closest('#type-search') && !e.target.closest('#type-dropdown')) {
-            document.getElementById('type-dropdown').style.display = 'none';
+            document.getElementById('type-dropdown').classList.add('hidden');
         }
         if (!e.target.closest('#subskill-search') && !e.target.closest('#subskill-dropdown')) {
-            document.getElementById('subskill-dropdown').style.display = 'none';
+            document.getElementById('subskill-dropdown').classList.add('hidden');
         }
     });
 });
@@ -80,18 +80,18 @@ function updateCategoryHelp() {
     if (!help) return;
 
     if (categoriesLoadFailed) {
-        help.className = 'form-text text-warning';
+        help.className = 'text-xs text-amber-300';
         help.textContent = 'Supported categories could not be loaded from GitHub. Retry later.';
         return;
     }
 
     if (!allCategories || allCategories.length === 0) {
-        help.className = 'form-text text-warning';
+        help.className = 'text-xs text-amber-300';
         help.textContent = 'No supported categories are available right now.';
         return;
     }
 
-    help.className = 'form-text text-muted';
+    help.className = 'text-xs text-zinc-500';
     help.textContent = 'Category must be selected from the supported list.';
 }
 
@@ -104,13 +104,13 @@ function renderGroupTable() {
 
     body.innerHTML = '';
     if (!allGroupViews || allGroupViews.length === 0) {
-        table.classList.add('d-none');
-        empty.classList.remove('d-none');
+        table.classList.add('hidden');
+        empty.classList.remove('hidden');
         return;
     }
 
-    empty.classList.add('d-none');
-    table.classList.remove('d-none');
+    empty.classList.add('hidden');
+    table.classList.remove('hidden');
 
     allGroupViews.forEach(function (entry) {
         const group = entry.group || entry;
@@ -118,15 +118,16 @@ function renderGroupTable() {
 
         const tr = document.createElement('tr');
         tr.id = 'group-row-' + group.uuid;
+        tr.className = 'border-b border-zinc-800/80 last:border-0';
 
         const pills = skills.length === 0
-            ? '<span class="text-muted small">No skills</span>'
+            ? '<span class="text-xs text-zinc-500">No skills</span>'
             : skills.map(function (s) {
                 const isPrivate = (s.visibility || 'PUBLIC') === 'PRIVATE';
                 const visibilityIcon = isPrivate
                     ? ' <i class="fa-solid fa-lock text-warning" title="Private skill"></i>'
                     : ' <i class="fa-solid fa-globe text-info" title="Public skill"></i>';
-                return '<span class="skill-pill me-1 mb-1">'
+                return '<span class="skill-pill mr-1 mb-1">'
                     + '<span>' + escapeHtml(s.name) + visibilityIcon + '</span>'
                     + '<span class="remove-skill" title="Edit skill" onclick="openEdit(\'' + escapeHtml(s.uuid) + '\')"><i class="fa-solid fa-pen"></i></span>'
                     + '<span class="remove-skill text-danger" title="Delete skill" onclick="deleteSkill(\'' + escapeHtml(s.uuid) + '\')"><i class="fa-solid fa-trash"></i></span>'
@@ -134,15 +135,15 @@ function renderGroupTable() {
             }).join('');
 
         tr.innerHTML = ''
-            + '<td class="fw-semibold">' + escapeHtml(group.name || '') + '</td>'
-            + '<td><span class="badge bg-dark border border-secondary text-secondary">' + escapeHtml(group.category || '—') + '</span></td>'
-            + '<td>' + pills + '</td>'
-            + '<td class="small text-muted">' + escapeHtml(group.author || '—') + '</td>'
-            + '<td class="text-end">'
-            + '  <div class="d-flex gap-1 justify-content-end">'
-            + '    <button class="btn btn-sm btn-outline-secondary" onclick="openEditGroup(\'' + escapeHtml(group.uuid) + '\')" title="Edit group"><i class="fa-solid fa-pen"></i></button>'
-            + '    <button class="btn btn-sm btn-outline-info" onclick="exportGroup(\'' + escapeHtml(group.uuid) + '\')" title="Export group"><i class="fa-solid fa-file-export"></i></button>'
-            + '    <button class="btn btn-sm btn-outline-danger" onclick="deleteGroup(\'' + escapeHtml(group.uuid) + '\')" title="Delete group"><i class="fa-solid fa-trash"></i></button>'
+            + '<td class="px-3 py-2 font-semibold text-zinc-100">' + escapeHtml(group.name || '') + '</td>'
+            + '<td class="px-3 py-2"><span class="inline-flex rounded-md border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-400">' + escapeHtml(group.category || '—') + '</span></td>'
+            + '<td class="px-3 py-2">' + pills + '</td>'
+            + '<td class="px-3 py-2 text-xs text-zinc-400">' + escapeHtml(group.author || '—') + '</td>'
+            + '<td class="px-3 py-2 text-right">'
+            + '  <div class="inline-flex gap-1 justify-end">'
+            + '    <button class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800" onclick="openEditGroup(\'' + escapeHtml(group.uuid) + '\')" title="Edit group"><i class="fa-solid fa-pen"></i></button>'
+            + '    <button class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/15" onclick="exportGroup(\'' + escapeHtml(group.uuid) + '\')" title="Export group"><i class="fa-solid fa-file-export"></i></button>'
+            + '    <button class="rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15" onclick="deleteGroup(\'' + escapeHtml(group.uuid) + '\')" title="Delete group"><i class="fa-solid fa-trash"></i></button>'
             + '  </div>'
             + '</td>';
 
@@ -189,7 +190,7 @@ function openCreate() {
     document.getElementById('skill-description').value          = '';
     document.getElementById('skill-instructions').value         = '';
     document.getElementById('skill-visibility').value           = 'PUBLIC';
-    document.getElementById('btn-delete-skill').classList.add('d-none');
+    document.getElementById('btn-delete-skill').classList.add('hidden');
     populateGroupSelect('');
     modalTools      = [];
     modalTypes      = [];
@@ -216,7 +217,7 @@ function openEdit(id) {
     document.getElementById('skill-instructions').value         = skill.instructions || '';
     populateGroupSelect(skill.groupUuid || '');
     document.getElementById('skill-visibility').value           = skill.visibility || 'PUBLIC';
-    document.getElementById('btn-delete-skill').classList.remove('d-none');
+    document.getElementById('btn-delete-skill').classList.remove('hidden');
     modalTools      = skill.allowedTools  ? skill.allowedTools.slice()  : [];
     modalTypes      = skill.allowedTypes  ? skill.allowedTypes.slice()  : [];
     modalSubSkills  = skill.subSkillUuids ? skill.subSkillUuids.slice() : [];
@@ -266,7 +267,7 @@ function renderParams() {
     const list = document.getElementById('param-list');
     list.innerHTML = '';
     if (modalParams.length === 0) {
-        list.innerHTML = '<p class="text-muted small mb-0">No parameters defined. The skill will receive no structured input.</p>';
+        list.innerHTML = '<p class="mb-0 text-xs text-zinc-500">No parameters defined. The skill will receive no structured input.</p>';
         return;
     }
 
@@ -274,11 +275,11 @@ function renderParams() {
     const hdr = document.createElement('div');
     hdr.className = 'param-row mb-1';
     hdr.innerHTML =
-        '<span class="param-name text-muted small">Name</span>' +
-        '<span class="param-type text-muted small">Type</span>' +
-        '<span class="param-input-mode text-muted small">Input</span>' +
-        '<span class="param-desc text-muted small">Description (optional)</span>' +
-        '<span style="width:32px"></span>';
+        '<span class="param-name text-xs text-zinc-500">Name</span>' +
+        '<span class="param-type text-xs text-zinc-500">Type</span>' +
+        '<span class="param-input-mode text-xs text-zinc-500">Input</span>' +
+        '<span class="param-desc text-xs text-zinc-500">Description (optional)</span>' +
+        '<span class="inline-block w-8"></span>';
     list.appendChild(hdr);
 
     modalParams.forEach(function (p, idx) {
@@ -300,21 +301,21 @@ function renderParams() {
         }).join('');
 
         row.innerHTML =
-            '<input type="text" class="form-control form-control-sm param-name" ' +
+            '<input type="text" class="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/20 param-name" ' +
                    'placeholder="paramName" value="' + escapeHtml(p.name) + '" ' +
                    'data-idx="' + idx + '" oninput="updateParam(this)">' +
-            '<select class="form-select form-select-sm param-type" ' +
+            '<select class="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/20 param-type" ' +
                     'data-idx="' + idx + '" onchange="updateParam(this)">' +
             typeOptions +
             '</select>' +
-                '<select class="form-select form-select-sm param-input-mode" ' +
+                '<select class="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/20 param-input-mode" ' +
                     'data-idx="' + idx + '" onchange="updateParam(this)">' +
                 forceOptions +
                 '</select>' +
-            '<input type="text" class="form-control form-control-sm param-desc" ' +
+            '<input type="text" class="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/20 param-desc" ' +
                    'placeholder="Brief description…" value="' + escapeHtml(p.description) + '" ' +
                    'data-idx="' + idx + '" oninput="updateParam(this)">' +
-            '<button type="button" class="btn btn-sm btn-outline-danger btn-remove-param" ' +
+            '<button type="button" class="btn-remove-param rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15" ' +
                     'onclick="removeParam(' + idx + ')" title="Remove parameter">' +
             '  <i class="fa-solid fa-xmark"></i>' +
             '</button>';
@@ -351,32 +352,33 @@ function renderSecrets() {
 
     list.innerHTML = '';
     if (modalSecrets.length === 0) {
-        list.innerHTML = '<p class="text-muted small mb-0">No secrets defined. Add names to enable secure {{SECRET_NAME}} placeholder substitution.</p>';
+        list.innerHTML = '<p class="mb-0 text-xs text-zinc-500">No secrets defined. Add names to enable secure {{SECRET_NAME}} placeholder substitution.</p>';
         return;
     }
 
     const hdr = document.createElement('div');
     hdr.className = 'secret-row mb-1';
     hdr.innerHTML =
-        '<span class="secret-name text-muted small">Name</span>' +
-        '<span class="secret-desc text-muted small">Description (optional)</span>' +
-        '<span style="width:32px"></span>';
+        '<span class="secret-name text-xs text-zinc-500">Name</span>' +
+        '<span class="secret-desc text-xs text-zinc-500">Description (optional)</span>' +
+        '<span class="inline-block w-8"></span>';
     list.appendChild(hdr);
 
     modalSecrets.forEach(function (s, idx) {
         const row = document.createElement('div');
         row.className = 'secret-row';
         row.innerHTML =
-            '<input type="text" class="form-control form-control-sm secret-name" ' +
+             '<input type="text" class="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/20 secret-name" ' +
                    'placeholder="API_KEY" value="' + escapeHtml(s.name) + '" ' +
                    'data-idx="' + idx + '" oninput="updateSecret(this)">' +
-            '<input type="text" class="form-control form-control-sm secret-desc" ' +
+             '<input type="text" class="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/20 secret-desc" ' +
                    'placeholder="What this secret is used for…" value="' + escapeHtml(s.description) + '" ' +
                    'data-idx="' + idx + '" oninput="updateSecret(this)">' +
-            '<button type="button" class="btn btn-sm btn-outline-danger btn-remove-secret" ' +
+             '<button type="button" class="btn-remove-secret rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15" ' +
                     'onclick="removeSecret(' + idx + ')" title="Remove secret">' +
             '  <i class="fa-solid fa-xmark"></i>' +
             '</button>';
+
         list.appendChild(row);
     });
 }
@@ -392,7 +394,7 @@ function renderToolPills() {
     const container = document.getElementById('tool-pill-container');
     container.innerHTML = '';
     if (modalTools.length === 0) {
-        container.innerHTML = '<span class="text-muted small">No tools assigned — skill will run with no external tools.</span>';
+        container.innerHTML = '<span class="text-xs text-zinc-500">No tools assigned — skill will run with no external tools.</span>';
         return;
     }
     modalTools.forEach(function (toolId) {
@@ -427,25 +429,25 @@ function filterTools() {
     });
 
     list.innerHTML = '';
-    if (matches.length === 0) { dropdown.style.display = 'none'; return; }
+    if (matches.length === 0) { dropdown.classList.add('hidden'); return; }
     matches.forEach(function (t) {
         const li = document.createElement('li');
-        li.className = 'list-group-item list-group-item-action tool-list-item py-1 px-2';
+        li.className = 'tool-list-item cursor-pointer px-2 py-1.5 hover:bg-zinc-800';
         li.innerHTML =
-            '<div class="d-flex align-items-center gap-2">' +
-            '  <i class="fa-solid fa-screwdriver-wrench fa-xs text-secondary"></i>' +
-            '  <span class="fw-semibold small">' + escapeHtml(t.friendlyName || t.name || t.id) + '</span>' +
-            (t.category ? '  <span class="badge bg-dark border border-secondary text-secondary" style="font-size:0.65rem">' + escapeHtml(t.category) + '</span>' : '') +
+            '<div class="flex items-center gap-2">' +
+            '  <i class="fa-solid fa-screwdriver-wrench fa-xs text-zinc-400"></i>' +
+            '  <span class="text-xs font-semibold text-zinc-100">' + escapeHtml(t.friendlyName || t.name || t.id) + '</span>' +
+            (t.category ? '  <span class="inline-flex rounded-md border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-[0.65rem] text-zinc-400">' + escapeHtml(t.category) + '</span>' : '') +
             '</div>' +
-            (t.description ? '<div class="text-muted" style="font-size:0.7rem">' + escapeHtml(t.description) + '</div>' : '');
+            (t.description ? '<div class="text-[0.7rem] text-zinc-400">' + escapeHtml(t.description) + '</div>' : '');
         li.addEventListener('click', function () {
             addTool(t.id);
             document.getElementById('tool-search').value = '';
-            dropdown.style.display = 'none';
+            dropdown.classList.add('hidden');
         });
         list.appendChild(li);
     });
-    dropdown.style.display = '';
+    dropdown.classList.remove('hidden');
 }
 
 function addTool(toolId) {
@@ -457,7 +459,7 @@ function renderTypePills() {
     const container = document.getElementById('type-pill-container');
     container.innerHTML = '';
     if (modalTypes.length === 0) {
-        container.innerHTML = '<span class="text-muted small">No types assigned.</span>';
+        container.innerHTML = '<span class="text-xs text-zinc-500">No types assigned.</span>';
         return;
     }
     modalTypes.forEach(function (fqn) {
@@ -491,24 +493,24 @@ function filterTypes() {
     });
 
     list.innerHTML = '';
-    if (matches.length === 0) { dropdown.style.display = 'none'; return; }
+    if (matches.length === 0) { dropdown.classList.add('hidden'); return; }
     matches.forEach(function (t) {
         const fqn = typeof t === 'string' ? t : (t.fqn || t.name || '');
         const li  = document.createElement('li');
-        li.className = 'list-group-item list-group-item-action skill-list-item py-1 px-2';
+        li.className = 'skill-list-item cursor-pointer px-2 py-1.5 hover:bg-zinc-800';
         li.innerHTML =
-            '<div class="d-flex align-items-center gap-2">' +
-            '  <i class="fa-solid fa-cube fa-xs text-secondary"></i>' +
-            '  <span class="small">' + escapeHtml(fqn) + '</span>' +
+            '<div class="flex items-center gap-2">' +
+            '  <i class="fa-solid fa-cube fa-xs text-zinc-400"></i>' +
+            '  <span class="text-xs text-zinc-200">' + escapeHtml(fqn) + '</span>' +
             '</div>';
         li.addEventListener('click', function () {
             addType(fqn);
             document.getElementById('type-search').value = '';
-            dropdown.style.display = 'none';
+            dropdown.classList.add('hidden');
         });
         list.appendChild(li);
     });
-    dropdown.style.display = '';
+    dropdown.classList.remove('hidden');
 }
 
 function addType(fqn) {
@@ -520,7 +522,7 @@ function renderSubSkillPills() {
     const container = document.getElementById('subskill-pill-container');
     container.innerHTML = '';
     if (modalSubSkills.length === 0) {
-        container.innerHTML = '<span class="text-muted small">No sub-skills assigned.</span>';
+        container.innerHTML = '<span class="text-xs text-zinc-500">No sub-skills assigned.</span>';
         return;
     }
     modalSubSkills.forEach(function (uuid) {
@@ -557,25 +559,25 @@ function filterSubSkills() {
     });
 
     list.innerHTML = '';
-    if (matches.length === 0) { dropdown.style.display = 'none'; return; }
+    if (matches.length === 0) { dropdown.classList.add('hidden'); return; }
     matches.forEach(function (s) {
         const li = document.createElement('li');
-        li.className = 'list-group-item list-group-item-action skill-list-item py-1 px-2';
+        li.className = 'skill-list-item cursor-pointer px-2 py-1.5 hover:bg-zinc-800';
         li.innerHTML =
-            '<div class="d-flex align-items-center gap-2">' +
-            '  <i class="fa-solid fa-bolt fa-xs text-secondary"></i>' +
-            '  <span class="fw-semibold small">' + escapeHtml(s.name) + '</span>' +
-            (s.groupUuid ? '  <span class="badge bg-dark border border-secondary text-secondary" style="font-size:0.65rem">' + escapeHtml(resolveGroupName(s.groupUuid)) + '</span>' : '') +
+            '<div class="flex items-center gap-2">' +
+            '  <i class="fa-solid fa-bolt fa-xs text-zinc-400"></i>' +
+            '  <span class="text-xs font-semibold text-zinc-100">' + escapeHtml(s.name) + '</span>' +
+            (s.groupUuid ? '  <span class="inline-flex rounded-md border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-[0.65rem] text-zinc-400">' + escapeHtml(resolveGroupName(s.groupUuid)) + '</span>' : '') +
             '</div>' +
-            (s.description ? '<div class="text-muted" style="font-size:0.7rem">' + escapeHtml(s.description) + '</div>' : '');
+            (s.description ? '<div class="text-[0.7rem] text-zinc-400">' + escapeHtml(s.description) + '</div>' : '');
         li.addEventListener('click', function () {
             addSubSkill(s.uuid);
             document.getElementById('subskill-search').value = '';
-            dropdown.style.display = 'none';
+            dropdown.classList.add('hidden');
         });
         list.appendChild(li);
     });
-    dropdown.style.display = '';
+    dropdown.classList.remove('hidden');
 }
 
 function addSubSkill(uuid) {
@@ -648,7 +650,7 @@ async function saveSkill() {
 
     const btn = document.getElementById('btn-save-skill');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
+    btn.innerHTML = '<span class="mr-1 inline-block h-3 w-3 animate-spin rounded-full border border-current border-t-transparent align-[-0.1em]"></span>Saving...';
 
     try {
         const url    = id ? '/api/skills/' + id : '/api/skills';
@@ -667,7 +669,7 @@ async function saveSkill() {
         showAlertIn('skill-modal-alert', 'Network error saving skill.', 'danger');
     } finally {
         btn.disabled = false;
-        btn.innerHTML = '<i class="fa-solid fa-save me-1"></i>Save Skill';
+        btn.innerHTML = '<i class="fa-solid fa-save mr-1"></i>Save Skill';
     }
 }
 
@@ -866,11 +868,24 @@ function resolveGroupName(groupUuid) {
 function showAlert(msg, type) {
     const area = document.getElementById('alert-area');
     if (!area) return;
+    const tones = {
+        success: 'border-emerald-700/60 bg-emerald-950/40 text-emerald-300',
+        warning: 'border-amber-700/60 bg-amber-950/40 text-amber-300',
+        danger: 'border-rose-700/60 bg-rose-950/40 text-rose-300',
+        info: 'border-cyan-700/60 bg-cyan-950/40 text-cyan-300'
+    };
+    const tone = tones[type] || tones.info;
     area.innerHTML =
-        '<div class="alert alert-' + type + ' alert-dismissible fade show" role="alert">' +
-        escapeHtml(msg) +
-        '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>' +
+        '<div class="flex items-start justify-between gap-3 rounded-lg border px-3 py-2 text-sm ' + tone + '" role="alert">' +
+        '<div>' + escapeHtml(msg) + '</div>' +
+        '<button type="button" class="shrink-0 rounded-md border border-current/35 px-2 py-0.5 text-xs" aria-label="Dismiss alert">Close</button>' +
         '</div>';
+    const closeBtn = area.querySelector('button[aria-label="Dismiss alert"]');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', function () {
+            area.innerHTML = '';
+        });
+    }
 }
 
 function showAlertIn(areaId, msg, type) {
@@ -879,11 +894,24 @@ function showAlertIn(areaId, msg, type) {
         showAlert(msg, type);
         return;
     }
+    const tones = {
+        success: 'border-emerald-700/60 bg-emerald-950/40 text-emerald-300',
+        warning: 'border-amber-700/60 bg-amber-950/40 text-amber-300',
+        danger: 'border-rose-700/60 bg-rose-950/40 text-rose-300',
+        info: 'border-cyan-700/60 bg-cyan-950/40 text-cyan-300'
+    };
+    const tone = tones[type] || tones.info;
     area.innerHTML =
-        '<div class="alert alert-' + type + ' alert-dismissible fade show" role="alert">' +
-        escapeHtml(msg) +
-        '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>' +
+        '<div class="flex items-start justify-between gap-3 rounded-lg border px-3 py-2 text-sm ' + tone + '" role="alert">' +
+        '<div>' + escapeHtml(msg) + '</div>' +
+        '<button type="button" class="shrink-0 rounded-md border border-current/35 px-2 py-0.5 text-xs" aria-label="Dismiss alert">Close</button>' +
         '</div>';
+    const closeBtn = area.querySelector('button[aria-label="Dismiss alert"]');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', function () {
+            area.innerHTML = '';
+        });
+    }
 }
 
 function clearAlert(areaId) {

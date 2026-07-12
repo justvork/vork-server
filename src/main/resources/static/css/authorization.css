@@ -203,6 +203,25 @@ body {
     letter-spacing: 0.5px;
     transition: all 0.2s ease;
     box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
+    }
+
+    @keyframes fadeInUp {
+        from {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .auth-card {
+        animation: fadeInUp 0.3s ease-out;
+    }
+
+    .authorization-bg {
+        background: radial-gradient(ellipse at top, rgba(20, 20, 40, 0.9) 0%, #0f0f0f 70%);
 }
 
 .btn-success:hover {

@@ -11,16 +11,21 @@
 </head>
 <body class="bg-zinc-950 text-zinc-100">
 <div th:replace="~{fragments/header :: header}"></div>
-<div class="max-w-2xl mx-auto px-4 py-8">
-    <h2 class="text-xl font-bold mb-1 flex items-center gap-2">
-        <i class="fa-solid fa-sliders text-[#fdaa02]"></i> General
-    </h2>
-    <p class="text-zinc-500 text-sm mb-6">Vork Relay host and system-wide defaults.</p>
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
+        <div>
+            <h2 class="text-xl font-bold mb-0 flex items-center gap-2">
+                <i class="fa-solid fa-sliders text-[#fdaa02]"></i> General
+            </h2>
+            <p class="vork-page-subtitle">Vork Relay host and system-wide defaults.</p>
+        </div>
+    </div>
 
-    <div id="alert-area" class="mb-4"></div>
+    <div class="vork-content-stack">
+        <div id="alert-area"></div>
 
-    <!-- Relay host card -->
-    <div class="bg-zinc-900 border border-[#fdaa02]/40 rounded-xl mb-4 overflow-hidden">
+        <!-- Relay host card -->
+        <div class="bg-zinc-900 border border-[#fdaa02]/40 rounded-xl overflow-hidden">
         <div class="flex items-center gap-2 px-4 py-3 border-b border-zinc-800 bg-zinc-900/50">
             <i class="fa-solid fa-globe text-[#fdaa02]"></i>
             <span class="font-semibold text-sm">Vork Relay Host</span>
@@ -37,14 +42,14 @@
                    class="w-full bg-zinc-950 border border-zinc-700 text-zinc-100 rounded-lg px-3 py-2 text-sm mb-3
                           placeholder:text-zinc-600 focus:outline-none focus:border-[#fdaa02] focus:ring-2 focus:ring-[#fdaa02]/25 transition-colors"
                    placeholder="https://relay.vork.sh" autocomplete="off">
-            <button class="btn btn-primary btn-sm" onclick="saveSettings()">
-                <i class="fa-solid fa-save me-1"></i>Save
+            <button class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-sm font-semibold text-black transition-colors hover:bg-[#e89a02]" onclick="saveSettings()">
+                <i class="fa-solid fa-save mr-1"></i>Save
             </button>
         </div>
-    </div>
+        </div>
 
-    <!-- OOB Timeout card -->
-    <div class="bg-zinc-900 border border-[#fdaa02]/40 rounded-xl mb-4 overflow-hidden">
+        <!-- OOB Timeout card -->
+        <div class="bg-zinc-900 border border-[#fdaa02]/40 rounded-xl overflow-hidden">
         <div class="flex items-center gap-2 px-4 py-3 border-b border-zinc-800 bg-zinc-900/50">
             <i class="fa-solid fa-bell text-[#fdaa02]"></i>
             <span class="font-semibold text-sm">Default OOB Authorization Timeout</span>
@@ -60,54 +65,14 @@
                    class="w-full bg-zinc-950 border border-zinc-700 text-zinc-100 rounded-lg px-3 py-2 text-sm mb-3
                           focus:outline-none focus:border-[#fdaa02] focus:ring-2 focus:ring-[#fdaa02]/25 transition-colors"
                    min="1" placeholder="15" autocomplete="off">
-            <button class="btn btn-primary btn-sm" onclick="saveSettings()">
-                <i class="fa-solid fa-save me-1"></i>Save
+            <button class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-sm font-semibold text-black transition-colors hover:bg-[#e89a02]" onclick="saveSettings()">
+                <i class="fa-solid fa-save mr-1"></i>Save
             </button>
+        </div>
         </div>
     </div>
 </div>
-
-<script>
-    const alertArea = document.getElementById('alert-area');
-
-    function showAlert(msg, type) {
-        alertArea.innerHTML = `<div class="alert alert-${type} alert-dismissible fade show" role="alert">
-            ${msg}
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>`;
-    }
-
-    // Load current value on page load
-    fetch('/api/system/settings')
-        .then(r => r.json())
-        .then(d => {
-            document.getElementById('relay-host').value = d.relayHost || '';
-            document.getElementById('oob-timeout').value = d.defaultOobTimeoutMinutes || 15;
-        })
-        .catch(() => {});
-
-    function saveSettings() {
-        // Read current system settings first so we preserve provider/model
-        fetch('/api/system/settings')
-            .then(r => r.json())
-            .then(current => {
-                const payload = {
-                    defaultProvider:         current.defaultProvider || '',
-                    defaultModelId:          current.defaultModelId  || '',
-                    relayHost:               document.getElementById('relay-host').value.trim(),
-                    defaultOobTimeoutMinutes: parseInt(document.getElementById('oob-timeout').value) || 15
-                };
-                return fetch('/api/system/settings', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-            })
-            .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
-            .then(() => showAlert('Settings saved.', 'success'))
-            .catch(e => showAlert('Failed to save: ' + (e.error || e.message || 'unknown error'), 'danger'));
-    }
-</script>
-    <script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
+<script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
+<script src="/js/settings-general.js" th:src="@{/js/settings-general.js}"></script>
 </body>
 </html>

@@ -12,81 +12,89 @@
 </head>
 <body class="bg-zinc-950 text-zinc-100">
 <div th:replace="~{fragments/header :: header}"></div>
-<div class="container py-5">
+<div class="vork-page-shell py-4">
 
-    <h2 class="mb-1"><i class="fa-solid fa-users me-2"></i>Users</h2>
-    <p class="text-muted mb-4">Manage user accounts and role assignments.</p>
+    <div class="vork-page-header">
+        <div>
+            <h2 class="flex items-center gap-2 text-2xl font-bold text-zinc-100"><i class="fa-solid fa-users text-[#fdaa02]"></i>Users</h2>
+            <p class="vork-page-subtitle">Manage user accounts and role assignments.</p>
+        </div>
+    </div>
 
-    <div class="card mb-4">
-        <div class="card-header">Create User</div>
-        <div class="card-body">
-            <form id="create-user-form" class="row g-3">
-                <div class="col-md-4">
-                    <label for="new-username" class="form-label">Username</label>
-                    <input id="new-username" name="username" class="form-control" required>
+    <div class="vork-content-stack">
+        <div class="rounded-xl border border-zinc-800 bg-zinc-900">
+        <div class="border-b border-zinc-800 px-4 py-3 text-sm font-semibold text-zinc-100">Create User</div>
+        <div class="p-4">
+            <form id="create-user-form" class="grid grid-cols-1 gap-3 md:grid-cols-12">
+                <div class="md:col-span-4">
+                    <label for="new-username" class="mb-1.5 block text-sm font-medium text-zinc-300">Username</label>
+                    <input id="new-username" name="username" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" required>
                 </div>
-                <div class="col-md-4">
-                    <label for="new-password" class="form-label">Password</label>
-                    <input id="new-password" name="password" type="password" class="form-control" minlength="8" required>
+                <div class="md:col-span-4">
+                    <label for="new-password" class="mb-1.5 block text-sm font-medium text-zinc-300">Password</label>
+                    <input id="new-password" name="password" type="password" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" minlength="8" required>
                 </div>
-                <div class="col-md-3">
-                    <label for="new-role" class="form-label">Role</label>
-                    <select id="new-role" name="role" class="form-select">
+                <div class="md:col-span-3">
+                    <label for="new-role" class="mb-1.5 block text-sm font-medium text-zinc-300">Role</label>
+                    <select id="new-role" name="role" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25">
                         <option value="USER">USER</option>
                         <option value="ADMIN">ADMIN</option>
                     </select>
                 </div>
-                <div class="col-md-1 d-flex align-items-end">
-                    <button type="submit" class="btn btn-primary w-100">Create</button>
+                <div class="md:col-span-1 flex items-end">
+                    <button type="submit" class="w-full rounded-lg bg-[#fdaa02] px-3 py-2 text-sm font-semibold text-black transition-colors hover:bg-[#e89a02]">Create</button>
                 </div>
             </form>
         </div>
-    </div>
+        </div>
 
-    <div class="card" th:if="${users != null and !#lists.isEmpty(users)}">
-        <div class="card-body p-0">
-            <div class="table-responsive">
-                <table class="table table-dark table-striped align-middle mb-0">
+        <div class="rounded-xl border border-zinc-800 bg-zinc-900" th:if="${users != null and !#lists.isEmpty(users)}">
+        <div class="overflow-x-auto">
+                <table class="min-w-full text-left text-sm text-zinc-200">
                     <thead>
-                    <tr>
-                        <th>Username</th>
-                        <th>Role</th>
-                        <th>Status</th>
-                        <th>Actions</th>
+                    <tr class="border-b border-zinc-800 text-xs uppercase tracking-wide text-zinc-400">
+                        <th class="px-3 py-2">Username</th>
+                        <th class="px-3 py-2">Role</th>
+                        <th class="px-3 py-2">Status</th>
+                        <th class="px-3 py-2">Actions</th>
                     </tr>
                     </thead>
                     <tbody id="users-table-body">
-                    <tr th:each="user : ${users}" th:attr="data-username=${user.username}">
-                        <td th:text="${user.username}"></td>
-                        <td>
-                            <select class="form-select form-select-sm user-role-select" th:attr="data-username=${user.username}">
+                    <tr th:each="user : ${users}" th:attr="data-username=${user.username}" class="border-b border-zinc-800/80 last:border-0">
+                        <td class="px-3 py-2 font-medium" th:text="${user.username}"></td>
+                        <td class="px-3 py-2">
+                            <select class="user-role-select w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" th:attr="data-username=${user.username}">
                                 <option value="USER" th:selected="${user.role == 'USER'}">USER</option>
                                 <option value="ADMIN" th:selected="${user.role == 'ADMIN'}">ADMIN</option>
                             </select>
                         </td>
-                        <td>
-                            <span th:if="${user.enabled}" class="badge bg-success">Enabled</span>
-                            <span th:if="${!user.enabled}" class="badge bg-secondary">Disabled</span>
+                        <td class="px-3 py-2">
+                            <span th:if="${user.enabled}" class="inline-flex rounded-md bg-emerald-600/20 px-2 py-1 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-500/30">Enabled</span>
+                            <span th:if="${!user.enabled}" class="inline-flex rounded-md bg-zinc-700/30 px-2 py-1 text-xs font-semibold text-zinc-300 ring-1 ring-zinc-600">Disabled</span>
                         </td>
-                        <td class="d-flex gap-2 flex-wrap">
-                            <button class="btn btn-sm btn-outline-warning reset-password-btn"
+                        <td class="px-3 py-2">
+                            <div class="flex flex-wrap gap-2">
+                            <button class="reset-password-btn rounded-md border border-amber-500/40 px-2 py-1 text-xs font-medium text-amber-300 transition-colors hover:bg-amber-500/15"
                                     th:attr="data-username=${user.username}">Reset Password</button>
-                            <button class="btn btn-sm btn-outline-info toggle-enabled-btn"
+                            <button class="toggle-enabled-btn rounded-md border border-cyan-500/40 px-2 py-1 text-xs font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15"
                                     th:attr="data-username=${user.username},data-enabled=${user.enabled}"
                                     th:text="${user.enabled ? 'Disable' : 'Enable'}"></button>
-                            <button class="btn btn-sm btn-outline-danger delete-user-btn"
+                            <button class="delete-user-btn rounded-md border border-rose-500/40 px-2 py-1 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-500/15"
                                     th:attr="data-username=${user.username}">Delete</button>
+                            </div>
                         </td>
                     </tr>
                     </tbody>
                 </table>
             </div>
         </div>
-    </div>
 
-    <div th:if="${users == null or #lists.isEmpty(users)}" class="card">
-        <div class="card-body text-center py-5 text-muted">
-            <i class="fa-solid fa-circle-info me-2"></i>No users found.
+        <div th:if="${users == null or #lists.isEmpty(users)}" class="rounded-xl border border-zinc-800 bg-zinc-900">
+            <div class="vork-empty-state-card">
+                <i class="fa-solid fa-circle-info vork-empty-icon"></i>
+                <p class="vork-empty-title">No users found</p>
+                <p class="vork-empty-hint">Create a user to grant dashboard access.</p>
+            </div>
         </div>
     </div>
 </div>

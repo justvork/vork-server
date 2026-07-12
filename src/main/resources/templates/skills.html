@@ -13,52 +13,53 @@
 <body class="bg-zinc-950 text-zinc-100">
 <div th:replace="~{fragments/header :: header}"></div>
 
-<div class="container py-4" style="max-width: 1000px;">
-    <div class="d-flex align-items-center justify-content-between mb-4">
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
         <div>
-            <div>
-                <h2 class="mb-0"><i class="fa-solid fa-bolt me-2"></i>Skills</h2>
-                <p class="text-muted small mb-0">Reusable AI skill definitions with sandboxed execution</p>
-            </div>
+            <h2 class="flex items-center gap-2 text-2xl font-bold text-zinc-100"><i class="fa-solid fa-bolt text-[#fdaa02]"></i>Skills</h2>
+            <p class="vork-page-subtitle">Reusable AI skill definitions with sandboxed execution</p>
         </div>
-        <div class="d-flex gap-2">
-            <button class="btn btn-outline-secondary"
+        <div class="vork-page-header-actions">
+            <button class="rounded-lg border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800"
                     onclick="document.getElementById('import-file-input').click()"
                     title="Import a skill group from a JSON export file">
-                <i class="fa-solid fa-file-import me-2"></i>Import
+                <i class="fa-solid fa-file-import mr-2"></i>Import
             </button>
             <input type="file" id="import-file-input" accept=".json"
-                   style="display:none" onchange="importSkill(this)">
-            <button class="btn btn-outline-info" onclick="openCreateGroup()">
-                <i class="fa-solid fa-layer-group me-2"></i>New Group
+                   class="hidden" onchange="importSkill(this)">
+            <button class="rounded-lg border border-cyan-500/40 px-3 py-2 text-sm font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15" onclick="openCreateGroup()">
+                <i class="fa-solid fa-layer-group mr-2"></i>New Group
             </button>
-            <button class="btn btn-primary" onclick="openCreate()">
-                <i class="fa-solid fa-plus me-2"></i>New Skill
+            <button class="rounded-lg bg-[#fdaa02] px-3 py-2 text-sm font-semibold text-black transition-colors hover:bg-[#e89a02]" onclick="openCreate()">
+                <i class="fa-solid fa-plus mr-2"></i>New Skill
             </button>
         </div>
     </div>
 
-    <div id="alert-area" class="mb-3"></div>
+    <div class="vork-content-stack">
+        <div id="alert-area"></div>
 
-    <!-- Group-first table -->
-    <div class="card">
-        <div class="card-body p-0">
-            <div id="no-groups" class="text-center text-muted py-5 d-none">
-                <i class="fa-solid fa-bolt fa-2x mb-3 d-block"></i>
-                No skill groups defined yet.
-            </div>
-            <table id="group-table" class="table table-hover mb-0 align-middle d-none">
-                <thead class="table-dark">
+        <!-- Group-first table -->
+        <div class="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
+            <div class="p-0">
+                <div id="no-groups" class="vork-empty-state-card hidden">
+                    <i class="fa-solid fa-bolt vork-empty-icon"></i>
+                    <p class="vork-empty-title">No skill groups defined yet</p>
+                    <p class="vork-empty-hint">Create a group to organize reusable skills.</p>
+                </div>
+                <table id="group-table" class="hidden min-w-full text-left text-sm text-zinc-200">
+                <thead class="bg-zinc-800/80 text-xs uppercase tracking-wide text-zinc-300">
                     <tr>
-                        <th>Group</th>
-                        <th>Category</th>
-                        <th>Skills</th>
-                        <th>Author</th>
-                        <th class="text-end">Actions</th>
+                        <th class="px-3 py-2 font-semibold">Group</th>
+                        <th class="px-3 py-2 font-semibold">Category</th>
+                        <th class="px-3 py-2 font-semibold">Skills</th>
+                        <th class="px-3 py-2 font-semibold">Author</th>
+                        <th class="px-3 py-2 text-right font-semibold">Actions</th>
                     </tr>
                 </thead>
                 <tbody id="group-table-body"></tbody>
-            </table>
+                </table>
+            </div>
         </div>
     </div>
 </div>
@@ -69,117 +70,117 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="skillModalLabel">New Skill</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-700 text-zinc-300 transition-colors hover:bg-zinc-800" data-bs-dismiss="modal" aria-label="Close">×</button>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="skill-id">
                 <div id="skill-modal-alert" class="mb-3"></div>
 
                 <div class="mb-3">
-                    <label class="form-label" for="skill-name">Name <span class="text-danger">*</span></label>
-                    <input type="text" id="skill-name" class="form-control" placeholder="e.g. Summarise Document">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="skill-name">Name <span class="text-rose-400">*</span></label>
+                    <input type="text" id="skill-name" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. Summarise Document">
                 </div>
 
                 <div class="mb-3">
-                    <label class="form-label" for="skill-group">Group <span class="text-danger">*</span></label>
-                    <select id="skill-group" class="form-select">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="skill-group">Group <span class="text-rose-400">*</span></label>
+                    <select id="skill-group" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25">
                         <option value="">— select a group —</option>
                     </select>
                 </div>
 
                 <div class="mb-3">
-                    <label class="form-label" for="skill-visibility">Visibility</label>
-                    <select id="skill-visibility" class="form-select">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="skill-visibility">Visibility</label>
+                    <select id="skill-visibility" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25">
                         <option value="PUBLIC">Public</option>
                         <option value="PRIVATE">Private</option>
                     </select>
-                    <div class="form-text">
+                    <div class="mt-1 text-xs text-zinc-500">
                         Public skills are visible to users. Private skills can only be called from skills in the same group.
                     </div>
                 </div>
 
                 <div class="mb-3">
-                    <label class="form-label" for="skill-description">Description</label>
-                    <input type="text" id="skill-description" class="form-control"
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="skill-description">Description</label>
+                    <input type="text" id="skill-description" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"
                            placeholder="Brief description of what this skill does">
                 </div>
 
                 <!-- Input Parameters ────────────────────────────────────── -->
                 <div class="mb-3">
-                    <label class="form-label">Input Parameters</label>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300">Input Parameters</label>
                     <div id="param-list" class="mb-2"></div>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addParam()">
-                        <i class="fa-solid fa-plus me-1"></i>Add Parameter
+                    <button type="button" class="rounded-md border border-zinc-600 px-2.5 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800" onclick="addParam()">
+                        <i class="fa-solid fa-plus mr-1"></i>Add Parameter
                     </button>
                 </div>
 
                 <div class="mb-3">
-                    <label class="form-label">Secrets</label>
-                    <div class="form-text mb-2">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300">Secrets</label>
+                    <div class="mb-2 text-xs text-zinc-500">
                         Define secret placeholders for this skill. Use names like <code>API_KEY</code> and reference them as <code>{{API_KEY}}</code> in tool arguments.
                     </div>
                     <div id="secret-list" class="mb-2"></div>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addSecret()">
-                        <i class="fa-solid fa-plus me-1"></i>Add Secret
+                    <button type="button" class="rounded-md border border-zinc-600 px-2.5 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800" onclick="addSecret()">
+                        <i class="fa-solid fa-plus mr-1"></i>Add Secret
                     </button>
                 </div>
 
                 <div class="mb-3">
-                    <label class="form-label" for="skill-instructions">Instructions</label>
-                    <textarea id="skill-instructions" class="form-control font-monospace" rows="8"
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="skill-instructions">Instructions</label>
+                    <textarea id="skill-instructions" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" rows="8"
                               placeholder="Detailed instructions for the AI: what to do, how to do it, constraints, output format…"></textarea>
                 </div>
 
                 <!-- Allowed Tools ─────────────────────────────────────────── -->
                 <div class="mb-3">
-                    <label class="form-label">Allowed Tools</label>
-                    <div id="tool-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary" style="min-height: 40px;"></div>
-                    <div class="input-group mb-1">
-                        <span class="input-group-text"><i class="fa-solid fa-magnifying-glass"></i></span>
-                        <input type="text" id="tool-search" class="form-control" placeholder="Search tools to add…" oninput="filterTools()">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300">Allowed Tools</label>
+                    <div id="tool-pill-container" class="mb-2 flex min-h-10 flex-wrap gap-1 rounded border border-zinc-700 bg-zinc-950 p-2"></div>
+                    <div class="mb-1 flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950 px-2">
+                        <span class="text-zinc-400"><i class="fa-solid fa-magnifying-glass"></i></span>
+                        <input type="text" id="tool-search" class="w-full bg-transparent py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none" placeholder="Search tools to add…" oninput="filterTools()">
                     </div>
-                    <div id="tool-dropdown" class="card" style="max-height: 200px; overflow-y: auto; display: none;">
-                        <ul id="tool-list" class="list-group list-group-flush"></ul>
+                    <div id="tool-dropdown" class="hidden max-h-52 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900">
+                        <ul id="tool-list" class="divide-y divide-zinc-800"></ul>
                     </div>
                 </div>
 
                 <!-- Allowed Types ─────────────────────────────────────────── -->
                 <div class="mb-3">
-                    <label class="form-label">Allowed Types
-                        <span class="text-muted small">(custom Java record types the skill may use)</span>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300">Allowed Types
+                        <span class="text-xs text-zinc-500">(custom Java record types the skill may use)</span>
                     </label>
-                    <div id="type-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary" style="min-height: 40px;"></div>
-                    <div class="input-group mb-1">
-                        <span class="input-group-text"><i class="fa-solid fa-cube"></i></span>
-                        <input type="text" id="type-search" class="form-control" placeholder="Search types to add…" oninput="filterTypes()">
+                    <div id="type-pill-container" class="mb-2 flex min-h-10 flex-wrap gap-1 rounded border border-zinc-700 bg-zinc-950 p-2"></div>
+                    <div class="mb-1 flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950 px-2">
+                        <span class="text-zinc-400"><i class="fa-solid fa-cube"></i></span>
+                        <input type="text" id="type-search" class="w-full bg-transparent py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none" placeholder="Search types to add…" oninput="filterTypes()">
                     </div>
-                    <div id="type-dropdown" class="card" style="max-height: 200px; overflow-y: auto; display: none;">
-                        <ul id="type-list" class="list-group list-group-flush"></ul>
+                    <div id="type-dropdown" class="hidden max-h-52 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900">
+                        <ul id="type-list" class="divide-y divide-zinc-800"></ul>
                     </div>
                 </div>
 
                 <!-- Sub-skills ──────────────────────────────────────────────── -->
                 <div>
-                    <label class="form-label">Sub-skills
-                        <span class="text-muted small">(skills this skill may invoke — presented to the AI as tools during execution)</span>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300">Sub-skills
+                        <span class="text-xs text-zinc-500">(skills this skill may invoke — presented to the AI as tools during execution)</span>
                     </label>
-                    <div id="subskill-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary" style="min-height: 40px;"></div>
-                    <div class="input-group mb-1">
-                        <span class="input-group-text"><i class="fa-solid fa-bolt"></i></span>
-                        <input type="text" id="subskill-search" class="form-control" placeholder="Search sub-skills to add…" oninput="filterSubSkills()">
+                    <div id="subskill-pill-container" class="mb-2 flex min-h-10 flex-wrap gap-1 rounded border border-zinc-700 bg-zinc-950 p-2"></div>
+                    <div class="mb-1 flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950 px-2">
+                        <span class="text-zinc-400"><i class="fa-solid fa-bolt"></i></span>
+                        <input type="text" id="subskill-search" class="w-full bg-transparent py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none" placeholder="Search sub-skills to add…" oninput="filterSubSkills()">
                     </div>
-                    <div id="subskill-dropdown" class="card" style="max-height: 200px; overflow-y: auto; display: none;">
-                        <ul id="subskill-list" class="list-group list-group-flush"></ul>
+                    <div id="subskill-dropdown" class="hidden max-h-52 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900">
+                        <ul id="subskill-list" class="divide-y divide-zinc-800"></ul>
                     </div>
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="button" id="btn-delete-skill" class="btn btn-outline-danger d-none" onclick="deleteCurrentSkillFromModal()">
-                    <i class="fa-solid fa-trash me-1"></i>Delete Skill
+                <button type="button" id="btn-delete-skill" class="hidden rounded-lg border border-rose-500/40 px-3 py-1.5 text-sm font-medium text-rose-300 transition-colors hover:bg-rose-500/15" onclick="deleteCurrentSkillFromModal()">
+                    <i class="fa-solid fa-trash mr-1"></i>Delete Skill
                 </button>
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" id="btn-save-skill" class="btn btn-primary" onclick="saveSkill()">
-                    <i class="fa-solid fa-save me-1"></i>Save Skill
+                <button type="button" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" id="btn-save-skill" class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-sm font-semibold text-black transition-colors hover:bg-[#e89a02]" onclick="saveSkill()">
+                    <i class="fa-solid fa-save mr-1"></i>Save Skill
                 </button>
             </div>
         </div>
@@ -192,31 +193,31 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="groupModalLabel">New Group</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-700 text-zinc-300 transition-colors hover:bg-zinc-800" data-bs-dismiss="modal" aria-label="Close">×</button>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="group-id">
                 <div id="group-modal-alert" class="mb-3"></div>
                 <div class="mb-3">
-                    <label class="form-label" for="group-name">Name <span class="text-danger">*</span></label>
-                    <input type="text" id="group-name" class="form-control" placeholder="e.g. Gmail Skills">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="group-name">Name <span class="text-rose-400">*</span></label>
+                    <input type="text" id="group-name" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. Gmail Skills">
                 </div>
                 <div class="mb-3">
-                    <label class="form-label" for="group-author">Author</label>
-                    <input type="text" id="group-author" class="form-control" placeholder="Team or owner">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="group-author">Author</label>
+                    <input type="text" id="group-author" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="Team or owner">
                 </div>
                 <div class="mb-0">
-                    <label class="form-label" for="group-category">Category</label>
-                    <select id="group-category" class="form-select">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="group-category">Category</label>
+                    <select id="group-category" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25">
                         <option value="">— select a category —</option>
                     </select>
-                    <div id="group-category-help" class="form-text text-muted"></div>
+                    <div id="group-category-help" class="mt-1 text-xs text-zinc-500"></div>
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" id="btn-save-group" class="btn btn-primary" onclick="saveGroup()">
-                    <i class="fa-solid fa-save me-1"></i>Save Group
+                <button type="button" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" id="btn-save-group" class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-sm font-semibold text-black transition-colors hover:bg-[#e89a02]" onclick="saveGroup()">
+                    <i class="fa-solid fa-save mr-1"></i>Save Group
                 </button>
             </div>
         </div>

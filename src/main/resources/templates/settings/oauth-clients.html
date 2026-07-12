@@ -12,59 +12,63 @@
 </head>
 <body class="bg-zinc-950 text-zinc-100">
 <div th:replace="~{fragments/header :: header}"></div>
-<div class="container py-5">
-    <h2 class="mb-1"><i class="fa-solid fa-key me-2"></i>OAuth Clients</h2>
-    <p class="text-muted mb-4">Configured OAuth clients for your account.</p>
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
+        <div>
+            <h2 class="flex items-center gap-2 text-2xl font-bold text-zinc-100"><i class="fa-solid fa-key text-[#fdaa02]"></i>OAuth Clients</h2>
+            <p class="vork-page-subtitle">Configured OAuth clients for your account.</p>
+        </div>
+    </div>
 
-    <div th:if="${oauthClientDeleteMessage != null}" class="alert alert-success" role="alert" th:text="${oauthClientDeleteMessage}"></div>
-    <div th:if="${oauthClientDeleteError != null}" class="alert alert-danger" role="alert" th:text="${oauthClientDeleteError}"></div>
+    <div class="vork-content-stack">
+        <div th:if="${oauthClientDeleteMessage != null}" class="rounded-lg border border-emerald-700/60 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-300" role="alert" th:text="${oauthClientDeleteMessage}"></div>
+        <div th:if="${oauthClientDeleteError != null}" class="rounded-lg border border-rose-700/60 bg-rose-950/40 px-3 py-2 text-sm text-rose-300" role="alert" th:text="${oauthClientDeleteError}"></div>
 
-    <div class="card" th:if="${oauthClients != null and !#lists.isEmpty(oauthClients)}">
-        <div class="card-body p-0">
-            <div class="table-responsive">
-                <table class="table table-dark table-striped align-middle mb-0">
+        <div class="rounded-xl border border-zinc-800 bg-zinc-900" th:if="${oauthClients != null and !#lists.isEmpty(oauthClients)}">
+        <div class="overflow-x-auto">
+                <table class="min-w-full text-left text-sm text-zinc-200">
                     <thead>
-                    <tr>
-                        <th>Profile</th>
-                        <th>Client Name</th>
-                        <th>Status</th>
-                        <th>Expires</th>
-                        <th>Scopes</th>
-                        <th>Placeholder</th>
-                        <th th:if="${canManageUsers}">Actions</th>
+                    <tr class="border-b border-zinc-800 text-xs uppercase tracking-wide text-zinc-400">
+                        <th class="px-3 py-2">Profile</th>
+                        <th class="px-3 py-2">Client Name</th>
+                        <th class="px-3 py-2">Status</th>
+                        <th class="px-3 py-2">Expires</th>
+                        <th class="px-3 py-2">Scopes</th>
+                        <th class="px-3 py-2">Placeholder</th>
+                        <th class="px-3 py-2" th:if="${canManageUsers}">Actions</th>
                     </tr>
                     </thead>
                     <tbody>
-                    <tr th:each="client : ${oauthClients}">
-                        <td>
-                            <div class="fw-semibold" th:text="${client.profileName}"></div>
-                            <span th:if="${client.defaultProfile}" class="badge bg-info text-dark mt-1">Default</span>
+                    <tr th:each="client : ${oauthClients}" class="border-b border-zinc-800/80 last:border-0">
+                        <td class="px-3 py-2 align-top">
+                            <div class="font-semibold text-zinc-100" th:text="${client.profileName}"></div>
+                            <span th:if="${client.defaultProfile}" class="mt-1 inline-flex rounded-md bg-cyan-600/20 px-2 py-0.5 text-xs font-semibold text-cyan-300 ring-1 ring-cyan-500/30">Default</span>
                         </td>
-                        <td>
-                            <div class="fw-semibold" th:text="${client.clientName}"></div>
+                        <td class="px-3 py-2 align-top">
+                            <div class="font-semibold text-zinc-100" th:text="${client.clientName}"></div>
                         </td>
-                        <td>
-                            <span th:if="${client.connected}" class="badge bg-success">Connected</span>
-                            <span th:if="${!client.connected and client.configComplete}" class="badge bg-warning text-dark">Configured</span>
-                            <span th:if="${!client.connected and !client.configComplete}" class="badge bg-secondary">Incomplete</span>
+                        <td class="px-3 py-2 align-top">
+                            <span th:if="${client.connected}" class="inline-flex rounded-md bg-emerald-600/20 px-2 py-0.5 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-500/30">Connected</span>
+                            <span th:if="${!client.connected and client.configComplete}" class="inline-flex rounded-md bg-amber-600/20 px-2 py-0.5 text-xs font-semibold text-amber-300 ring-1 ring-amber-500/30">Configured</span>
+                            <span th:if="${!client.connected and !client.configComplete}" class="inline-flex rounded-md bg-zinc-700/30 px-2 py-0.5 text-xs font-semibold text-zinc-300 ring-1 ring-zinc-600">Incomplete</span>
                         </td>
-                        <td>
+                        <td class="px-3 py-2 align-top text-zinc-300">
                             <span th:if="${client.accessTokenExpiresAt > 0}"
                                   th:text="${#dates.format(new java.util.Date(client.accessTokenExpiresAt), 'yyyy-MM-dd HH:mm:ss')}"></span>
-                            <span th:if="${client.accessTokenExpiresAt <= 0}" class="text-muted">-</span>
+                            <span th:if="${client.accessTokenExpiresAt <= 0}" class="text-zinc-500">-</span>
                         </td>
-                        <td>
-                            <span th:if="${#lists.isEmpty(client.scopes)}" class="text-muted">-</span>
+                        <td class="px-3 py-2 align-top text-zinc-300">
+                            <span th:if="${#lists.isEmpty(client.scopes)}" class="text-zinc-500">-</span>
                             <span th:if="${!#lists.isEmpty(client.scopes)}" th:text="${#strings.listJoin(client.scopes, ', ')}"></span>
                         </td>
-                        <td>
-                            <code th:text="${client.placeholder}"></code>
+                        <td class="px-3 py-2 align-top">
+                            <code class="rounded bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-300" th:text="${client.placeholder}"></code>
                         </td>
-                        <td th:if="${canManageUsers}">
+                        <td class="px-3 py-2 align-top" th:if="${canManageUsers}">
                             <form method="post" th:action="@{|/settings/oauth-clients/${client.uuid}/delete|}"
                                   onsubmit="return confirm('Delete OAuth client ' + this.dataset.clientName + ' / ' + this.dataset.profileName + '?');"
                                   th:attr="data-client-name=${client.clientName},data-profile-name=${client.profileName}">
-                                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                                <button type="submit" class="rounded-md border border-rose-500/40 px-2 py-1 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-500/15">Delete</button>
                             </form>
                         </td>
                     </tr>
@@ -72,11 +76,13 @@
                 </table>
             </div>
         </div>
-    </div>
 
-    <div th:if="${oauthClients == null or #lists.isEmpty(oauthClients)}" class="card">
-        <div class="card-body text-center py-5 text-muted">
-            <i class="fa-solid fa-circle-info me-2"></i>No OAuth clients are configured yet.
+        <div th:if="${oauthClients == null or #lists.isEmpty(oauthClients)}" class="rounded-xl border border-zinc-800 bg-zinc-900">
+            <div class="vork-empty-state-card">
+                <i class="fa-solid fa-circle-info vork-empty-icon"></i>
+                <p class="vork-empty-title">No OAuth clients configured</p>
+                <p class="vork-empty-hint">Clients will appear here after first OAuth connection.</p>
+            </div>
         </div>
     </div>
 </div>

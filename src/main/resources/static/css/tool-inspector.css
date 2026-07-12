@@ -1,0 +1,22 @@
+/* tool-inspector.css — Vork Tool Inspector page */
+
+.tool-id {
+    font-family: monospace;
+    font-size: 0.8rem;
+    opacity: 0.6;
+}
+
+.tool-description {
+    white-space: pre-wrap;
+    font-size: 0.875rem;
+}
+
+.category-header {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+#toolSearch {
+    max-width: 360px;
+}

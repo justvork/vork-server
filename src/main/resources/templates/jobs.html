@@ -8,44 +8,36 @@
     <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
     <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
     <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
-    <style>
-        .badge-MANUAL        { background: #6c757d; }
-        .badge-ONE_TIME      { background: #0d6efd; }
-        .badge-REPEAT        { background: #198754; }
-        .badge-WAITING       { background: #0dcaf0; color: #000; }
-        .badge-ACTIVE        { background: #198754; }
-        .badge-AWAITING_INPUT{ background: #fd7e14; }
-        .badge-PAUSED        { background: #ffc107; color: #000; }
-        .truncate { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    </style>
+    <link rel="stylesheet" href="/css/jobs-page.css" th:href="@{/css/jobs-page.css}">
 </head>
 <body class="bg-zinc-950 text-zinc-100">
 <div th:replace="~{fragments/header :: header}"></div>
 
-<div class="container py-4" style="max-width: 960px;">
-    <div class="d-flex align-items-center justify-content-between mb-4">
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
         <div>
-            <div>
-                <h2 class="mb-0"><i class="fa-solid fa-clock-rotate-left me-2"></i>Jobs</h2>
-                <p class="text-muted small mb-0">Scheduled and manual AI background tasks</p>
-            </div>
+            <h2 class="mb-0"><i class="fa-solid fa-clock-rotate-left me-2"></i>Jobs</h2>
+            <p class="vork-page-subtitle">Scheduled and manual AI background tasks</p>
         </div>
-        <button class="btn btn-primary" onclick="openCreate()">
+        <div class="vork-page-header-actions">
+            <button class="btn btn-primary" onclick="openCreate()">
             <i class="fa-solid fa-plus me-2"></i>New Job
-        </button>
+            </button>
+        </div>
     </div>
 
-    <div id="alert-area" class="mb-3"></div>
+    <div class="vork-content-stack">
+        <div id="alert-area"></div>
 
-    <!-- Jobs table -->
-    <div class="card">
-        <div class="card-body p-0">
-            <div th:if="${#lists.isEmpty(jobs)}" class="text-center text-muted py-5">
-                <i class="fa-solid fa-clock fa-2x mb-3 d-block"></i>
-                No jobs yet. Click <strong>New Job</strong> to create one.
-            </div>
-            <table th:unless="${#lists.isEmpty(jobs)}" class="table table-hover mb-0 align-middle">
+        <!-- Jobs table -->
+        <div class="card">
+            <div class="card-body p-0">
+                <div th:if="${#lists.isEmpty(jobs)}" class="vork-empty-state-card">
+                    <i class="fa-solid fa-clock vork-empty-icon"></i>
+                    <p class="vork-empty-title">No jobs created yet</p>
+                    <p class="vork-empty-hint">Create a background job to automate recurring AI tasks.</p>
+                </div>
+                <table th:unless="${#lists.isEmpty(jobs)}" class="table table-hover mb-0 align-middle">
                 <thead class="table-dark">
                     <tr>
                         <th>Name</th>
@@ -156,7 +148,8 @@
                         </td>
                     </tr>
                 </tbody>
-            </table>
+                </table>
+            </div>
         </div>
     </div>
 </div>
@@ -215,17 +208,17 @@
                     </div>
 
                     <!-- Start time (ONE_TIME + REPEAT) -->
-                    <div class="col-md-6" id="row-start-time" style="display:none;">
+                    <div class="col-md-6 jobs-schedule-hidden" id="row-start-time">
                         <label class="form-label" for="job-start-time">Start Time</label>
                         <input type="datetime-local" id="job-start-time" class="form-control">
                     </div>
 
                     <!-- Repeat duration (REPEAT only) -->
-                    <div class="col-md-3" id="row-repeat-duration" style="display:none;">
+                    <div class="col-md-3 jobs-schedule-hidden" id="row-repeat-duration">
                         <label class="form-label" for="job-repeat-duration">Every</label>
                         <input type="number" id="job-repeat-duration" class="form-control" min="1" value="1">
                     </div>
-                    <div class="col-md-3" id="row-duration-type" style="display:none;">
+                    <div class="col-md-3 jobs-schedule-hidden" id="row-duration-type">
                         <label class="form-label" for="job-duration-type">&nbsp;</label>
                         <select id="job-duration-type" class="form-select">
                             <option value="MINUTES">Minutes</option>
@@ -264,11 +257,10 @@
                     <div class="col-12">
                         <label class="form-label">Session Skills</label>
                         <div id="job-skills-pills" class="d-flex flex-wrap gap-1 mb-1"></div>
-                        <div class="input-group input-group-sm" style="max-width:380px;position:relative">
+                        <div class="input-group input-group-sm jobs-search-wrap">
                             <input id="job-skill-search" type="text" class="form-control"
                                    placeholder="Search and add skill…" autocomplete="off">
-                            <div id="job-skill-dropdown" class="skills-search-dropdown d-none"
-                                 style="position:absolute;top:100%;left:0;right:0;z-index:300"></div>
+                            <div id="job-skill-dropdown" class="skills-search-dropdown jobs-search-dropdown hidden"></div>
                         </div>
                         <div class="form-text">Extra skills available to this job's AI session.</div>
                     </div>
@@ -277,11 +269,10 @@
                     <div class="col-12">
                         <label class="form-label">Session Tools</label>
                         <div id="job-tools-pills" class="d-flex flex-wrap gap-1 mb-1"></div>
-                        <div class="input-group input-group-sm" style="max-width:380px;position:relative">
+                        <div class="input-group input-group-sm jobs-search-wrap">
                             <input id="job-tool-search" type="text" class="form-control"
                                    placeholder="Search and add tool…" autocomplete="off">
-                            <div id="job-tool-dropdown" class="skills-search-dropdown d-none"
-                                 style="position:absolute;top:100%;left:0;right:0;z-index:300"></div>
+                            <div id="job-tool-dropdown" class="skills-search-dropdown jobs-search-dropdown hidden"></div>
                         </div>
                         <div class="form-text">Extra tools available to this job's AI session.</div>
                     </div>
@@ -300,378 +291,7 @@
     </div>
 </div>
 
-<script>
-    let jobModal;
-    let allJobs = [];
-    let _jobToolsCache = null;
-    let _jobSkillsCache = null;
-    let pendingJobSkillUuids = [];
-    let pendingJobToolIds    = [];
-
-    // ── Initialise ────────────────────────────────────────────────────────────
-    document.addEventListener('DOMContentLoaded', function () {
-        jobModal = new VorkModal(document.getElementById('jobModal'));
-        loadAgents();
-        loadModels();
-        // Hydrate allJobs from server-rendered data for the edit flow
-        loadJobsJson();
-    });
-
-    function loadAgents() {
-        fetch('/api/chat/agents?type=BACKGROUND')
-            .then(function (r) { return r.ok ? r.json() : []; })
-            .then(function (agents) {
-                var sel = document.getElementById('job-agent');
-                agents.forEach(function (a) {
-                    var opt = document.createElement('option');
-                    opt.value = a.uuid;
-                    opt.textContent = a.name;
-                    sel.appendChild(opt);
-                });
-                // Default new jobs to the Automation Reporter
-                if (!sel.value) {
-                    sel.value = 'agent-tpl-automation-reporter-001';
-                }
-            })
-            .catch(function () {});
-    }
-
-    function loadModels() {
-        fetch('/api/chat/models')
-            .then(function (r) { return r.ok ? r.json() : []; })
-            .then(function (groups) {
-                var sel = document.getElementById('job-model');
-                groups.forEach(function (g) {
-                    if (!g.configured) return;
-                    g.models.forEach(function (m) {
-                        var opt = document.createElement('option');
-                        opt.value = g.providerKey + ':' + m.modelId;
-                        opt.textContent = g.providerLabel + ' — ' + m.label;
-                        sel.appendChild(opt);
-                    });
-                });
-            })
-            .catch(function () {});
-    }
-
-    function loadJobsJson() {
-        fetch('/api/jobs')
-            .then(function (r) { return r.ok ? r.json() : []; })
-            .then(function (jobs) { allJobs = jobs; })
-            .catch(function () {});
-    }
-
-    // ── Modal helpers ─────────────────────────────────────────────────────────
-    function openCreate() {
-        document.getElementById('jobModalLabel').textContent = 'New Job';
-        document.getElementById('job-id').value = '';
-        document.getElementById('job-name').value = '';
-        document.getElementById('job-prompt').value = '';
-        document.getElementById('job-start-time').value = '';
-        document.getElementById('job-repeat-duration').value = 1;
-        document.getElementById('job-duration-type').value = 'HOURS';
-        document.getElementById('job-agent').value = 'agent-tpl-automation-reporter-001';
-        document.getElementById('job-model').value = '';
-        document.getElementById('job-oob-timeout').value = 240;
-        document.querySelectorAll('input[name="invocationType"]').forEach(function (r) { r.checked = false; });
-        pendingJobSkillUuids = [];
-        pendingJobToolIds    = [];
-        renderJobSkillPills();
-        renderJobToolPills();
-        document.getElementById('modal-alert-area').innerHTML = '';
-        onTypeChange();
-        jobModal.show();
-    }
-
-    function openEdit(id) {
-        var job = allJobs.find(function (j) { return j.id === id; });
-        if (!job) { showAlert('Job not found.', 'warning'); return; }
-
-        document.getElementById('jobModalLabel').textContent = 'Edit Job';
-        document.getElementById('job-id').value = job.id;
-        document.getElementById('job-name').value = job.name;
-        document.getElementById('job-prompt').value = job.aiPrompt;
-        document.getElementById('job-agent').value = job.agentTemplateId || '';
-
-        var modelKey = job.provider ? job.provider + ':' + (job.modelId || '') : '';
-        document.getElementById('job-model').value = modelKey;
-
-        var typeRadio = document.getElementById('type-' + job.invocationType);
-        if (typeRadio) typeRadio.checked = true;
-        onTypeChange();
-
-        if (job.startTime) {
-            var dt = new Date(job.startTime);
-            document.getElementById('job-start-time').value = toDatetimeLocal(dt);
-        }
-        document.getElementById('job-repeat-duration').value = job.repeatDuration || 1;
-        document.getElementById('job-duration-type').value = job.durationType || 'HOURS';
-        document.getElementById('job-oob-timeout').value = job.oobTimeoutMinutes > 0 ? job.oobTimeoutMinutes : 240;
-        pendingJobSkillUuids = job.skillUuids ? job.skillUuids.slice() : [];
-        pendingJobToolIds    = job.toolIds    ? job.toolIds.slice()    : [];
-        renderJobSkillPills();
-        renderJobToolPills();
-        document.getElementById('modal-alert-area').innerHTML = '';
-        jobModal.show();
-    }
-
-    function onTypeChange() {
-        var type = selectedType();
-        var showStart   = type === 'ONE_TIME' || type === 'REPEAT';
-        var showRepeat  = type === 'REPEAT';
-        document.getElementById('row-start-time').style.display      = showStart  ? '' : 'none';
-        document.getElementById('row-repeat-duration').style.display = showRepeat ? '' : 'none';
-        document.getElementById('row-duration-type').style.display   = showRepeat ? '' : 'none';
-    }
-
-    function selectedType() {
-        var radio = document.querySelector('input[name="invocationType"]:checked');
-        return radio ? radio.value : null;
-    }
-
-    // ── CRUD ──────────────────────────────────────────────────────────────────
-    async function saveJob() {
-        var id   = document.getElementById('job-id').value;
-        var type = selectedType();
-        if (!type) { showAlert('Please select an invocation type.', 'warning'); return; }
-
-        var modelVal = document.getElementById('job-model').value;
-        var sep      = modelVal ? modelVal.indexOf(':') : -1;
-        var provider = sep >= 0 ? modelVal.substring(0, sep) : null;
-        var modelId  = sep >= 0 ? modelVal.substring(sep + 1) : null;
-
-        var body = {
-            name:             document.getElementById('job-name').value.trim(),
-            aiPrompt:         document.getElementById('job-prompt').value.trim(),
-            invocationType:   type,
-            startTime:        document.getElementById('job-start-time').value || null,
-            repeatDuration:   parseInt(document.getElementById('job-repeat-duration').value) || 0,
-            durationType:     document.getElementById('job-duration-type').value,
-            agentTemplateId:  document.getElementById('job-agent').value || null,
-            provider:         provider,
-            modelId:          modelId,
-            oobTimeoutMinutes: parseInt(document.getElementById('job-oob-timeout').value) || 240,
-            skillUuids: pendingJobSkillUuids.slice(),
-            toolIds:    pendingJobToolIds.slice()
-        };
-
-        var btn = document.getElementById('btn-save-job');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
-
-        try {
-            var url    = id ? '/api/jobs/' + id : '/api/jobs';
-            var method = id ? 'PUT' : 'POST';
-            var res    = await fetch(url, {
-                method: method,
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
-            });
-            var data = await res.json();
-            if (data.error) { showAlert(data.error, 'danger'); return; }
-            jobModal.hide();
-            showAlert((id ? 'Job updated.' : 'Job created.'), 'success');
-            setTimeout(function () { location.reload(); }, 800);
-        } catch (e) {
-            showAlert('Network error saving job.', 'danger');
-        } finally {
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fa-solid fa-save me-1"></i>Save Job';
-        }
-    }
-
-    async function deleteJob(id) {
-        if (!confirm('Delete this job? This cannot be undone.')) return;
-        try {
-            var res  = await fetch('/api/jobs/' + id, { method: 'DELETE' });
-            var data = await res.json();
-            if (data.error) { showAlert(data.error, 'danger'); return; }
-            showAlert('Job deleted.', 'warning');
-            setTimeout(function () { location.reload(); }, 600);
-        } catch (e) {
-            showAlert('Network error deleting job.', 'danger');
-        }
-    }
-
-    async function runNow(id) {
-        try {
-            var res  = await fetch('/api/jobs/' + id + '/run', { method: 'POST' });
-            var data = await res.json();
-            if (data.error) { showAlert(data.error, 'danger'); return; }
-            window.open('/job-monitor.html?session=' + encodeURIComponent(data.trackingSessionUuid), '_blank');
-        } catch (e) {
-            showAlert('Network error triggering job.', 'danger');
-        }
-    }
-
-    async function pauseJob(id) {
-        try {
-            var res  = await fetch('/api/jobs/' + id + '/pause', { method: 'POST' });
-            var data = await res.json();
-            if (data.error) { showAlert(data.error, 'danger'); return; }
-            showAlert('Job paused.', 'warning');
-            setTimeout(function () { location.reload(); }, 600);
-        } catch (e) {
-            showAlert('Network error pausing job.', 'danger');
-        }
-    }
-
-    async function resumeJob(id) {
-        try {
-            var res  = await fetch('/api/jobs/' + id + '/resume', { method: 'POST' });
-            var data = await res.json();
-            if (data.error) { showAlert(data.error, 'danger'); return; }
-            showAlert('Job resumed.', 'success');
-            setTimeout(function () { location.reload(); }, 600);
-        } catch (e) {
-            showAlert('Network error resuming job.', 'danger');
-        }
-    }
-
-    // ── Job modal — skills / tools ────────────────────────────────────────────
-    function renderJobSkillPills() {
-        var container = document.getElementById('job-skills-pills');
-        if (!container) return;
-        container.innerHTML = '';
-        pendingJobSkillUuids.forEach(function (uuid) {
-            var skill = (_jobSkillsCache || []).find(function (s) { return s.uuid === uuid; });
-            var label = skill ? skill.name : uuid;
-            var pill = document.createElement('span');
-            pill.className = 'extra-pill skill-pill';
-            pill.textContent = label;
-            var btn = document.createElement('button');
-            btn.className = 'pill-remove'; btn.innerHTML = '&times;';
-            btn.addEventListener('click', function () {
-                pendingJobSkillUuids = pendingJobSkillUuids.filter(function (u) { return u !== uuid; });
-                renderJobSkillPills();
-            });
-            pill.appendChild(btn);
-            container.appendChild(pill);
-        });
-    }
-
-    function renderJobToolPills() {
-        var container = document.getElementById('job-tools-pills');
-        if (!container) return;
-        container.innerHTML = '';
-        pendingJobToolIds.forEach(function (id) {
-            var tool = (_jobToolsCache || []).find(function (t) { return t.id === id; });
-            var label = tool ? tool.name : id;
-            var pill = document.createElement('span');
-            pill.className = 'extra-pill tool-pill';
-            pill.textContent = label;
-            var btn = document.createElement('button');
-            btn.className = 'pill-remove'; btn.innerHTML = '&times;';
-            btn.addEventListener('click', function () {
-                pendingJobToolIds = pendingJobToolIds.filter(function (i) { return i !== id; });
-                renderJobToolPills();
-            });
-            pill.appendChild(btn);
-            container.appendChild(pill);
-        });
-    }
-
-    function setupJobSkillSearch() {
-        var input    = document.getElementById('job-skill-search');
-        var dropdown = document.getElementById('job-skill-dropdown');
-        if (!input || !dropdown) return;
-        input.addEventListener('input', async function () {
-            var q = input.value.trim().toLowerCase();
-            dropdown.classList.add('d-none'); dropdown.innerHTML = '';
-            if (q.length < 1) return;
-            if (!_jobSkillsCache) {
-                try {
-                    var r = await fetch('/api/skills?page=0&pageSize=100');
-                    if (r.ok) _jobSkillsCache = await r.json();
-                } catch (e) { _jobSkillsCache = []; }
-            }
-            var matches = (_jobSkillsCache || []).filter(function (s) {
-                return s.name.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q);
-            }).slice(0, 10);
-            if (!matches.length) return;
-            matches.forEach(function (skill) {
-                var item = document.createElement('div');
-                item.className = 'skills-search-item';
-                item.textContent = skill.name;
-                item.title = skill.description || '';
-                item.addEventListener('click', function () {
-                    if (!pendingJobSkillUuids.includes(skill.uuid)) {
-                        pendingJobSkillUuids.push(skill.uuid);
-                        renderJobSkillPills();
-                    }
-                    input.value = ''; dropdown.classList.add('d-none');
-                });
-                dropdown.appendChild(item);
-            });
-            dropdown.classList.remove('d-none');
-        });
-        document.addEventListener('click', function (e) {
-            if (!input.contains(e.target) && !dropdown.contains(e.target)) dropdown.classList.add('d-none');
-        });
-    }
-
-    function setupJobToolSearch() {
-        var input    = document.getElementById('job-tool-search');
-        var dropdown = document.getElementById('job-tool-dropdown');
-        if (!input || !dropdown) return;
-        input.addEventListener('input', async function () {
-            var q = input.value.trim().toLowerCase();
-            dropdown.classList.add('d-none'); dropdown.innerHTML = '';
-            if (q.length < 1) return;
-            if (!_jobToolsCache) {
-                try {
-                    var r = await fetch('/api/chat/tools');
-                    if (r.ok) _jobToolsCache = await r.json();
-                } catch (e) { _jobToolsCache = []; }
-            }
-            var matches = (_jobToolsCache || []).filter(function (t) {
-                return t.name.toLowerCase().includes(q)
-                    || (t.description || '').toLowerCase().includes(q)
-                    || (t.category || '').toLowerCase().includes(q);
-            }).slice(0, 10);
-            if (!matches.length) return;
-            matches.forEach(function (tool) {
-                var item = document.createElement('div');
-                item.className = 'skills-search-item';
-                item.textContent = tool.name + (tool.category ? '  [' + tool.category + ']' : '');
-                item.title = tool.description || '';
-                item.addEventListener('click', function () {
-                    if (!pendingJobToolIds.includes(tool.id)) {
-                        pendingJobToolIds.push(tool.id);
-                        renderJobToolPills();
-                    }
-                    input.value = ''; dropdown.classList.add('d-none');
-                });
-                dropdown.appendChild(item);
-            });
-            dropdown.classList.remove('d-none');
-        });
-        document.addEventListener('click', function (e) {
-            if (!input.contains(e.target) && !dropdown.contains(e.target)) dropdown.classList.add('d-none');
-        });
-    }
-
-    // Wire up search inputs after DOM ready
-    document.addEventListener('DOMContentLoaded', function () {
-        setupJobSkillSearch();
-        setupJobToolSearch();
-    });
-
-    // ── Utility ───────────────────────────────────────────────────────────────
-    function showAlert(msg, type) {
-        var modalEl  = document.getElementById('jobModal');
-        var isOpen   = modalEl && modalEl.classList.contains('show');
-        var area     = document.getElementById(isOpen ? 'modal-alert-area' : 'alert-area');
-        area.innerHTML = '<div class="alert alert-' + type + ' alert-dismissible fade show py-2 small" role="alert">' +
-            msg + '<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>';
-    }
-
-    function toDatetimeLocal(d) {
-        var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
-        return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
-               'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-    }
-</script>
+<script src="/js/jobs-page.js" th:src="@{/js/jobs-page.js}"></script>
 <script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
 </body>
 </html>

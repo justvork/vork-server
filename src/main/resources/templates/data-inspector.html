@@ -8,7 +8,6 @@
     <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
     <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
     <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
     <link rel="stylesheet" href="/css/data-inspector.css" th:href="@{/css/data-inspector.css}">
 </head>
 <body class="bg-zinc-950 text-zinc-100">
@@ -16,82 +15,92 @@
 
 <!-- Type selector bar -->
 <div class="inspector-type-bar">
-    <div class="container-fluid d-flex align-items-center gap-3 py-2 px-3">
-        <span class="text-muted small fw-semibold text-nowrap">
-            <i class="fa-solid fa-database me-1"></i> Record
+    <div class="vork-page-shell flex items-center gap-3 py-2">
+        <span class="whitespace-nowrap text-xs font-semibold text-zinc-400">
+            <i class="fa-solid fa-database mr-1"></i> Record
         </span>
-        <select id="type-select" class="form-select form-select-sm inspector-type-select">
+        <select id="type-select" class="inspector-type-select w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25">
             <option value="">— select a record schema —</option>
         </select>
-        <div id="type-actions" class="d-none d-flex align-items-center gap-2 ms-auto">
-            <span id="type-count-badge" class="badge text-bg-secondary"></span>
-            <button id="create-btn" type="button" class="btn btn-sm btn-primary text-nowrap">
-                <i class="fa-solid fa-plus me-1"></i>Create
+        <div id="type-actions" class="ml-auto hidden items-center gap-2">
+            <span id="type-count-badge" class="inline-flex rounded-md border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-xs font-semibold text-zinc-300"></span>
+            <button id="create-btn" type="button" class="whitespace-nowrap rounded-lg bg-[#fdaa02] px-3 py-1.5 text-xs font-semibold text-black transition-colors hover:bg-[#e89a02]">
+                <i class="fa-solid fa-plus mr-1"></i>Create
             </button>
         </div>
     </div>
 </div>
 
-<div class="container-fluid px-3 py-3">
+<div class="vork-page-shell py-3">
 
     <!-- Initial / loading / empty states -->
-    <div id="state-initial" class="inspector-state text-center py-5 text-muted">
-        <i class="fa-solid fa-database fa-2x mb-3 d-block"></i>
-        <p class="mb-0">Select a type above to inspect its data.</p>
-    </div>
-
-    <div id="state-loading" class="inspector-state d-none text-center py-5 text-muted">
-        <div class="spinner-border text-secondary mb-3" role="status">
-            <span class="visually-hidden">Loading…</span>
+    <div id="state-initial" class="inspector-state card">
+        <div class="vork-empty-state-card">
+            <i class="fa-solid fa-database vork-empty-icon"></i>
+            <p class="vork-empty-title">Select a record type</p>
+            <p class="vork-empty-hint">Choose a schema above to inspect and manage stored data.</p>
         </div>
-        <p class="mb-0">Loading data…</p>
     </div>
 
-    <div id="state-empty" class="inspector-state d-none text-center py-5 text-muted">
-        <i class="fa-solid fa-inbox fa-2x mb-3 d-block"></i>
-        <p class="mb-1">No records found.</p>
-        <button class="btn btn-sm btn-outline-primary mt-2" onclick="document.getElementById('create-btn').click()">
-            <i class="fa-solid fa-plus me-1"></i>Create your first record
-        </button>
+    <div id="state-loading" class="inspector-state hidden card">
+        <div class="vork-empty-state-card">
+            <div class="h-6 w-6 animate-spin rounded-full border-2 border-zinc-600 border-t-zinc-300" role="status" aria-label="Loading"></div>
+            <p class="vork-empty-hint mt-2">Loading data…</p>
+        </div>
     </div>
 
-    <div id="state-error" class="inspector-state d-none">
-        <div class="alert alert-danger" id="error-message"></div>
+    <div id="state-empty" class="inspector-state hidden card">
+        <div class="vork-empty-state-card">
+            <i class="fa-solid fa-inbox vork-empty-icon"></i>
+            <p class="vork-empty-title">No records found</p>
+            <p class="vork-empty-hint">Create your first record for this schema.</p>
+            <button class="mt-3 rounded-lg border border-cyan-500/40 px-3 py-1.5 text-xs font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15" onclick="document.getElementById('create-btn').click()">
+                <i class="fa-solid fa-plus mr-1"></i>Create your first record
+            </button>
+        </div>
+    </div>
+
+    <div id="state-error" class="inspector-state hidden">
+        <div class="rounded-lg border border-rose-700/60 bg-rose-950/40 px-3 py-2 text-sm text-rose-300" id="error-message"></div>
     </div>
 
     <!-- Data table -->
-    <div id="state-table" class="inspector-state d-none">
-        <div class="d-flex flex-column flex-md-row gap-2 mb-3 align-items-md-center">
-            <select id="search-query-type" class="form-select form-select-sm" style="max-width: 140px;">
-                <option value="SQL" selected>SQL</option>
-                <option value="MONGO">Mongo JSON</option>
-            </select>
-            <input id="search-query" type="text" class="form-control form-control-sm"
-                   placeholder="Search records (e.g. status = 'ACTIVE' AND age >= 2)">
-            <button id="search-apply-btn" type="button" class="btn btn-sm btn-outline-primary text-nowrap">
-                <i class="fa-solid fa-magnifying-glass me-1"></i>Search
-            </button>
-            <button id="search-clear-btn" type="button" class="btn btn-sm btn-outline-secondary text-nowrap">
-                <i class="fa-solid fa-xmark me-1"></i>Clear
-            </button>
-        </div>
-        <div class="table-responsive">
-            <table class="table table-sm table-hover inspector-table align-middle mb-0">
-                <thead id="table-head"></thead>
-                <tbody id="table-body"></tbody>
-            </table>
-        </div>
+    <div id="state-table" class="inspector-state hidden">
+        <div class="card">
+            <div class="card-body">
+                <div class="d-flex flex-column flex-md-row gap-2 mb-3 align-items-md-center">
+                    <select id="search-query-type" class="form-select form-select-sm max-w-[140px]">
+                        <option value="SQL" selected>SQL</option>
+                        <option value="MONGO">Mongo JSON</option>
+                    </select>
+                    <input id="search-query" type="text" class="form-control form-control-sm"
+                           placeholder="Search records (e.g. status = 'ACTIVE' AND age >= 2)">
+                    <button id="search-apply-btn" type="button" class="btn btn-sm btn-outline-primary text-nowrap">
+                        <i class="fa-solid fa-magnifying-glass me-1"></i>Search
+                    </button>
+                    <button id="search-clear-btn" type="button" class="btn btn-sm btn-outline-secondary text-nowrap">
+                        <i class="fa-solid fa-xmark me-1"></i>Clear
+                    </button>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover inspector-table align-middle mb-0">
+                        <thead id="table-head"></thead>
+                        <tbody id="table-body"></tbody>
+                    </table>
+                </div>
 
-        <!-- Pagination -->
-        <div class="d-flex align-items-center justify-content-between mt-3 px-1">
-            <span id="pagination-info" class="text-muted small"></span>
-            <div class="d-flex gap-2">
-                <button id="prev-btn" type="button" class="btn btn-sm btn-outline-secondary" disabled>
-                    <i class="fa-solid fa-chevron-left"></i> Previous
-                </button>
-                <button id="next-btn" type="button" class="btn btn-sm btn-outline-secondary" disabled>
-                    Next <i class="fa-solid fa-chevron-right"></i>
-                </button>
+                <!-- Pagination -->
+                <div class="d-flex align-items-center justify-content-between mt-3 px-1">
+                    <span id="pagination-info" class="text-muted small"></span>
+                    <div class="d-flex gap-2">
+                        <button id="prev-btn" type="button" class="btn btn-sm btn-outline-secondary" disabled>
+                            <i class="fa-solid fa-chevron-left"></i> Previous
+                        </button>
+                        <button id="next-btn" type="button" class="btn btn-sm btn-outline-secondary" disabled>
+                            Next <i class="fa-solid fa-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -110,10 +119,10 @@
                 <!-- dynamic form rendered here by data-inspector.js -->
             </div>
             <div class="modal-footer">
-                <span id="modal-error" class="text-danger small me-auto d-none"></span>
+                <span id="modal-error" class="mr-auto hidden text-xs text-rose-300"></span>
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" id="modal-save-btn" class="btn btn-primary">
-                    <i class="fa-solid fa-floppy-disk me-1"></i>Save
+                    <i class="fa-solid fa-floppy-disk mr-1"></i>Save
                 </button>
             </div>
         </div>

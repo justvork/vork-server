@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     if (!token) {
         showError('Invalid authorization URL: missing token parameter');
-        document.getElementById('authForm').style.display = 'none';
+        document.getElementById('authForm').classList.add('hidden');
         return;
     }
     
@@ -64,7 +64,7 @@ function displayActionDetails(data) {
     const detailsDiv = document.getElementById('actionDetails');
     
     let html = `
-        <h5><i class="fa-solid fa-tasks me-2"></i>Action Details</h5>
+        <h5 class="mb-2 flex items-center gap-2 text-sm font-semibold text-zinc-100"><i class="fa-solid fa-tasks text-[#fdaa02]"></i>Action Details</h5>
     `;
     
     if (data.toolName) {
@@ -96,7 +96,7 @@ function submitAuthorization() {
     const submitBtn = document.querySelector('button[type="submit"]');
     const originalText = submitBtn.innerHTML;
     submitBtn.disabled = true;
-    submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-2"></i>Verifying...';
+    submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Verifying...';
     
     fetch('/api/authorization/approve', {
         method: 'POST',
@@ -150,7 +150,7 @@ function denyAuthorization() {
     
     const originalText = denyBtn.innerHTML;
     denyBtn.disabled = true;
-    denyBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-2"></i>Denying...';
+    denyBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Denying...';
     
     fetch('/api/authorization/deny', {
         method: 'POST',
@@ -193,7 +193,7 @@ function showError(message) {
     const errorMessage = document.getElementById('errorMessage');
     
     errorMessage.textContent = message;
-    errorAlert.classList.remove('d-none');
+    errorAlert.classList.remove('hidden');
 }
 
 /**

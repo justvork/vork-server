@@ -11,11 +11,16 @@
 </head>
 <body class="bg-zinc-950 text-zinc-100">
 <div th:replace="~{fragments/header :: header}"></div>
-<div class="max-w-4xl mx-auto px-4 py-8">
-    <h1 class="text-2xl font-bold mb-6 flex items-center gap-2">
-        <i class="fa-solid fa-gear text-[#fdaa02]"></i> Settings
-    </h1>
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
+        <div>
+            <h1 class="text-2xl font-bold mb-0 flex items-center gap-2">
+                <i class="fa-solid fa-gear text-[#fdaa02]"></i> Settings
+            </h1>
+            <p class="vork-page-subtitle">Configure platform behavior, providers, and integrations.</p>
+        </div>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         <th:block th:each="page : ${pages}">
             <a th:href="@{/settings/{page}(page=${page.path})}"
                class="block bg-zinc-900 border border-zinc-800 rounded-xl p-6 text-center

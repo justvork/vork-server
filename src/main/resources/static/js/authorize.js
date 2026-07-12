@@ -30,7 +30,7 @@
     }
 
     function showFeedback(message, isOk) {
-        feedbackEl.classList.remove('d-none', 'feedback-ok', 'feedback-error');
+        feedbackEl.classList.remove('hidden', 'feedback-ok', 'feedback-error');
         feedbackEl.classList.add(isOk ? 'feedback-ok' : 'feedback-error');
         feedbackEl.textContent = message;
     }
@@ -79,7 +79,7 @@
                     const action = entry[0];
                     const btn = entry[1];
                     if (!btn) return;
-                    btn.classList.toggle('d-none', !allowed.has(action));
+                    btn.classList.toggle('hidden', !allowed.has(action));
                 });
 
                 setButtonsEnabled(true);

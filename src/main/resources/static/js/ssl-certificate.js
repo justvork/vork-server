@@ -3,10 +3,23 @@
 const alertArea = document.getElementById('alert-area');
 
 function showAlert(msg, type) {
-    alertArea.innerHTML = `<div class="alert alert-${type} alert-dismissible fade show" role="alert">
-        ${msg}
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    const map = {
+        success: 'border-emerald-700/60 bg-emerald-950/40 text-emerald-300',
+        warning: 'border-amber-700/60 bg-amber-950/40 text-amber-300',
+        danger: 'border-rose-700/60 bg-rose-950/40 text-rose-300',
+        info: 'border-cyan-700/60 bg-cyan-950/40 text-cyan-300'
+    };
+    const tone = map[type] || map.info;
+    alertArea.innerHTML = `<div class="flex items-start justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${tone}" role="alert">
+        <div>${msg}</div>
+        <button type="button" class="shrink-0 rounded-md border border-current/35 px-2 py-0.5 text-xs" aria-label="Dismiss alert">Close</button>
     </div>`;
+    const closeBtn = alertArea.querySelector('button[aria-label="Dismiss alert"]');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            alertArea.innerHTML = '';
+        });
+    }
     alertArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -16,13 +29,15 @@ function loadCertInfo() {
     fetch('/api/ssl/certificate')
         .then(r => r.json())
         .then(data => {
+            const certInfo = document.getElementById('cert-info-section');
+            const notConfigured = document.getElementById('cert-not-configured');
             if (data.status === 'not-configured') {
-                document.getElementById('cert-info-section').style.display = 'none';
-                document.getElementById('cert-not-configured').style.display = '';
+                certInfo.classList.add('hidden');
+                notConfigured.classList.remove('hidden');
                 return;
             }
-            document.getElementById('cert-info-section').style.display = '';
-            document.getElementById('cert-not-configured').style.display = 'none';
+            certInfo.classList.remove('hidden');
+            notConfigured.classList.add('hidden');
             renderCertInfo(data);
             prefillSelfSignedForm(data);
         })
@@ -31,12 +46,12 @@ function loadCertInfo() {
 
 function renderCertInfo(d) {
     const typeLabel = d.type === 'lets-encrypt'
-        ? '<span class="badge bg-success cert-badge">Let\'s Encrypt</span>'
-        : '<span class="badge bg-secondary cert-badge">Self-Signed</span>';
+        ? '<span class="inline-flex rounded-md bg-emerald-600/20 px-2 py-0.5 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-500/30 cert-badge">Let\'s Encrypt</span>'
+        : '<span class="inline-flex rounded-md bg-zinc-700/30 px-2 py-0.5 text-xs font-semibold text-zinc-300 ring-1 ring-zinc-600 cert-badge">Self-Signed</span>';
 
     const now         = Date.now();
     const expiresIn   = Math.floor((d.validUntil - now) / 86400000);
-    const expiryClass = expiresIn <= 30 ? 'text-danger fw-bold' : expiresIn <= 60 ? 'text-warning' : 'text-success';
+    const expiryClass = expiresIn <= 30 ? 'text-rose-400 font-bold' : expiresIn <= 60 ? 'text-amber-300' : 'text-emerald-300';
 
     const sanList = (d.subjectAltNames && d.subjectAltNames.length)
         ? d.subjectAltNames.join(', ')
@@ -58,10 +73,14 @@ function renderCertInfo(d) {
     setField('cert-valid-until', d.validUntil ? new Date(d.validUntil).toLocaleString() : '—');
 
     const expiryEl = document.getElementById('cert-expiry-info');
-    expiryEl.className = 'small ' + expiryClass;
+    expiryEl.className = 'text-xs ' + expiryClass;
     expiryEl.textContent = expiresIn >= 0
         ? `Expires in ${expiresIn} day${expiresIn !== 1 ? 's' : ''}`
         : `Expired ${Math.abs(expiresIn)} days ago`;
+}
+
+function spinnerLabel(label) {
+    return `<span class="mr-1 inline-block h-3 w-3 animate-spin rounded-full border border-current border-t-transparent align-[-0.1em]"></span>${label}`;
 }
 
 function setField(id, value) {
@@ -91,7 +110,7 @@ function regenerateSelfSigned() {
 
     const btn = document.getElementById('btn-regen-ss');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generating…';
+    btn.innerHTML = spinnerLabel('Generating...');
 
     fetch('/api/ssl/certificate/self-signed', {
         method: 'POST',
@@ -117,7 +136,7 @@ function regenerateSelfSigned() {
     .catch(() => showAlert('Request failed — check console.', 'danger'))
     .finally(() => {
         btn.disabled = false;
-        btn.innerHTML = '<i class="fa-solid fa-rotate me-1"></i>Regenerate Certificate';
+        btn.innerHTML = '<i class="fa-solid fa-rotate mr-1"></i>Regenerate Certificate';
     });
 }
 
@@ -161,7 +180,7 @@ function requestLetsEncrypt() {
 
     const btn = document.getElementById('btn-le-request');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Starting…';
+    btn.innerHTML = spinnerLabel('Starting...');
 
     fetch('/api/ssl/certificate/lets-encrypt', {
         method: 'POST',
@@ -176,13 +195,13 @@ function requestLetsEncrypt() {
         } else {
             showAlert('Error: ' + (data.message || 'Unknown error'), 'danger');
             btn.disabled = false;
-            btn.innerHTML = '<i class="fa-solid fa-certificate me-1"></i>Request Certificate';
+            btn.innerHTML = '<i class="fa-solid fa-certificate mr-1"></i>Request Certificate';
         }
     })
     .catch(() => {
         showAlert('Request failed — check console.', 'danger');
         btn.disabled = false;
-        btn.innerHTML = '<i class="fa-solid fa-certificate me-1"></i>Request Certificate';
+        btn.innerHTML = '<i class="fa-solid fa-certificate mr-1"></i>Request Certificate';
     });
 }
 
@@ -209,7 +228,7 @@ function pollLeStatus() {
                 stopLeStatusPolling();
                 const btn = document.getElementById('btn-le-request');
                 btn.disabled = false;
-                btn.innerHTML = '<i class="fa-solid fa-certificate me-1"></i>Request Certificate';
+                btn.innerHTML = '<i class="fa-solid fa-certificate mr-1"></i>Request Certificate';
                 if (data.status === 'success') {
                     showAlert('<strong>Success!</strong> Let\'s Encrypt certificate installed. The SSL context will reload automatically.', 'success');
                     setTimeout(loadCertInfo, 3000);

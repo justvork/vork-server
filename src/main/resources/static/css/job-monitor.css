@@ -4,6 +4,8 @@
 html, body {
     height: 100%;
     margin: 0;
+    background: #0f0f0f;
+    color: #e9ecef;
     overflow: hidden;
     display: flex;
     flex-direction: column;

@@ -17,20 +17,20 @@
         fetch('/api/chat/sessions/pending-input')
             .then(function (r) { return r.ok ? r.json() : Promise.reject('HTTP ' + r.status); })
             .then(function (data) {
-                loadingEl.classList.add('d-none');
+                loadingEl.classList.add('hidden');
                 sessions = data || [];
                 if (sessions.length === 0) {
-                    emptyEl.classList.remove('d-none');
+                    emptyEl.classList.remove('hidden');
                     return;
                 }
                 renderTable(sessions);
-                tableWrapper.classList.remove('d-none');
+                tableWrapper.classList.remove('hidden');
             })
             .catch(function (err) {
-                loadingEl.classList.add('d-none');
+                loadingEl.classList.add('hidden');
                 tableWrapper.innerHTML =
-                    '<div class="alert alert-danger">Failed to load pending sessions: ' + escapeHtml(String(err)) + '</div>';
-                tableWrapper.classList.remove('d-none');
+                    '<div class="rounded-lg border border-rose-700/60 bg-rose-950/40 px-3 py-2 text-sm text-rose-300">Failed to load pending sessions: ' + escapeHtml(String(err)) + '</div>';
+                tableWrapper.classList.remove('hidden');
             });
     }
 
@@ -46,16 +46,18 @@
     function buildRow(session) {
         var tr = document.createElement('tr');
         tr.id = 'row-' + session.sessionUuid;
+        tr.className = 'border-b border-zinc-800/80 last:border-0';
 
         // Session name
         var tdName = document.createElement('td');
-        tdName.className = 'fw-semibold';
+        tdName.className = 'px-3 py-2 font-semibold text-zinc-100';
         tdName.textContent = session.sessionName || 'Untitled';
         tdName.title = session.sessionUuid;
         tr.appendChild(tdName);
 
         // Origin badge
         var tdOrigin = document.createElement('td');
+        tdOrigin.className = 'px-3 py-2';
         var badge = document.createElement('span');
         badge.className = 'origin-badge origin-' + (session.originMode || '');
         badge.textContent = session.originMode === 'TELEGRAM' ? '\u2708 Telegram' : '\u25CE Background';
@@ -64,26 +66,26 @@
 
         // Tool name
         var tdTool = document.createElement('td');
-        tdTool.className = 'pending-tool-name';
+        tdTool.className = 'pending-tool-name px-3 py-2';
         tdTool.textContent = session.toolName || '\u2014';
         tr.appendChild(tdTool);
 
         // Waiting since
         var tdAge = document.createElement('td');
-        tdAge.className = 'text-muted small';
+        tdAge.className = 'px-3 py-2 text-xs text-zinc-400';
         tdAge.textContent = formatAge(session.createdAt);
         tr.appendChild(tdAge);
 
         // Action
         var tdAction = document.createElement('td');
-        tdAction.className = 'text-end';
+        tdAction.className = 'px-3 py-2 text-right';
         var actionWrap = document.createElement('div');
-        actionWrap.className = 'd-inline-flex gap-2';
+        actionWrap.className = 'inline-flex gap-2';
 
         var inputBtn = document.createElement('button');
         inputBtn.type = 'button';
-        inputBtn.className = 'btn btn-sm btn-primary';
-        inputBtn.innerHTML = '<i class="fa-solid fa-keyboard me-1"></i>Provide Input';
+        inputBtn.className = 'rounded-lg bg-[#fdaa02] px-2.5 py-1.5 text-xs font-semibold text-black transition-colors hover:bg-[#e89a02]';
+        inputBtn.innerHTML = '<i class="fa-solid fa-keyboard mr-1"></i>Provide Input';
         inputBtn.addEventListener('click', function () {
             window.location.href = '/job-monitor.html?session=' + encodeURIComponent(session.sessionUuid);
         });
@@ -91,8 +93,8 @@
 
         var dismissBtn = document.createElement('button');
         dismissBtn.type = 'button';
-        dismissBtn.className = 'btn btn-sm btn-outline-danger';
-        dismissBtn.innerHTML = '<i class="fa-solid fa-xmark me-1"></i>Dismiss';
+        dismissBtn.className = 'rounded-lg border border-rose-500/40 px-2.5 py-1.5 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-500/15';
+        dismissBtn.innerHTML = '<i class="fa-solid fa-xmark mr-1"></i>Dismiss';
         dismissBtn.addEventListener('click', function () { dismissSession(session, tr, dismissBtn); });
         actionWrap.appendChild(dismissBtn);
 
@@ -110,7 +112,7 @@
 
         if (buttonEl) {
             buttonEl.disabled = true;
-            buttonEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i>Dismissing';
+            buttonEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i>Dismissing';
         }
 
         fetch('/api/chat/sessions/pending-input/' + encodeURIComponent(session.sessionUuid), {
@@ -130,15 +132,15 @@
             .then(function () {
                 if (tr && tr.parentNode) tr.parentNode.removeChild(tr);
                 if (tbody.querySelectorAll('tr').length === 0) {
-                    tableWrapper.classList.add('d-none');
-                    emptyEl.classList.remove('d-none');
+                    tableWrapper.classList.add('hidden');
+                    emptyEl.classList.remove('hidden');
                 }
             })
             .catch(function (err) {
                 window.alert('Failed to dismiss pending request: ' + escapeHtml(String(err && err.message ? err.message : err)));
                 if (buttonEl) {
                     buttonEl.disabled = false;
-                    buttonEl.innerHTML = '<i class="fa-solid fa-xmark me-1"></i>Dismiss';
+                    buttonEl.innerHTML = '<i class="fa-solid fa-xmark mr-1"></i>Dismiss';
                 }
             });
     }

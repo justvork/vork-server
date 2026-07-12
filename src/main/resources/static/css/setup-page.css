@@ -1,0 +1,109 @@
+/* setup-page.css */
+
+html,
+body {
+    background: var(--bs-body-bg, var(--vork-bg, #0f0f0f));
+    color: var(--bs-body-color, var(--vork-text, #e9ecef));
+}
+
+.setup-wrapper {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+}
+
+.setup-card {
+    width: 100%;
+    max-width: 500px;
+}
+
+.step-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 2rem;
+}
+
+.step-dot {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    background: var(--bs-secondary-bg);
+    color: var(--bs-secondary-color);
+    border: 2px solid var(--bs-border-color);
+    transition: background 0.25s, border-color 0.25s, color 0.25s;
+    flex-shrink: 0;
+}
+
+.step-dot.active {
+    background: #0d6efd;
+    color: #fff;
+    border-color: #0d6efd;
+}
+
+.step-dot.done {
+    background: #198754;
+    color: #fff;
+    border-color: #198754;
+}
+
+.step-line {
+    flex: 1;
+    height: 2px;
+    background: var(--vork-border);
+    max-width: 100px;
+}
+
+.step-panel {
+    display: none;
+}
+
+.step-panel.active {
+    display: block;
+}
+
+.provider-btn {
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    border: 1px solid rgba(253, 170, 2, 0.35) !important;
+    border-radius: 6px !important;
+}
+
+.provider-btn:hover {
+    border-color: var(--vork-primary) !important;
+}
+
+.provider-btn.selected {
+    border-color: var(--vork-primary) !important;
+    background: var(--vork-primary-subtle) !important;
+}
+
+.feature-list li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0;
+}
+
+.provider-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.5rem;
+}
+
+.db-provider-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.5rem;
+}
+
+.setup-option-hint {
+    font-size: 0.7rem;
+}

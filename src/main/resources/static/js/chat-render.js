@@ -66,7 +66,7 @@
 
     function showTyping(on) {
         if (!ctx || !ctx.typingEl) return;
-        ctx.typingEl.classList.toggle('d-none', !on);
+        ctx.typingEl.classList.toggle('hidden', !on);
         if (on) scrollBottom();
     }
 
@@ -306,7 +306,7 @@
             }
 
             const label = document.createElement('label');
-            label.className = 'form-label mb-1';
+            label.className = 'mb-1 block text-sm font-medium text-zinc-300';
             label.textContent = field.label || field.name;
             wrapper.appendChild(label);
 
@@ -314,10 +314,10 @@
             if (type === 'textarea') {
                 input = document.createElement('textarea');
                 input.rows = 4;
-                input.className = 'form-control form-control-sm';
+                input.className = 'w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25';
             } else if (type === 'select') {
                 input = document.createElement('select');
-                input.className = 'form-select form-select-sm';
+                input.className = 'w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25';
                 (Array.isArray(field.options) ? field.options : []).forEach(function (opt) {
                     const o = document.createElement('option');
                     o.value = opt.value;
@@ -327,17 +327,17 @@
             } else if (type === 'checkbox') {
                 input = document.createElement('input');
                 input.type = 'checkbox';
-                input.className = 'form-check-input';
+                input.className = 'h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-[#fdaa02] focus:ring-[#fdaa02]/30';
             } else if (type === 'readonly') {
                 input = document.createElement('input');
                 input.type = 'text';
-                input.className = 'form-control form-control-sm';
+                input.className = 'w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100';
                 input.readOnly = true;
                 input.value = (field.value != null ? field.value : field.placeholder) || '';
             } else {
                 input = document.createElement('input');
                 input.type = (type === 'password') ? 'password' : 'text';
-                input.className = 'form-control form-control-sm';
+                input.className = 'w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25';
             }
 
             input.setAttribute('data-field-name', field.name);
@@ -375,13 +375,13 @@
             const action = actionDef.name || 'ONCE';
             const btn = document.createElement('button');
             btn.type = 'button';
-            btn.className = 'btn btn-sm prompt-action-btn';
+            btn.className = 'prompt-action-btn rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors';
             btn.textContent = actionDef.label || action;
 
             const style = (actionDef.style || actionDef.variant || '').toLowerCase();
-            if (style === 'danger') btn.classList.add('btn-danger');
-            else if (style === 'success') btn.classList.add('btn-success');
-            else btn.classList.add('btn-outline-primary');
+            if (style === 'danger') btn.classList.add('border', 'border-rose-500/40', 'text-rose-300', 'hover:bg-rose-500/15');
+            else if (style === 'success') btn.classList.add('bg-emerald-600', 'text-white', 'hover:bg-emerald-500');
+            else btn.classList.add('border', 'border-cyan-500/40', 'text-cyan-300', 'hover:bg-cyan-500/15');
 
             btn.addEventListener('click', function () {
                 const fieldValues = {};
@@ -515,7 +515,7 @@
     function markTerminalCompleted(view) {
         if (!view) return;
         view.completed = true; view.live = false;
-        if (view.stopBtn) view.stopBtn.style.display = 'none';
+        if (view.stopBtn) view.stopBtn.classList.add('hidden');
         if (view.toggleBtn) view.toggleBtn.disabled = false;
         if (view.statusIcon) {
             view.statusIcon.className = 'terminal-status-icon terminal-status-done';
@@ -528,7 +528,7 @@
     function markTerminalAborted(view) {
         if (!view) return;
         view.completed = true; view.live = false;
-        if (view.stopBtn) view.stopBtn.style.display = 'none';
+        if (view.stopBtn) view.stopBtn.classList.add('hidden');
         if (view.toggleBtn) view.toggleBtn.disabled = false;
         if (view.statusIcon) {
             view.statusIcon.className = 'terminal-status-icon terminal-status-aborted';
@@ -544,7 +544,7 @@
         view.row.classList.toggle('terminal-collapsed', !view.expanded);
         if (view.xtermContainer) view.xtermContainer.style.height = view.expanded ? '220px' : TERMINAL_COLLAPSED_HEIGHT;
         if (view.passivePre) view.passivePre.style.maxHeight = view.expanded ? '320px' : TERMINAL_COLLAPSED_HEIGHT;
-        if (view.fitAddon && view.terminal && view.xtermContainer && !view.xtermContainer.classList.contains('d-none')) {
+        if (view.fitAddon && view.terminal && view.xtermContainer && !view.xtermContainer.classList.contains('hidden')) {
             setTimeout(function () { if (view.fitAddon && view.terminal) view.fitAddon.fit(); }, 0);
         }
         if (view.toggleBtn) {
@@ -582,8 +582,8 @@
         if (view.finalizeTimer) { clearTimeout(view.finalizeTimer); view.finalizeTimer = null; }
         if (view.aborted) markTerminalAborted(view); else markTerminalCompleted(view);
         view.passivePre.textContent = buildPassiveTranscript(view);
-        view.passivePre.classList.remove('d-none');
-        view.xtermContainer.classList.add('d-none');
+        view.passivePre.classList.remove('hidden');
+        view.xtermContainer.classList.add('hidden');
         setTerminalExpanded(view, view.expanded);
     }
 
@@ -670,7 +670,7 @@
             '  </div>' +
             '  <div class="terminal-stream-body">' +
             '    <div class="terminal-stream-xterm"></div>' +
-            '    <pre class="terminal-stream-passive d-none"></pre>' +
+            '    <pre class="terminal-stream-passive hidden"></pre>' +
             '  </div>' +
             '</div>';
         ctx.messagesArea.insertBefore(row, ctx.typingEl);
@@ -722,13 +722,13 @@
         view.bufferedText = ''; view.pendingChunks = []; view.endReceived = false;
         view.endReceivedAt = 0; view.live = true; view.completed = false; view.socketConnected = false;
         if (view.finalizeTimer) { clearTimeout(view.finalizeTimer); view.finalizeTimer = null; }
-        view.passivePre.classList.add('d-none');
-        view.xtermContainer.classList.remove('d-none');
+        view.passivePre.classList.add('hidden');
+        view.xtermContainer.classList.remove('hidden');
         view.xtermContainer.innerHTML = '';
         if (typeof Terminal !== 'function') {
             view.passivePre.textContent = 'xterm.js is not available.';
-            view.passivePre.classList.remove('d-none');
-            view.xtermContainer.classList.add('d-none');
+            view.passivePre.classList.remove('hidden');
+            view.xtermContainer.classList.add('hidden');
             return;
         }
         const term = new Terminal({ convertEol: true, cursorBlink: true, fontSize: 13, fontFamily: "'Menlo','Monaco','Consolas',monospace" });

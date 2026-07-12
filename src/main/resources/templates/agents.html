@@ -8,42 +8,36 @@
     <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
     <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
     <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
-    <style>
-        .truncate-prompt { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 320px; font-size: 0.8rem; color: #adb5bd; }
-        .tool-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem; padding: 2px 8px; border-radius: 50rem; background: #1d3557; border: 1px solid #457b9d; color: #a8dadc; white-space: nowrap; }
-        .tool-pill .remove-tool { cursor: pointer; opacity: 0.7; font-size: 0.65rem; }
-        .tool-pill .remove-tool:hover { opacity: 1; }
-        .tool-list-item { cursor: pointer; }
-        .tool-list-item:hover { background: rgba(255,255,255,0.05); }
-    </style>
+    <link rel="stylesheet" href="/css/agents-page.css" th:href="@{/css/agents-page.css}">
 </head>
 <body class="bg-zinc-950 text-zinc-100">
 <div th:replace="~{fragments/header :: header}"></div>
 
-<div class="container py-4" style="max-width: 1000px;">
-    <div class="d-flex align-items-center justify-content-between mb-4">
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
         <div>
-            <div>
-                <h2 class="mb-0"><i class="fa-solid fa-robot me-2"></i>Agents</h2>
-                <p class="text-muted small mb-0">Manage AI agent personas and their tool permissions</p>
-            </div>
+            <h2 class="mb-0"><i class="fa-solid fa-robot me-2"></i>Agents</h2>
+            <p class="vork-page-subtitle">Manage AI agent personas and their tool permissions</p>
         </div>
-        <button class="btn btn-primary" onclick="openCreate()">
+        <div class="vork-page-header-actions">
+            <button class="btn btn-primary" onclick="openCreate()">
             <i class="fa-solid fa-plus me-2"></i>New Agent
-        </button>
+            </button>
+        </div>
     </div>
 
-    <div id="alert-area" class="mb-3"></div>
+    <div class="vork-content-stack">
+        <div id="alert-area"></div>
 
-    <!-- Agents table -->
-    <div class="card">
-        <div class="card-body p-0">
-            <div th:if="${#lists.isEmpty(agents)}" class="text-center text-muted py-5">
-                <i class="fa-solid fa-robot fa-2x mb-3 d-block"></i>
-                No agents found.
-            </div>
-            <table th:unless="${#lists.isEmpty(agents)}" class="table table-hover mb-0 align-middle">
+        <!-- Agents table -->
+        <div class="card">
+            <div class="card-body p-0">
+                <div th:if="${#lists.isEmpty(agents)}" class="vork-empty-state-card">
+                    <i class="fa-solid fa-robot vork-empty-icon"></i>
+                    <p class="vork-empty-title">No agents found</p>
+                    <p class="vork-empty-hint">Create an agent to define a reusable tool persona.</p>
+                </div>
+                <table th:unless="${#lists.isEmpty(agents)}" class="table table-hover mb-0 align-middle">
                 <thead class="table-dark">
                     <tr>
                         <th>Name</th>
@@ -105,7 +99,8 @@
                         </td>
                     </tr>
                 </tbody>
-            </table>
+                </table>
+            </div>
         </div>
     </div>
 </div>
@@ -139,14 +134,14 @@
                     </label>
 
                     <!-- Current tool pills -->
-                    <div id="tool-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary" style="min-height: 40px;"></div>
+                    <div id="tool-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary agent-pill-container"></div>
 
                     <!-- Search + add tool -->
                     <div class="input-group mb-1">
                         <span class="input-group-text"><i class="fa-solid fa-magnifying-glass"></i></span>
                         <input type="text" id="tool-search" class="form-control" placeholder="Search tools to add…" oninput="filterTools()">
                     </div>
-                    <div id="tool-dropdown" class="card" style="max-height: 200px; overflow-y: auto; display: none;">
+                    <div id="tool-dropdown" class="card agent-dropdown hidden">
                         <ul id="tool-list" class="list-group list-group-flush"></ul>
                     </div>
                 </div>
@@ -156,12 +151,12 @@
                     <label class="form-label">Assigned Skills
                         <span class="text-muted small">(skills are presented to the agent as tools during execution)</span>
                     </label>
-                    <div id="skill-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary" style="min-height: 40px;"></div>
+                    <div id="skill-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary agent-pill-container"></div>
                     <div class="input-group mb-1">
                         <span class="input-group-text"><i class="fa-solid fa-bolt"></i></span>
                         <input type="text" id="skill-search" class="form-control" placeholder="Search skills to assign…" oninput="filterSkills()">
                     </div>
-                    <div id="skill-dropdown" class="card" style="max-height: 200px; overflow-y: auto; display: none;">
+                    <div id="skill-dropdown" class="card agent-dropdown hidden">
                         <ul id="skill-list" class="list-group list-group-flush"></ul>
                     </div>
                 </div>
@@ -177,296 +172,6 @@
 </div>
 
 <script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
-<script>
-    let agentModal;
-    let allAgents  = [];
-    let allTools   = [];
-    let allSkills  = [];
-    let modalTools = []; // tool IDs currently assigned in the open modal
-    let modalSkills = []; // skill UUIDs currently assigned in the open modal
-
-    // ── Init ──────────────────────────────────────────────────────────────────
-    document.addEventListener('DOMContentLoaded', function () {
-        agentModal = new VorkModal(document.getElementById('agentModal'));
-        loadData();
-
-        document.getElementById('agentModal').addEventListener('hidden.bs.modal', function () {
-            document.getElementById('tool-search').value = '';
-            document.getElementById('skill-search').value = '';
-            document.getElementById('tool-dropdown').style.display = 'none';
-            document.getElementById('skill-dropdown').style.display = 'none';
-        });
-        document.addEventListener('click', function (e) {
-            if (!e.target.closest('#tool-search') && !e.target.closest('#tool-dropdown')) {
-                document.getElementById('tool-dropdown').style.display = 'none';
-            }
-            if (!e.target.closest('#skill-search') && !e.target.closest('#skill-dropdown')) {
-                document.getElementById('skill-dropdown').style.display = 'none';
-            }
-        });
-    });
-
-    async function loadData() {
-        try {
-            const [agentsRes, toolsRes, skillsRes] = await Promise.all([
-                fetch('/api/agents'),
-                fetch('/api/management/tools'),
-                fetch('/api/skills')
-            ]);
-            allAgents = agentsRes.ok ? await agentsRes.json() : [];
-            allTools  = toolsRes.ok  ? await toolsRes.json()  : [];
-            allSkills = skillsRes.ok ? await skillsRes.json() : [];
-        } catch (e) {
-            showAlert('Failed to load data.', 'warning');
-        }
-    }
-
-    // ── Open modal ────────────────────────────────────────────────────────────
-    function openCreate() {
-        document.getElementById('agentModalLabel').textContent = 'New Agent';
-        document.getElementById('agent-id').value      = '';
-        document.getElementById('agent-name').value    = '';
-        document.getElementById('agent-prompt').value  = '';
-        modalTools  = [];
-        modalSkills = [];
-        renderToolPills();
-        renderSkillPills();
-        agentModal.show();
-    }
-
-    function openEdit(id) {
-        const agent = allAgents.find(function (a) { return a.uuid === id; });
-        if (!agent) { showAlert('Agent not found — reload the page.', 'warning'); return; }
-
-        document.getElementById('agentModalLabel').textContent = 'Edit Agent: ' + agent.name;
-        document.getElementById('agent-id').value      = agent.uuid;
-        document.getElementById('agent-name').value    = agent.name;
-        document.getElementById('agent-prompt').value  = agent.systemPrompt || '';
-        modalTools  = agent.allowedTools ? agent.allowedTools.slice() : [];
-        modalSkills = agent.skillUuids   ? agent.skillUuids.slice()   : [];
-        renderToolPills();
-        renderSkillPills();
-        agentModal.show();
-    }
-
-    // ── Tool pills ────────────────────────────────────────────────────────────
-    function renderToolPills() {
-        const container = document.getElementById('tool-pill-container');
-        container.innerHTML = '';
-        if (modalTools.length === 0) {
-            container.innerHTML = '<span class="text-muted small">No tools assigned — agent will have access to all tools.</span>';
-            return;
-        }
-        modalTools.forEach(function (toolId) {
-            const desc = allTools.find(function (t) { return t.id === toolId; });
-            const label = desc ? (desc.friendlyName || desc.name || toolId) : toolId;
-            const pill = document.createElement('span');
-            pill.className = 'tool-pill';
-            pill.innerHTML =
-                '<i class="fa-solid fa-screwdriver-wrench"></i>' +
-                '<span>' + escapeHtml(label) + '</span>' +
-                '<span class="remove-tool" onclick="removeTool(\'' + escapeHtml(toolId) + '\')" title="Remove tool">✕</span>';
-            container.appendChild(pill);
-        });
-    }
-
-    function removeTool(toolId) {
-        modalTools = modalTools.filter(function (t) { return t !== toolId; });
-        renderToolPills();
-        filterTools(); // refresh dropdown so the removed tool reappears
-    }
-
-    // ── Tool search dropdown ──────────────────────────────────────────────────
-    function filterTools() {
-        const query = document.getElementById('tool-search').value.toLowerCase().trim();
-        const dropdown = document.getElementById('tool-dropdown');
-        const list     = document.getElementById('tool-list');
-
-        const matches = allTools.filter(function (t) {
-            if (modalTools.includes(t.id)) return false; // already added
-            if (!query) return true;
-            const label = ((t.friendlyName || '') + ' ' + (t.name || '') + ' ' + (t.id || '') + ' ' + (t.category || '')).toLowerCase();
-            return label.includes(query);
-        });
-
-        list.innerHTML = '';
-        if (matches.length === 0) {
-            dropdown.style.display = 'none';
-            return;
-        }
-        matches.forEach(function (t) {
-            const li = document.createElement('li');
-            li.className = 'list-group-item list-group-item-action tool-list-item py-1 px-2';
-            li.innerHTML =
-                '<div class="d-flex align-items-center gap-2">' +
-                '  <i class="fa-solid fa-screwdriver-wrench fa-xs text-secondary"></i>' +
-                '  <span class="fw-semibold small">' + escapeHtml(t.friendlyName || t.name || t.id) + '</span>' +
-                (t.category ? '  <span class="badge bg-dark border border-secondary text-secondary" style="font-size:0.65rem">' + escapeHtml(t.category) + '</span>' : '') +
-                '</div>' +
-                (t.description ? '<div class="text-muted" style="font-size:0.7rem">' + escapeHtml(t.description) + '</div>' : '');
-            li.addEventListener('click', function () {
-                addTool(t.id);
-                document.getElementById('tool-search').value = '';
-                dropdown.style.display = 'none';
-            });
-            list.appendChild(li);
-        });
-        dropdown.style.display = '';
-    }
-
-    function addTool(toolId) {
-        if (!modalTools.includes(toolId)) {
-            modalTools.push(toolId);
-            renderToolPills();
-        }
-    }
-
-    // ── Skill pills ───────────────────────────────────────────────────────────
-    function renderSkillPills() {
-        const container = document.getElementById('skill-pill-container');
-        container.innerHTML = '';
-        if (modalSkills.length === 0) {
-            container.innerHTML = '<span class="text-muted small">No skills assigned.</span>';
-            return;
-        }
-        modalSkills.forEach(function (uuid) {
-            const skill = allSkills.find(function (s) { return s.uuid === uuid; });
-            const label = skill ? skill.name : uuid;
-            const pill  = document.createElement('span');
-            pill.className = 'tool-pill';
-            pill.style.background = '#1a2744';
-            pill.style.borderColor = '#2563eb';
-            pill.style.color = '#93c5fd';
-            pill.innerHTML =
-                '<i class="fa-solid fa-bolt"></i>' +
-                '<span>' + escapeHtml(label) + '</span>' +
-                '<span class="remove-tool" title="Remove skill" style="cursor:pointer;opacity:0.7;font-size:0.65rem">✕</span>';
-            pill.querySelector('.remove-tool').addEventListener('click', function () {
-                removeSkill(uuid);
-            });
-            container.appendChild(pill);
-        });
-    }
-
-    function removeSkill(uuid) {
-        modalSkills = modalSkills.filter(function (s) { return s !== uuid; });
-        renderSkillPills();
-        filterSkills();
-    }
-
-    function filterSkills() {
-        const query    = document.getElementById('skill-search').value.toLowerCase().trim();
-        const dropdown = document.getElementById('skill-dropdown');
-        const list     = document.getElementById('skill-list');
-
-        const matches = allSkills.filter(function (s) {
-            if (modalSkills.includes(s.uuid)) return false;
-            if (!query) return true;
-            return ((s.name || '') + ' ' + (s.description || '')).toLowerCase().includes(query);
-        });
-
-        list.innerHTML = '';
-        if (matches.length === 0) { dropdown.style.display = 'none'; return; }
-        matches.forEach(function (s) {
-            const li = document.createElement('li');
-            li.className = 'list-group-item list-group-item-action tool-list-item py-1 px-2';
-            li.innerHTML =
-                '<div class="d-flex align-items-center gap-2">' +
-                '  <i class="fa-solid fa-bolt fa-xs text-secondary"></i>' +
-                '  <span class="fw-semibold small">' + escapeHtml(s.name) + '</span>' +
-                '  <span class="badge bg-dark border border-secondary text-secondary" style="font-size:0.65rem">v' + (s.version || 1) + '</span>' +
-                '</div>' +
-                (s.description ? '<div class="text-muted" style="font-size:0.7rem">' + escapeHtml(s.description) + '</div>' : '');
-            li.addEventListener('click', function () {
-                addSkill(s.uuid);
-                document.getElementById('skill-search').value = '';
-                dropdown.style.display = 'none';
-            });
-            list.appendChild(li);
-        });
-        dropdown.style.display = '';
-    }
-
-    function addSkill(uuid) {
-        if (!modalSkills.includes(uuid)) {
-            modalSkills.push(uuid);
-            renderSkillPills();
-        }
-    }
-
-    // ── Save ──────────────────────────────────────────────────────────────────
-    async function saveAgent() {
-        const id   = document.getElementById('agent-id').value.trim();
-        const name = document.getElementById('agent-name').value.trim();
-        if (!name) { showAlert('Name is required.', 'warning'); return; }
-
-        const body = {
-            name:         name,
-            systemPrompt: document.getElementById('agent-prompt').value,
-            allowedTools: modalTools.slice(),
-            skillUuids:   modalSkills.slice()
-        };
-
-        const btn = document.getElementById('btn-save-agent');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
-
-        try {
-            const url    = id ? '/api/agents/' + id : '/api/agents';
-            const method = id ? 'PUT' : 'POST';
-            const res    = await fetch(url, {
-                method:  method,
-                headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify(body)
-            });
-            const data = await res.json();
-            if (data.error) { showAlert(data.error, 'danger'); return; }
-            agentModal.hide();
-            showAlert(id ? 'Agent updated.' : 'Agent created.', 'success');
-            setTimeout(function () { location.reload(); }, 800);
-        } catch (e) {
-            showAlert('Network error saving agent.', 'danger');
-        } finally {
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fa-solid fa-save me-1"></i>Save Agent';
-        }
-    }
-
-    // ── Delete ────────────────────────────────────────────────────────────────
-    async function deleteAgent(id) {
-        if (!confirm('Delete this agent? This cannot be undone.')) return;
-        try {
-            const res  = await fetch('/api/agents/' + id, { method: 'DELETE' });
-            const data = await res.json();
-            if (data.error) { showAlert(data.error, 'danger'); return; }
-            showAlert('Agent deleted.', 'success');
-            const row = document.getElementById('row-' + id);
-            if (row) row.remove();
-            allAgents = allAgents.filter(function (a) { return a.uuid !== id; });
-        } catch (e) {
-            showAlert('Network error deleting agent.', 'danger');
-        }
-    }
-
-    // ── Alert helper ──────────────────────────────────────────────────────────
-    function showAlert(msg, type) {
-        const area = document.getElementById('alert-area');
-        area.innerHTML =
-            '<div class="alert alert-' + type + ' alert-dismissible fade show" role="alert">' +
-            escapeHtml(msg) +
-            '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>' +
-            '</div>';
-    }
-
-    function escapeHtml(str) {
-        if (!str) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-</script>
+<script src="/js/agents-page.js" th:src="@{/js/agents-page.js}"></script>
 </body>
 </html>

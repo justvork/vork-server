@@ -8,13 +8,9 @@
     <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
     <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
     <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
-    <style>
-        @keyframes fadeInUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
-        .auth-card { animation: fadeInUp 0.3s ease-out; }
-    </style>
+    <link rel="stylesheet" href="/css/authorization.css" th:href="@{/css/authorization.css}">
 </head>
-<body class="min-h-screen bg-zinc-950 flex items-center justify-center p-4"
-      style="background: radial-gradient(ellipse at top, rgba(20,20,40,0.9) 0%, #0f0f0f 70%)">
+<body class="authorization-bg min-h-screen bg-zinc-950 flex items-center justify-center p-4">
 
 <div class="auth-card w-full max-w-lg">
     <div class="bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden">
@@ -32,7 +28,7 @@
         <div class="p-6">
             <!-- Error alert (hidden by default; shown by authorization.js) -->
             <div id="errorAlert"
-                 class="d-none flex items-start gap-2 bg-red-950/50 border border-red-800/60 text-red-400 rounded-lg px-3 py-2.5 mb-4 text-sm">
+                  class="hidden flex items-start gap-2 bg-red-950/50 border border-red-800/60 text-red-400 rounded-lg px-3 py-2.5 mb-4 text-sm">
                 <i class="fa-solid fa-circle-exclamation flex-shrink-0 mt-0.5"></i>
                 <span id="errorMessage"></span>
             </div>
@@ -41,7 +37,7 @@
             <div id="actionDetails"
                  class="bg-zinc-800/50 border border-zinc-700 rounded-xl p-4 mb-5 text-sm text-zinc-300 leading-relaxed min-h-[60px]">
                 <div class="flex items-center gap-2 text-zinc-500">
-                    <span class="spinner-border spinner-border-sm"></span>
+                    <span class="inline-block h-3.5 w-3.5 animate-spin rounded-full border border-zinc-500 border-t-zinc-200"></span>
                     <span>Loading action details&hellip;</span>
                 </div>
             </div>

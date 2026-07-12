@@ -6,69 +6,11 @@
     <title>Setup — Vork</title>
     <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
     <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
-    <link rel="stylesheet" href="/css/bootstrap-theme.css" th:href="@{/css/bootstrap-theme.css}">
+    <link rel="stylesheet" href="/css/vork-theme.css" th:href="@{/css/vork-theme.css}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="/css/setup-page.css" th:href="@{/css/setup-page.css}">
     <script src="/packages/npm/qrious/current/dist/qrious.min.js" th:src="@{/packages/npm/qrious/current/dist/qrious.min.js}"></script>
-    <style>
-        html,
-        body {
-            background: var(--bs-body-bg, var(--vork-bg, #0f0f0f));
-            color: var(--bs-body-color, var(--vork-text, #e9ecef));
-        }
-        .setup-wrapper {
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 1.5rem;
-        }
-        .setup-card { width: 100%; max-width: 500px; }
-        .step-indicator {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 2rem;
-        }
-        .step-dot {
-            width: 34px; height: 34px;
-            border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 0.85rem; font-weight: 600;
-            background: var(--bs-secondary-bg);
-            color: var(--bs-secondary-color);
-            border: 2px solid var(--bs-border-color);
-            transition: background 0.25s, border-color 0.25s, color 0.25s;
-            flex-shrink: 0;
-        }
-        .step-dot.active  { background: #0d6efd; color: #fff; border-color: #0d6efd; }
-        .step-dot.done    { background: #198754; color: #fff; border-color: #198754; }
-        .step-line        { flex: 1; height: 2px; background: var(--vork-border); max-width: 100px; }
-        .step-panel       { display: none; }
-        .step-panel.active { display: block; }
-        .provider-btn {
-            cursor: pointer;
-            transition: border-color 0.15s, background 0.15s;
-            border: 1px solid rgba(253, 170, 2, 0.35) !important;
-            border-radius: 6px !important;
-        }
-        .provider-btn:hover  { border-color: var(--vork-primary) !important; }
-        .provider-btn.selected {
-            border-color: var(--vork-primary) !important;
-            background: var(--vork-primary-subtle) !important;
-        }
-        .feature-list li { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; }
-        .provider-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 0.5rem;
-        }
-        .db-provider-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 0.5rem;
-        }
-    </style>
 </head>
 <body class="bg-zinc-950 text-zinc-100">
 <div class="setup-wrapper">
@@ -109,27 +51,27 @@
                         <div class="card provider-btn text-center p-2 rounded selected" id="db-btn-nitrite" onclick="selectDbBackend('nitrite')">
                             <i class="fa-solid fa-hard-drive fa-lg mb-1 text-warning"></i>
                             <div class="fw-semibold small">Nitrite</div>
-                            <div class="text-muted" style="font-size:0.7rem">Embedded</div>
+                            <div class="text-muted setup-option-hint">Embedded</div>
                         </div>
                         <div class="card provider-btn text-center p-2 rounded" id="db-btn-mongo" onclick="selectDbBackend('mongo')">
                             <i class="fa-solid fa-leaf fa-lg mb-1 text-success"></i>
                             <div class="fw-semibold small">MongoDB</div>
-                            <div class="text-muted" style="font-size:0.7rem">Document Store</div>
+                            <div class="text-muted setup-option-hint">Document Store</div>
                         </div>
                         <div class="card provider-btn text-center p-2 rounded" id="db-btn-redis" onclick="selectDbBackend('redis')">
                             <i class="fa-solid fa-server fa-lg mb-1 text-danger"></i>
                             <div class="fw-semibold small">Redis</div>
-                            <div class="text-muted" style="font-size:0.7rem">In-Memory + Persistence</div>
+                            <div class="text-muted setup-option-hint">In-Memory + Persistence</div>
                         </div>
                         <div class="card provider-btn text-center p-2 rounded" id="db-btn-couchbase" onclick="selectDbBackend('couchbase')">
                             <i class="fa-solid fa-cubes fa-lg mb-1 text-info"></i>
                             <div class="fw-semibold small">Couchbase</div>
-                            <div class="text-muted" style="font-size:0.7rem">Distributed JSON</div>
+                            <div class="text-muted setup-option-hint">Distributed JSON</div>
                         </div>
                     </div>
 
                     <!-- MongoDB fields -->
-                    <div id="db-mongo-fields" class="d-none">
+                    <div id="db-mongo-fields" class="hidden">
                         <div class="row g-2 mb-2">
                             <div class="col-8">
                                 <label class="form-label small" for="db-mongo-host">Host</label>
@@ -157,7 +99,7 @@
                     </div>
 
                     <!-- Redis fields -->
-                    <div id="db-redis-fields" class="d-none">
+                    <div id="db-redis-fields" class="hidden">
                         <div class="row g-2 mb-2">
                             <div class="col-8">
                                 <label class="form-label small" for="db-redis-host">Host</label>
@@ -175,7 +117,7 @@
                     </div>
 
                     <!-- Couchbase fields -->
-                    <div id="db-couchbase-fields" class="d-none">
+                    <div id="db-couchbase-fields" class="hidden">
                         <div class="row g-2 mb-2">
                             <div class="col-8">
                                 <label class="form-label small" for="db-couchbase-host">Host</label>
@@ -266,23 +208,23 @@
                     <div class="provider-grid mb-3">
                         <div class="card provider-btn text-center p-2 rounded" onclick="selectProvider('GEMINI')" id="btn-GEMINI">
                             <div class="fw-semibold small">Gemini</div>
-                            <div class="text-muted" style="font-size:0.7rem">Google</div>
+                            <div class="text-muted setup-option-hint">Google</div>
                         </div>
                         <div class="card provider-btn text-center p-2 rounded" onclick="selectProvider('OPENAI')" id="btn-OPENAI">
                             <div class="fw-semibold small">ChatGPT</div>
-                            <div class="text-muted" style="font-size:0.7rem">OpenAI</div>
+                            <div class="text-muted setup-option-hint">OpenAI</div>
                         </div>
                         <div class="card provider-btn text-center p-2 rounded" onclick="selectProvider('GROQ')" id="btn-GROQ">
                             <div class="fw-semibold small">Groq</div>
-                            <div class="text-muted" style="font-size:0.7rem">Fast inference</div>
+                            <div class="text-muted setup-option-hint">Fast inference</div>
                         </div>
                         <div class="card provider-btn text-center p-2 rounded" onclick="selectProvider('OLLAMA')" id="btn-OLLAMA">
                             <div class="fw-semibold small">Ollama</div>
-                            <div class="text-muted" style="font-size:0.7rem">Local</div>
+                            <div class="text-muted setup-option-hint">Local</div>
                         </div>
                     </div>
 
-                    <div id="config-GEMINI" class="provider-config d-none">
+                    <div id="config-GEMINI" class="provider-config hidden">
                         <div class="mb-3">
                             <label class="form-label" for="apiKey-GEMINI">Gemini API Key</label>
                             <input type="password" id="apiKey-GEMINI" class="form-control"
@@ -290,325 +232,9 @@
                         </div>
                     </div>
 
-                    <div id="config-GROQ" class="provider-config d-none">
+                    <div id="config-GROQ" class="provider-config hidden">
                         <div class="mb-3">
-                            <label class="form-label" for="apiKey-GROQ">Groq API Key</label>
-                            <input type="password" id="apiKey-GROQ" class="form-control"
-                                   placeholder="gsk_…" autocomplete="off">
-                        </div>
-                    </div>
-
-                    <div id="config-OPENAI" class="provider-config d-none">
-                        <div class="mb-3">
-                            <label class="form-label" for="apiKey-OPENAI">OpenAI API Key</label>
-                            <input type="password" id="apiKey-OPENAI" class="form-control"
-                                   placeholder="sk-…" autocomplete="off">
-                        </div>
-                    </div>
-
-                    <div id="config-OLLAMA" class="provider-config d-none">
-                        <div class="mb-3">
-                            <label class="form-label" for="baseUrl-OLLAMA">Ollama Base URL</label>
-                            <input type="url" id="baseUrl-OLLAMA" class="form-control"
-                                   value="http://localhost:11434">
-                        </div>
-                    </div>
-
-                    <div id="provider-actions" class="d-none">
-                        <button id="btn-test" class="btn btn-outline-secondary w-100 mb-3"
-                                onclick="testProvider()">
-                            <i class="fa-solid fa-plug me-2"></i>Test Connection &amp; Discover Models
-                        </button>
-
-                        <div id="model-select-area" class="d-none">
-                            <label class="form-label" for="default-model">Default Model</label>
-                            <select id="default-model" class="form-select mb-3">
-                                <option value="">— select a model —</option>
-                            </select>
-                            <div class="form-check mb-3">
-                                <input type="checkbox" class="form-check-input" id="set-global" checked>
-                                <label class="form-check-label small" for="set-global">
-                                    Set as global default provider &amp; model
-                                </label>
-                            </div>
-                            <button id="btn-save-provider" class="btn btn-primary w-100"
-                                    onclick="saveProvider()">
-                                <i class="fa-solid fa-arrow-right me-2"></i>Save &amp; Continue
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-    </div><!-- /setup-card -->
-</div><!-- /setup-wrapper -->
-
-<script>
-    let selectedProvider = null;
-
-    function showAlert(msg, type) {
-        document.getElementById('alert-area').innerHTML =
-            `<div class="alert alert-${type} alert-dismissible fade show py-2 small" role="alert">
-                ${msg}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-             </div>`;
-    }
-
-    function clearAlert() {
-        document.getElementById('alert-area').innerHTML = '';
-    }
-
-    function setStep(n) {
-        ['step-database', 'step-account', 'step-ai'].forEach(function(id, i) {
-            document.getElementById(id).classList.toggle('active', i + 1 === n);
-        });
-        for (let i = 1; i <= 3; i++) {
-            const dot = document.getElementById('dot-' + i);
-            dot.classList.remove('active', 'done');
-            if (i < n)        dot.classList.add('done');
-            else if (i === n) dot.classList.add('active');
-        }
-        clearAlert();
-    }
-
-    function selectProvider(provider) {
-        selectedProvider = provider;
-        document.querySelectorAll('#step-ai .provider-btn').forEach(function(b) { b.classList.remove('selected'); });
-        document.getElementById('btn-' + provider).classList.add('selected');
-        document.querySelectorAll('#step-ai .provider-config').forEach(function(d) { d.classList.add('d-none'); });
-        document.getElementById('config-' + provider).classList.remove('d-none');
-        document.getElementById('provider-actions').classList.remove('d-none');
-        document.getElementById('model-select-area').classList.add('d-none');
-        clearAlert();
-    }
-
-    function escapeHtml(s) {
-        if (!s) return '';
-        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
-
-    // ── Account step ───────────────────────────────────────────────────────
-
-    async function createAccount() {
-        const username = document.getElementById('username').value.trim();
-        const password = document.getElementById('password').value;
-        const confirm  = document.getElementById('confirmPassword').value;
-
-        if (!username) { showAlert('Username is required.', 'danger'); return; }
-        if (password.length < 8) { showAlert('Password must be at least 8 characters.', 'danger'); return; }
-        if (password !== confirm) { showAlert('Passwords do not match.', 'danger'); return; }
-
-        const btn = document.getElementById('btn-create-account');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Creating&hellip;';
-
-        try {
-            const res = await fetch('/api/setup/account', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password, confirmPassword: confirm })
-            });
-            const data = await res.json();
-            if (data.error) { showAlert(data.error, 'danger'); return; }
-            setStep(3);
-        } catch (e) {
-            showAlert('Request failed — please try again.', 'danger');
-        } finally {
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fa-solid fa-arrow-right me-2"></i>Create Account';
-        }
-    }
-
-    async function testProvider() {
-        if (!selectedProvider) { showAlert('Please select a provider first.', 'warning'); return; }
-
-        const body = { provider: selectedProvider };
-        const apiKeyEl  = document.getElementById('apiKey-'  + selectedProvider);
-        const baseUrlEl = document.getElementById('baseUrl-' + selectedProvider);
-        if (apiKeyEl)  body.apiKey  = apiKeyEl.value.trim();
-        if (baseUrlEl) body.baseUrl = baseUrlEl.value.trim();
-
-        const btn = document.getElementById('btn-test');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Testing&hellip;';
-
-        try {
-            const res = await fetch('/api/setup/ai-provider/validate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
-            });
-            const data = await res.json();
-            if (data.error) { showAlert(data.error, 'danger'); return; }
-
-            const sel = document.getElementById('default-model');
-            sel.innerHTML = '<option value="">— select a model —</option>';
-            (data.models || []).forEach(function(m) {
-                const opt = document.createElement('option');
-                opt.value = m.id;
-                opt.textContent = m.displayName || m.id;
-                sel.appendChild(opt);
-            });
-            if (sel.options.length > 1) sel.selectedIndex = 1;
-
-            document.getElementById('model-select-area').classList.remove('d-none');
-            showAlert((data.models?.length || 0) + ' model(s) discovered. Select your default below.', 'success');
-        } catch (e) {
-            showAlert('Connection test failed — please check your credentials.', 'danger');
-        } finally {
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fa-solid fa-plug me-2"></i>Test Connection &amp; Discover Models';
-        }
-    }
-
-    async function saveProvider() {
-        const model = document.getElementById('default-model').value;
-        if (!model) { showAlert('Please select a default model.', 'warning'); return; }
-
-        const body = {
-            provider:     selectedProvider,
-            defaultModel: model,
-            setAsGlobal:  document.getElementById('set-global').checked
-        };
-        const apiKeyEl  = document.getElementById('apiKey-'  + selectedProvider);
-        const baseUrlEl = document.getElementById('baseUrl-' + selectedProvider);
-        if (apiKeyEl)  body.apiKey  = apiKeyEl.value.trim();
-        if (baseUrlEl) body.baseUrl = baseUrlEl.value.trim();
-
-        const btn = document.getElementById('btn-save-provider');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Saving&hellip;';
-
-        try {
-            const res = await fetch('/api/setup/ai-provider', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
-            });
-            const data = await res.json();
-            if (data.error) { showAlert(data.error, 'danger'); return; }
-            window.location.href = '/login';
-        } catch (e) {
-            showAlert('Save failed — please try again.', 'danger');
-        } finally {
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fa-solid fa-arrow-right me-2"></i>Save &amp; Continue';
-        }
-    }
-
-    // ── Database step ─────────────────────────────────────────────────────────
-
-    let selectedDbBackend = 'nitrite';
-
-    function selectDbBackend(backend) {
-        selectedDbBackend = backend;
-        document.getElementById('db-btn-mongo').classList.toggle('selected', backend === 'mongo');
-        document.getElementById('db-btn-redis').classList.toggle('selected', backend === 'redis');
-        document.getElementById('db-btn-nitrite').classList.toggle('selected', backend === 'nitrite');
-        document.getElementById('db-btn-couchbase').classList.toggle('selected', backend === 'couchbase');
-        document.getElementById('db-mongo-fields').classList.toggle('d-none', backend !== 'mongo');
-        document.getElementById('db-redis-fields').classList.toggle('d-none', backend !== 'redis');
-        document.getElementById('db-nitrite-fields').classList.toggle('d-none', backend !== 'nitrite');
-        document.getElementById('db-couchbase-fields').classList.toggle('d-none', backend !== 'couchbase');
-    }
-
-    function showDbAlert(msg, type) {
-        document.getElementById('db-alert').innerHTML =
-            '<div class="alert alert-' + type + ' py-2 small mb-0">' + msg + '</div>';
-    }
-
-    function clearDbAlert() {
-        document.getElementById('db-alert').innerHTML = '';
-    }
-
-    async function configureDatabase() {
-        const settings = selectedDbBackend === 'redis' ? {
-            backend:  'redis',
-            host:     document.getElementById('db-redis-host').value.trim(),
-            port:     parseInt(document.getElementById('db-redis-port').value, 10) || 6379,
-            password: document.getElementById('db-redis-password').value
-        } : selectedDbBackend === 'couchbase' ? {
-            backend:   'couchbase',
-            host:      document.getElementById('db-couchbase-host').value.trim(),
-            port:      parseInt(document.getElementById('db-couchbase-port').value, 10) || 8091,
-            database:  document.getElementById('db-couchbase-bucket').value.trim() || 'vork',
-            username:  document.getElementById('db-couchbase-username').value.trim(),
-            password:  document.getElementById('db-couchbase-password').value
-        } : selectedDbBackend === 'nitrite' ? {
-            backend:  'nitrite',
-            database: document.getElementById('db-nitrite-path').value.trim() || 'conf.d/vork.db'
-        } : {
-            backend:   'mongo',
-            host:      document.getElementById('db-mongo-host').value.trim(),
-            port:      parseInt(document.getElementById('db-mongo-port').value, 10) || 27017,
-            database:  document.getElementById('db-mongo-database').value.trim() || 'vork',
-            username:  document.getElementById('db-mongo-username').value.trim(),
-            password:  document.getElementById('db-mongo-password').value
-        };
-
-        const btn = document.getElementById('btn-configure-db');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Connecting\u2026';
-        clearDbAlert();
-
-        try {
-            const res = await fetch('/api/setup/database', {
-                method:  'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify(settings)
-            });
-            const data = await res.json();
-            if (data.error) {
-                showDbAlert('<i class="fa-solid fa-circle-xmark me-1"></i>' + escapeHtml(data.error), 'danger');
-                return;
-            }
-            if (data.restartRequired) {
-                showDbAlert('<i class="fa-solid fa-arrows-rotate me-1"></i>Restarting to apply database settings\u2026', 'info');
-                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Waiting for restart\u2026';
-                await pollAfterRestart();
-                showDbAlert('<i class="fa-solid fa-circle-check me-1"></i>Server restarted. Continuing setup.', 'success');
-            }
-            setStep(2);
-        } catch (e) {
-            showDbAlert('Request failed \u2014 please try again.', 'danger');
-        } finally {
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fa-solid fa-plug me-2"></i>Connect &amp; Continue';
-        }
-    }
-
-    async function pollAfterRestart() {
-        // Wait for the server to begin its shutdown
-        await new Promise(function(r) { setTimeout(r, 2000); });
-        // Poll until the server responds again (up to 60 s)
-        for (let i = 0; i < 60; i++) {
-            try {
-                const r = await fetch('/api/setup/status');
-                if (r.ok) return;
-            } catch (e) { /* server still restarting */ }
-            await new Promise(function(r) { setTimeout(r, 1000); });
-        }
-    }
-
-    async function loadInitialState() {
-        try {
-            const [statusRes, dbRes] = await Promise.all([
-                fetch('/api/setup/status'),
-                fetch('/api/setup/database')
-            ]);
-            const status = statusRes.ok ? await statusRes.json() : {};
-            const dbData = dbRes.ok   ? await dbRes.json()   : {};
-
-            // Pre-fill the DB form with current / default settings
-            if (dbData.settings) {
-                prefillDbForm(dbData.settings);
-            }
-
-            const databaseConfigured = Boolean(status.databaseConfigured || dbData.configured);
-            const accountConfigured = Boolean(status.accountConfigured);
-            const aiConfigured = Boolean(status.aiConfigured);
+                            <script src="/js/setup-page.js" th:src="@{/js/setup-page.js}"></script>
 
             if (databaseConfigured && accountConfigured && !aiConfigured) {
                 setStep(3);

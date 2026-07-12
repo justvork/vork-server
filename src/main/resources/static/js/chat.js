@@ -113,7 +113,7 @@ function escapeHtml(s) {
 }
 
 function setStatus(state) {
-    statusDot.className = 'status-dot ms-1 ' + state;
+    statusDot.className = 'status-dot ml-1 ' + state;
     const labels = { connected: 'Connected', disconnected: 'Disconnected', connecting: 'Connecting\u2026' };
     statusDot.title = labels[state] || state;
 }
@@ -123,7 +123,7 @@ function scrollBottom() {
 }
 
 function showTyping(on) {
-    typingEl.classList.toggle('d-none', !on);
+    typingEl.classList.toggle('hidden', !on);
     if (on) { scrollBottom(); }
 }
 
@@ -163,8 +163,12 @@ function persistThinkingEnabled() {
 function syncThinkingToggleUi() {
     if (!thinkingToggleBtn) return;
     thinkingToggleBtn.textContent = thinkingEnabled ? 'Thinking ON' : 'Thinking OFF';
-    thinkingToggleBtn.classList.toggle('btn-outline-secondary', thinkingEnabled);
-    thinkingToggleBtn.classList.toggle('btn-outline-warning', !thinkingEnabled);
+    thinkingToggleBtn.classList.toggle('border-zinc-700', thinkingEnabled);
+    thinkingToggleBtn.classList.toggle('text-zinc-200', thinkingEnabled);
+    thinkingToggleBtn.classList.toggle('hover:bg-zinc-800', thinkingEnabled);
+    thinkingToggleBtn.classList.toggle('border-amber-500/50', !thinkingEnabled);
+    thinkingToggleBtn.classList.toggle('text-amber-300', !thinkingEnabled);
+    thinkingToggleBtn.classList.toggle('hover:bg-amber-500/10', !thinkingEnabled);
 }
 
 function initThinkingToggle() {
@@ -512,7 +516,7 @@ function createTerminalInlineRow(terminalId, command, options) {
         '  </div>' +
         '  <div class="terminal-stream-body">' +
         '    <div class="terminal-stream-xterm"></div>' +
-        '    <pre class="terminal-stream-passive d-none"></pre>' +
+        '    <pre class="terminal-stream-passive hidden"></pre>' +
         '  </div>' +
         '</div>';
 
@@ -690,8 +694,8 @@ function maybeFinalizeTerminalView(view) {
     }
 
     view.passivePre.textContent = buildPassiveTranscript(view);
-    view.passivePre.classList.remove('d-none');
-    view.xtermContainer.classList.add('d-none');
+    view.passivePre.classList.remove('hidden');
+    view.xtermContainer.classList.add('hidden');
     setTerminalExpanded(view, view.expanded);
 
     if (!hasLiveTerminal() && !awaitingPostTerminalResponse) {
@@ -727,7 +731,7 @@ function setTerminalExpanded(view, expanded) {
         view.passivePre.style.maxHeight = view.expanded ? '320px' : TERMINAL_COLLAPSED_HEIGHT;
     }
 
-    if (view.fitAddon && view.terminal && view.xtermContainer && !view.xtermContainer.classList.contains('d-none')) {
+    if (view.fitAddon && view.terminal && view.xtermContainer && !view.xtermContainer.classList.contains('hidden')) {
         setTimeout(function () {
             if (view.fitAddon && view.terminal) {
                 view.fitAddon.fit();
@@ -757,7 +761,7 @@ function markTerminalCompleted(view) {
     view.completed = true;
     view.live = false;
     if (view.stopBtn) {
-        view.stopBtn.style.display = 'none';
+        view.stopBtn.classList.add('hidden');
     }
     if (view.toggleBtn) {
         view.toggleBtn.disabled = false;
@@ -777,7 +781,7 @@ function markTerminalAborted(view) {
     view.completed = true;
     view.live = false;
     if (view.stopBtn) {
-        view.stopBtn.style.display = 'none';
+        view.stopBtn.classList.add('hidden');
     }
     if (view.toggleBtn) {
         view.toggleBtn.disabled = false;
@@ -861,14 +865,14 @@ function handleTerminalStart(frame) {
         view.finalizeTimer = null;
     }
 
-    view.passivePre.classList.add('d-none');
-    view.xtermContainer.classList.remove('d-none');
+    view.passivePre.classList.add('hidden');
+    view.xtermContainer.classList.remove('hidden');
     view.xtermContainer.innerHTML = '';
 
     if (typeof Terminal !== 'function') {
         view.passivePre.textContent = 'xterm.js is not available in this page build.';
-        view.passivePre.classList.remove('d-none');
-        view.xtermContainer.classList.add('d-none');
+        view.passivePre.classList.remove('hidden');
+        view.xtermContainer.classList.add('hidden');
         return;
     }
 
@@ -979,9 +983,9 @@ function renderTerminalTranscript(terminalId, command, output, expanded, attachm
     const view = createTerminalInlineRow(terminalId, command, { expanded: expanded });
     view.bufferedText = output || '';
     markTerminalCompleted(view);
-    view.xtermContainer.classList.add('d-none');
+    view.xtermContainer.classList.add('hidden');
     view.passivePre.textContent = buildPassiveTranscript(view);
-    view.passivePre.classList.remove('d-none');
+    view.passivePre.classList.remove('hidden');
     attachTerminalHeaderFile(view, attachment);
     setTerminalExpanded(view, expanded);
     return view;
@@ -1260,8 +1264,8 @@ function renderPromptRequiredFrame(frame) {
                     const emptyOptionSelected = !fieldValue ? ' selected' : '';
                     return (
                         '<div class="prompt-field mb-2">' +
-                        '  <label class="form-label mb-1" for="' + escapeHtml(inputId) + '">' + escapeHtml(fieldLabel) + '</label>' +
-                        '  <select class="form-select form-select-sm" id="' + escapeHtml(inputId) + '" data-field-name="' + escapeHtml(fieldName) + '"' + requiredAttr + '>' +
+                        '  <label class="mb-1 block text-sm font-medium text-zinc-300" for="' + escapeHtml(inputId) + '">' + escapeHtml(fieldLabel) + '</label>' +
+                        '  <select class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" id="' + escapeHtml(inputId) + '" data-field-name="' + escapeHtml(fieldName) + '"' + requiredAttr + '>' +
                         '    <option value=""' + emptyOptionSelected + '>Select a value</option>' +
                         optionsHtml +
                         '  </select>' +
@@ -1272,8 +1276,8 @@ function renderPromptRequiredFrame(frame) {
                 if (fieldType === 'textarea') {
                     return (
                         '<div class="prompt-field mb-2">' +
-                        '  <label class="form-label mb-1" for="' + escapeHtml(inputId) + '">' + escapeHtml(fieldLabel) + '</label>' +
-                        '  <textarea class="form-control form-control-sm" id="' + escapeHtml(inputId) + '" data-field-name="' + escapeHtml(fieldName) + '" placeholder="' + escapeHtml(fieldPlaceholder) + '" rows="4"' + requiredAttr + '>' + escapeHtml(fieldValue) + '</textarea>' +
+                        '  <label class="mb-1 block text-sm font-medium text-zinc-300" for="' + escapeHtml(inputId) + '">' + escapeHtml(fieldLabel) + '</label>' +
+                        '  <textarea class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" id="' + escapeHtml(inputId) + '" data-field-name="' + escapeHtml(fieldName) + '" placeholder="' + escapeHtml(fieldPlaceholder) + '" rows="4"' + requiredAttr + '>' + escapeHtml(fieldValue) + '</textarea>' +
                         '</div>'
                     );
                 }
@@ -1284,13 +1288,15 @@ function renderPromptRequiredFrame(frame) {
 
                 if (fieldType === 'checkbox') {
                     const helpText = fieldPlaceholder
-                        ? ('<div class="form-text mt-1">' + escapeHtml(fieldPlaceholder) + '</div>')
+                        ? ('<div class="ml-6 mt-1 text-xs text-zinc-500">' + escapeHtml(fieldPlaceholder) + '</div>')
                         : '';
                     const checkedAttr = String(fieldValue).toLowerCase() === 'true' ? ' checked' : '';
                     return (
-                        '<div class="prompt-field form-check mb-2">' +
-                        '  <input class="form-check-input" id="' + escapeHtml(inputId) + '" data-field-name="' + escapeHtml(fieldName) + '" type="checkbox" value="true"' + requiredAttr + checkedAttr + '>' +
-                        '  <label class="form-check-label" for="' + escapeHtml(inputId) + '">' + escapeHtml(fieldLabel) + '</label>' +
+                        '<div class="prompt-field mb-2">' +
+                        '  <div class="flex items-center gap-2">' +
+                        '    <input class="h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-[#fdaa02] focus:ring-[#fdaa02]/30" id="' + escapeHtml(inputId) + '" data-field-name="' + escapeHtml(fieldName) + '" type="checkbox" value="true"' + requiredAttr + checkedAttr + '>' +
+                        '    <label class="text-sm text-zinc-300" for="' + escapeHtml(inputId) + '">' + escapeHtml(fieldLabel) + '</label>' +
+                        '  </div>' +
                         '  ' + helpText +
                         '</div>'
                     );
@@ -1300,8 +1306,8 @@ function renderPromptRequiredFrame(frame) {
                 const readonlyAttr = fieldType === 'readonly' ? ' readonly' : '';
                 return (
                     '<div class="prompt-field mb-2">' +
-                    '  <label class="form-label mb-1" for="' + escapeHtml(inputId) + '">' + escapeHtml(fieldLabel) + '</label>' +
-                    '  <input class="form-control form-control-sm" id="' + escapeHtml(inputId) + '" data-field-name="' + escapeHtml(fieldName) + '" type="' + inputType + '" value="' + escapeHtml(fieldValue) + '" placeholder="' + escapeHtml(fieldPlaceholder) + '"' + readonlyAttr + requiredAttr + '>' +
+                    '  <label class="mb-1 block text-sm font-medium text-zinc-300" for="' + escapeHtml(inputId) + '">' + escapeHtml(fieldLabel) + '</label>' +
+                    '  <input class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" id="' + escapeHtml(inputId) + '" data-field-name="' + escapeHtml(fieldName) + '" type="' + inputType + '" value="' + escapeHtml(fieldValue) + '" placeholder="' + escapeHtml(fieldPlaceholder) + '"' + readonlyAttr + requiredAttr + '>' +
                     '</div>'
                 );
             }).join('') +
@@ -1326,16 +1332,23 @@ function renderPromptRequiredFrame(frame) {
         const action = actionDef.name;
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'btn btn-sm prompt-action-btn';
+        btn.className = 'prompt-action-btn rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors';
         btn.dataset.action = action;
         btn.textContent = actionDef.label;
 
-        if (actionDef.style) {
-            btn.classList.add('btn-' + actionDef.style);
+        const style = (actionDef.style || '').toLowerCase();
+        if (style === 'danger') {
+            btn.classList.add('border', 'border-rose-500/40', 'text-rose-300', 'hover:bg-rose-500/15');
+        } else if (style === 'success') {
+            btn.classList.add('bg-emerald-600', 'text-white', 'hover:bg-emerald-500');
+        } else if (style === 'warning') {
+            btn.classList.add('border', 'border-amber-500/40', 'text-amber-300', 'hover:bg-amber-500/15');
+        } else if (style === 'secondary') {
+            btn.classList.add('border', 'border-zinc-600', 'text-zinc-200', 'hover:bg-zinc-800');
         } else if (action === 'DENIED') {
-            btn.classList.add('btn-outline-danger');
+            btn.classList.add('border', 'border-rose-500/40', 'text-rose-300', 'hover:bg-rose-500/15');
         } else {
-            btn.classList.add('btn-outline-primary');
+            btn.classList.add('border', 'border-cyan-500/40', 'text-cyan-300', 'hover:bg-cyan-500/15');
         }
 
         btn.addEventListener('click', function () {
@@ -1588,7 +1601,7 @@ messageInput.addEventListener('keydown', function (e) {
 // ── Attachment strip helpers ──────────────────────────────────────────────────
 
 function syncStripVisibility() {
-    attachStrip.classList.toggle('d-none', attachStrip.children.length === 0);
+    attachStrip.classList.toggle('hidden', attachStrip.children.length === 0);
 }
 
 function removeAttachment(uuid) {
@@ -1611,7 +1624,7 @@ function createChip(tempId, filename) {
     // Spinner overlay (shown while uploading)
     chip.innerHTML =
         '<div class="chip-spinner">' +
-        '  <div class="spinner-border spinner-border-sm text-light" role="status"></div>' +
+        '  <div class="h-3.5 w-3.5 animate-spin rounded-full border border-zinc-500 border-t-zinc-200" role="status"></div>' +
         '</div>' +
         '<span class="chip-label">' + escapeHtml(filename) + '</span>';
 
@@ -1784,7 +1797,7 @@ const sidebarTabBtns = document.querySelectorAll('.sidebar-tab-btn[data-tab]');
 
 function switchSidebarTab(tabName) {
     document.querySelectorAll('.sidebar-tab-content').forEach(function (el) {
-        el.classList.toggle('d-none', el.id !== 'tab-' + tabName);
+        el.classList.toggle('hidden', el.id !== 'tab-' + tabName);
     });
     sidebarTabBtns.forEach(function (btn) {
         btn.classList.toggle('active', btn.dataset.tab === tabName);
@@ -1840,7 +1853,7 @@ function renderSkillPills(containerId, skills, removable, _unused, sessionUuidRe
     if (!el) return;
     el.innerHTML = '';
     if (skills.length === 0) {
-        el.innerHTML = '<span class="text-muted small">' + (removable ? 'None' : 'None assigned') + '</span>';
+        el.innerHTML = '<span class="text-xs text-zinc-500">' + (removable ? 'None' : 'None assigned') + '</span>';
         return;
     }
     skills.forEach(function (skill) {
@@ -1867,7 +1880,7 @@ function renderToolPills(containerId, tools, removable, sessionUuidRef) {
     if (!el) return;
     el.innerHTML = '';
     if (tools.length === 0) {
-        el.innerHTML = '<span class="text-muted small">' + (removable ? 'None' : 'None assigned') + '</span>';
+        el.innerHTML = '<span class="text-xs text-zinc-500">' + (removable ? 'None' : 'None assigned') + '</span>';
         return;
     }
     tools.forEach(function (tool) {
@@ -1930,7 +1943,7 @@ function setupSkillSearch() {
 
     input.addEventListener('input', async function () {
         const query = input.value.trim().toLowerCase();
-        dropdown.classList.add('d-none');
+        dropdown.classList.add('hidden');
         dropdown.innerHTML = '';
         if (query.length < 1) return;
         if (!_skillsSearchCache) {
@@ -1953,16 +1966,16 @@ function setupSkillSearch() {
             item.addEventListener('click', function () {
                 if (sessionUuid) addSessionSkillAction(sessionUuid, skill.uuid);
                 input.value = '';
-                dropdown.classList.add('d-none');
+                dropdown.classList.add('hidden');
             });
             dropdown.appendChild(item);
         });
-        dropdown.classList.remove('d-none');
+        dropdown.classList.remove('hidden');
     });
 
     document.addEventListener('click', function (e) {
         if (!input.contains(e.target) && !dropdown.contains(e.target)) {
-            dropdown.classList.add('d-none');
+            dropdown.classList.add('hidden');
         }
     });
 }
@@ -1976,7 +1989,7 @@ function setupToolSearch() {
 
     input.addEventListener('input', async function () {
         const query = input.value.trim().toLowerCase();
-        dropdown.classList.add('d-none');
+        dropdown.classList.add('hidden');
         dropdown.innerHTML = '';
         if (query.length < 1) return;
         if (!_toolsCache) {
@@ -1999,16 +2012,16 @@ function setupToolSearch() {
             item.addEventListener('click', function () {
                 if (sessionUuid) addSessionToolAction(sessionUuid, tool.id);
                 input.value = '';
-                dropdown.classList.add('d-none');
+                dropdown.classList.add('hidden');
             });
             dropdown.appendChild(item);
         });
-        dropdown.classList.remove('d-none');
+        dropdown.classList.remove('hidden');
     });
 
     document.addEventListener('click', function (e) {
         if (!input.contains(e.target) && !dropdown.contains(e.target)) {
-            dropdown.classList.add('d-none');
+            dropdown.classList.add('hidden');
         }
     });
 }
@@ -2548,20 +2561,20 @@ function checkPendingSessions() {
             var alertEl = document.getElementById('pending-sessions-alert');
             if (!alertEl) return;
             if (!sessions || sessions.length === 0) {
-                alertEl.classList.add('d-none');
+                alertEl.classList.add('hidden');
                 return;
             }
             var count = sessions.length;
             var label = count === 1 ? '1 session is' : count + ' sessions are';
             alertEl.innerHTML =
-                '<i class="fa-solid fa-inbox me-2"></i>'
+                '<i class="fa-solid fa-inbox mr-2"></i>'
                 + '<strong>' + label + ' waiting for your input.</strong> '
                 + '<a href="/pending-sessions" class="pending-alert-link">Review now</a>'
-                + '<button type="button" class="btn-close btn-close-white btn-close-sm ms-auto" aria-label="Dismiss"></button>';
-            alertEl.classList.remove('d-none');
+                + '<button type="button" class="pending-alert-close ml-auto inline-flex h-6 w-6 items-center justify-center rounded-md border border-zinc-600 text-zinc-200 transition-colors hover:bg-zinc-800" aria-label="Dismiss">×</button>';
+            alertEl.classList.remove('hidden');
 
-            alertEl.querySelector('.btn-close').addEventListener('click', function () {
-                alertEl.classList.add('d-none');
+            alertEl.querySelector('.pending-alert-close').addEventListener('click', function () {
+                alertEl.classList.add('hidden');
             });
         })
         .catch(function () { /* silent — non-critical */ });

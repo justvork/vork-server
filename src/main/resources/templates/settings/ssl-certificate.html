@@ -8,58 +8,62 @@
     <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
     <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
     <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
-    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
     <link rel="stylesheet" href="/css/settings.css" th:href="@{/css/settings.css}">
     <link rel="stylesheet" href="/css/ssl-certificate.css" th:href="@{/css/ssl-certificate.css}">
 </head>
 <body class="bg-zinc-950 text-zinc-100">
 <div th:replace="~{fragments/header :: header}"></div>
-<div class="container py-5" style="max-width: 760px;">
-    <h2 class="mb-1"><i class="fa-solid fa-lock me-2"></i>SSL Certificate</h2>
-    <p class="text-muted mb-4">View, regenerate, or replace the HTTPS certificate.</p>
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
+        <div>
+            <h2 class="flex items-center gap-2 text-2xl font-bold text-zinc-100"><i class="fa-solid fa-lock text-[#fdaa02]"></i>SSL Certificate</h2>
+            <p class="vork-page-subtitle">View, regenerate, or replace the HTTPS certificate.</p>
+        </div>
+    </div>
 
-    <div id="alert-area" class="mb-3"></div>
+    <div class="vork-content-stack">
+        <div id="alert-area"></div>
 
     <!-- ── Not configured ───────────────────────────────────────────────── -->
-    <div id="cert-not-configured" class="alert alert-warning" style="display:none;">
-        <i class="fa-solid fa-triangle-exclamation me-2"></i>
+    <div id="cert-not-configured" class="hidden rounded-lg border border-amber-700/60 bg-amber-950/40 px-3 py-2 text-sm text-amber-300">
+        <i class="fa-solid fa-triangle-exclamation mr-2"></i>
         No SSL certificate is currently active. The server may be running on HTTP only.
     </div>
 
     <!-- ── Current certificate ──────────────────────────────────────────── -->
-    <div id="cert-info-section">
-        <div class="card mb-4 border-primary">
-            <div class="card-header d-flex align-items-center justify-content-between">
-                <span><i class="fa-solid fa-certificate text-primary me-2"></i><span class="fw-semibold">Current Certificate</span></span>
+        <div id="cert-info-section">
+        <div class="mb-4 rounded-xl border border-cyan-700/40 bg-zinc-900">
+            <div class="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+                <span><i class="fa-solid fa-certificate mr-2 text-cyan-400"></i><span class="font-semibold text-zinc-100">Current Certificate</span></span>
                 <span id="cert-type"></span>
             </div>
-            <div class="card-body">
-                <div class="row row-cols-1 row-cols-sm-2 g-3">
-                    <div class="col">
+            <div class="p-4">
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
                         <div class="cert-field-label">Common Name (CN)</div>
                         <div class="cert-field-value" id="cert-cn">—</div>
                     </div>
-                    <div class="col">
+                    <div>
                         <div class="cert-field-label">Organization (O)</div>
                         <div class="cert-field-value" id="cert-o">—</div>
                     </div>
-                    <div class="col">
+                    <div>
                         <div class="cert-field-label">Organizational Unit (OU)</div>
                         <div class="cert-field-value" id="cert-ou">—</div>
                     </div>
-                    <div class="col">
+                    <div>
                         <div class="cert-field-label">Locality / City (L)</div>
                         <div class="cert-field-value" id="cert-l">—</div>
                     </div>
-                    <div class="col">
+                    <div>
                         <div class="cert-field-label">State / Province (ST)</div>
                         <div class="cert-field-value" id="cert-st">—</div>
                     </div>
-                    <div class="col">
+                    <div>
                         <div class="cert-field-label">Country (C)</div>
                         <div class="cert-field-value" id="cert-c">—</div>
                     </div>
-                    <div class="col col-sm-12">
+                    <div class="sm:col-span-2">
                         <div class="cert-field-label">Subject Alternative Names</div>
                         <div class="cert-field-value" id="cert-sans">—</div>
                     </div>
@@ -67,104 +71,104 @@
 
                 <hr class="section-divider">
 
-                <div class="row row-cols-1 row-cols-sm-2 g-3">
-                    <div class="col">
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
                         <div class="cert-field-label">Valid From</div>
                         <div class="cert-field-value" id="cert-valid-from">—</div>
                     </div>
-                    <div class="col">
+                    <div>
                         <div class="cert-field-label">Valid Until</div>
                         <div class="cert-field-value" id="cert-valid-until">—</div>
                     </div>
-                    <div class="col col-sm-12">
-                        <div id="cert-expiry-info" class="small text-muted"></div>
+                    <div class="sm:col-span-2">
+                        <div id="cert-expiry-info" class="text-xs text-zinc-500"></div>
                     </div>
-                    <div class="col">
+                    <div>
                         <div class="cert-field-label">Signature Algorithm</div>
                         <div class="cert-field-value" id="cert-algorithm">—</div>
                     </div>
-                    <div class="col">
+                    <div>
                         <div class="cert-field-label">Key Size</div>
                         <div class="cert-field-value" id="cert-keysize">—</div>
                     </div>
-                    <div class="col">
+                    <div>
                         <div class="cert-field-label">Serial Number</div>
-                        <div class="cert-field-value small" id="cert-serial">—</div>
+                        <div class="cert-field-value text-xs" id="cert-serial">—</div>
                     </div>
-                    <div class="col">
+                    <div>
                         <div class="cert-field-label">Issuer</div>
-                        <div class="cert-field-value small" id="cert-issuer">—</div>
+                        <div class="cert-field-value text-xs" id="cert-issuer">—</div>
                     </div>
                 </div>
             </div>
         </div>
-    </div>
+        </div>
 
     <!-- ── Regenerate self-signed ────────────────────────────────────────── -->
-    <div class="card mb-4 border-secondary">
-        <div class="card-header d-flex align-items-center gap-2">
-            <i class="fa-solid fa-rotate text-secondary"></i>
-            <span class="fw-semibold">Regenerate Self-Signed Certificate</span>
+        <div class="mb-4 rounded-xl border border-zinc-700 bg-zinc-900">
+        <div class="flex items-center gap-2 border-b border-zinc-800 px-4 py-3">
+            <i class="fa-solid fa-rotate text-zinc-400"></i>
+            <span class="font-semibold text-zinc-100">Regenerate Self-Signed Certificate</span>
         </div>
-        <div class="card-body">
-            <p class="text-muted small mb-3">
+        <div class="p-4">
+            <p class="mb-3 text-xs text-zinc-400">
                 Generates a new 2048-bit RSA self-signed certificate. Browsers will show a
                 security warning until you either import it as trusted or switch to Let's Encrypt.
                 The SSL context reloads automatically — no restart required.
             </p>
-            <div class="row g-3 mb-3">
-                <div class="col-md-6">
-                    <label class="form-label" for="ss-cn">Common Name (CN) <span class="text-danger">*</span></label>
-                    <input type="text" id="ss-cn" class="form-control" placeholder="e.g. my.server.com" autocomplete="off">
-                    <div class="form-text">The hostname of this server.</div>
+            <div class="mb-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                    <label class="mb-1.5 block text-sm font-medium text-zinc-300" for="ss-cn">Common Name (CN) <span class="text-rose-400">*</span></label>
+                    <input type="text" id="ss-cn" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. my.server.com" autocomplete="off">
+                    <div class="mt-1 text-xs text-zinc-500">The hostname of this server.</div>
                 </div>
-                <div class="col-md-6">
-                    <label class="form-label" for="ss-o">Organization (O)</label>
-                    <input type="text" id="ss-o" class="form-control" placeholder="e.g. Acme Corp" autocomplete="off">
+                <div>
+                    <label class="mb-1.5 block text-sm font-medium text-zinc-300" for="ss-o">Organization (O)</label>
+                    <input type="text" id="ss-o" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. Acme Corp" autocomplete="off">
                 </div>
-                <div class="col-md-6">
-                    <label class="form-label" for="ss-ou">Organizational Unit (OU)</label>
-                    <input type="text" id="ss-ou" class="form-control" placeholder="e.g. IT" autocomplete="off">
+                <div>
+                    <label class="mb-1.5 block text-sm font-medium text-zinc-300" for="ss-ou">Organizational Unit (OU)</label>
+                    <input type="text" id="ss-ou" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. IT" autocomplete="off">
                 </div>
-                <div class="col-md-6">
-                    <label class="form-label" for="ss-l">Locality / City (L)</label>
-                    <input type="text" id="ss-l" class="form-control" placeholder="e.g. London" autocomplete="off">
+                <div>
+                    <label class="mb-1.5 block text-sm font-medium text-zinc-300" for="ss-l">Locality / City (L)</label>
+                    <input type="text" id="ss-l" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. London" autocomplete="off">
                 </div>
-                <div class="col-md-6">
-                    <label class="form-label" for="ss-st">State / Province (ST)</label>
-                    <input type="text" id="ss-st" class="form-control" placeholder="e.g. England" autocomplete="off">
+                <div>
+                    <label class="mb-1.5 block text-sm font-medium text-zinc-300" for="ss-st">State / Province (ST)</label>
+                    <input type="text" id="ss-st" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. England" autocomplete="off">
                 </div>
-                <div class="col-md-6">
-                    <label class="form-label" for="ss-c">Country (C)</label>
-                    <input type="text" id="ss-c" class="form-control" placeholder="e.g. GB" maxlength="2" autocomplete="off">
-                    <div class="form-text">ISO 3166-1 alpha-2 country code.</div>
+                <div>
+                    <label class="mb-1.5 block text-sm font-medium text-zinc-300" for="ss-c">Country (C)</label>
+                    <input type="text" id="ss-c" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. GB" maxlength="2" autocomplete="off">
+                    <div class="mt-1 text-xs text-zinc-500">ISO 3166-1 alpha-2 country code.</div>
                 </div>
             </div>
-            <div class="d-flex gap-2 flex-wrap">
-                <button id="btn-regen-ss" class="btn btn-warning btn-sm" onclick="regenerateSelfSigned()">
-                    <i class="fa-solid fa-rotate me-1"></i>Regenerate Certificate
+            <div class="flex flex-wrap gap-2">
+                <button id="btn-regen-ss" class="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-black transition-colors hover:bg-amber-400" onclick="regenerateSelfSigned()">
+                    <i class="fa-solid fa-rotate mr-1"></i>Regenerate Certificate
                 </button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="downloadCsr()"
+                <button class="rounded-lg border border-zinc-600 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800" onclick="downloadCsr()"
                         title="Download a Certificate Signing Request to get it signed by a CA">
-                    <i class="fa-solid fa-file-arrow-down me-1"></i>Download CSR
+                    <i class="fa-solid fa-file-arrow-down mr-1"></i>Download CSR
                 </button>
             </div>
         </div>
-    </div>
+        </div>
 
     <!-- ── Let's Encrypt ─────────────────────────────────────────────────── -->
-    <div class="card mb-4 border-success">
-        <div class="card-header d-flex align-items-center gap-2">
-            <i class="fa-solid fa-shield-halved text-success"></i>
-            <span class="fw-semibold">Let's Encrypt (ACME)</span>
+        <div class="mb-4 rounded-xl border border-emerald-700/40 bg-zinc-900">
+        <div class="flex items-center gap-2 border-b border-zinc-800 px-4 py-3">
+            <i class="fa-solid fa-shield-halved text-emerald-400"></i>
+            <span class="font-semibold text-zinc-100">Let's Encrypt (ACME)</span>
         </div>
-        <div class="card-body">
-            <p class="text-muted small mb-3">
+        <div class="p-4">
+            <p class="mb-3 text-xs text-zinc-400">
                 Automatically obtains and renews a trusted certificate from
                 <strong>Let's Encrypt</strong> using the HTTP-01 challenge.
             </p>
-            <div class="alert alert-info d-flex gap-2 py-2 small">
-                <i class="fa-solid fa-circle-info mt-1 flex-shrink-0"></i>
+            <div class="mb-3 flex gap-2 rounded-lg border border-cyan-700/50 bg-cyan-950/30 px-3 py-2 text-xs text-cyan-200">
+                <i class="fa-solid fa-circle-info mt-0.5 shrink-0"></i>
                 <span>
                     Let's Encrypt validates domain ownership by fetching
                     <code>http://{hostname}:80/.well-known/acme-challenge/…</code>.
@@ -173,30 +177,31 @@
                     Certificates are renewed automatically 30 days before expiry.
                 </span>
             </div>
-            <div class="row g-3 mb-3">
-                <div class="col-md-6">
-                    <label class="form-label" for="le-hostname">Hostname <span class="text-danger">*</span></label>
-                    <input type="text" id="le-hostname" class="form-control" placeholder="e.g. my.vork.app" autocomplete="off">
-                    <div class="form-text">Must resolve to this server's public IP.</div>
+            <div class="mb-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                    <label class="mb-1.5 block text-sm font-medium text-zinc-300" for="le-hostname">Hostname <span class="text-rose-400">*</span></label>
+                    <input type="text" id="le-hostname" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. my.vork.app" autocomplete="off">
+                    <div class="mt-1 text-xs text-zinc-500">Must resolve to this server's public IP.</div>
                 </div>
-                <div class="col-md-6">
-                    <label class="form-label" for="le-email">Contact Email <span class="text-danger">*</span></label>
-                    <input type="email" id="le-email" class="form-control" placeholder="admin@example.com" autocomplete="off">
-                    <div class="form-text">Used for expiry notifications from Let's Encrypt.</div>
+                <div>
+                    <label class="mb-1.5 block text-sm font-medium text-zinc-300" for="le-email">Contact Email <span class="text-rose-400">*</span></label>
+                    <input type="email" id="le-email" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="admin@example.com" autocomplete="off">
+                    <div class="mt-1 text-xs text-zinc-500">Used for expiry notifications from Let's Encrypt.</div>
                 </div>
             </div>
-            <button id="btn-le-request" class="btn btn-success btn-sm mb-3" onclick="requestLetsEncrypt()">
-                <i class="fa-solid fa-certificate me-1"></i>Request Certificate
+            <button id="btn-le-request" class="mb-3 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-emerald-500" onclick="requestLetsEncrypt()">
+                <i class="fa-solid fa-certificate mr-1"></i>Request Certificate
             </button>
 
             <!-- Status display -->
-            <div id="le-status-display" class="small text-muted">
+            <div id="le-status-display" class="text-xs text-zinc-500">
                 <span class="le-status-indicator le-status-idle"></span>
                 <span>Idle</span>
             </div>
         </div>
-    </div>
+        </div>
 
+    </div>
 </div>
 
 <script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>

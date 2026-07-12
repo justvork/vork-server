@@ -215,7 +215,7 @@
 
                 if (terminateBtn) {
                     const isBackground = data.originMode === 'BACKGROUND';
-                    terminateBtn.classList.toggle('d-none', !isBackground);
+                    terminateBtn.classList.toggle('hidden', !isBackground);
                     terminateBtn.disabled = !isBackground || isTerminalStatus(status);
                 }
 

@@ -1,0 +1,55 @@
+/* jobs-page.css */
+
+.badge-MANUAL {
+    background: #6c757d;
+}
+
+.badge-ONE_TIME {
+    background: #0d6efd;
+}
+
+.badge-REPEAT {
+    background: #198754;
+}
+
+.badge-WAITING {
+    background: #0dcaf0;
+    color: #000;
+}
+
+.badge-ACTIVE {
+    background: #198754;
+}
+
+.badge-AWAITING_INPUT {
+    background: #fd7e14;
+}
+
+.badge-PAUSED {
+    background: #ffc107;
+    color: #000;
+}
+
+.truncate {
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.jobs-schedule-hidden {
+    display: none;
+}
+
+.jobs-search-wrap {
+    max-width: 380px;
+    position: relative;
+}
+
+.jobs-search-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 300;
+}
