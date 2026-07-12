@@ -5,11 +5,21 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
 import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.net.URI;
 import java.util.Locale;
+import java.util.Base64;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.security.KeyFactory;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.Signature;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.X509EncodedKeySpec;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -69,6 +79,8 @@ import sh.vork.ai.function.ExportJavaTypeRequest;
 import sh.vork.ai.function.ExportJavaTypeSourceRequest;
 import sh.vork.ai.function.GetDateTimeRequest;
 import sh.vork.ai.function.GetMongoDbCollectionSchemaRequest;
+import sh.vork.ai.function.GeneratePrivateKeyRequest;
+import sh.vork.ai.function.GetPublicKeyRequest;
 import sh.vork.ai.function.GetTypeInstanceRequest;
 import sh.vork.ai.function.GetTypeSchemaRequest;
 import sh.vork.ai.function.HttpRequestToolRequest;
@@ -100,12 +112,17 @@ import sh.vork.ai.function.ReadFileRequest;
 import sh.vork.ai.function.ResolveArchitectureRequest;
 import sh.vork.ai.function.StartProcessRequest;
 import sh.vork.ai.function.CheckProcessRequest;
+import sh.vork.ai.function.Base64DecodeStringRequest;
+import sh.vork.ai.function.Base64EncodeStringRequest;
 import sh.vork.ai.function.WriteProcessRequest;
 import sh.vork.ai.function.ReadProcessRequest;
 import sh.vork.ai.function.StopProcessRequest;
+import sh.vork.ai.function.SignDataRequest;
 import sh.vork.ai.function.UpdateMongoDbDocumentsRequest;
 import sh.vork.ai.function.UploadFileRequest;
 import sh.vork.ai.function.UploadTextFileRequest;
+import sh.vork.ai.function.VerifyDataRequest;
+import sh.vork.ai.function.VerifyDataByRefRequest;
 import sh.vork.ai.function.WriteFileRequest;
 import sh.vork.ai.mongo.MongoToolService;
 import sh.vork.ai.skill.SkillAuthoringService;
@@ -879,6 +896,253 @@ the protocol and will break the system. Do not converse. Execute.
                 .build();
     }
 
+    @Bean
+    @ToolCategory("Encoding & Crypto")
+    public ToolCallback base64EncodeString() {
+        return FunctionToolCallback
+                .builder("base64EncodeString", (Base64EncodeStringRequest req) -> {
+                    if (req == null || req.input() == null) {
+                        throw new IllegalArgumentException("input is required");
+                    }
+                    return Base64.getEncoder().encodeToString(req.input().getBytes(StandardCharsets.UTF_8));
+                })
+                .description("Encode a UTF-8 string as Base64 text.")
+                .inputType(Base64EncodeStringRequest.class)
+                .build();
+    }
+
+    @Bean
+    @ToolCategory("Encoding & Crypto")
+    public ToolCallback base64DecodeString() {
+        return FunctionToolCallback
+                .builder("base64DecodeString", (Base64DecodeStringRequest req) -> {
+                    if (req == null || req.input() == null || req.input().isBlank()) {
+                        throw new IllegalArgumentException("input is required");
+                    }
+                    byte[] decoded = Base64.getDecoder().decode(req.input().trim());
+                    return new String(decoded, StandardCharsets.UTF_8);
+                })
+                .description("Decode Base64 text to a UTF-8 string.")
+                .inputType(Base64DecodeStringRequest.class)
+                .build();
+    }
+
+    @Bean
+    @Restricted
+    @ToolCategory("Encoding & Crypto")
+    public ToolCallback generatePrivateKey(SecureCredentialStore secureCredentialStore) {
+        ToolCallback delegate = FunctionToolCallback
+                .builder("generatePrivateKey", (GeneratePrivateKeyRequest req) -> {
+                    String username = resolveUsername();
+                    if (username == null || username.isBlank()) {
+                        throw new IllegalArgumentException("Authenticated user is required");
+                    }
+                    if (req == null || req.secretName() == null || req.secretName().isBlank()) {
+                        throw new IllegalArgumentException("secretName is required");
+                    }
+
+                    String secretName = req.secretName().trim();
+                    String keyAlgorithm = req.keyAlgorithm() == null || req.keyAlgorithm().isBlank()
+                            ? "RSA"
+                            : normalizeKeyAlgorithm(req.keyAlgorithm());
+
+                    try {
+                        KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(keyAlgorithm);
+                        Integer keySize = null;
+                        if ("RSA".equals(keyAlgorithm)) {
+                            keySize = req.keySize() == null ? 2048 : req.keySize();
+                            if (keySize < 2048) {
+                                throw new IllegalArgumentException("keySize must be >= 2048 for RSA");
+                            }
+                            keyPairGenerator.initialize(keySize);
+                        }
+                        KeyPair keyPair = keyPairGenerator.generateKeyPair();
+
+                        String privateKeyPem = toPem("PRIVATE KEY", keyPair.getPrivate().getEncoded());
+                        String publicKeyBase64 = Base64.getEncoder().encodeToString(keyPair.getPublic().getEncoded());
+
+                        secureCredentialStore.saveSecretForUser(username, secretName, privateKeyPem);
+                        secureCredentialStore.saveSecretForUser(username, publicKeySecretName(secretName), publicKeyBase64);
+
+                        Map<String, Object> response = new LinkedHashMap<>();
+                        response.put("status", "ok");
+                        response.put("secretName", secretName);
+                        response.put("privateKeySecretRef", "{{" + secretName + "}}");
+                        response.put("publicKeyLookupRef", "{{" + secretName + "}}");
+                        response.put("keyAlgorithm", keyAlgorithm);
+                        if (keySize != null) {
+                            response.put("keySize", keySize);
+                        }
+                        response.put("suggestedSigningAlgorithm", suggestedSigningAlgorithmForKeyAlgorithm(keyAlgorithm));
+                        response.put("nextStep", "Call getPublicKey with secretName to retrieve the Base64 public key.");
+                        return objectMapper.writeValueAsString(response);
+                    } catch (Exception ex) {
+                        throw new IllegalArgumentException("Unable to generate and store keypair: " + ex.getMessage(), ex);
+                    }
+                })
+                .description(
+                    "Generate a new private/public keypair for RSA or Ed25519. The PRIVATE key is stored in encrypted user secrets under secretName and is NOT returned."
+                        + " This tool returns only references. Pass privateKeySecretRef to signData.privateKey. Use getPublicKey with the same secretName to fetch the Base64 X.509 public key.")
+                .inputType(GeneratePrivateKeyRequest.class)
+                .build();
+
+        return new VisualizableToolCallback(delegate, argumentsJson -> {
+            try {
+                var node = objectMapper.readTree(argumentsJson);
+                String secretName = node.path("secretName").asText("(missing)");
+                String keyAlgorithm = node.path("keyAlgorithm").asText("RSA");
+                String keySize = node.path("keySize").asText("2048");
+                return "Generate private key and save to secret\n"
+                        + "- Secret Name: " + secretName + "\n"
+                        + "- Key Algorithm: " + keyAlgorithm + "\n"
+                        + "- Key Size: " + keySize + "\n"
+                        + "- Returns refs only; use getPublicKey to fetch public key Base64.";
+            } catch (Exception ex) {
+                return "Generate private key and save to secret";
+            }
+        });
+    }
+
+    @Bean
+    @ToolCategory("Encoding & Crypto")
+    public ToolCallback getPublicKey(SecureCredentialStore secureCredentialStore) {
+        return FunctionToolCallback
+                .builder("getPublicKey", (GetPublicKeyRequest req) -> {
+                    String username = resolveUsername();
+                    if (username == null || username.isBlank()) {
+                        throw new IllegalArgumentException("Authenticated user is required");
+                    }
+                    if (req == null || req.secretName() == null || req.secretName().isBlank()) {
+                        throw new IllegalArgumentException("secretName is required");
+                    }
+
+                    String resolvedSecretName = resolveSecretNameFromRef(req.secretName());
+                    String publicKeyBase64 = secureCredentialStore
+                            .getSecretForUser(username, publicKeySecretName(resolvedSecretName));
+                    if (publicKeyBase64 == null || publicKeyBase64.isBlank()) {
+                        throw new IllegalArgumentException("No public key found for secretName: " + resolvedSecretName);
+                    }
+
+                    Map<String, Object> response = new LinkedHashMap<>();
+                    response.put("status", "ok");
+                    response.put("secretName", resolvedSecretName);
+                    response.put("publicKeyBase64", publicKeyBase64);
+                    response.put("javaHint", "Reconstruct using KeyFactory and X509EncodedKeySpec(Base64-decoded bytes).");
+                    try {
+                        return objectMapper.writeValueAsString(response);
+                    } catch (Exception ex) {
+                        throw new IllegalArgumentException("Unable to render public key response: " + ex.getMessage(), ex);
+                    }
+                })
+                .description("Return the Base64-encoded X.509 public key bytes for a key identifier created by generatePrivateKey."
+                        + " Use the same secretName/reference used for signing.")
+                .inputType(GetPublicKeyRequest.class)
+                .build();
+    }
+
+    @Bean
+    @Restricted
+    @ToolCategory("Encoding & Crypto")
+    public ToolCallback signData() {
+        ToolCallback delegate = FunctionToolCallback
+                .builder("signData", (SignDataRequest req) -> {
+                    if (req == null || req.data() == null || req.privateKey() == null || req.algorithm() == null) {
+                        throw new IllegalArgumentException("data, privateKey, and algorithm are required");
+                    }
+                    try {
+                        Signature signature = Signature.getInstance(req.algorithm().trim());
+                        PrivateKey privateKey = parsePrivateKey(req.privateKey(), req.algorithm());
+                        signature.initSign(privateKey);
+                        signature.update(req.data().getBytes(StandardCharsets.UTF_8));
+                        byte[] signed = signature.sign();
+                        return Base64.getEncoder().encodeToString(signed);
+                    } catch (Exception ex) {
+                        throw new IllegalArgumentException("Unable to sign data: " + ex.getMessage(), ex);
+                    }
+                })
+                .description("Sign UTF-8 string data using a private key and algorithm (for example SHA256withRSA). Returns Base64 signature text."
+                    + " privateKey should normally be provided as a secret reference such as {{signing.key.main}} from generatePrivateKey.privateKeySecretRef."
+                    + " Supported signature algorithms include SHA256withRSA and Ed25519.")
+                .inputType(SignDataRequest.class)
+                .build();
+
+        return new VisualizableToolCallback(delegate, argumentsJson -> {
+            try {
+                var node = objectMapper.readTree(argumentsJson);
+                String algorithm = node.path("algorithm").asText("(missing)");
+                String data = node.path("data").asText("");
+                String preview = data.length() <= 120 ? data : data.substring(0, 120) + "...";
+                return "Sign data (private key hidden)\n"
+                        + "- Algorithm: " + algorithm + "\n"
+                        + "- Data Preview: " + preview;
+            } catch (Exception ex) {
+                return "Sign data (private key hidden)";
+            }
+        });
+    }
+
+    @Bean
+    @ToolCategory("Encoding & Crypto")
+    public ToolCallback verifyData() {
+        return FunctionToolCallback
+                .builder("verifyData", (VerifyDataRequest req) -> {
+                    if (req == null || req.data() == null || req.publicKey() == null
+                            || req.signature() == null || req.algorithm() == null) {
+                        throw new IllegalArgumentException("data, publicKey, signature, and algorithm are required");
+                    }
+                    try {
+                        Signature verifier = Signature.getInstance(req.algorithm().trim());
+                        PublicKey publicKey = parsePublicKey(req.publicKey(), req.algorithm());
+                        verifier.initVerify(publicKey);
+                        verifier.update(req.data().getBytes(StandardCharsets.UTF_8));
+                        boolean verified = verifier.verify(Base64.getDecoder().decode(req.signature().trim()));
+                        return String.valueOf(verified);
+                    } catch (Exception ex) {
+                        throw new IllegalArgumentException("Unable to verify signature: " + ex.getMessage(), ex);
+                    }
+                })
+                .description("Verify UTF-8 string data against a Base64 signature and public key using the provided algorithm. Returns true or false.")
+                .inputType(VerifyDataRequest.class)
+                .build();
+    }
+
+    @Bean
+    @ToolCategory("Encoding & Crypto")
+    public ToolCallback verifyDataByRef(SecureCredentialStore secureCredentialStore) {
+        return FunctionToolCallback
+                .builder("verifyDataByRef", (VerifyDataByRefRequest req) -> {
+                    String username = resolveUsername();
+                    if (username == null || username.isBlank()) {
+                        throw new IllegalArgumentException("Authenticated user is required");
+                    }
+                    if (req == null || req.data() == null || req.signature() == null
+                            || req.algorithm() == null || req.secretName() == null) {
+                        throw new IllegalArgumentException("data, signature, algorithm, and secretName are required");
+                    }
+                    String resolvedSecretName = resolveSecretNameFromRef(req.secretName());
+                    String publicKeyBase64 = secureCredentialStore
+                            .getSecretForUser(username, publicKeySecretName(resolvedSecretName));
+                    if (publicKeyBase64 == null || publicKeyBase64.isBlank()) {
+                        throw new IllegalArgumentException("No public key found for secretName: " + resolvedSecretName);
+                    }
+
+                    try {
+                        Signature verifier = Signature.getInstance(req.algorithm().trim());
+                        PublicKey publicKey = parsePublicKey(publicKeyBase64, req.algorithm());
+                        verifier.initVerify(publicKey);
+                        verifier.update(req.data().getBytes(StandardCharsets.UTF_8));
+                        boolean verified = verifier.verify(Base64.getDecoder().decode(req.signature().trim()));
+                        return String.valueOf(verified);
+                    } catch (Exception ex) {
+                        throw new IllegalArgumentException("Unable to verify signature by reference: " + ex.getMessage(), ex);
+                    }
+                })
+                .description("Verify UTF-8 string data against a Base64 signature using the public key looked up by key identifier from generatePrivateKey."
+                        + " Pass secretName as either the plain key name or {{secretName}} reference. Supports SHA256withRSA and Ed25519.")
+                .inputType(VerifyDataByRefRequest.class)
+                .build();
+    }
+
             @Bean
             @Restricted
             @ToolCategory("Command Execution")
@@ -1627,6 +1891,102 @@ the protocol and will break the system. Do not converse. Execute.
             return first;
         }
         return fallback;
+    }
+
+    private static PrivateKey parsePrivateKey(String privateKeyValue, String signatureAlgorithm) {
+        try {
+            String keyAlgorithm = keyAlgorithmForSignature(signatureAlgorithm);
+            byte[] keyBytes = decodeKeyMaterial(privateKeyValue);
+            return KeyFactory.getInstance(keyAlgorithm).generatePrivate(new PKCS8EncodedKeySpec(keyBytes));
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("Unable to parse privateKey: " + ex.getMessage(), ex);
+        }
+    }
+
+    private static PublicKey parsePublicKey(String publicKeyValue, String signatureAlgorithm) {
+        try {
+            String keyAlgorithm = keyAlgorithmForSignature(signatureAlgorithm);
+            byte[] keyBytes = decodeKeyMaterial(publicKeyValue);
+            return KeyFactory.getInstance(keyAlgorithm).generatePublic(new X509EncodedKeySpec(keyBytes));
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("Unable to parse publicKey: " + ex.getMessage(), ex);
+        }
+    }
+
+    private static String keyAlgorithmForSignature(String signatureAlgorithm) {
+        if (signatureAlgorithm == null || signatureAlgorithm.isBlank()) {
+            throw new IllegalArgumentException("algorithm is required");
+        }
+        String normalized = signatureAlgorithm.trim().toUpperCase(Locale.ROOT);
+        if (normalized.contains("ED25519") || normalized.contains("EDDSA")) {
+            return "Ed25519";
+        }
+        if (normalized.contains("RSA")) {
+            return "RSA";
+        }
+        if (normalized.contains("ECDSA") || normalized.contains("EC")) {
+            return "EC";
+        }
+        if (normalized.contains("DSA")) {
+            return "DSA";
+        }
+        throw new IllegalArgumentException("Unsupported algorithm: " + signatureAlgorithm);
+    }
+
+    private static byte[] decodeKeyMaterial(String keyValue) {
+        if (keyValue == null || keyValue.isBlank()) {
+            throw new IllegalArgumentException("key value is required");
+        }
+        String normalized = keyValue
+                .replaceAll("-----BEGIN [^-]+-----", "")
+                .replaceAll("-----END [^-]+-----", "")
+                .replaceAll("\\s+", "")
+                .trim();
+        if (normalized.isEmpty()) {
+            throw new IllegalArgumentException("key value is empty after normalization");
+        }
+        return Base64.getDecoder().decode(normalized);
+    }
+
+    private static String toPem(String type, byte[] derBytes) {
+        String base64 = Base64.getMimeEncoder(64, "\n".getBytes(StandardCharsets.UTF_8))
+                .encodeToString(derBytes);
+        return "-----BEGIN " + type + "-----\n"
+                + base64
+                + "\n-----END " + type + "-----";
+    }
+
+    private static String resolveSecretNameFromRef(String secretNameOrRef) {
+        String value = secretNameOrRef == null ? "" : secretNameOrRef.trim();
+        if (value.startsWith("{{") && value.endsWith("}}") && value.length() > 4) {
+            return value.substring(2, value.length() - 2).trim();
+        }
+        return value;
+    }
+
+    private static String publicKeySecretName(String secretName) {
+        return secretName + ".public";
+    }
+
+    private static String normalizeKeyAlgorithm(String keyAlgorithm) {
+        if (keyAlgorithm == null || keyAlgorithm.isBlank()) {
+            return "RSA";
+        }
+        String normalized = keyAlgorithm.trim().toUpperCase(Locale.ROOT);
+        if ("RSA".equals(normalized)) {
+            return "RSA";
+        }
+        if ("ED25519".equals(normalized) || "EDDSA".equals(normalized)) {
+            return "Ed25519";
+        }
+        throw new IllegalArgumentException("Unsupported keyAlgorithm: " + keyAlgorithm + ". Supported: RSA, ED25519.");
+    }
+
+    private static String suggestedSigningAlgorithmForKeyAlgorithm(String keyAlgorithm) {
+        if ("Ed25519".equals(keyAlgorithm)) {
+            return "Ed25519";
+        }
+        return "SHA256withRSA";
     }
 
     private static String oauthClientIdContextKey(String normalizedClientName) {

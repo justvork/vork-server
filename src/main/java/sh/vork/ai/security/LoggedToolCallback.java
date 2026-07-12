@@ -21,7 +21,7 @@ public class LoggedToolCallback implements ToolCallback {
     private static final Logger log = LoggerFactory.getLogger(LoggedToolCallback.class);
 
     private static final Pattern SENSITIVE_JSON_FIELD = Pattern.compile(
-            "(?i)(\\\"(?:password|secret|token|api[_-]?key|clientSecret|authorization)\\\"\\s*:\\s*\\\")([^\\\"]*)(\\\")");
+            "(?i)(\\\"(?:password|secret|token|api[_-]?key|private[_-]?key|clientSecret|authorization)\\\"\\s*:\\s*\\\")([^\\\"]*)(\\\")");
     private static final Pattern BEARER_VALUE = Pattern.compile("(?i)(Bearer\\s+)[A-Za-z0-9._\\-~+/=]+");
 
     private final ToolCallback delegate;
