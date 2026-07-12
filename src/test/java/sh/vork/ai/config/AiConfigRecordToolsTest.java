@@ -207,6 +207,41 @@ class AiConfigRecordToolsTest {
         }
     }
 
+    @Test
+    void generatePrivateKey_authorizationDetails_includeKeySizeForRsa() throws Exception {
+        JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
+        TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
+        SecureCredentialStore secureCredentialStore = mock(SecureCredentialStore.class);
+        AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
+
+        ToolCallback tool = config.generatePrivateKey(secureCredentialStore);
+        assertTrue(tool instanceof VisualizableTool);
+
+        String details = ((VisualizableTool) tool).formatAuthorizationDetails(
+                "{\"secretName\":\"signing.key.main\",\"keyAlgorithm\":\"RSA\",\"keySize\":3072}");
+
+        assertTrue(details.contains("- Key Algorithm: RSA"));
+        assertTrue(details.contains("- Key Size: 3072"));
+    }
+
+    @Test
+    void generatePrivateKey_authorizationDetails_omitKeySizeForEd25519() throws Exception {
+        JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
+        TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
+        SecureCredentialStore secureCredentialStore = mock(SecureCredentialStore.class);
+        AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
+
+        ToolCallback tool = config.generatePrivateKey(secureCredentialStore);
+        assertTrue(tool instanceof VisualizableTool);
+
+        String details = ((VisualizableTool) tool).formatAuthorizationDetails(
+                "{\"secretName\":\"signing.key.main\",\"keyAlgorithm\":\"ED25519\"}");
+
+        assertTrue(details.contains("- Key Algorithm: ED25519"));
+        assertFalse(details.contains("Key Size"));
+        assertFalse(details.contains("2048"));
+    }
+
             @Test
             void getPublicKey_returnsBase64ForSameIdentifier() throws Exception {
             JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);

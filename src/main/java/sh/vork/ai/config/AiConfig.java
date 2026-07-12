@@ -991,12 +991,20 @@ the protocol and will break the system. Do not converse. Execute.
                 var node = objectMapper.readTree(argumentsJson);
                 String secretName = node.path("secretName").asText("(missing)");
                 String keyAlgorithm = node.path("keyAlgorithm").asText("RSA");
-                String keySize = node.path("keySize").asText("2048");
-                return "Generate private key and save to secret\n"
+                String normalizedAlgorithm = keyAlgorithm == null
+                        ? "RSA"
+                        : keyAlgorithm.trim().toUpperCase(Locale.ROOT);
+                boolean includeKeySize = "RSA".equals(normalizedAlgorithm);
+
+                StringBuilder details = new StringBuilder("Generate private key and save to secret\n"
                         + "- Secret Name: " + secretName + "\n"
-                        + "- Key Algorithm: " + keyAlgorithm + "\n"
-                        + "- Key Size: " + keySize + "\n"
-                        + "- Returns refs only; use getPublicKey to fetch public key Base64.";
+                        + "- Key Algorithm: " + keyAlgorithm + "\n");
+                if (includeKeySize) {
+                    String keySize = node.path("keySize").asText("2048");
+                    details.append("- Key Size: ").append(keySize).append("\n");
+                }
+                details.append("- Returns refs only; use getPublicKey to fetch public key Base64.");
+                return details.toString();
             } catch (Exception ex) {
                 return "Generate private key and save to secret";
             }

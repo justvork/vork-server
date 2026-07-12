@@ -11,11 +11,9 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.RememberMeServices;
-import org.springframework.security.web.authentication.rememberme.TokenBasedRememberMeServices;
 
 /**
- * Spring Security configuration for custom login, page protection, and remember-me.
+ * Spring Security configuration for custom login and page protection.
  * Uses DatabaseUserDetailsService for credential loading from MongoDB.
  */
 @Configuration
@@ -25,7 +23,6 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http,
-                                           RememberMeServices rememberMeServices,
                                            UserDetailsService userDetailsService) throws Exception {
         http
             .authorizeHttpRequests(auth -> auth
@@ -60,12 +57,8 @@ public class SecurityConfig {
                 .logoutSuccessUrl("/login?logout=true")
                 .invalidateHttpSession(true)
                 .clearAuthentication(true)
-                .deleteCookies("VORK_REMEMBER_ME", "JSESSIONID")
+                .deleteCookies("JSESSIONID")
                 .permitAll()
-            )
-            .rememberMe(rememberMe -> rememberMe
-                .rememberMeServices(rememberMeServices)
-                .key("vork-remember-me-key-change-in-production")
             )
             .csrf(csrf -> csrf
                 .ignoringRequestMatchers("/api/authorization/**", "/api/chat/**", "/ws/**", "/logout",
@@ -96,18 +89,6 @@ public class SecurityConfig {
                 .userDetailsService(userDetailsService)
                 .passwordEncoder(passwordEncoder);
         return authenticationManagerBuilder.build();
-    }
-
-    @Bean
-    public RememberMeServices rememberMeServices(UserDetailsService userDetailsService) {
-        TokenBasedRememberMeServices rememberMeServices = new TokenBasedRememberMeServices(
-                "vork-remember-me-key-change-in-production",
-                userDetailsService);
-        rememberMeServices.setTokenValiditySeconds(2_592_000);
-        rememberMeServices.setCookieName("VORK_REMEMBER_ME");
-        rememberMeServices.setUseSecureCookie(false);
-        rememberMeServices.setAlwaysRemember(false);
-        return rememberMeServices;
     }
 
     @Bean
