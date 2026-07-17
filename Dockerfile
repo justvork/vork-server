@@ -22,10 +22,10 @@ COPY package.json package.json
 COPY tailwind-input.css tailwind-input.css
 COPY tailwind.config.js tailwind.config.js
 # Pre-fetch deps as a separate layer so source changes don't re-download
-RUN mvn -q -Dmaven.test.skip=true dependency:resolve || true
+RUN mvn -q -Dmaven.test.skip=true dependency:resolve
 
 COPY src src
-RUN mvn -q -Dmaven.test.skip=true -U package
+RUN mvn -q -Dmaven.test.skip=true -U clean package
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 # Full JDK required at runtime — javax.tools.JavaCompiler is used to compile

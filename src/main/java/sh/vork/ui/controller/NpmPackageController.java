@@ -68,7 +68,7 @@ public class NpmPackageController {
 
         if ("current".equals(version)) {
             String locatorName = "META-INF/LOCATOR." + parts[0] + "." + parts[1] + ".properties";
-            log.debug("Resolving version via locator: {}", locatorName);
+            log.trace("Resolving version via locator: {}", locatorName);
             InputStream locatorIn = getClass().getClassLoader().getResourceAsStream(locatorName);
             if (locatorIn == null) {
                 log.warn("npm2mvn LOCATOR not found: {}", locatorName);
@@ -99,7 +99,7 @@ public class NpmPackageController {
             return;
         }
 
-        log.debug("Serving npm resource: {}", resourceUri);
+        log.trace("Serving npm resource: {}", resourceUri);
         URLConnection conn = url.openConnection();
         try (InputStream in = conn.getInputStream()) {
             response.setStatus(HttpServletResponse.SC_OK);

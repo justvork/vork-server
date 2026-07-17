@@ -57,37 +57,37 @@ public class NitriteRepository<T extends DatabaseEntity> implements DatabaseRepo
         if (!this.collection.hasIndex(UUID_FIELD)) {
             this.collection.createIndex(UUID_FIELD);
         }
-        log.debug("NitriteRepository ready: collection={}", name);
+        log.trace("NitriteRepository ready: collection={}", name);
     }
 
     // ─── Core CRUD ────────────────────────────────────────────────────────────
 
     @Override
     public T get(String uuid) {
-        log.debug("ENTER get: uuid={}", uuid);
+        log.trace("ENTER get: uuid={}", uuid);
         Document doc = collection.find(where(UUID_FIELD).eq(uuid)).firstOrNull();
         T result = fromDocument(doc);
-        log.debug("EXIT get: found={}", result != null);
+        log.trace("EXIT get: found={}", result != null);
         return result;
     }
 
     @Override
     public T get(SearchQuery... queries) {
-        log.debug("ENTER get by queries: count={}", queries.length);
+        log.trace("ENTER get by queries: count={}", queries.length);
         for (Document doc : collection.find()) {
             Map<String, Object> map = toMap(doc);
             if (map != null && matchesAll(map, queries)) {
-                log.debug("EXIT get by queries: found");
+                log.trace("EXIT get by queries: found");
                 return fromMap(map);
             }
         }
-        log.debug("EXIT get by queries: not found");
+        log.trace("EXIT get by queries: not found");
         return null;
     }
 
     @Override
     public void save(T entity) {
-        log.debug("ENTER save: uuid={}", entity.uuid());
+        log.trace("ENTER save: uuid={}", entity.uuid());
         try {
             String json = objectMapper.writeValueAsString(entity);
             Document doc = Document.createDocument(UUID_FIELD, entity.uuid())
@@ -95,7 +95,7 @@ public class NitriteRepository<T extends DatabaseEntity> implements DatabaseRepo
             // Upsert: remove any existing document, then insert fresh
             collection.remove(where(UUID_FIELD).eq(entity.uuid()));
             collection.insert(doc);
-            log.debug("EXIT save: ok");
+            log.trace("EXIT save: ok");
         } catch (Exception e) {
             throw new DatabaseException("Failed to save entity: " + entity.uuid(), e);
         }
@@ -103,15 +103,15 @@ public class NitriteRepository<T extends DatabaseEntity> implements DatabaseRepo
 
     @Override
     public void delete(String uuid) {
-        log.debug("ENTER delete: uuid={}", uuid);
+        log.trace("ENTER delete: uuid={}", uuid);
         collection.remove(where(UUID_FIELD).eq(uuid));
-        log.debug("EXIT delete: ok");
+        log.trace("EXIT delete: ok");
     }
 
     @Override
     public long count() {
         long n = collection.size();
-        log.debug("count: {}", n);
+        log.trace("count: {}", n);
         return n;
     }
 
@@ -119,7 +119,7 @@ public class NitriteRepository<T extends DatabaseEntity> implements DatabaseRepo
 
     @Override
     public Stream<T> list(int page, int pageSize) {
-        log.debug("ENTER list: page={}, pageSize={}", page, pageSize);
+        log.trace("ENTER list: page={}, pageSize={}", page, pageSize);
         List<Document> all = new ArrayList<>(collection.find().toList());
         // Sort by uuid for stable ordering across pages
         all.sort(Comparator.comparing(d -> String.valueOf(d.get(UUID_FIELD))));
@@ -129,7 +129,7 @@ public class NitriteRepository<T extends DatabaseEntity> implements DatabaseRepo
             T entity = fromDocument(all.get(i));
             if (entity != null) results.add(entity);
         }
-        log.debug("EXIT list: returned={}", results.size());
+        log.trace("EXIT list: returned={}", results.size());
         return results.stream();
     }
 
@@ -139,7 +139,7 @@ public class NitriteRepository<T extends DatabaseEntity> implements DatabaseRepo
     public Stream<T> search(int page, int pageSize,
                             String sortField, SortOrder sortOrder,
                             SearchQuery... queries) {
-        log.debug("ENTER search: page={}, pageSize={}, sortField={}, sortOrder={}, queries={}",
+        log.trace("ENTER search: page={}, pageSize={}, sortField={}, sortOrder={}, queries={}",
                 page, pageSize, sortField, sortOrder, queries.length);
 
         List<Map<String, Object>> matched = new ArrayList<>();
@@ -158,20 +158,20 @@ public class NitriteRepository<T extends DatabaseEntity> implements DatabaseRepo
                 .filter(Objects::nonNull)
                 .toList();
 
-        log.debug("EXIT search: returned={}", results.size());
+        log.trace("EXIT search: returned={}", results.size());
         return results.stream();
     }
 
     @Override
     public long searchCount(SearchQuery... queries) {
-        log.debug("ENTER searchCount: queries={}", queries.length);
+        log.trace("ENTER searchCount: queries={}", queries.length);
         if (queries.length == 0) return collection.size();
         long count = 0;
         for (Document doc : collection.find()) {
             Map<String, Object> map = toMap(doc);
             if (map != null && matchesAll(map, queries)) count++;
         }
-        log.debug("EXIT searchCount: {}", count);
+        log.trace("EXIT searchCount: {}", count);
         return count;
     }
 

@@ -47,6 +47,8 @@ cd vork-server
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
   --file Dockerfile \
+  --pull \
+  --no-cache \
   --tag yourusername/vork-server:latest \
   --tag yourusername/vork-server:{version} \
   --push \
@@ -77,6 +79,19 @@ docker buildx build \
 ```bash
 docker buildx imagetools inspect yourusername/vork:latest
 ```
+
+### Ensure deployments pick up the new image
+
+If a host keeps running old layers under a mutable tag like `latest`, force pull
+before recreate:
+
+```bash
+docker pull yourusername/vork-server:latest
+docker compose up -d --force-recreate
+```
+
+For production, prefer immutable tags (for example `0.0.3-20260713-1`) and deploy
+that exact tag.
 
 ---
 

@@ -2,6 +2,8 @@ package sh.vork.oauth;
 
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,6 +18,8 @@ import sh.vork.orm.DatabaseRepository;
 @RestController
 @RequestMapping("/api/oauth")
 public class OAuthCallbackController {
+
+    private static final Logger log = LoggerFactory.getLogger(OAuthCallbackController.class);
 
     private final OAuthClientService oauthClientService;
     private final DatabaseRepository<AiSession> sessionRepository;
@@ -36,15 +40,25 @@ public class OAuthCallbackController {
             SessionOriginMode originMode = resolveOriginMode(sessionUuid);
             String autoResumeScript = "";
             String followUpMessage;
+            
+            log.debug("OAuth callback successful [sessionUuid={}, originMode={}]", 
+                      sessionUuid.isBlank() ? "empty" : sessionUuid, originMode);
+            
             if (!sessionUuid.isBlank()) {
                 autoResumeScript = """
                     <script>
                     (async function () {
                         try {
-                            await fetch('/api/chat/authorize/%s?approved=true&policy=ONCE', { method: 'GET', credentials: 'same-origin' });
+                            const response = await fetch('/api/chat/authorize/%s?approved=true&policy=ONCE', { method: 'GET', credentials: 'same-origin' });
+                            if (!response.ok) {
+                                console.error('Authorization failed:', response.status);
+                            } else {
+                                console.log('Authorization successful');
+                            }
                         } catch (e) {
-                            // Best-effort resume; user can still continue manually if needed.
+                            console.error('Authorization error:', e.message);
                         }
+                        // Always redirect as authorization was processed
                         %s
                     }());
                     </script>
@@ -52,6 +66,18 @@ public class OAuthCallbackController {
                         originMode == SessionOriginMode.WEB
                                 ? "window.location.href = '/index.html';"
                                 : "");
+            } else {
+                // Fallback redirect if sessionUuid is empty (non-web origins or background OAuth)
+                log.debug("OAuth callback: No session UUID available, using fallback redirect for origin={}", originMode);
+                if (originMode == SessionOriginMode.WEB) {
+                    autoResumeScript = """
+                        <script>
+                        // Fallback redirect after short delay when session context is unavailable
+                        console.log('OAuth callback: redirecting via fallback (no session context)');
+                        setTimeout(function() { window.location.href = '/index.html'; }, 1000);
+                        </script>
+                        """;
+                }
             }
 
             if (originMode == SessionOriginMode.WEB) {
@@ -72,6 +98,7 @@ public class OAuthCallbackController {
                     """.formatted(followUpMessage, autoResumeScript));
         }
         String message = String.valueOf(result.getOrDefault("message", "OAuth callback failed"));
+        log.warn("OAuth callback failed: {}", message);
         return ResponseEntity.badRequest().body("""
                 <html><body>
                 <h3>OAuth connection failed</h3>

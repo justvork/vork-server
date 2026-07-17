@@ -1812,7 +1812,6 @@ the protocol and will break the system. Do not converse. Execute.
     private InteractionFormSchema oauthConfigurationForm(OAuthConnectRequest effectiveReq,
                                                          String suggestedRedirectUri) {
         String clientNameValue = firstNonBlank(effectiveReq.clientName(), "gmail");
-        String profileNameValue = firstNonBlank(effectiveReq.profileName(), "default");
         String authorizeEndpointValue = firstNonBlank(effectiveReq.authorizeEndpoint(), "");
         String tokenEndpointValue = firstNonBlank(effectiveReq.tokenEndpoint(), "");
         String clientIdValue = firstNonBlank(effectiveReq.clientId(), "");
@@ -1820,9 +1819,11 @@ the protocol and will break the system. Do not converse. Execute.
         String authorizationParamsValue = authorizationParamsPlaceholder(effectiveReq.authorizationParams());
         String forceReconnectValue = String.valueOf(Boolean.TRUE.equals(effectiveReq.forceReconnect()));
 
+        // profileName is not shown in the form — it is determined by user intent in the chat instruction.
+        // If user says "Connect to GitHub" → profileName defaults to "default"
+        // If user says "Connect to GitHub as my-org" → profileName="my-org" is extracted by the AI tool
         List<FormField> fields = List.of(
             new FormField("clientName", "TEXT", "clientName", clientNameValue, clientNameValue, true, FieldSource.CONTEXT, null),
-            new FormField("profileName", "TEXT", "profileName", profileNameValue, profileNameValue, true, FieldSource.CONTEXT, null),
                 new FormField("authorizeEndpoint", "TEXT", "authorizeEndpoint", authorizeEndpointValue, authorizeEndpointValue, true, FieldSource.CONTEXT, null),
                 new FormField("tokenEndpoint", "TEXT", "tokenEndpoint", tokenEndpointValue, tokenEndpointValue, true, FieldSource.CONTEXT, null),
             new FormField(OAUTH_CLIENT_ID_FORM_KEY, "TEXT", "clientId", clientIdValue, clientIdValue, true, FieldSource.CONTEXT, null),

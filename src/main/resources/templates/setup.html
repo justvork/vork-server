@@ -10,7 +10,6 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
     <link rel="stylesheet" href="/css/setup-page.css" th:href="@{/css/setup-page.css}">
-    <script src="/packages/npm/qrious/current/dist/qrious.min.js" th:src="@{/packages/npm/qrious/current/dist/qrious.min.js}"></script>
 </head>
 <body class="bg-zinc-950 text-zinc-100">
 <div class="setup-wrapper">
@@ -30,6 +29,8 @@
             <div class="step-dot" id="dot-2">2</div>
             <div class="step-line mx-2"></div>
             <div class="step-dot" id="dot-3">3</div>
+            <div class="step-line mx-2"></div>
+            <div class="step-dot" id="dot-4">4</div>
         </div>
 
         <div id="alert-area" class="mb-3"></div>
@@ -234,59 +235,76 @@
 
                     <div id="config-GROQ" class="provider-config hidden">
                         <div class="mb-3">
-                            <script src="/js/setup-page.js" th:src="@{/js/setup-page.js}"></script>
+                            <label class="form-label" for="apiKey-GROQ">Groq API Key</label>
+                            <input type="password" id="apiKey-GROQ" class="form-control"
+                                   placeholder="gsk_..." autocomplete="off">
+                        </div>
+                    </div>
 
-            if (databaseConfigured && accountConfigured && !aiConfigured) {
-                setStep(3);
-            } else if (databaseConfigured) {
-                setStep(2);
-            }
-        } catch (e) { /* ignore — DB step shows by default */ }
+                    <div id="config-OPENAI" class="provider-config hidden">
+                        <div class="mb-3">
+                            <label class="form-label" for="apiKey-OPENAI">OpenAI API Key</label>
+                            <input type="password" id="apiKey-OPENAI" class="form-control"
+                                   placeholder="sk-..." autocomplete="off">
+                        </div>
+                    </div>
 
-    }
+                    <div id="config-OLLAMA" class="provider-config hidden">
+                        <div class="mb-3">
+                            <label class="form-label" for="baseUrl-OLLAMA">Ollama Base URL</label>
+                            <input type="url" id="baseUrl-OLLAMA" class="form-control"
+                                   value="http://localhost:11434">
+                        </div>
+                    </div>
 
-    function prefillDbForm(s) {
-        if (s.backend) selectDbBackend(s.backend);
-        const isRedis   = s.backend === 'redis';
-        const isCouchbase = s.backend === 'couchbase';
-        const isNitrite = s.backend === 'nitrite';
-        if (isNitrite) {
-            if (s.database) document.getElementById('db-nitrite-path').value = s.database;
-            return;
-        }
-        if (s.host) {
-            const hostId = isRedis
-                ? 'db-redis-host'
-                : isCouchbase
-                    ? 'db-couchbase-host'
-                    : 'db-mongo-host';
-            const el = document.getElementById(hostId);
-            if (el) el.value = s.host;
-        }
-        if (s.port) {
-            const portId = isRedis
-                ? 'db-redis-port'
-                : isCouchbase
-                    ? 'db-couchbase-port'
-                    : 'db-mongo-port';
-            const el = document.getElementById(portId);
-            if (el) el.value = s.port;
-        }
-        if (!isRedis && s.database) {
-            const dbId = isCouchbase ? 'db-couchbase-bucket' : 'db-mongo-database';
-            const el = document.getElementById(dbId);
-            if (el) el.value = s.database;
-        }
-        if (!isRedis && s.username) {
-            const userId = isCouchbase ? 'db-couchbase-username' : 'db-mongo-username';
-            const el = document.getElementById(userId);
-            if (el) el.value = s.username;
-        }
-    }
+                    <div id="provider-actions" class="hidden">
+                        <button id="btn-test" class="btn btn-outline-secondary w-100 mb-3"
+                                onclick="testProvider()">
+                            <i class="fa-solid fa-plug me-2"></i>Test Connection &amp; Discover Models
+                        </button>
 
-    // On load: determine starting step and pre-fill database form
-    loadInitialState();
-</script>
+                        <div id="model-select-area" class="hidden">
+                            <label class="form-label" for="default-model">Default Model</label>
+                            <select id="default-model" class="form-select mb-3">
+                                <option value="">- select a model -</option>
+                            </select>
+                            <div class="form-check mb-3">
+                                <input type="checkbox" class="form-check-input" id="set-global" checked>
+                                <label class="form-check-label small" for="set-global">
+                                    Set as global default provider &amp; model
+                                </label>
+                            </div>
+                            <button id="btn-save-provider" class="btn btn-primary w-100"
+                                    onclick="saveProvider()">
+                                <i class="fa-solid fa-arrow-right me-2"></i>Save &amp; Continue
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ─── Step 4: Complete ───────────────────────────────────────── -->
+        <div id="step-complete" class="step-panel">
+            <div class="card">
+                <div class="card-body p-4 text-center">
+                    <h5 class="card-title mb-2">
+                        <i class="fa-solid fa-circle-check me-2 text-success"></i>Setup Complete
+                    </h5>
+                    <p class="text-muted small mb-4">
+                        Vork has now been configured. Click continue to login.
+                    </p>
+                    <button id="btn-continue-login" class="btn btn-primary w-100" onclick="continueToLogin()">
+                        <i class="fa-solid fa-arrow-right-to-bracket me-2"></i>Continue
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script src="/js/setup-page.js" th:src="@{/js/setup-page.js}"></script>
 <script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
 </body>
 </html>

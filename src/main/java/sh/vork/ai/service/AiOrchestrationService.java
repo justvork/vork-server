@@ -567,7 +567,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 StringBuilder prompt = new StringBuilder(AiConfig.BASE_SYSTEM_PROMPT);
 
                 if (sessionUuid == null || sessionUuid.isBlank()) {
-                        log.debug("System prompt composed [session=none, origin=ANONYMOUS, chars={}]", prompt.length());
+                        log.trace("System prompt composed [session=none, origin=ANONYMOUS, chars={}]", prompt.length());
                         return prompt.toString();
                 }
 
@@ -719,8 +719,10 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
 
         private String logAndReturn(StringBuilder prompt, String sessionUuid, String originLabel) {
                 String result = prompt.toString();
-                log.debug("System prompt composed [session={}, origin={}, chars={}]:\n{}",
+                log.trace("System prompt composed [session={}, origin={}, chars={}]:\n{}",
                         sessionUuid, originLabel, result.length(), result);
+                log.debug("System prompt composed [session={}, origin={}, chars={}]",
+                        sessionUuid, originLabel, result.length());
                 return result;
         }
 
@@ -916,11 +918,13 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 .toArray(ToolCallback[]::new);
                 }
 
-                if (log.isDebugEnabled()) {
+                log.debug("Tools available for AI invocation [session={}, count={}]",
+                        sessionUuid, merged.size());
+                if (log.isTraceEnabled()) {
                         String toolNames = merged.stream()
                                 .map(t -> t.getToolDefinition().name())
                                 .collect(Collectors.joining(", "));
-                        log.debug("Tools available for AI invocation [session={}, count={}, tools=[{}]]",
+                        log.trace("Tools available for AI invocation [session={}, count={}, tools=[{}]]",
                                 sessionUuid, merged.size(), toolNames);
                 }
 

@@ -16,11 +16,13 @@ function clearAlert() {
 }
 
 function setStep(n) {
-    ['step-database', 'step-account', 'step-ai'].forEach(function (id, i) {
-        document.getElementById(id).classList.toggle('active', i + 1 === n);
+    ['step-database', 'step-account', 'step-ai', 'step-complete'].forEach(function (id, i) {
+        const panel = document.getElementById(id);
+        if (panel) panel.classList.toggle('active', i + 1 === n);
     });
-    for (let i = 1; i <= 3; i++) {
+    for (let i = 1; i <= 4; i++) {
         const dot = document.getElementById('dot-' + i);
+        if (!dot) continue;
         dot.classList.remove('active', 'done');
         if (i < n) {
             dot.classList.add('done');
@@ -36,13 +38,17 @@ function selectProvider(provider) {
     document.querySelectorAll('#step-ai .provider-btn').forEach(function (b) {
         b.classList.remove('selected');
     });
-    document.getElementById('btn-' + provider).classList.add('selected');
+    const providerButton = document.getElementById('btn-' + provider);
+    if (providerButton) providerButton.classList.add('selected');
     document.querySelectorAll('#step-ai .provider-config').forEach(function (d) {
         d.classList.add('hidden');
     });
-    document.getElementById('config-' + provider).classList.remove('hidden');
-    document.getElementById('provider-actions').classList.remove('hidden');
-    document.getElementById('model-select-area').classList.add('hidden');
+    const providerConfig = document.getElementById('config-' + provider);
+    if (providerConfig) providerConfig.classList.remove('hidden');
+    const providerActions = document.getElementById('provider-actions');
+    if (providerActions) providerActions.classList.remove('hidden');
+    const modelSelectArea = document.getElementById('model-select-area');
+    if (modelSelectArea) modelSelectArea.classList.add('hidden');
     clearAlert();
 }
 
@@ -178,7 +184,7 @@ async function saveProvider() {
             showAlert(data.error, 'danger');
             return;
         }
-        window.location.href = '/login';
+        setStep(4);
     } catch (_e) {
         showAlert('Save failed - please try again.', 'danger');
     } finally {
@@ -296,7 +302,9 @@ async function loadInitialState() {
         const accountConfigured = Boolean(status.accountConfigured);
         const aiConfigured = Boolean(status.aiConfigured);
 
-        if (databaseConfigured && accountConfigured && !aiConfigured) {
+        if (databaseConfigured && accountConfigured && aiConfigured) {
+            setStep(4);
+        } else if (databaseConfigured && accountConfigured && !aiConfigured) {
             setStep(3);
         } else if (databaseConfigured) {
             setStep(2);
@@ -343,6 +351,10 @@ function prefillDbForm(s) {
         const el = document.getElementById(userId);
         if (el) el.value = s.username;
     }
+}
+
+function continueToLogin() {
+    window.location.href = '/login';
 }
 
 loadInitialState();

@@ -213,12 +213,22 @@ public class OAuthClientService {
             OAuthClient updated = applyTokenPayload(client, tokenJson);
             clientRepository.save(updated);
             connectSessionRepository.delete(connectSession.uuid());
+            
+            String resultSessionUuid = connectSession.aiSessionUuid() == null ? "" : connectSession.aiSessionUuid();
+            if (resultSessionUuid.isBlank()) {
+                log.debug("OAuth callback: aiSessionUuid was null or empty for client={}, state={}. " +
+                          "This may happen for non-web origins or background OAuth flows.",
+                          normalizedClientName, state);
+            } else {
+                log.debug("OAuth callback completed with sessionUuid={}, client={}", resultSessionUuid, normalizedClientName);
+            }
+            
             return Map.of(
                     "status", "ok",
                     "clientName", normalizedClientName,
                     "profileName", updated.profileName(),
                     "isDefaultProfile", updated.isDefaultProfile(),
-                    "sessionUuid", connectSession.aiSessionUuid() == null ? "" : connectSession.aiSessionUuid(),
+                    "sessionUuid", resultSessionUuid,
                     "secretKey", accessTokenPlaceholder(normalizedClientName),
                     "placeholder", "{{" + accessTokenPlaceholder(normalizedClientName) + "}}");
         } catch (Exception ex) {
@@ -688,6 +698,17 @@ public class OAuthClientService {
         return value != null && !value.isBlank();
     }
 
+    /**
+     * Normalizes a profile name, defaulting to "default" if not provided.
+     *
+     * <p>Intent: When a user says "Connect to GitHub" (without specifying a profile name),
+     * use the "default" profile. If they say "Connect to GitHub as my-org", the profile
+     * name is set to "my-org". The form never asks for profile name — it is determined
+     * by user intent in the chat instruction.
+     *
+     * <p>Subsequent requests for the same service/profile name reuse the existing connection.
+     * Only if the profile name differs from the existing one should a new connection be created.
+     */
     private static String normalizeProfileName(String raw) {
         String normalized = normalizeClientName(raw);
         return normalized == null || normalized.isBlank() ? "default" : normalized;
@@ -709,6 +730,23 @@ public class OAuthClientService {
         return !listClients(userUuid, normalizedClientName).isEmpty();
     }
 
+    /**
+     * Selects an existing OAuth client for the given service and profile name.
+     *
+     * <p>Selection order:
+     * <ol>
+     *   <li>Exact match: client with matching clientName and profileName</li>
+     *   <li>Fallback (default profile only): if profileName=="default" and only one profile exists for
+     *       clientName, use it. This handles the case where the user didn't explicitly specify a profile.</li>
+     *   <li>Fallback (default profile preference): if profileName=="default" and multiple profiles exist,
+     *       prefer the one marked as default</li>
+     * </ol>
+     *
+     * <p>CRITICAL: If the user explicitly requests a profileName OTHER than "default" (e.g. "sshtools"),
+     * no fallback is applied. A new connection must be created for that profile.
+     *
+     * <p>Returns {@code null} if no match found (will trigger form + new connection).
+     */
     private OAuthClient selectClientForRequest(String userUuid,
                                                String normalizedClientName,
                                                String normalizedProfileName) {
@@ -717,14 +755,21 @@ public class OAuthClientService {
             return exact;
         }
         List<OAuthClient> candidates = listClients(userUuid, normalizedClientName);
-        if (candidates.size() == 1) {
-            return candidates.getFirst();
-        }
-        for (OAuthClient c : candidates) {
-            if (c.isDefaultProfile()) {
-                return c;
+        
+        // Only apply fallback logic if the user requested "default" profile.
+        // If user explicitly requested a different profile (e.g. "sshtools"), 
+        // no fallback — must create a new connection.
+        if ("default".equals(normalizedProfileName)) {
+            if (candidates.size() == 1) {
+                return candidates.getFirst();
+            }
+            for (OAuthClient c : candidates) {
+                if (c.isDefaultProfile()) {
+                    return c;
+                }
             }
         }
+        
         return null;
     }
 

@@ -1176,7 +1176,6 @@ public class ChatService {
                                        AiProvider provider) {
         final int MAX_SKILL_ITERATIONS = 20;
         final long MAX_SKILL_RUNTIME_MS = provider == AiProvider.BACKGROUND_SCHEDULER ? 300_000L : 60_000L;
-        String currentPrompt = ex.getInitialPrompt();
         long startedAt = System.currentTimeMillis();
 
         broadcastAndPersistSkillEvent(sessionUuid, "Running skill: " + ex.getSkillName());
@@ -1185,6 +1184,18 @@ public class ChatService {
         // Without this check the model would be handed no usable tools, might hallucinate a result,
         // and the caller would get garbage back with no indication of what went wrong.
         AiSession sessionAtStart = sessionRepo.get(sessionUuid);
+        
+        // Prepend skill frame instructions to the initial prompt
+        String skillInstructions = "";
+        if (sessionAtStart != null && sessionAtStart.skillStack() != null && !sessionAtStart.skillStack().isEmpty()) {
+            sh.vork.skill.SkillFrame frame = sessionAtStart.skillStack().getLast();
+            if (frame.instructions() != null && !frame.instructions().isBlank()) {
+                skillInstructions = frame.instructions() + "\n\n";
+                log.debug("Skill frame instructions applied [session={}, skill={}, instructionChars={}]",
+                        sessionUuid, ex.getSkillName(), frame.instructions().length());
+            }
+        }
+        String currentPrompt = skillInstructions + ex.getInitialPrompt();
         if (sessionAtStart != null && sessionAtStart.skillStack() != null && !sessionAtStart.skillStack().isEmpty()) {
             sh.vork.skill.SkillFrame frame = sessionAtStart.skillStack().getLast();
             List<String> unresolvable = aiService.findUnresolvableTools(

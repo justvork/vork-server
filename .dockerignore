@@ -1,0 +1,23 @@
+.git
+.github
+.idea
+.vscode
+
+# Build outputs
+**/target/
+
+# Runtime and local data
+conf.d/files/
+
+# Node/tooling caches
+node_modules/
+.node/
+
+# OS/editor artifacts
+.DS_Store
+*.swp
+*.swo
+
+# Local-only docs/logs
+JOURNAL.md
+PROGRESS.md

@@ -91,7 +91,7 @@ public class SkillToolCallbackFactory {
                 .inputSchema(inputSchema)
                 .build();
 
-        log.debug("Created skill ToolCallback [toolName={}, skillUuid={}]", toolName, skill.uuid());
+        log.trace("Created skill ToolCallback [toolName={}, skillUuid={}]", toolName, skill.uuid());
 
         return new ToolCallback() {
             @Override
