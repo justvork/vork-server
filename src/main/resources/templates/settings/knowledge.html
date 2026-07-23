@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Knowledge Base - Vork</title>
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="/css/settings.css" th:href="@{/css/settings.css}">
+    <link rel="stylesheet" href="/css/knowledge-settings.css" th:href="@{/css/knowledge-settings.css}">
+</head>
+<body class="bg-zinc-950 text-zinc-100">
+<div th:replace="~{fragments/header :: header}"></div>
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
+        <div>
+            <h2 class="flex items-center gap-2 text-2xl font-bold text-zinc-100"><i class="fa-solid fa-brain text-[#fdaa02]"></i>Knowledge Base</h2>
+            <p class="vork-page-subtitle">Persistent organizational knowledge articles organized by category.</p>
+        </div>
+    </div>
+
+    <div class="vork-content-stack">
+        <!-- Status messages -->
+        <div id="statusMessage"></div>
+
+        <!-- Two-panel layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-4">
+            <!-- Left sidebar: base categories -->
+            <div class="lg:col-span-1">
+                <div class="rounded-xl border border-zinc-800 bg-zinc-900 h-fit sticky top-4">
+                    <div class="border-b border-zinc-800 px-4 py-3 flex items-center justify-between">
+                        <h3 class="font-semibold text-zinc-100">Categories</h3>
+                        <button id="newBaseBtn" class="rounded-md border border-emerald-500/40 px-2 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/15 transition-colors">
+                            <i class="fa-solid fa-plus mr-1"></i>New
+                        </button>
+                    </div>
+                    <div id="basesList" class="divide-y divide-zinc-800 max-h-96 overflow-y-auto">
+                        <div class="px-4 py-3 text-sm text-zinc-400 italic">Loading categories...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right panel: entries table -->
+            <div class="lg:col-span-3">
+                <div class="rounded-xl border border-zinc-800 bg-zinc-900">
+                    <div class="border-b border-zinc-800 px-4 py-3 flex items-center justify-between">
+                        <h3 class="font-semibold text-zinc-100">Entries</h3>
+                        <button id="newEntryBtn" class="rounded-md border border-emerald-500/40 px-2 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/15 transition-colors" disabled>
+                            <i class="fa-solid fa-plus mr-1"></i>New Entry
+                        </button>
+                    </div>
+
+                    <!-- Empty state -->
+                    <div id="emptyState" class="px-4 py-8 text-center">
+                        <div class="text-zinc-400 mb-2"><i class="fa-solid fa-inbox text-3xl mb-2 block"></i></div>
+                        <p class="text-zinc-400">Select a category to view knowledge entries.</p>
+                    </div>
+
+                    <!-- Entries table -->
+                    <div id="entriesContainer" class="overflow-x-auto hidden">
+                        <table class="min-w-full text-left text-sm text-zinc-200">
+                            <thead>
+                            <tr class="border-b border-zinc-800 text-xs uppercase tracking-wide text-zinc-400">
+                                <th class="px-4 py-2 w-40">Category</th>
+                                <th class="px-4 py-2">Content Preview</th>
+                                <th class="px-4 py-2 w-32">Created</th>
+                                <th class="px-4 py-2 w-32">Updated</th>
+                                <th class="px-4 py-2 w-20">Actions</th>
+                            </tr>
+                            </thead>
+                            <tbody id="entriesBody" class="divide-y divide-zinc-800">
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Pagination -->
+                    <div id="paginationContainer" class="border-t border-zinc-800 px-4 py-3 flex items-center justify-between hidden">
+                        <div class="text-sm text-zinc-400">
+                            Showing <span id="pageStart">0</span>-<span id="pageEnd">0</span> of <span id="totalCount">0</span>
+                        </div>
+                        <div class="flex gap-2">
+                            <button id="prevBtn" class="rounded-md border border-zinc-700 px-3 py-1 text-xs font-medium text-zinc-300 hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">← Previous</button>
+                            <button id="nextBtn" class="rounded-md border border-zinc-700 px-3 py-1 text-xs font-medium text-zinc-300 hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Next →</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal for create/edit -->
+<div id="entryModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50" style="display:none">
+    <div class="rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl w-full max-w-2xl mx-4">
+        <div class="border-b border-zinc-800 px-6 py-4 flex items-center justify-between">
+            <h3 id="modalTitle" class="text-lg font-semibold text-zinc-100">New Knowledge Entry</h3>
+            <button id="closeModalBtn" class="text-zinc-400 hover:text-zinc-200 transition-colors">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+        </div>
+        <div class="px-6 py-4 space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-zinc-300 mb-1">Category (Base)</label>
+                <input id="modalBase" type="text" class="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500" placeholder="e.g., Deployment, Troubleshooting">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-zinc-300 mb-1">Content</label>
+                <textarea id="modalContent" class="w-full h-48 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 resize-none" placeholder="Knowledge article content..."></textarea>
+            </div>
+        </div>
+        <div class="border-t border-zinc-800 px-6 py-4 flex items-center justify-end gap-3">
+            <button id="cancelBtn" class="rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-zinc-800 transition-colors">Cancel</button>
+            <button id="saveBtn" class="rounded-md border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-sm font-medium text-emerald-300 hover:bg-emerald-600/30 transition-colors">Save</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/knowledge-settings.js" th:src="@{/js/knowledge-settings.js}"></script>
+</body>
+</html>

@@ -149,6 +149,9 @@ import sh.vork.ai.tool.RecordProgressRequest;
 import sh.vork.ai.tool.SessionFileToolSuite;
 import sh.vork.ai.tool.ThinkRequest;
 import sh.vork.ai.tool.ToggleInputRelayRequest;
+import sh.vork.ai.tool.DefineKnowledgeRequest;
+import sh.vork.ai.tool.SearchKnowledgeRequest;
+import sh.vork.ai.tool.GetKnowledgeRequest;
 import sh.vork.ai.protocol.UiEventFrame;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import sh.vork.ai.tool.DeleteSshConnectionTool;
@@ -187,6 +190,8 @@ import sh.vork.typegen.TypeGeneratorService;
 import sh.vork.web.RequestOriginContext;
 import sh.vork.skill.Skill;
 import sh.vork.skill.SkillService;
+import sh.vork.knowledge.KnowledgeService;
+import sh.vork.knowledge.KnowledgeEntry;
 
 /**
  * Wires all AI-related Spring beans.
@@ -937,12 +942,44 @@ the protocol and will break the system. Do not converse. Execute.
                     if (username == null || username.isBlank()) {
                         throw new IllegalArgumentException("Authenticated user is required");
                     }
-                    if (req == null || req.secretName() == null || req.secretName().isBlank()) {
-                        throw new IllegalArgumentException("secretName is required");
+
+                    Object secretNameCtx = ToolExecutionContext.get("generate-private-key-secret-name");
+                    if (secretNameCtx == null || secretNameCtx.toString().isBlank()) {
+                        String keyAlgorithm = req != null && req.keyAlgorithm() != null && !req.keyAlgorithm().isBlank()
+                                ? req.keyAlgorithm()
+                                : "RSA";
+
+                        List<FormField> fields = List.of(
+                                new FormField(
+                                        "generate-private-key-secret-name",
+                                        "TEXT",
+                                        "Secret Name",
+                                        "",
+                                        "A unique identifier for this key pair (e.g., 'my_app_signing_key'). "
+                                                + "The private key will be stored under this name in your secrets.",
+                                        true,
+                                        FieldSource.CONTEXT,
+                                        null
+                                )
+                        );
+
+                        InteractionFormSchema schema = new InteractionFormSchema(
+                                "GENERATE_PRIVATE_KEY_INPUT",
+                                "Generate Private Key",
+                                "Provide a unique name for the key pair.",
+                                fields,
+                                List.of(new FormAction("ONCE", "Generate", "primary"))
+                        );
+
+                        throw new ToolSuspensionException(
+                                "generatePrivateKey",
+                                "{}",
+                                "Please provide a unique name for the key pair (" + keyAlgorithm + ").",
+                                schema);
                     }
 
-                    String secretName = req.secretName().trim();
-                    String keyAlgorithm = req.keyAlgorithm() == null || req.keyAlgorithm().isBlank()
+                    String secretName = secretNameCtx.toString().trim();
+                    String keyAlgorithm = req == null || req.keyAlgorithm() == null || req.keyAlgorithm().isBlank()
                             ? "RSA"
                             : normalizeKeyAlgorithm(req.keyAlgorithm());
 
@@ -950,7 +987,7 @@ the protocol and will break the system. Do not converse. Execute.
                         KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(keyAlgorithm);
                         Integer keySize = null;
                         if ("RSA".equals(keyAlgorithm)) {
-                            keySize = req.keySize() == null ? 2048 : req.keySize();
+                            keySize = req == null || req.keySize() == null ? 2048 : req.keySize();
                             if (keySize < 2048) {
                                 throw new IllegalArgumentException("keySize must be >= 2048 for RSA");
                             }
@@ -961,14 +998,20 @@ the protocol and will break the system. Do not converse. Execute.
                         String privateKeyPem = toPem("PRIVATE KEY", keyPair.getPrivate().getEncoded());
                         String publicKeyBase64 = Base64.getEncoder().encodeToString(keyPair.getPublic().getEncoded());
 
-                        secureCredentialStore.saveSecretForUser(username, secretName, privateKeyPem);
-                        secureCredentialStore.saveSecretForUser(username, publicKeySecretName(secretName), publicKeyBase64);
+                        // Normalize secret names to uppercase with spaces converted to underscores.
+                        // Only A-Z, 0-9 and underscore are allowed after normalization.
+                        String normalizedSecretName = normalizeGeneratedSecretBaseName(secretName);
+                        String privateKeySecretName = normalizedSecretName + "_PRIVATE";
+                        String publicKeySecretName = normalizedSecretName + "_PUBLIC";
+
+                        secureCredentialStore.saveSecretForUser(username, privateKeySecretName, privateKeyPem);
+                        secureCredentialStore.saveSecretForUser(username, publicKeySecretName, publicKeyBase64);
 
                         Map<String, Object> response = new LinkedHashMap<>();
                         response.put("status", "ok");
-                        response.put("secretName", secretName);
-                        response.put("privateKeySecretRef", "{{" + secretName + "}}");
-                        response.put("publicKeyLookupRef", "{{" + secretName + "}}");
+                        response.put("secretName", normalizedSecretName);
+                        response.put("privateKeySecretRef", "{{" + privateKeySecretName + "}}");
+                        response.put("publicKeyLookupRef", "{{" + publicKeySecretName + "}}");
                         response.put("keyAlgorithm", keyAlgorithm);
                         if (keySize != null) {
                             response.put("keySize", keySize);
@@ -978,6 +1021,8 @@ the protocol and will break the system. Do not converse. Execute.
                         return objectMapper.writeValueAsString(response);
                     } catch (Exception ex) {
                         throw new IllegalArgumentException("Unable to generate and store keypair: " + ex.getMessage(), ex);
+                    } finally {
+                        ToolExecutionContext.remove("generate-private-key-secret-name");
                     }
                 })
                 .description(
@@ -989,24 +1034,21 @@ the protocol and will break the system. Do not converse. Execute.
         return new VisualizableToolCallback(delegate, argumentsJson -> {
             try {
                 var node = objectMapper.readTree(argumentsJson);
-                String secretName = node.path("secretName").asText("(missing)");
                 String keyAlgorithm = node.path("keyAlgorithm").asText("RSA");
-                String normalizedAlgorithm = keyAlgorithm == null
-                        ? "RSA"
-                        : keyAlgorithm.trim().toUpperCase(Locale.ROOT);
-                boolean includeKeySize = "RSA".equals(normalizedAlgorithm);
-
-                StringBuilder details = new StringBuilder("Generate private key and save to secret\n"
-                        + "- Secret Name: " + secretName + "\n"
-                        + "- Key Algorithm: " + keyAlgorithm + "\n");
-                if (includeKeySize) {
-                    String keySize = node.path("keySize").asText("2048");
-                    details.append("- Key Size: ").append(keySize).append("\n");
+                Integer keySize = node.path("keySize").asInt(0);
+                
+                StringBuilder details = new StringBuilder("Generate private/public key pair\n");
+                details.append("- Key Type: ").append(keyAlgorithm).append("\n");
+                
+                if ("RSA".equalsIgnoreCase(keyAlgorithm) && keySize > 0) {
+                    details.append("- Key Size: ").append(keySize).append(" bits\n");
+                } else if ("RSA".equalsIgnoreCase(keyAlgorithm)) {
+                    details.append("- Key Size: 2048 bits (default)\n");
                 }
-                details.append("- Returns refs only; use getPublicKey to fetch public key Base64.");
+                
                 return details.toString();
             } catch (Exception ex) {
-                return "Generate private key and save to secret";
+                return "Generate private/public key pair";
             }
         });
     }
@@ -1793,8 +1835,10 @@ the protocol and will break the system. Do not converse. Execute.
         }
 
         String clientSecret = firstNonBlank(
-            secureCredentialStore.getSecretForUser(username, OAUTH_CLIENT_SECRET_FORM_KEY),
-            secureCredentialStore.getSecretForUser(username, oauthClientSecretStoreKey(normalizedClientName)));
+            contextString(OAUTH_CLIENT_SECRET_FORM_KEY),
+            firstNonBlank(
+                secureCredentialStore.getSecretForUser(username, OAUTH_CLIENT_SECRET_FORM_KEY),
+                secureCredentialStore.getSecretForUser(username, oauthClientSecretStoreKey(normalizedClientName))));
 
         return new OAuthConnectRequest(
                 clientName,
@@ -1822,12 +1866,14 @@ the protocol and will break the system. Do not converse. Execute.
         // profileName is not shown in the form — it is determined by user intent in the chat instruction.
         // If user says "Connect to GitHub" → profileName defaults to "default"
         // If user says "Connect to GitHub as my-org" → profileName="my-org" is extracted by the AI tool
+        String normalizedClientName = OAuthClientService.normalizeClientName(clientNameValue);
+        
         List<FormField> fields = List.of(
             new FormField("clientName", "TEXT", "clientName", clientNameValue, clientNameValue, true, FieldSource.CONTEXT, null),
                 new FormField("authorizeEndpoint", "TEXT", "authorizeEndpoint", authorizeEndpointValue, authorizeEndpointValue, true, FieldSource.CONTEXT, null),
                 new FormField("tokenEndpoint", "TEXT", "tokenEndpoint", tokenEndpointValue, tokenEndpointValue, true, FieldSource.CONTEXT, null),
             new FormField(OAUTH_CLIENT_ID_FORM_KEY, "TEXT", "clientId", clientIdValue, clientIdValue, true, FieldSource.CONTEXT, null),
-            new FormField(OAUTH_CLIENT_SECRET_FORM_KEY, "PASSWORD", "clientSecret (optional for PKCE public clients)", "", null, false, FieldSource.SECRET, null),
+            new FormField(OAUTH_CLIENT_SECRET_FORM_KEY, "PASSWORD", "clientSecret (optional for PKCE public clients)", "", null, false, FieldSource.CONTEXT, null),
                 new FormField("redirectUri", "READONLY", "redirectUri", suggestedRedirectUri, suggestedRedirectUri, true, FieldSource.CONTEXT, null),
                 new FormField("scopes", "TEXTAREA", "scopes (space/comma/newline separated)", scopesValue, scopesValue, false, FieldSource.CONTEXT, null),
                 new FormField("authorizationParams", "TEXTAREA", "authorizationParams JSON", authorizationParamsValue, authorizationParamsValue, false, FieldSource.CONTEXT, null),
@@ -1974,7 +2020,35 @@ the protocol and will break the system. Do not converse. Execute.
     }
 
     private static String publicKeySecretName(String secretName) {
-        return secretName + ".public";
+        String normalized = secretName.trim().toUpperCase(Locale.ROOT);
+        // If it ends with _PRIVATE, replace with _PUBLIC; otherwise append _PUBLIC
+        if (normalized.endsWith("_PRIVATE")) {
+            return normalized.substring(0, normalized.length() - 8) + "_PUBLIC";
+        }
+        return normalized + "_PUBLIC";
+    }
+
+    private static String normalizeGeneratedSecretBaseName(String rawSecretName) {
+        if (rawSecretName == null || rawSecretName.isBlank()) {
+            throw new IllegalArgumentException("secretName is required");
+        }
+
+        String normalized = rawSecretName
+                .trim()
+                .replaceAll("\\s+", " ")
+                .replace(' ', '_')
+                .toUpperCase(Locale.ROOT);
+
+        if (!normalized.matches("^[A-Z0-9_]+$")) {
+            throw new IllegalArgumentException(
+                    "secretName may only contain letters, numbers, and spaces (spaces become underscores)");
+        }
+
+        if (!normalized.matches(".*[A-Z0-9].*")) {
+            throw new IllegalArgumentException("secretName must contain at least one letter or number");
+        }
+
+        return normalized;
     }
 
     private static String normalizeKeyAlgorithm(String keyAlgorithm) {
@@ -3249,6 +3323,124 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
             return FileArea.valueOf(rawArea.trim().toUpperCase(Locale.ROOT));
         } catch (Exception ignored) {
             return FileArea.SESSION;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Knowledge Base Tools
+    // -------------------------------------------------------------------------
+
+    @Bean
+    @Restricted
+    @ToolCategory("Knowledge")
+    public ToolCallback defineKnowledge(KnowledgeService knowledgeService) {
+        ToolCallback delegate = FunctionToolCallback
+                .builder("defineKnowledge", (DefineKnowledgeRequest req) -> {
+                    if (req == null || req.base() == null || req.base().isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"base is required\"}";
+                    }
+                    if (req.content() == null || req.content().isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"content is required\"}";
+                    }
+
+                    try {
+                        KnowledgeEntry entry = knowledgeService.define(req.base().trim(), req.content().trim());
+                        return objectMapper.writeValueAsString(Map.of(
+                                "status", "ok",
+                                "uuid", entry.uuid(),
+                                "base", entry.base(),
+                                "createdAt", entry.createdAt()));
+                    } catch (Exception e) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + e.getMessage().replace("\"", "'") + "\"}";
+                    }
+                })
+                .description("Persistently define a new knowledge article in the knowledge base. The base is a category name (e.g. 'Deployment', 'Troubleshooting'). Content is the free-text article.")
+                .inputType(DefineKnowledgeRequest.class)
+                .build();
+        return new VisualizableToolCallback(delegate, this::formatDefineKnowledgeAuthorizationDetails);
+    }
+
+    @Bean
+    @ToolCategory("Knowledge")
+    public ToolCallback searchKnowledge(KnowledgeService knowledgeService) {
+        return FunctionToolCallback
+                .builder("searchKnowledge", (SearchKnowledgeRequest req) -> {
+                    if (req == null || req.base() == null || req.base().isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"base is required\"}";
+                    }
+                    if (req.query() == null || req.query().isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"query is required\"}";
+                    }
+
+                    try {
+                        List<Map<String, Object>> results = new ArrayList<>();
+                        try (var stream = knowledgeService.search(req.base().trim(), req.query().trim(), 0, 50)) {
+                            stream.forEach(entry -> results.add(Map.of(
+                                    "uuid", entry.uuid(),
+                                    "base", entry.base(),
+                                    "content", entry.content(),
+                                    "createdAt", entry.createdAt(),
+                                    "updatedAt", entry.updatedAt())));
+                        }
+                        return objectMapper.writeValueAsString(Map.of(
+                                "status", "ok",
+                                "results", results,
+                                "count", results.size()));
+                    } catch (Exception e) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + e.getMessage().replace("\"", "'") + "\"}";
+                    }
+                })
+                .description("Search knowledge base articles by category and keyword. Returns matching articles with content, timestamps, and UUIDs.")
+                .inputType(SearchKnowledgeRequest.class)
+                .build();
+    }
+
+    @Bean
+    @ToolCategory("Knowledge")
+    public ToolCallback getKnowledge(KnowledgeService knowledgeService) {
+        return FunctionToolCallback
+                .builder("getKnowledge", (GetKnowledgeRequest req) -> {
+                    if (req == null || req.base() == null || req.base().isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"base is required\"}";
+                    }
+
+                    try {
+                        List<Map<String, Object>> results = new ArrayList<>();
+                        try (var stream = knowledgeService.getAll(req.base().trim(), 0, 100)) {
+                            stream.forEach(entry -> results.add(Map.of(
+                                    "uuid", entry.uuid(),
+                                    "base", entry.base(),
+                                    "content", entry.content(),
+                                    "createdAt", entry.createdAt(),
+                                    "updatedAt", entry.updatedAt())));
+                        }
+                        return objectMapper.writeValueAsString(Map.of(
+                                "status", "ok",
+                                "results", results,
+                                "count", results.size()));
+                    } catch (Exception e) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + e.getMessage().replace("\"", "'") + "\"}";
+                    }
+                })
+                .description("Retrieve all knowledge base articles in a given category, sorted by creation date (newest first).")
+                .inputType(GetKnowledgeRequest.class)
+                .build();
+    }
+
+    private String formatDefineKnowledgeAuthorizationDetails(String argumentsJson) {
+        try {
+            Map<String, Object> args = objectMapper.readValue(argumentsJson, Map.class);
+            String base = (String) args.get("base");
+            String content = (String) args.get("content");
+            if (content != null && content.length() > 200) {
+                content = content.substring(0, 200) + "…";
+            }
+            return String.format("Define knowledge entry in base '%s':\n\n%s", base, content);
+        } catch (Exception e) {
+            return "Define knowledge entry";
         }
     }
 

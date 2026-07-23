@@ -5,12 +5,9 @@ import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 
 /**
  * Input schema for the {@code generatePrivateKey} tool.
+ * Note: secretName is collected via an interactive form and handled separately.
  */
 public record GeneratePrivateKeyRequest(
-        @JsonProperty(required = true, value = "secretName")
-        @JsonPropertyDescription("Secret key name used to store the generated private key.")
-        String secretName,
-
         @JsonProperty(value = "keyAlgorithm")
         @JsonPropertyDescription("Key algorithm. Supports RSA and ED25519. Defaults to RSA.")
         String keyAlgorithm,

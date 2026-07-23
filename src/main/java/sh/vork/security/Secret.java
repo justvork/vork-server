@@ -6,5 +6,7 @@ public record Secret(
     String uuid,      // The ID of the secret
     String userUuid,  // The VorkNode UUID this belongs to
     String key,
-    String encryptedPayload
+    String encryptedPayload,
+    long createdAt,   // Epoch milliseconds when created
+    long updatedAt    // Epoch milliseconds when last updated
 ) implements DatabaseEntity {}

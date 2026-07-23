@@ -25,6 +25,7 @@
 
     <Loggers>
         <!-- Application code at DEBUG; set to INFO in production via logging.level.sh.vork=INFO -->
+        <!-- Set level="TRACE" to see individual DB ops, tool lists, full system prompt dumps -->
         <Logger name="sh.vork" level="DEBUG" additivity="false">
             <AppenderRef ref="Console"/>
             <!-- Also write to file if VORK_FILE_LOGGING=true -->

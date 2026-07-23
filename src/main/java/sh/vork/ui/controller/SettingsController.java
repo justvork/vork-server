@@ -107,6 +107,16 @@ public class SettingsController {
         return "settings/users";
     }
 
+    @GetMapping("/knowledge")
+    public String knowledge() {
+        return "settings/knowledge";
+    }
+
+    @GetMapping("/secrets")
+    public String secrets() {
+        return "settings/secrets";
+    }
+
     @GetMapping("/{page}")
     public String settingsPage(@org.springframework.web.bind.annotation.PathVariable String page) {
         return "settings/" + page;
