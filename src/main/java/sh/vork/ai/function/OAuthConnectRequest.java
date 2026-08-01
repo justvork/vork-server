@@ -49,7 +49,11 @@ public record OAuthConnectRequest(
 
         @JsonProperty(value = "forceReconnect")
         @JsonPropertyDescription("When true, always force a new consent flow even if a token exists.")
-        Boolean forceReconnect
+        Boolean forceReconnect,
+
+        @JsonProperty(value = "returnPath")
+        @JsonPropertyDescription("Optional post-callback app-relative redirect path (for web initiators), e.g. /settings/oauth-templates.")
+        String returnPath
 
 ) {
     public boolean isForceReconnect() {

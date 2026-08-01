@@ -2,6 +2,7 @@ package sh.vork.oauth;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -14,6 +15,7 @@ import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -62,7 +64,6 @@ class OAuthClientServiceTest {
                 "github",
                 "default",
                 true,
-                null,
                 "https://github.com/login/oauth/authorize",
                 "https://github.com/login/oauth/access_token",
                 "enc:client-id",
@@ -81,7 +82,7 @@ class OAuthClientServiceTest {
 
         Map<String, Object> result = service.connectOrEnsure(
                 "alice",
-                new OAuthConnectRequest("github", null, null, null, null, null, null, null, null, false));
+                new OAuthConnectRequest("github", null, null, null, null, null, null, null, null, false, null));
 
         assertEquals("ready", result.get("status"));
         assertEquals("{{OAUTH_GITHUB_ACCESS_TOKEN}}", result.get("placeholder"));
@@ -96,7 +97,6 @@ class OAuthClientServiceTest {
                 "github",
                 "default",
                 true,
-                null,
                 "https://github.com/login/oauth/authorize",
                 "https://github.com/login/oauth/access_token",
                 "enc:client-id",
@@ -117,7 +117,7 @@ class OAuthClientServiceTest {
 
         Map<String, Object> result = service.connectOrEnsure(
                 "alice",
-                new OAuthConnectRequest("github", null, null, null, null, null, null, null, null, false));
+                new OAuthConnectRequest("github", null, null, null, null, null, null, null, null, false, null));
 
         assertEquals("connect_required", result.get("status"));
         assertTrue(String.valueOf(result.get("authorizationUrl")).contains("code_challenge_method=S256"));
@@ -133,7 +133,6 @@ class OAuthClientServiceTest {
                 "github",
                 "default",
                 true,
-                null,
                 "https://github.com/login/oauth/authorize",
                 "https://github.com/login/oauth/access_token",
                 "enc:client-id",
@@ -174,7 +173,6 @@ class OAuthClientServiceTest {
                                 "gmail",
                                 "default",
                                 true,
-                                null,
                                 "https://accounts.google.com/o/oauth2/v2/auth",
                                 "https://oauth2.googleapis.com/token",
                                 "enc:client-id",
@@ -196,6 +194,7 @@ class OAuthClientServiceTest {
                                 true,
                                 null,
                                 "session-1",
+                                null,
                                 "enc:verifier",
                                 "https://app.example.com/api/oauth/callback",
                                 List.of("https://www.googleapis.com/auth/gmail.readonly"),
@@ -232,7 +231,6 @@ class OAuthClientServiceTest {
                                 "gmail",
                                 "default",
                                 true,
-                                null,
                                 "https://accounts.google.com/o/oauth2/v2/auth",
                                 "https://oauth2.googleapis.com/token",
                                 "enc:client-id",
@@ -263,7 +261,8 @@ class OAuthClientServiceTest {
                                                 null,
                                                 null,
                                                 Map.of("access_type", "offline", "prompt", "consent"),
-                                                false));
+                                                false,
+                                                null));
 
                 assertEquals("connect_required", result.get("status"));
                 String authUrl = String.valueOf(result.get("authorizationUrl"));
@@ -279,7 +278,6 @@ class OAuthClientServiceTest {
                                 "gmail",
                                 "default",
                                 true,
-                                null,
                                 "https://accounts.google.com/o/oauth2/v2/auth",
                                 "https://oauth2.googleapis.com/token",
                                 "enc:client-id",
@@ -310,7 +308,8 @@ class OAuthClientServiceTest {
                                                 "https://<your_ip_address>/api/oauth/callback",
                                                 null,
                                                 Map.of("access_type", "offline"),
-                                                false));
+                                                false,
+                                                null));
 
                 assertEquals("connect_required", result.get("status"));
                 String authUrl = String.valueOf(result.get("authorizationUrl"));
@@ -319,14 +318,13 @@ class OAuthClientServiceTest {
         }
 
         @Test
-        void connectOrEnsureUsesSingleExistingProfileWhenRequestedProfileDiffers() {
+        void connectOrEnsureRequiresNewProfileWhenRequestedProfileDiffers() {
                 OAuthClient existing = new OAuthClient(
                                 "uuid-1",
                                 "alice",
                                 "google_calendar",
                                 "personal",
                                 true,
-                                null,
                                 "https://accounts.google.com/o/oauth2/v2/auth",
                                 "https://oauth2.googleapis.com/token",
                                 "enc:client-id",
@@ -340,15 +338,18 @@ class OAuthClientServiceTest {
                                 System.currentTimeMillis(),
                                 System.currentTimeMillis());
 
+                AtomicInteger calls = new AtomicInteger(0);
                 when(clientRepository.search(anyInt(), anyInt(), anyString(), eq(SortOrder.DESC), any(SearchQuery[].class)))
-                                .thenReturn(java.util.stream.Stream.empty(), java.util.stream.Stream.of(existing));
+                                .thenAnswer(invocation -> calls.getAndIncrement() == 0
+                                                ? java.util.stream.Stream.empty()
+                                                : java.util.stream.Stream.of(existing));
 
                 Map<String, Object> result = service.connectOrEnsure(
                                 "alice",
-                                new OAuthConnectRequest("google_calendar", "work", null, null, null, null, null, null, null, false));
+                                new OAuthConnectRequest("google_calendar", "work", null, null, null, null, null, null, null, false, null));
 
-                assertEquals("ready", result.get("status"));
-                assertEquals("personal", result.get("profileName"));
+                assertEquals("error", result.get("status"));
+                assertTrue(String.valueOf(result.get("message")).contains("not configured"));
         }
 
         @Test
@@ -359,7 +360,6 @@ class OAuthClientServiceTest {
                                 "google_calendar",
                                 "personal",
                                 true,
-                                null,
                                 "https://accounts.google.com/o/oauth2/v2/auth",
                                 "https://oauth2.googleapis.com/token",
                                 "enc:client-id",
@@ -378,7 +378,6 @@ class OAuthClientServiceTest {
                                 "google_calendar",
                                 "work",
                                 false,
-                                null,
                                 "https://accounts.google.com/o/oauth2/v2/auth",
                                 "https://oauth2.googleapis.com/token",
                                 "enc:client-id",
@@ -413,7 +412,6 @@ class OAuthClientServiceTest {
                                 "google_calendar",
                                 "personal",
                                 true,
-                                null,
                                 "https://accounts.google.com/o/oauth2/v2/auth",
                                 "https://oauth2.googleapis.com/token",
                                 "enc:client-id",
@@ -435,6 +433,7 @@ class OAuthClientServiceTest {
                                 true,
                                 null,
                                 "session-1",
+                                null,
                                 "enc:verifier",
                                 "https://app.example.com/api/oauth/callback",
                                 List.of("https://www.googleapis.com/auth/calendar.readonly"),
@@ -451,5 +450,100 @@ class OAuthClientServiceTest {
                 verify(clientRepository).delete("uuid-1");
                 verify(connectSessionRepository).delete("state-1");
         }
+
+    @Test
+    void duplicateProfileAndConnectRejectsExistingProfileName() {
+        OAuthClient source = new OAuthClient(
+                "uuid-1",
+                "alice",
+                "google_calendar",
+                "personal",
+                true,
+                "https://accounts.google.com/o/oauth2/v2/auth",
+                "https://oauth2.googleapis.com/token",
+                "enc:client-id",
+                "enc:client-secret",
+                "https://app.example.com/api/oauth/callback",
+                List.of("https://www.googleapis.com/auth/calendar.readonly"),
+                Map.of("access_type", "offline"),
+                "enc:access-token",
+                null,
+                System.currentTimeMillis() + 10 * 60 * 1000,
+                System.currentTimeMillis(),
+                System.currentTimeMillis());
+
+        OAuthClient existingDuplicate = new OAuthClient(
+                "uuid-2",
+                "alice",
+                "google_calendar",
+                "work",
+                false,
+                "https://accounts.google.com/o/oauth2/v2/auth",
+                "https://oauth2.googleapis.com/token",
+                "enc:client-id",
+                "enc:client-secret",
+                "https://app.example.com/api/oauth/callback",
+                List.of("https://www.googleapis.com/auth/calendar.readonly"),
+                Map.of("access_type", "offline"),
+                null,
+                null,
+                0,
+                System.currentTimeMillis(),
+                System.currentTimeMillis());
+
+        when(clientRepository.get("uuid-1")).thenReturn(source);
+        when(clientRepository.search(anyInt(), anyInt(), anyString(), eq(SortOrder.DESC), any(SearchQuery[].class)))
+                .thenReturn(java.util.stream.Stream.of(existingDuplicate));
+
+        Map<String, Object> result = service.duplicateProfileAndConnect("alice", "uuid-1", "work", "/settings/oauth-clients");
+
+        assertEquals("error", result.get("status"));
+        assertTrue(String.valueOf(result.get("message")).contains("already exists"));
+        verify(connectSessionRepository, never()).save(any());
+    }
+
+    @Test
+    void duplicateProfileAndConnectStartsAuthorizationFlowForNewProfile() {
+        OAuthClient source = new OAuthClient(
+                "uuid-1",
+                "alice",
+                "google_calendar",
+                "personal",
+                true,
+                "https://accounts.google.com/o/oauth2/v2/auth",
+                "https://oauth2.googleapis.com/token",
+                "enc:client-id",
+                "enc:client-secret",
+                "https://app.example.com/api/oauth/callback",
+                List.of("https://www.googleapis.com/auth/calendar.readonly"),
+                Map.of("access_type", "offline"),
+                "enc:access-token",
+                "enc:refresh-token",
+                System.currentTimeMillis() + 10 * 60 * 1000,
+                System.currentTimeMillis(),
+                System.currentTimeMillis());
+
+        when(clientRepository.get("uuid-1")).thenReturn(source);
+        when(encryptionService.decrypt("enc:client-id")).thenReturn("client-id");
+        when(encryptionService.decrypt("enc:client-secret")).thenReturn("client-secret");
+        when(encryptionService.encrypt(anyString())).thenAnswer(inv -> "enc:" + inv.getArgument(0));
+
+                AtomicInteger searchCalls = new AtomicInteger(0);
+                when(clientRepository.search(anyInt(), anyInt(), anyString(), eq(SortOrder.DESC), any(SearchQuery[].class)))
+                                .thenAnswer(inv -> {
+                                        int call = searchCalls.getAndIncrement();
+                                        if (call < 2) {
+                                                return java.util.stream.Stream.empty();
+                                        }
+                                        return java.util.stream.Stream.of(source);
+                                });
+
+        Map<String, Object> result = service.duplicateProfileAndConnect("alice", "uuid-1", "work", "/settings/oauth-clients");
+
+        assertEquals("connect_required", result.get("status"));
+        assertEquals("work", result.get("profileName"));
+        assertNotNull(result.get("authorizationUrl"));
+        verify(connectSessionRepository).save(any(OAuthConnectSession.class));
+    }
 
 }

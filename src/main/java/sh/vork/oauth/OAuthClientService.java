@@ -141,6 +141,7 @@ public class OAuthClientService {
         Map<String, String> authorizationParams = requestedAuthorizationParams(req, existing);
         String authorizationUrl = buildAuthorizationUrl(existing, state, codeChallenge, scopes, authorizationParams);
         String aiSessionUuid = ToolExecutionContext.getSessionUuid();
+        String initiatorReturnPath = sanitizeInitiatorReturnPath(req.returnPath());
 
         long now = System.currentTimeMillis();
         connectSessionRepository.save(new OAuthConnectSession(
@@ -151,6 +152,7 @@ public class OAuthClientService {
                 defaultProfile,
                 null,
                 aiSessionUuid,
+            initiatorReturnPath,
                 encryptionService.encrypt(codeVerifier),
                 existing.redirectUri(),
                 scopes,
@@ -223,19 +225,44 @@ public class OAuthClientService {
                 log.debug("OAuth callback completed with sessionUuid={}, client={}", resultSessionUuid, normalizedClientName);
             }
             
-            return Map.of(
-                    "status", "ok",
-                    "clientName", normalizedClientName,
-                    "profileName", updated.profileName(),
-                    "isDefaultProfile", updated.isDefaultProfile(),
-                    "sessionUuid", resultSessionUuid,
-                    "secretKey", accessTokenPlaceholder(normalizedClientName),
-                    "placeholder", "{{" + accessTokenPlaceholder(normalizedClientName) + "}}");
+            Map<String, Object> success = new LinkedHashMap<>();
+            success.put("status", "ok");
+            success.put("clientName", normalizedClientName);
+            success.put("profileName", updated.profileName());
+            success.put("isDefaultProfile", updated.isDefaultProfile());
+            success.put("sessionUuid", resultSessionUuid);
+            success.put("secretKey", accessTokenPlaceholder(normalizedClientName));
+            success.put("placeholder", "{{" + accessTokenPlaceholder(normalizedClientName) + "}}");
+            String returnPath = sanitizeInitiatorReturnPath(connectSession.initiatorReturnPath());
+            if (returnPath != null) {
+                success.put("returnPath", returnPath);
+            }
+            return success;
         } catch (Exception ex) {
             log.error("OAuth callback exchange failed [client={}, state={}]: {}",
                     normalizedClientName, state, ex.getMessage(), ex);
             return Map.of("status", "error", "message", "OAuth token exchange failed: " + ex.getMessage());
         }
+    }
+
+    private static String sanitizeInitiatorReturnPath(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String value = raw.trim();
+        if (value.isBlank()) {
+            return null;
+        }
+        if (!value.startsWith("/")) {
+            return null;
+        }
+        if (value.startsWith("//")) {
+            return null;
+        }
+        if (value.contains("://")) {
+            return null;
+        }
+        return value;
     }
 
     public Map<String, Object> resetClient(String username, String clientName) {
@@ -322,6 +349,65 @@ public class OAuthClientService {
                 "clientName", normalizedClientName,
                 "profiles", profiles,
                 "count", profiles.size());
+    }
+
+    public Map<String, Object> duplicateProfileAndConnect(String username,
+                                                           String sourceClientUuid,
+                                                           String profileName,
+                                                           String returnPath) {
+        log.debug("ENTER duplicateProfileAndConnect: user={}, sourceClientUuid={}", username, sourceClientUuid);
+        if (username == null || username.isBlank()) {
+            log.warn("duplicateProfileAndConnect rejected: missing username");
+            return Map.of("status", "error", "message", "Authenticated user is required");
+        }
+        if (sourceClientUuid == null || sourceClientUuid.isBlank()) {
+            log.warn("duplicateProfileAndConnect rejected: missing sourceClientUuid [user={}]", username);
+            return Map.of("status", "error", "message", "Source OAuth client UUID is required");
+        }
+        if (profileName == null || profileName.isBlank()) {
+            log.warn("duplicateProfileAndConnect rejected: missing profileName [user={}, sourceClientUuid={}]",
+                    username, sourceClientUuid);
+            return Map.of("status", "error", "message", "A new profile name is required");
+        }
+
+        OAuthClient source = clientRepository.get(sourceClientUuid);
+        if (source == null || !username.equals(source.userUuid())) {
+            log.warn("duplicateProfileAndConnect rejected: source client not found [user={}, sourceClientUuid={}]",
+                    username, sourceClientUuid);
+            return Map.of("status", "error", "message", "Source OAuth client was not found");
+        }
+
+        String normalizedProfileName = normalizeProfileName(profileName);
+        if (normalizedProfileName.equals(source.profileName())) {
+            log.warn("duplicateProfileAndConnect rejected: same profile name [user={}, clientName={}, profileName={}]",
+                    username, source.clientName(), normalizedProfileName);
+            return Map.of("status", "error", "message", "New profile name must differ from the source profile");
+        }
+
+        OAuthClient duplicate = loadClient(username, source.clientName(), normalizedProfileName);
+        if (duplicate != null) {
+            log.warn("duplicateProfileAndConnect rejected: duplicate profile exists [user={}, clientName={}, profileName={}]",
+                    username, source.clientName(), normalizedProfileName);
+            return Map.of("status", "error", "message", "An OAuth client profile with this name already exists");
+        }
+
+        OAuthConnectRequest request = new OAuthConnectRequest(
+                source.clientName(),
+                normalizedProfileName,
+                source.authorizeEndpoint(),
+                source.tokenEndpoint(),
+                decryptIfPresent(source.clientIdEncrypted()),
+                decryptIfPresent(source.clientSecretEncrypted()),
+                source.redirectUri(),
+                source.scopes(),
+                source.authorizationParams(),
+                true,
+                returnPath);
+
+        Map<String, Object> result = connectOrEnsure(username, request);
+        log.debug("EXIT duplicateProfileAndConnect: user={}, clientName={}, profileName={}, status={}",
+                username, source.clientName(), normalizedProfileName, result.get("status"));
+        return result;
     }
 
     public boolean deleteClientByUuidAsAdmin(String clientUuid) {
@@ -576,7 +662,6 @@ public class OAuthClientService {
                 client.clientName(),
             client.profileName(),
             client.isDefaultProfile(),
-            client.ownerSkillUuid(),
                 client.authorizeEndpoint(),
                 client.tokenEndpoint(),
                 client.clientIdEncrypted(),
@@ -655,7 +740,6 @@ public class OAuthClientService {
                 normalizedClientName,
             existing != null ? existing.profileName() : normalizedProfileName,
             existing != null ? existing.isDefaultProfile() : defaultProfile,
-            existing != null ? existing.ownerSkillUuid() : null,
                 authorizeEndpoint,
                 tokenEndpoint,
                 clientIdEncrypted,
@@ -987,7 +1071,6 @@ public class OAuthClientService {
                 client.clientName(),
             client.profileName(),
             client.isDefaultProfile(),
-            client.ownerSkillUuid(),
                 client.authorizeEndpoint(),
                 client.tokenEndpoint(),
                 client.redirectUri(),
@@ -1010,7 +1093,6 @@ public class OAuthClientService {
             String clientName,
             String profileName,
             boolean defaultProfile,
-            String ownerSkillUuid,
             String authorizeEndpoint,
             String tokenEndpoint,
             String redirectUri,

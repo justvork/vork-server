@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <title>OAuth Clients - Vork</title>
     <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
     <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
@@ -35,7 +37,7 @@
                         <th class="px-3 py-2">Expires</th>
                         <th class="px-3 py-2">Scopes</th>
                         <th class="px-3 py-2">Placeholder</th>
-                        <th class="px-3 py-2" th:if="${canManageUsers}">Actions</th>
+                        <th class="px-3 py-2">Actions</th>
                     </tr>
                     </thead>
                     <tbody>
@@ -64,12 +66,25 @@
                         <td class="px-3 py-2 align-top">
                             <code class="rounded bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-300" th:text="${client.placeholder}"></code>
                         </td>
-                        <td class="px-3 py-2 align-top" th:if="${canManageUsers}">
-                            <form method="post" th:action="@{|/settings/oauth-clients/${client.uuid}/delete|}"
-                                  onsubmit="return confirm('Delete OAuth client ' + this.dataset.clientName + ' / ' + this.dataset.profileName + '?');"
-                                  th:attr="data-client-name=${client.clientName},data-profile-name=${client.profileName}">
-                                <button type="submit" class="rounded-md border border-rose-500/40 px-2 py-1 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-500/15">Delete</button>
-                            </form>
+                        <td class="px-3 py-2 align-top">
+                            <div class="flex items-center gap-2">
+                                <button type="button"
+                                        class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15"
+                                        data-action="duplicate-oauth-client"
+                                        th:attr="data-client-uuid=${client.uuid},data-client-name=${client.clientName},data-profile-name=${client.profileName}"
+                                        title="Duplicate profile">
+                                    <i class="fa-solid fa-copy"></i>
+                                </button>
+                                <form th:if="${canManageUsers}" method="post" th:action="@{|/settings/oauth-clients/${client.uuid}/delete|}"
+                                      onsubmit="return confirm('Delete OAuth client ' + this.dataset.clientName + ' / ' + this.dataset.profileName + '?');"
+                                      th:attr="data-client-name=${client.clientName},data-profile-name=${client.profileName}">
+                                    <button type="submit"
+                                            class="rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15"
+                                            title="Delete profile">
+                                        <i class="fa-solid fa-trash"></i>
+                                    </button>
+                                </form>
+                            </div>
                         </td>
                     </tr>
                     </tbody>
@@ -86,5 +101,42 @@
         </div>
     </div>
 </div>
+
+<div id="duplicateProfileModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div class="w-full max-w-xl rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
+            <h3 class="text-lg font-semibold text-zinc-100">Duplicate OAuth Profile</h3>
+            <button id="close-duplicate-modal" class="rounded-md border border-zinc-700 px-2 py-1 text-zinc-300 transition-colors hover:bg-zinc-800" aria-label="Close">×</button>
+        </div>
+        <div class="space-y-4 px-5 py-4">
+            <div id="duplicate-modal-alert"></div>
+            <input id="duplicate-client-uuid" type="hidden">
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="duplicate-client-name">OAuth Client</label>
+                <input id="duplicate-client-name" type="text" readonly class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-300">
+            </div>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="duplicate-source-profile">Source Profile</label>
+                <input id="duplicate-source-profile" type="text" readonly class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-300">
+            </div>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="duplicate-new-profile">New Profile Name <span class="text-rose-400">*</span></label>
+                <input id="duplicate-new-profile" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. work">
+                <div class="mt-1 text-xs text-zinc-500">This creates a separate profile on the same OAuth client and starts a fresh authorization flow.</div>
+            </div>
+        </div>
+        <div class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">
+            <button id="cancel-duplicate-btn" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800">Cancel</button>
+            <button id="confirm-duplicate-btn" class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-sm font-semibold text-black transition-colors hover:bg-[#e89a02]">
+                <i class="fa-solid fa-copy mr-1"></i>Duplicate & Connect
+            </button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/settings-oauth-clients.js" th:src="@{/js/settings-oauth-clients.js}"></script>
 </body>
 </html>

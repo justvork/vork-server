@@ -100,6 +100,8 @@ import sh.vork.ai.function.LogInfoRequest;
 import sh.vork.ai.function.OAuthConnectRequest;
 import sh.vork.ai.function.OAuthDiscoverProfilesRequest;
 import sh.vork.ai.function.OAuthResetRequest;
+import sh.vork.ai.function.ListOauthTemplatesRequest;
+import sh.vork.ai.function.GetOauthTemplateRequest;
 import sh.vork.ai.function.CountTypeInstancesRequest;
 import sh.vork.ai.function.SaveTypeInstanceRequest;
 import sh.vork.ai.function.SearchMongoDbDocumentsRequest;
@@ -172,6 +174,8 @@ import sh.vork.ai.tool.UploadFileTool;
 import sh.vork.ai.tool.UploadTextFileTool;
 import sh.vork.notification.service.DirectNotificationService;
 import sh.vork.oauth.OAuthClientService;
+import sh.vork.oauth.OAuthTemplate;
+import sh.vork.oauth.OAuthTemplateService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.SortOrder;
 import sh.vork.filesystem.FileArea;
@@ -1635,7 +1639,7 @@ the protocol and will break the system. Do not converse. Execute.
                 OAuthConnectRequest req;
                 try {
                     req = toolInput == null || toolInput.isBlank()
-                            ? new OAuthConnectRequest(null, null, null, null, null, null, null, null, null, null)
+                            ? new OAuthConnectRequest(null, null, null, null, null, null, null, null, null, null, null)
                             : objectMapper.readValue(toolInput, OAuthConnectRequest.class);
                 } catch (Exception parseError) {
                     return "{\"status\":\"error\",\"message\":\"Invalid oauthConnect input JSON\"}";
@@ -1703,6 +1707,115 @@ the protocol and will break the system. Do not converse. Execute.
     /**
      * {@code oauthReset} tool — clear saved OAuth client state for the current user.
      */
+    @Bean
+    @ToolCategory("Web")
+    public ToolCallback listOauthTemplates(OAuthTemplateService oauthTemplateService) {
+        ToolCallback schemaCallback = FunctionToolCallback
+                .builder("listOauthTemplates", (ListOauthTemplatesRequest req) -> "{}")
+                .description("""
+                    List shared OAuth templates. Returns summary rows containing only:
+                    clientName, name, and description.
+                    """.stripIndent())
+                .inputType(ListOauthTemplatesRequest.class)
+                .build();
+
+        ToolDefinition definition = schemaCallback.getToolDefinition();
+        return new ToolCallback() {
+            @Override
+            public ToolDefinition getToolDefinition() {
+                return definition;
+            }
+
+            @Override
+            public String call(String toolInput) {
+                try {
+                    String username = resolveUsername();
+                    if (username == null || username.isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"Authenticated user is required\"}";
+                    }
+
+                    List<OAuthTemplate> templates = oauthTemplateService.listTemplates();
+                    List<Map<String, String>> summaries = templates.stream()
+                            .map(t -> Map.of(
+                                    "clientName", t.clientName() == null ? "" : t.clientName(),
+                                    "name", t.name() == null ? "" : t.name(),
+                                    "description", t.description() == null ? "" : t.description()))
+                            .toList();
+                    return objectMapper.writeValueAsString(Map.of(
+                            "status", "ok",
+                            "count", summaries.size(),
+                            "templates", summaries));
+                } catch (Exception e) {
+                    return "{\"status\":\"error\",\"message\":\""
+                            + e.getMessage().replace("\"", "'") + "\"}";
+                }
+            }
+        };
+    }
+
+    @Bean
+    @ToolCategory("Web")
+    public ToolCallback getOauthTemplate(OAuthTemplateService oauthTemplateService) {
+        ToolCallback schemaCallback = FunctionToolCallback
+                .builder("getOauthTemplate", (GetOauthTemplateRequest req) -> "{}")
+                .description("""
+                    Return the full shared OAuth template for a given clientName.
+                    """.stripIndent())
+                .inputType(GetOauthTemplateRequest.class)
+                .build();
+
+        ToolDefinition definition = schemaCallback.getToolDefinition();
+        return new ToolCallback() {
+            @Override
+            public ToolDefinition getToolDefinition() {
+                return definition;
+            }
+
+            @Override
+            public String call(String toolInput) {
+                GetOauthTemplateRequest req;
+                try {
+                    req = toolInput == null || toolInput.isBlank()
+                            ? new GetOauthTemplateRequest(null)
+                            : objectMapper.readValue(toolInput, GetOauthTemplateRequest.class);
+                } catch (Exception parseError) {
+                    return "{\"status\":\"error\",\"message\":\"Invalid getOauthTemplate input JSON\"}";
+                }
+
+                String username = resolveUsername();
+                if (username == null || username.isBlank()) {
+                    return "{\"status\":\"error\",\"message\":\"Authenticated user is required\"}";
+                }
+
+                String requestedClientName = req.clientName();
+                if (requestedClientName == null || requestedClientName.isBlank()) {
+                    return "{\"status\":\"error\",\"message\":\"clientName is required\"}";
+                }
+
+                try {
+                    String normalizedClientName = OAuthClientService.normalizeClientName(requestedClientName);
+                    OAuthTemplate matched = oauthTemplateService.listTemplates().stream()
+                            .filter(t -> normalizedClientName.equals(t.clientName()))
+                            .findFirst()
+                            .orElse(null);
+
+                    if (matched == null) {
+                        return objectMapper.writeValueAsString(Map.of(
+                                "status", "error",
+                                "message", "OAuth template not found for clientName='" + normalizedClientName + "'"));
+                    }
+
+                    return objectMapper.writeValueAsString(Map.of(
+                            "status", "ok",
+                            "template", matched));
+                } catch (Exception e) {
+                    return "{\"status\":\"error\",\"message\":\""
+                            + e.getMessage().replace("\"", "'") + "\"}";
+                }
+            }
+        };
+    }
+
     @Bean
     @ToolCategory("Web")
     public ToolCallback oauthDiscoverProfiles(OAuthClientService oauthClientService) {
@@ -1850,7 +1963,8 @@ the protocol and will break the system. Do not converse. Execute.
                 redirectUri,
                 scopes,
                 authorizationParams,
-                forceReconnect);
+                forceReconnect,
+                req == null ? null : req.returnPath());
     }
 
     private InteractionFormSchema oauthConfigurationForm(OAuthConnectRequest effectiveReq,
@@ -1866,8 +1980,7 @@ the protocol and will break the system. Do not converse. Execute.
         // profileName is not shown in the form — it is determined by user intent in the chat instruction.
         // If user says "Connect to GitHub" → profileName defaults to "default"
         // If user says "Connect to GitHub as my-org" → profileName="my-org" is extracted by the AI tool
-        String normalizedClientName = OAuthClientService.normalizeClientName(clientNameValue);
-        
+
         List<FormField> fields = List.of(
             new FormField("clientName", "TEXT", "clientName", clientNameValue, clientNameValue, true, FieldSource.CONTEXT, null),
                 new FormField("authorizeEndpoint", "TEXT", "authorizeEndpoint", authorizeEndpointValue, authorizeEndpointValue, true, FieldSource.CONTEXT, null),

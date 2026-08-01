@@ -88,6 +88,12 @@ public class SettingsController {
         return "settings/oauth-clients";
     }
 
+    @GetMapping("/oauth-templates")
+    public String oauthTemplates(Model model) {
+        model.addAttribute("canManageUsers", hasAuthority(Permission.USERS_MANAGE.authority()));
+        return "settings/oauth-templates";
+    }
+
     @PostMapping("/oauth-clients/{clientUuid}/delete")
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
     public String deleteOAuthClient(@PathVariable String clientUuid, RedirectAttributes redirectAttributes) {

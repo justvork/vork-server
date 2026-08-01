@@ -9,6 +9,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.tool.ToolCallback;
@@ -38,6 +39,12 @@ import sh.vork.typegen.TypeDatabaseService;
 class AiConfigRecordToolsTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+
+    @AfterEach
+    void clearExecutionContext() {
+        ToolExecutionContext.clear();
+        SecurityContextHolder.clearContext();
+    }
 
     @Test
     void getTypeInstance_returnsRecordJsonWhenFound() throws Exception {
@@ -175,15 +182,16 @@ class AiConfigRecordToolsTest {
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken("alice", "n/a"));
         try {
+            ToolExecutionContext.put("generate-private-key-secret-name", "signing key main");
             ToolCallback tool = config.generatePrivateKey(secureCredentialStore);
 
-            String output = tool.call("{\"secretName\":\"signing.key.main\",\"keyAlgorithm\":\"RSA\",\"keySize\":2048}");
+            String output = tool.call("{\"keyAlgorithm\":\"RSA\",\"keySize\":2048}");
             var map = objectMapper.readValue(output, new TypeReference<java.util.Map<String, Object>>() {});
 
             assertEquals("ok", map.get("status"));
-            assertEquals("signing.key.main", map.get("secretName"));
-            assertEquals("{{signing.key.main}}", map.get("privateKeySecretRef"));
-                assertEquals("{{signing.key.main}}", map.get("publicKeyLookupRef"));
+            assertEquals("SIGNING_KEY_MAIN", map.get("secretName"));
+            assertEquals("{{SIGNING_KEY_MAIN_PRIVATE}}", map.get("privateKeySecretRef"));
+                assertEquals("{{SIGNING_KEY_MAIN_PUBLIC}}", map.get("publicKeyLookupRef"));
             assertEquals("RSA", map.get("keyAlgorithm"));
             assertEquals("SHA256withRSA", map.get("suggestedSigningAlgorithm"));
                 assertEquals("Call getPublicKey with secretName to retrieve the Base64 public key.", map.get("nextStep"));
@@ -191,14 +199,14 @@ class AiConfigRecordToolsTest {
             ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
             verify(secureCredentialStore).saveSecretForUser(
                     org.mockito.ArgumentMatchers.eq("alice"),
-                    org.mockito.ArgumentMatchers.eq("signing.key.main"),
+                    org.mockito.ArgumentMatchers.eq("SIGNING_KEY_MAIN_PRIVATE"),
                     valueCaptor.capture());
             assertTrue(valueCaptor.getValue().contains("BEGIN PRIVATE KEY"));
 
                 ArgumentCaptor<String> publicValueCaptor = ArgumentCaptor.forClass(String.class);
                 verify(secureCredentialStore).saveSecretForUser(
                     org.mockito.ArgumentMatchers.eq("alice"),
-                    org.mockito.ArgumentMatchers.eq("signing.key.main.public"),
+                    org.mockito.ArgumentMatchers.eq("SIGNING_KEY_MAIN_PUBLIC"),
                     publicValueCaptor.capture());
                 assertFalse(publicValueCaptor.getValue().isBlank());
                 assertFalse(publicValueCaptor.getValue().contains("BEGIN"));
@@ -220,7 +228,7 @@ class AiConfigRecordToolsTest {
         String details = ((VisualizableTool) tool).formatAuthorizationDetails(
                 "{\"secretName\":\"signing.key.main\",\"keyAlgorithm\":\"RSA\",\"keySize\":3072}");
 
-        assertTrue(details.contains("- Key Algorithm: RSA"));
+        assertTrue(details.contains("- Key Type: RSA"));
         assertTrue(details.contains("- Key Size: 3072"));
     }
 
@@ -237,7 +245,7 @@ class AiConfigRecordToolsTest {
         String details = ((VisualizableTool) tool).formatAuthorizationDetails(
                 "{\"secretName\":\"signing.key.main\",\"keyAlgorithm\":\"ED25519\"}");
 
-        assertTrue(details.contains("- Key Algorithm: ED25519"));
+        assertTrue(details.contains("- Key Type: ED25519"));
         assertFalse(details.contains("Key Size"));
         assertFalse(details.contains("2048"));
     }
@@ -249,18 +257,18 @@ class AiConfigRecordToolsTest {
             SecureCredentialStore secureCredentialStore = mock(SecureCredentialStore.class);
             AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
 
-            when(secureCredentialStore.getSecretForUser("alice", "signing.key.main.public"))
+            when(secureCredentialStore.getSecretForUser("alice", "SIGNING_KEY_MAIN_PUBLIC"))
                 .thenReturn("MCowBQYDK2VwAyEAXYZfakeBase64PublicKeyForTest==");
 
             SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken("alice", "n/a"));
             try {
                 ToolCallback tool = config.getPublicKey(secureCredentialStore);
-                String output = tool.call("{\"secretName\":\"{{signing.key.main}}\"}");
+                String output = tool.call("{\"secretName\":\"{{SIGNING_KEY_MAIN_PRIVATE}}\"}");
                 var map = objectMapper.readValue(output, new TypeReference<java.util.Map<String, Object>>() {});
 
                 assertEquals("ok", map.get("status"));
-                assertEquals("signing.key.main", map.get("secretName"));
+                assertEquals("SIGNING_KEY_MAIN_PRIVATE", map.get("secretName"));
                 assertEquals("MCowBQYDK2VwAyEAXYZfakeBase64PublicKeyForTest==", map.get("publicKeyBase64"));
             } finally {
                 SecurityContextHolder.clearContext();
@@ -315,7 +323,7 @@ class AiConfigRecordToolsTest {
 
             String privatePem = toPem("PRIVATE KEY", keyPair.getPrivate().getEncoded());
             String publicBase64 = Base64.getEncoder().encodeToString(keyPair.getPublic().getEncoded());
-            when(secureCredentialStore.getSecretForUser("alice", "signing.key.main.public")).thenReturn(publicBase64);
+            when(secureCredentialStore.getSecretForUser("alice", "SIGNING_KEY_MAIN_PUBLIC")).thenReturn(publicBase64);
 
             SecurityContextHolder.getContext().setAuthentication(
                     new UsernamePasswordAuthenticationToken("alice", "n/a"));
@@ -332,7 +340,7 @@ class AiConfigRecordToolsTest {
                         "data", data,
                         "signature", signature,
                         "algorithm", "SHA256withRSA",
-                        "secretName", "{{signing.key.main}}"
+                        "secretName", "{{SIGNING_KEY_MAIN_PRIVATE}}"
                 ));
                 assertEquals("true", readStringResult(verifyByRef.call(verifyArgs)));
 
@@ -340,7 +348,7 @@ class AiConfigRecordToolsTest {
                         "data", data + "-tampered",
                         "signature", signature,
                         "algorithm", "SHA256withRSA",
-                        "secretName", "{{signing.key.main}}"
+                        "secretName", "{{SIGNING_KEY_MAIN_PRIVATE}}"
                 ));
                 assertEquals("false", readStringResult(verifyByRef.call(tamperedVerifyArgs)));
             } finally {

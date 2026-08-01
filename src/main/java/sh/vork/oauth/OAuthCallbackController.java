@@ -38,6 +38,8 @@ public class OAuthCallbackController {
         if ("ok".equals(result.get("status"))) {
             String sessionUuid = String.valueOf(result.getOrDefault("sessionUuid", ""));
             SessionOriginMode originMode = resolveOriginMode(sessionUuid);
+            String returnPath = sanitizeReturnPath((String) result.get("returnPath"));
+            String webRedirectTarget = returnPath != null ? returnPath : "/index.html";
             String autoResumeScript = "";
             String followUpMessage;
             
@@ -64,7 +66,7 @@ public class OAuthCallbackController {
                     </script>
                     """.formatted(sessionUuid,
                         originMode == SessionOriginMode.WEB
-                                ? "window.location.href = '/index.html';"
+                                ? "window.location.href = '" + jsStringLiteral(webRedirectTarget) + "';"
                                 : "");
             } else {
                 // Fallback redirect if sessionUuid is empty (non-web origins or background OAuth)
@@ -74,9 +76,9 @@ public class OAuthCallbackController {
                         <script>
                         // Fallback redirect after short delay when session context is unavailable
                         console.log('OAuth callback: redirecting via fallback (no session context)');
-                        setTimeout(function() { window.location.href = '/index.html'; }, 1000);
+                        setTimeout(function() { window.location.href = '%s'; }, 1000);
                         </script>
-                        """;
+                        """.formatted(jsStringLiteral(webRedirectTarget));
                 }
             }
 
@@ -116,5 +118,26 @@ public class OAuthCallbackController {
             return SessionOriginMode.WEB;
         }
         return session.originMode();
+    }
+
+    private static String sanitizeReturnPath(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String value = raw.trim();
+        if (value.isBlank()) {
+            return null;
+        }
+        if (!value.startsWith("/")) {
+            return null;
+        }
+        if (value.startsWith("//") || value.contains("://")) {
+            return null;
+        }
+        return value;
+    }
+
+    private static String jsStringLiteral(String value) {
+        return value.replace("\\", "\\\\").replace("'", "\\'");
     }
 }

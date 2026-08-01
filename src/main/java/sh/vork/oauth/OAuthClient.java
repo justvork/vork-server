@@ -17,7 +17,6 @@ public record OAuthClient(
         String clientName,
     String profileName,
     boolean isDefaultProfile,
-    String ownerSkillUuid,
         String authorizeEndpoint,
         String tokenEndpoint,
         String clientIdEncrypted,

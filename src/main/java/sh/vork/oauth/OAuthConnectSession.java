@@ -15,6 +15,7 @@ public record OAuthConnectSession(
     boolean isDefaultProfile,
     String ownerSkillUuid,
         String aiSessionUuid,
+    String initiatorReturnPath,
         String codeVerifierEncrypted,
         String redirectUri,
         List<String> scopes,
