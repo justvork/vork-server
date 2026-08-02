@@ -13,6 +13,7 @@ import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.ai.provider.AiModelService;
 import sh.vork.ai.registry.ToolRegistry;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.reflection.ReflectionService;
 import sh.vork.skill.Skill;
 
 import java.security.Principal;
@@ -42,7 +43,8 @@ class ChatControllerAttachmentBroadcastTest {
                 mock(AiModelService.class),
                 mock(ToolRegistry.class),
                 (DatabaseRepository<Skill>) mock(DatabaseRepository.class),
-                mock(SessionEnvironmentService.class)
+                mock(SessionEnvironmentService.class),
+                mock(ReflectionService.class)
         );
 
         String sessionUuid = "session-zip-broadcast";

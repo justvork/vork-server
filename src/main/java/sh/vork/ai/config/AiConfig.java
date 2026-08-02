@@ -1,5 +1,6 @@
 package sh.vork.ai.config;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
@@ -146,6 +147,7 @@ import sh.vork.ai.protocol.interaction.InteractionFormSchema;
 import sh.vork.ai.tool.CompleteBackgroundTaskRequest;
 import sh.vork.ai.tool.CompleteSkillExecutionRequest;
 import sh.vork.ai.tool.CreateSessionTextFileTool;
+import sh.vork.ai.tool.DelegateTaskRequest;
 import sh.vork.ai.tool.MemoryRequest;
 import sh.vork.ai.tool.RecordProgressRequest;
 import sh.vork.ai.tool.SessionFileToolSuite;
@@ -182,6 +184,11 @@ import sh.vork.filesystem.FileArea;
 import sh.vork.filesystem.FileDescriptor;
 import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.scheduling.domain.JobResult;
+import sh.vork.scheduling.domain.DurationType;
+import sh.vork.scheduling.domain.InvocationType;
+import sh.vork.scheduling.domain.ScheduledJob;
+import sh.vork.scheduling.domain.ScheduledJobStatus;
+import sh.vork.scheduling.service.AiSchedulerService;
 import sh.vork.scheduling.service.BackgroundExecutionContext;
 import sh.vork.security.SecureCredentialStore;
 import sh.vork.typegen.JavaType;
@@ -425,16 +432,33 @@ the protocol and will break the system. Do not converse. Execute.
     @Bean
     @Hidden
     @ToolCategory("Agent Orchestration")
-    public ToolCallback listAvailableTools(ToolRegistry toolRegistry) {
+    public ToolCallback listAvailableTools(ToolRegistry toolRegistry,
+                                           ObjectProvider<sh.vork.ai.service.AiOrchestrationService> aiOrchestrationServiceProvider) {
         return FunctionToolCallback
                 .builder("listAvailableTools", (ListAvailableToolsRequest req) -> {
                     List<Object> entries = new ArrayList<>();
-                    toolRegistry.getAvailableTools().forEach(d -> entries.add(java.util.Map.of(
-                            "id",          d.id(),
-                            "name",        d.name(),
-                            "description", d.description(),
-                            "parameterSchema", d.parameterSchema(),
-                            "dependsOn", d.dependsOn())));
+
+                    String sessionUuid = resolveSessionUuid();
+                    java.util.Set<String> visibleToolIds = java.util.Set.of();
+                    var aiOrchestrationService = aiOrchestrationServiceProvider.getIfAvailable();
+                    boolean applySessionFilter = aiOrchestrationService != null
+                        && sessionUuid != null
+                        && !sessionUuid.isBlank()
+                        && !"system".equals(sessionUuid);
+                    if (applySessionFilter) {
+                        visibleToolIds = aiOrchestrationService.resolveVisibleToolNamesForSession(sessionUuid);
+                    }
+
+                    boolean effectiveApplySessionFilter = applySessionFilter;
+                    java.util.Set<String> effectiveVisibleToolIds = visibleToolIds;
+                    toolRegistry.getAvailableTools().stream()
+                        .filter(d -> !effectiveApplySessionFilter || effectiveVisibleToolIds.contains(d.id()))
+                            .forEach(d -> entries.add(java.util.Map.of(
+                                    "id",          d.id(),
+                                    "name",        d.name(),
+                                    "description", d.description(),
+                                    "parameterSchema", d.parameterSchema(),
+                                    "dependsOn", d.dependsOn())));
                     try {
                         return objectMapper.writeValueAsString(entries);
                     } catch (Exception e) {
@@ -529,6 +553,113 @@ the protocol and will break the system. Do not converse. Execute.
     // -------------------------------------------------------------------------
     // Existing function-calling tools (unchanged)
     // -------------------------------------------------------------------------
+
+    @Bean
+    @ToolCategory("Scheduling")
+    public ToolCallback delegateTask(ObjectProvider<AiSchedulerService> aiSchedulerServiceProvider,
+                                     DatabaseRepository<AgentTemplate> agentTemplateRepository,
+                                     DatabaseRepository<AiSession> aiSessionRepository) {
+        return FunctionToolCallback
+                .builder("delegateTask", (DelegateTaskRequest req) -> {
+                    try {
+                        if (req == null || req.agentName() == null || req.agentName().isBlank()) {
+                            return "{\"status\":\"error\",\"message\":\"agentName is required\"}";
+                        }
+                        if (req.prompt() == null || req.prompt().isBlank()) {
+                            return "{\"status\":\"error\",\"message\":\"prompt is required\"}";
+                        }
+
+                        String sessionUuid = resolveSessionUuid();
+                        String username = resolveUsername();
+                        if ((username == null || username.isBlank())
+                                && sessionUuid != null
+                                && !sessionUuid.isBlank()
+                                && !"system".equals(sessionUuid)) {
+                            AiSession session = aiSessionRepository.get(sessionUuid);
+                            if (session != null && session.username() != null && !session.username().isBlank()) {
+                                username = session.username();
+                            }
+                        }
+                        if (username == null || username.isBlank()) {
+                            return "{\"status\":\"error\",\"message\":\"Unable to resolve user context for delegateTask\"}";
+                        }
+
+                        List<AgentTemplate> matches;
+                        try (var stream = agentTemplateRepository.list(0, Integer.MAX_VALUE)) {
+                            matches = stream
+                                    .filter(t -> req.agentName().equals(t.name()))
+                                    .toList();
+                        }
+
+                        if (matches.isEmpty()) {
+                            return "{\"status\":\"error\",\"message\":\"No agent found with name: "
+                                    + req.agentName().replace("\"", "'") + "\"}";
+                        }
+
+                        if (matches.size() > 1) {
+                            List<Map<String, String>> candidates = matches.stream()
+                                    .map(t -> Map.of("uuid", t.uuid(), "name", t.name()))
+                                    .toList();
+                            return objectMapper.writeValueAsString(Map.of(
+                                    "status", "error",
+                                    "message", "Ambiguous agentName. Multiple agents found.",
+                                    "agentName", req.agentName(),
+                                    "candidates", candidates));
+                        }
+
+                        AgentTemplate target = matches.get(0);
+                        if (target.agentType() != sh.vork.ai.agent.AgentType.BACKGROUND) {
+                            return objectMapper.writeValueAsString(Map.of(
+                                    "status", "error",
+                                    "message", "Agent is not background-capable.",
+                                    "agentName", target.name(),
+                                    "agentType", target.agentType().name()));
+                        }
+
+                        String jobName = "Dynamic: " + target.name();
+                        ScheduledJob dynamicJob = new ScheduledJob(
+                                null,
+                                jobName,
+                                req.prompt().trim(),
+                                null,
+                                username,
+                                InvocationType.ONE_TIME,
+                                java.time.Instant.now(),
+                                0L,
+                                DurationType.MINUTES,
+                                0L,
+                                0L,
+                                target.uuid(),
+                                null,
+                                null,
+                                240,
+                                null,
+                                ScheduledJobStatus.WAITING,
+                                null,
+                                null);
+
+                            AiSchedulerService aiSchedulerService = aiSchedulerServiceProvider.getIfAvailable();
+                            if (aiSchedulerService == null) {
+                                return "{\"status\":\"error\",\"message\":\"Scheduler service is unavailable\"}";
+                            }
+
+                        ScheduledJob saved = aiSchedulerService.scheduleJob(dynamicJob);
+                        return objectMapper.writeValueAsString(Map.of(
+                                "status", "scheduled",
+                                "jobId", saved.id(),
+                                "jobName", saved.name(),
+                                "agentName", target.name(),
+                                "agentUuid", target.uuid(),
+                                "invocationType", saved.invocationType().name()));
+                    } catch (Exception e) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + e.getMessage().replace("\"", "'") + "\"}";
+                    }
+                })
+                .description("Delegate work to another agent by creating a new one-time background job with agentName and prompt. This is fire-and-forget and returns immediately.")
+                .inputType(DelegateTaskRequest.class)
+                .build();
+    }
 
     @Bean
     @Hidden
@@ -3545,7 +3676,10 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
 
     private String formatDefineKnowledgeAuthorizationDetails(String argumentsJson) {
         try {
-            Map<String, Object> args = objectMapper.readValue(argumentsJson, Map.class);
+            Map<String, Object> args = objectMapper.readValue(
+                    argumentsJson,
+                    new TypeReference<Map<String, Object>>() {
+                    });
             String base = (String) args.get("base");
             String content = (String) args.get("content");
             if (content != null && content.length() > 200) {

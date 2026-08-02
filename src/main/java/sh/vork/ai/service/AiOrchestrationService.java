@@ -37,6 +37,7 @@ import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.ai.provider.AiChatClientFactory;
+import sh.vork.ai.registry.Hidden;
 import sh.vork.ai.registry.ToolDepends;
 import sh.vork.ai.session.SessionToolStore;
 import sh.vork.orm.DatabaseRepository;
@@ -78,7 +79,7 @@ public class AiOrchestrationService {
                 "searchTypeInstances",
                 "listEnumValues");
         private static final String BACKGROUND_OPERATIONAL_PROTOCOL = """
-BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated background thread. You must perform all necessary analysis and tool calls across multiple message rounds without expecting further human input. Once you have validated that the requested objective is entirely satisfied (e.g., your types compile successfully and records are saved), you MUST invoke the completeBackgroundTask tool to cleanly finalize the run. You MUST provide a boolean 'success' value and a 'report' string summarising what was done and produced. Do not exit without invoking this tool.
+BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated background thread. You must perform all necessary analysis and tool calls across multiple message rounds without expecting further human input. If parallel or downstream processing is needed, you may call delegateTask(agentName, prompt) to spawn a separate one-time background job. delegateTask is fire-and-forget: do not wait for the child job to finish. Once you have validated that the requested objective is entirely satisfied (e.g., your types compile successfully and records are saved), you MUST invoke the completeBackgroundTask tool to cleanly finalize the run. You MUST provide a boolean 'success' value and a 'report' string summarising what was done and produced. Do not exit without invoking this tool.
                         """.stripIndent();
         private static final List<String> ALWAYS_ON_HIDDEN_FILE_TOOL_BEAN_NAMES = List.of(
                 "createSessionTextFile",
@@ -882,9 +883,19 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 }
                                 log.debug("Session skill tools injected [session={}, count={}]", sessionUuid, sessionInjected);
                         }
-                        if (presentNames.add("listAvailableTools"))  merged.add(listAvailableToolsCallback);
-                        if (isConciergeSession() && presentNames.add("listAgentTemplates"))
+                        // Discovery tools are no longer auto-injected.
+                        // They must be explicitly assigned to the active agent/session.
+                        String listAvailableToolsName = listAvailableToolsCallback.getToolDefinition().name();
+                        if (presentNames.contains(listAvailableToolsName)
+                                && merged.stream().noneMatch(t -> listAvailableToolsName.equals(t.getToolDefinition().name()))) {
+                                merged.add(listAvailableToolsCallback);
+                        }
+
+                        String listAgentTemplatesName = listAgentTemplatesCallback.getToolDefinition().name();
+                        if (presentNames.contains(listAgentTemplatesName)
+                                && merged.stream().noneMatch(t -> listAgentTemplatesName.equals(t.getToolDefinition().name()))) {
                                 merged.add(listAgentTemplatesCallback);
+                        }
 
                         // Inject reflection tools dynamically using the reflection ID as the
                         // external tool name (contract: one tool per reflection definition).
@@ -1149,7 +1160,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 List<String> unresolved = new ArrayList<>();
                 List<ToolCallback> resolved = new ArrayList<>();
                 for (String name : toolNames) {
-                        ToolCallback cb = securedToolCallbackMap.get(name);
+                        ToolCallback cb = resolveAssignableToolCallback(name);
                         if (cb != null) {
                                 resolved.add(cb);
                         } else {
@@ -1286,7 +1297,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 if (toolNames == null || toolNames.isEmpty()) return List.of();
                 return expandWithToolDependencies(toolNames).stream()
                         .filter(name -> !name.equals("completeSkillExecution"))
-                        .filter(name -> !securedToolCallbackMap.containsKey(name))
+                        .filter(name -> resolveAssignableToolCallback(name) == null)
                         .toList();
         }
 
@@ -1329,7 +1340,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                         }
                                 }
                                 for (String t : expandWithToolDependencies(hard)) {
-                                        if (securedToolCallbackMap != null && securedToolCallbackMap.containsKey(t)) {
+                                        if (resolveAssignableToolCallback(t) != null) {
                                                 names.add(t);
                                         }
                                 }
@@ -1367,6 +1378,59 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 names.add("getDateTime");
 
                 return Set.copyOf(names);
+        }
+
+        private ToolCallback resolveAssignableToolCallback(String toolId) {
+                if (toolId == null || toolId.isBlank()) {
+                        return null;
+                }
+
+                ToolCallback callback = securedToolCallbackMap.get(toolId);
+                if (callback != null) {
+                        return callback;
+                }
+
+                if (beanFactory == null || !beanFactory.containsBean(toolId)) {
+                        return null;
+                }
+
+                if (!isHiddenToolBean(toolId)) {
+                        return null;
+                }
+
+                try {
+                        return beanFactory.getBean(toolId, ToolCallback.class);
+                } catch (Exception ex) {
+                        log.warn("Failed to resolve hidden tool callback [tool={}]: {}", toolId, ex.getMessage());
+                        return null;
+                }
+        }
+
+        private boolean isHiddenToolBean(String toolId) {
+                if (beanFactory == null || !beanFactory.containsBeanDefinition(toolId)) {
+                        return false;
+                }
+
+                BeanDefinition bd = beanFactory.getBeanDefinition(toolId);
+                String factoryBeanName = bd.getFactoryBeanName();
+                String factoryMethodName = bd.getFactoryMethodName();
+                if (factoryBeanName == null || factoryMethodName == null) {
+                        return false;
+                }
+
+                try {
+                        Object factoryBean = beanFactory.getBean(factoryBeanName);
+                        Class<?> targetClass = ClassUtils.getUserClass(factoryBean);
+                        for (Method method : targetClass.getDeclaredMethods()) {
+                                if (!method.getName().equals(factoryMethodName)) {
+                                        continue;
+                                }
+                                return method.getAnnotation(Hidden.class) != null;
+                        }
+                } catch (Exception ex) {
+                        log.debug("Unable to inspect hidden annotation [tool={}, reason={}]", toolId, ex.getMessage());
+                }
+                return false;
         }
 
         /**

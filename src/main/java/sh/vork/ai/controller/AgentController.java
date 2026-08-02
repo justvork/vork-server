@@ -85,6 +85,9 @@ public class AgentController {
         log.debug("ENTER createAgent: [name={}]", req.name());
         String err = validate(req);
         if (err != null) return ResponseEntity.badRequest().body(Map.of("error", err));
+        if (isAgentNameInUse(req.name(), null)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Agent name already exists."));
+        }
         String skillErr = validateAssignableSkillUuids(req.skillUuids());
         if (skillErr != null) return ResponseEntity.badRequest().body(Map.of("error", skillErr));
 
@@ -113,6 +116,9 @@ public class AgentController {
 
         String err = validate(req);
         if (err != null) return ResponseEntity.badRequest().body(Map.of("error", err));
+        if (isAgentNameInUse(req.name(), id)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Agent name already exists."));
+        }
         String skillErr = validateAssignableSkillUuids(req.skillUuids());
         if (skillErr != null) return ResponseEntity.badRequest().body(Map.of("error", skillErr));
 
@@ -168,6 +174,22 @@ public class AgentController {
     private static String validate(AgentRequest req) {
         if (req.name() == null || req.name().isBlank()) return "Name is required.";
         return null;
+    }
+
+    private boolean isAgentNameInUse(String name, String excludeId) {
+        if (name == null || name.isBlank()) {
+            return false;
+        }
+        String candidate = name.trim();
+        try (var stream = agentRepository.list(0, Integer.MAX_VALUE)) {
+            return stream.anyMatch(agent -> {
+                if (excludeId != null && excludeId.equals(agent.uuid())) {
+                    return false;
+                }
+                String existingName = agent.name() == null ? "" : agent.name().trim();
+                return existingName.equalsIgnoreCase(candidate);
+            });
+        }
     }
 
     private String validateAssignableSkillUuids(List<String> skillUuids) {

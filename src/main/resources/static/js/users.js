@@ -1,12 +1,26 @@
 (function () {
+    const csrfToken = document.querySelector('meta[name="_csrf"]')?.getAttribute("content") || "";
+    const csrfHeader = document.querySelector('meta[name="_csrf_header"]')?.getAttribute("content") || "X-CSRF-TOKEN";
+
+    function buildHeaders() {
+        const headers = { "Content-Type": "application/json" };
+        if (csrfToken) {
+            headers[csrfHeader] = csrfToken;
+        }
+        return headers;
+    }
+
     async function jsonRequest(url, options) {
         const response = await fetch(url, {
-            headers: { "Content-Type": "application/json" },
+            headers: buildHeaders(),
             credentials: "same-origin",
             ...options,
         });
         const body = await response.json().catch(() => ({}));
         if (!response.ok) {
+            if (response.status === 403) {
+                throw new Error("Forbidden: your session may be missing permission or CSRF token. Refresh and try again.");
+            }
             throw new Error(body.message || body.error || "Request failed");
         }
         return body;

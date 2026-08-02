@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <title>Users - Vork</title>
     <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
     <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
