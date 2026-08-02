@@ -7,6 +7,7 @@ const isReadOnly = document.body.getAttribute('data-reflections-read-only') === 
 
 let groups = [];
 let reflections = [];
+let oauthTemplates = [];
 let modalParameters = [];
 let modalHeaders = [];
 let modalQueryParameters = [];
@@ -14,11 +15,13 @@ let modalGroupBindingParameters = [];
 let modalGroupBindingSecrets = [];
 let modalBindingParameterValues = {};
 let modalBindingSecretValues = {};
+let oauthConnectDefaults = null;
 
 const alertArea = document.getElementById('alert-area');
 
 function init() {
     bindEvents();
+    renderOAuthBindingCallbackAlert();
     loadAll();
 }
 
@@ -43,6 +46,8 @@ function bindEvents() {
     document.getElementById('group-modal-close').addEventListener('click', closeGroupModal);
     document.getElementById('group-modal-cancel').addEventListener('click', closeGroupModal);
     document.getElementById('group-modal-save').addEventListener('click', saveGroup);
+    document.getElementById('group-type').addEventListener('change', syncGroupAuthVisibility);
+    document.getElementById('group-auth-mode').addEventListener('change', syncGroupAuthVisibility);
     document.getElementById('add-group-binding-param-btn').addEventListener('click', function () {
         modalGroupBindingParameters.push({ name: '', type: 'string', description: '', defaultValue: '' });
         renderGroupBindingParameters();
@@ -85,8 +90,21 @@ function bindEvents() {
 }
 
 async function loadAll() {
-    await Promise.all([loadGroups(), loadReflections()]);
+    await Promise.all([loadGroups(), loadReflections(), loadOAuthTemplates()]);
     renderGroups();
+}
+
+async function loadOAuthTemplates() {
+    try {
+        const response = await fetch('/api/oauth-templates');
+        if (!response.ok) {
+            throw new Error('HTTP ' + response.status);
+        }
+        oauthTemplates = await response.json();
+    } catch (_error) {
+        oauthTemplates = [];
+    }
+    populateGroupOAuthTemplateSelect();
 }
 
 async function loadGroups() {
@@ -230,7 +248,7 @@ function renderBindingPillsHtml(bindings, groupUuid) {
             + '    <span class="font-mono">' + bindingName + '</span>'
             + '  </button>'
             + (isReadOnly ? '' : '  <button class="ml-1 px-1 py-0.5 text-[10px] text-zinc-300 transition-colors hover:text-cyan-300" data-action="copy-binding" data-group-id="' + escapeHtml(groupUuid) + '" data-name="' + bindingName + '" title="Copy binding"><i class="fa-solid fa-copy"></i></button>')
-            + (isReadOnly || String(binding.name || '').toLowerCase() === 'default' ? '' : '  <button class="px-1 py-0.5 text-[10px] text-rose-300 transition-colors hover:text-rose-200" data-action="delete-binding" data-group-id="' + escapeHtml(groupUuid) + '" data-name="' + bindingName + '" title="Delete binding"><i class="fa-solid fa-trash"></i></button>')
+            + (isReadOnly ? '' : '  <button class="px-1 py-0.5 text-[10px] text-rose-300 transition-colors hover:text-rose-200" data-action="delete-binding" data-group-id="' + escapeHtml(groupUuid) + '" data-name="' + bindingName + '" title="Delete binding"><i class="fa-solid fa-trash"></i></button>')
             + '</span>';
     }).join('');
 
@@ -310,10 +328,14 @@ function openCreateGroupModal() {
     document.getElementById('group-description').value = '';
     document.getElementById('group-type').value = 'REST';
     document.getElementById('group-base-url').value = '';
+    document.getElementById('group-url-override-enabled').checked = true;
+    document.getElementById('group-auth-mode').value = 'NONE';
+    populateGroupOAuthTemplateSelect('');
     modalGroupBindingParameters = [];
     modalGroupBindingSecrets = [];
     renderGroupBindingParameters();
     renderGroupBindingSecrets();
+    syncGroupAuthVisibility();
     clearGroupModalAlert();
     showModal('group-modal');
 }
@@ -331,6 +353,9 @@ function openEditGroupModal(uuid) {
     document.getElementById('group-description').value = group.description || '';
     document.getElementById('group-type').value = group.type || 'REST';
     document.getElementById('group-base-url').value = group.baseUrl || '';
+    document.getElementById('group-url-override-enabled').checked = group.urlOverrideEnabled !== false;
+    document.getElementById('group-auth-mode').value = group.authenticationMode || 'NONE';
+    populateGroupOAuthTemplateSelect(group.oauthTemplateId || '');
     modalGroupBindingParameters = (group.bindingParameters || []).map(function (parameter) {
         return {
             name: parameter.name || '',
@@ -347,23 +372,38 @@ function openEditGroupModal(uuid) {
     });
     renderGroupBindingParameters();
     renderGroupBindingSecrets();
+    syncGroupAuthVisibility();
     clearGroupModalAlert();
     showModal('group-modal');
 }
 
 async function saveGroup() {
+    const groupType = document.getElementById('group-type').value;
+    const authenticationMode = document.getElementById('group-auth-mode').value;
+    const oauthTemplateId = document.getElementById('group-oauth-template').value;
     const groupId = document.getElementById('group-id').value.trim();
     const payload = {
         name: document.getElementById('group-name').value.trim(),
         description: document.getElementById('group-description').value.trim(),
-        type: document.getElementById('group-type').value,
+        type: groupType,
         baseUrl: document.getElementById('group-base-url').value.trim(),
+        urlOverrideEnabled: document.getElementById('group-url-override-enabled').checked,
         bindingParameters: sanitizeBindingParameterSchema(modalGroupBindingParameters),
-        bindingSecrets: sanitizeBindingSecretSchema(modalGroupBindingSecrets)
+        bindingSecrets: sanitizeBindingSecretSchema(modalGroupBindingSecrets),
+        authenticationMode: authenticationMode,
+        oauthTemplateId: authenticationMode === 'OAUTH' ? oauthTemplateId : ''
     };
 
     if (!payload.name) {
         showGroupModalAlert('Group name is required.', 'warning');
+        return;
+    }
+    if (authenticationMode === 'OAUTH' && groupType !== 'REST') {
+        showGroupModalAlert('OAuth authentication is supported only for REST groups.', 'warning');
+        return;
+    }
+    if (authenticationMode === 'OAUTH' && !oauthTemplateId) {
+        showGroupModalAlert('Select an OAuth template for OAUTH authentication mode.', 'warning');
         return;
     }
 
@@ -385,6 +425,48 @@ async function saveGroup() {
     } catch (_error) {
         showGroupModalAlert('Network error while saving group.', 'danger');
     }
+}
+
+function populateGroupOAuthTemplateSelect(selectedTemplateId) {
+    const select = document.getElementById('group-oauth-template');
+    if (!select) {
+        return;
+    }
+
+    const previousValue = selectedTemplateId == null ? '' : String(selectedTemplateId);
+    select.innerHTML = '';
+
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = oauthTemplates.length === 0 ? 'No templates available' : 'Select OAuth template';
+    select.appendChild(blank);
+
+    (oauthTemplates || []).forEach(function (template) {
+        const option = document.createElement('option');
+        option.value = template.id || '';
+        const clientName = template.clientName ? (' (' + template.clientName + ')') : '';
+        option.textContent = (template.name || 'Unnamed template') + clientName;
+        select.appendChild(option);
+    });
+
+    select.value = previousValue;
+}
+
+function syncGroupAuthVisibility() {
+    const typeValue = document.getElementById('group-type').value;
+    const modeSelect = document.getElementById('group-auth-mode');
+    const oauthWrap = document.getElementById('group-oauth-template-wrap');
+
+    if (!modeSelect || !oauthWrap) {
+        return;
+    }
+
+    if (typeValue !== 'REST' && modeSelect.value === 'OAUTH') {
+        modeSelect.value = 'NONE';
+    }
+
+    const showOAuth = typeValue === 'REST' && modeSelect.value === 'OAUTH';
+    oauthWrap.classList.toggle('hidden', !showOAuth);
 }
 
 function renderGroupBindingParameters() {
@@ -564,8 +646,13 @@ function openCreateBindingModal(groupUuid) {
     document.getElementById('binding-copy-source-name').value = '';
     document.getElementById('binding-name').value = (entry.bindings || []).length === 0 ? 'default' : '';
     document.getElementById('binding-base-url').value = '';
+    document.getElementById('binding-oauth-client-id').value = '';
+    document.getElementById('binding-oauth-client-secret').value = '';
+    document.getElementById('binding-oauth-redirect-uri').value = '';
     modalBindingParameterValues = {};
     modalBindingSecretValues = {};
+    syncBindingModalSections(group);
+    loadBindingOauthDefaultsIfNeeded(group);
     renderBindingParameterFields(group.bindingParameters || []);
     renderBindingSecretFields(group.bindingSecrets || []);
     clearBindingModalAlert();
@@ -593,8 +680,13 @@ function openEditBindingModal(groupUuid, bindingName) {
     document.getElementById('binding-copy-source-name').value = '';
     document.getElementById('binding-name').value = binding.name || '';
     document.getElementById('binding-base-url').value = binding.baseUrl || '';
+    document.getElementById('binding-oauth-client-id').value = '';
+    document.getElementById('binding-oauth-client-secret').value = '';
+    document.getElementById('binding-oauth-redirect-uri').value = '';
     modalBindingParameterValues = Object.assign({}, binding.parameterValues || {});
     modalBindingSecretValues = {};
+    syncBindingModalSections(group);
+    loadBindingOauthDefaultsIfNeeded(group);
     renderBindingParameterFields(group.bindingParameters || []);
     renderBindingSecretFields(group.bindingSecrets || []);
     clearBindingModalAlert();
@@ -622,8 +714,13 @@ function openCopyBindingModal(groupUuid, bindingName) {
     document.getElementById('binding-copy-source-name').value = binding.name || '';
     document.getElementById('binding-name').value = '';
     document.getElementById('binding-base-url').value = binding.baseUrl || '';
+    document.getElementById('binding-oauth-client-id').value = '';
+    document.getElementById('binding-oauth-client-secret').value = '';
+    document.getElementById('binding-oauth-redirect-uri').value = '';
     modalBindingParameterValues = Object.assign({}, binding.parameterValues || {});
     modalBindingSecretValues = {};
+    syncBindingModalSections(group);
+    loadBindingOauthDefaultsIfNeeded(group);
     renderBindingParameterFields(group.bindingParameters || []);
     renderBindingSecretFields(group.bindingSecrets || []);
     clearBindingModalAlert();
@@ -639,7 +736,7 @@ function renderBindingParameterFields(parameterSchema) {
 
     const schema = parameterSchema || [];
     if (schema.length === 0) {
-        container.innerHTML = '<p class="text-xs text-zinc-500">This group has no binding parameters.</p>';
+        container.innerHTML = '';
         return;
     }
 
@@ -671,7 +768,7 @@ function renderBindingSecretFields(secretSchema) {
 
     const schema = secretSchema || [];
     if (schema.length === 0) {
-        container.innerHTML = '<p class="text-xs text-zinc-500">This group has no binding secrets.</p>';
+        container.innerHTML = '';
         return;
     }
 
@@ -694,12 +791,67 @@ function renderBindingSecretFields(secretSchema) {
     });
 }
 
+function syncBindingModalSections(group) {
+    const baseUrlSection = document.getElementById('binding-base-url-section');
+    const paramsSection = document.getElementById('binding-params-section');
+    const secretsSection = document.getElementById('binding-secrets-section');
+    const oauthConfigSection = document.getElementById('binding-oauth-config-section');
+    const baseUrlInput = document.getElementById('binding-base-url');
+
+    const hasParams = Array.isArray(group?.bindingParameters) && group.bindingParameters.length > 0;
+    const hasSecrets = Array.isArray(group?.bindingSecrets) && group.bindingSecrets.length > 0;
+    const urlOverrideEnabled = group?.urlOverrideEnabled !== false;
+    const usesOAuth = String(group?.authenticationMode || 'NONE').toUpperCase() === 'OAUTH';
+
+    if (baseUrlSection) {
+        baseUrlSection.classList.toggle('hidden', !urlOverrideEnabled);
+    }
+    if (!urlOverrideEnabled && baseUrlInput) {
+        baseUrlInput.value = '';
+    }
+
+    if (paramsSection) {
+        paramsSection.classList.toggle('hidden', !hasParams);
+    }
+    if (secretsSection) {
+        secretsSection.classList.toggle('hidden', !hasSecrets);
+    }
+    if (oauthConfigSection) {
+        oauthConfigSection.classList.toggle('hidden', !usesOAuth);
+    }
+}
+
+async function loadBindingOauthDefaultsIfNeeded(group) {
+    const usesOAuth = String(group?.authenticationMode || 'NONE').toUpperCase() === 'OAUTH';
+    if (!usesOAuth) {
+        return;
+    }
+    if (!oauthConnectDefaults) {
+        try {
+            const response = await fetch('/api/oauth-templates/connect-defaults');
+            if (!response.ok) {
+                throw new Error('HTTP ' + response.status);
+            }
+            oauthConnectDefaults = await response.json();
+        } catch (_error) {
+            oauthConnectDefaults = { redirectUri: '' };
+        }
+    }
+    const redirectInput = document.getElementById('binding-oauth-redirect-uri');
+    if (redirectInput && !redirectInput.value) {
+        redirectInput.value = (oauthConnectDefaults && oauthConnectDefaults.redirectUri) ? oauthConnectDefaults.redirectUri : '';
+    }
+}
+
 async function saveBinding() {
     const groupUuid = document.getElementById('binding-group-uuid').value;
     const originalName = document.getElementById('binding-original-name').value.trim();
     const copySourceName = document.getElementById('binding-copy-source-name').value.trim();
     const bindingName = document.getElementById('binding-name').value.trim();
     const baseUrl = document.getElementById('binding-base-url').value.trim();
+    const oauthClientId = document.getElementById('binding-oauth-client-id').value.trim();
+    const oauthClientSecret = document.getElementById('binding-oauth-client-secret').value.trim();
+    const oauthRedirectUri = document.getElementById('binding-oauth-redirect-uri').value.trim();
 
     if (!groupUuid) {
         showBindingModalAlert('Group context is missing.', 'danger');
@@ -723,7 +875,47 @@ async function saveBinding() {
         ? '/api/reflection-groups/' + encodeURIComponent(groupUuid) + '/bindings/' + encodeURIComponent(originalName)
         : '/api/reflection-groups/' + encodeURIComponent(groupUuid) + '/bindings';
 
+    const entry = findGroupEntry(groupUuid);
+    const group = entry ? (entry.group || entry) : null;
+    const usesOAuth = group && String(group.authenticationMode || 'NONE').toUpperCase() === 'OAUTH';
+
     try {
+        if (usesOAuth) {
+            const oauthFlowResponse = await fetch(
+                '/api/reflection-groups/' + encodeURIComponent(groupUuid) + '/bindings/oauth-flow',
+                {
+                    method: 'POST',
+                    headers: buildJsonHeaders(),
+                    body: JSON.stringify({
+                        originalBindingName: originalName || '',
+                        bindingRequest: payload,
+                        clientId: oauthClientId,
+                        clientSecret: oauthClientSecret,
+                        redirectUri: oauthRedirectUri
+                    })
+                }
+            );
+            const oauthFlowResult = await parseJson(oauthFlowResponse);
+            if (!oauthFlowResponse.ok) {
+                showBindingModalAlert(oauthFlowResult.error || 'Failed to start OAuth binding flow.', 'danger');
+                return;
+            }
+            if (oauthFlowResult.status === 'connect_required' && oauthFlowResult.authorizationUrl) {
+                closeBindingModal();
+                showAlert('Complete OAuth consent to finish saving the binding. Redirecting…', 'info');
+                window.location.href = oauthFlowResult.authorizationUrl;
+                return;
+            }
+            if (oauthFlowResult.status === 'binding_saved') {
+                closeBindingModal();
+                showAlert(isUpdate ? 'Binding updated.' : 'Binding created.', 'success');
+                await loadAll();
+                return;
+            }
+            showBindingModalAlert(oauthFlowResult.message || oauthFlowResult.error || 'Failed to save binding.', 'danger');
+            return;
+        }
+
         const response = await fetch(path, {
             method: isUpdate ? 'PUT' : 'POST',
             headers: buildJsonHeaders(),
@@ -741,6 +933,29 @@ async function saveBinding() {
     } catch (_error) {
         showBindingModalAlert('Network error while saving binding.', 'danger');
     }
+}
+
+function renderOAuthBindingCallbackAlert() {
+    const params = new URLSearchParams(window.location.search);
+    const status = (params.get('oauthBindingStatus') || '').trim();
+    if (!status) {
+        return;
+    }
+
+    if (status === 'created') {
+        const bindingName = params.get('oauthBindingName') || 'binding';
+        showAlert('OAuth connected and binding "' + bindingName + '" was saved.', 'success');
+    } else if (status === 'error') {
+        const message = params.get('oauthBindingMessage') || 'OAuth connected but binding could not be saved.';
+        showAlert(message, 'danger');
+    }
+
+    params.delete('oauthBindingStatus');
+    params.delete('oauthBindingName');
+    params.delete('oauthBindingMessage');
+    const nextQuery = params.toString();
+    const nextUrl = window.location.pathname + (nextQuery ? ('?' + nextQuery) : '') + window.location.hash;
+    window.history.replaceState({}, document.title, nextUrl);
 }
 
 async function deleteBinding(groupUuid, bindingName) {

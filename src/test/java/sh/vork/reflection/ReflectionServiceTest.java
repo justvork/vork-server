@@ -2,6 +2,7 @@ package sh.vork.reflection;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -10,6 +11,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
@@ -18,6 +20,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Flow;
 
@@ -27,7 +30,9 @@ import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import sh.vork.ai.security.SkillSecretSubstitutor;
+import sh.vork.oauth.OAuthTemplate;
 import sh.vork.oauth.OAuthClientService;
+import sh.vork.oauth.OAuthTemplateService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.mock.MapDatabaseRepository;
 import sh.vork.security.SecureCredentialStore;
@@ -37,15 +42,33 @@ class ReflectionServiceTest {
     private ReflectionService reflectionService;
     private HttpClient httpClient;
         private SecureCredentialStore secureCredentialStore;
+        private OAuthClientService oauthClientService;
+        private OAuthTemplateService oauthTemplateService;
+        private OAuthTemplate oauthTemplate;
 
     @BeforeEach
     void setUp() {
         DatabaseRepository<Reflection> reflectionRepository = new MapDatabaseRepository<>(Reflection.class);
         DatabaseRepository<ReflectionGroup> groupRepository = new MapDatabaseRepository<>(ReflectionGroup.class);
-                DatabaseRepository<ReflectionBinding> bindingRepository = new MapDatabaseRepository<>(ReflectionBinding.class);
+        DatabaseRepository<ReflectionBinding> bindingRepository = new MapDatabaseRepository<>(ReflectionBinding.class);
+        DatabaseRepository<PendingOAuthBindingAction> pendingOauthBindingActionRepository =
+                new MapDatabaseRepository<>(PendingOAuthBindingAction.class);
 
-        OAuthClientService oauthClientService = mock(OAuthClientService.class);
+        oauthClientService = mock(OAuthClientService.class);
         when(oauthClientService.resolveHeaderValue(any(), any())).thenAnswer(invocation -> invocation.getArgument(1));
+        when(oauthClientService.resolveAccessToken(any(), any(), any())).thenReturn(null);
+
+        oauthTemplateService = mock(OAuthTemplateService.class);
+        oauthTemplate = new OAuthTemplate(
+                UUID.randomUUID(),
+                "GitHub Work",
+                "github",
+                "GitHub OAuth",
+                URI.create("https://github.com/login/oauth/authorize"),
+                URI.create("https://github.com/login/oauth/access_token"),
+                List.of("repo"),
+                Map.of());
+        when(oauthTemplateService.getTemplate(any(UUID.class))).thenReturn(oauthTemplate);
 
         SkillSecretSubstitutor skillSecretSubstitutor = mock(SkillSecretSubstitutor.class);
         when(skillSecretSubstitutor.substitute(any(), any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -58,11 +81,176 @@ class ReflectionServiceTest {
                 reflectionRepository,
                 groupRepository,
                 bindingRepository,
+                pendingOauthBindingActionRepository,
                 oauthClientService,
+                oauthTemplateService,
                 skillSecretSubstitutor,
                 secureCredentialStore,
                 new ObjectMapper(),
                 httpClient);
+    }
+
+    @Test
+    void createGroupRejectsOauthAuthenticationWithoutTemplate() {
+        assertThrows(IllegalArgumentException.class, () ->
+                reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                        "OAuth Group",
+                        "desc",
+                        "REST",
+                        "",
+                        List.of(),
+                        List.of(),
+                        "OAUTH",
+                        "")));
+    }
+
+    @Test
+    void createBindingRequiresConnectedOauthProfileWhenGroupUsesOauthAuthentication() {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "OAuth Group",
+                "desc",
+                "REST",
+                "",
+                List.of(),
+                List.of(),
+                "OAUTH",
+                oauthTemplate.id().toString()));
+
+        when(oauthClientService.resolveAccessToken("alice", "github", "default")).thenReturn(null);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                reflectionService.createBinding("alice", group.uuid(),
+                        new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of())));
+
+        assertTrue(ex.getMessage().contains("OAuth is required before creating binding"));
+        assertTrue(ex.getMessage().contains("/api/oauth-templates/"));
+    }
+
+    @Test
+    void saveBindingWithOAuthFlowReturnsConnectRequiredAndCompletesAfterCallback() {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "OAuth Group",
+                "desc",
+                "REST",
+                "",
+                List.of(),
+                List.of(),
+                "OAUTH",
+                oauthTemplate.id().toString()));
+
+        when(oauthClientService.connectOrEnsure(eq("alice"), any()))
+                .thenReturn(Map.of(
+                        "status", "connect_required",
+                        "state", "oauth-state-1",
+                        "authorizationUrl", "https://oauth.example/authorize"));
+
+        ReflectionService.BindingSaveOutcome start = reflectionService.saveBindingWithOAuthFlow(
+                "alice",
+                group.uuid(),
+                "",
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+        assertEquals("connect_required", start.status());
+        assertEquals("https://oauth.example/authorize", start.authorizationUrl());
+
+        when(oauthClientService.resolveAccessToken("alice", "github", "default"))
+                .thenReturn("oauth-token");
+
+        ReflectionService.PendingOAuthBindingCompletion completion =
+                reflectionService.completePendingOAuthBinding("oauth-state-1");
+
+        assertTrue(completion.handled());
+        assertTrue(completion.success());
+        assertNotNull(reflectionService.getBinding(group.uuid(), "default"));
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void executeRestReflectionOauthOverridesAuthorizationHeader() throws Exception {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "OAuth Group",
+                "desc",
+                "REST",
+                "",
+                List.of(),
+                List.of(),
+                "OAUTH",
+                oauthTemplate.id().toString()));
+
+        when(oauthClientService.resolveAccessToken("alice", "github", "default"))
+                .thenReturn("oauth-token");
+
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+        reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                "getOAuthWeather",
+                "OAuth Weather",
+                "desc",
+                group.uuid(),
+                List.of(),
+                "GET",
+                "https://example.com/weather",
+                Map.of("Authorization", "Bearer static-token"),
+                Map.of(),
+                "",
+                "application/json"));
+
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("{\"ok\":true}");
+        when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (a, b) -> true));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn((HttpResponse) response);
+
+        String result = reflectionService.executeRestReflection("getOAuthWeather", Map.of(), null, "alice");
+        assertTrue(result.contains("\"status\":\"ok\""));
+
+        var requestCaptor = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
+        org.mockito.Mockito.verify(httpClient).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        assertEquals("Bearer oauth-token", requestCaptor.getValue().headers().firstValue("Authorization").orElse(""));
+    }
+
+    @Test
+    void deleteBindingDeletesMappedOauthProfile() {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "OAuth Group",
+                "desc",
+                "REST",
+                "",
+                List.of(),
+                List.of(),
+                "OAUTH",
+                oauthTemplate.id().toString()));
+
+        when(oauthClientService.resolveAccessToken("alice", "github", "default"))
+                .thenReturn("oauth-token-default");
+        when(oauthClientService.resolveAccessToken("alice", "github", "sandbox"))
+                .thenReturn("oauth-token-sandbox");
+
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("sandbox", "", Map.of(), Map.of()));
+
+        reflectionService.deleteBinding("alice", group.uuid(), "sandbox");
+
+        verify(oauthClientService).deleteProfile("alice", "github", "sandbox");
+    }
+
+    @Test
+    void deleteDefaultBindingRemovesDefaultBinding() {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group", "desc", "REST", "", List.of(), List.of()));
+
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+        boolean deleted = reflectionService.deleteBinding("alice", group.uuid(), "default");
+
+        assertTrue(deleted);
+        ReflectionBinding currentDefault = reflectionService.getBinding(group.uuid(), "default");
+                assertNull(currentDefault);
+        assertEquals(0, reflectionService.bindingsForGroup(group.uuid()).size());
     }
 
     @Test
@@ -114,6 +302,80 @@ class ReflectionServiceTest {
         assertTrue(result.contains("missing_parameters"));
         assertTrue(result.contains("city"));
     }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void executeRestReflectionResolvesUrlTemplateFromBindingParametersCaseInsensitive() throws Exception {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group", "desc", "REST", "", List.of(),
+                List.of(new ReflectionBindingParameter("SERVICE_HOST", "string", "host", ""))));
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of("SERVICE_HOST", "api.openrouteservice.org"), Map.of()));
+
+        reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                "DirectionsLookup",
+                "Directions Lookup",
+                "desc",
+                group.uuid(),
+                List.of(),
+                "GET",
+                "https://{{service_host}}/v2/directions/driving-car",
+                Map.of(),
+                Map.of(),
+                "",
+                "application/json"));
+
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("{\"ok\":true}");
+        when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (a, b) -> true));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn((HttpResponse) response);
+
+        String result = reflectionService.executeRestReflection("DirectionsLookup", Map.of(), null, "alice");
+        assertTrue(result.contains("\"status\":\"ok\""));
+
+        var requestCaptor = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
+        org.mockito.Mockito.verify(httpClient).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        String uri = requestCaptor.getValue().uri().toString();
+        assertEquals("https://api.openrouteservice.org/v2/directions/driving-car", uri);
+    }
+
+    @Test
+    void executeRestReflectionReturnsExplicitErrorForUnresolvedUrlTemplateParameters() {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group", "desc", "REST", "", List.of(),
+                List.of(new ReflectionBindingParameter("service_host", "string", "host", ""))));
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+        reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                "DirectionsLookup2",
+                "Directions Lookup",
+                "desc",
+                group.uuid(),
+                List.of(),
+                "GET",
+                "https://{{service_host}}/v2/directions/driving-car",
+                Map.of(),
+                Map.of(),
+                "",
+                "application/json"));
+
+        String result = reflectionService.executeRestReflection("DirectionsLookup2", Map.of(), null, "alice");
+
+        assertTrue(result.contains("\"status\":\"error\""));
+        assertTrue(result.contains("Unresolved URL template parameter(s): service_host"));
+        assertTrue(result.contains("retryAllowed"));
+    }
+
+        @Test
+        void executeRestReflectionErrorPayloadInstructsNoRetry() {
+                String result = reflectionService.executeRestReflection("missing-reflection", Map.of(), null, "alice");
+
+                assertTrue(result.contains("\"status\":\"error\""));
+                assertTrue(result.contains("\"retryAllowed\":false"));
+                assertTrue(result.contains("do not retry with different binding or profile names"));
+        }
 
     @Test
     void createBindingCopiesMissingSecretsFromSourceBindingWhenRequested() {
@@ -205,7 +467,7 @@ class ReflectionServiceTest {
 
     @Test
     @SuppressWarnings({"unchecked", "rawtypes"})
-    void executeRestReflectionMergesQueryParametersFromInputs() throws Exception {
+        void executeRestReflectionUsesOnlyConfiguredQueryParameters() throws Exception {
         ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
                 "REST Group", "desc", "REST", "", List.of(), List.of()));
         reflectionService.createBinding("alice", group.uuid(),
@@ -239,7 +501,7 @@ class ReflectionServiceTest {
         org.mockito.Mockito.verify(httpClient).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
         String calledUrl = requestCaptor.getValue().uri().toString();
         assertTrue(calledUrl.contains("units=metric"));
-        assertTrue(calledUrl.contains("city=london"));
+        assertTrue(!calledUrl.contains("city=london"));
         assertEquals("GET", requestCaptor.getValue().method());
     }
 
@@ -278,7 +540,7 @@ class ReflectionServiceTest {
         org.mockito.Mockito.verify(httpClient).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
         String calledUrl = requestCaptor.getValue().uri().toString();
         assertTrue(calledUrl.startsWith("https://example.com/api/weather"));
-        assertTrue(calledUrl.contains("city=auckland"));
+                assertTrue(!calledUrl.contains("city=auckland"));
     }
 
     @Test

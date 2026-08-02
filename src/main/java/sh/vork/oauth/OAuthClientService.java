@@ -166,6 +166,7 @@ public class OAuthClientService {
                 "isDefaultProfile", existing.isDefaultProfile(),
                 "secretKey", placeholderToken,
                 "placeholder", placeholder,
+            "state", state,
                 "authorizationUrl", authorizationUrl,
                 "message", "Open authorizationUrl and complete consent. After callback, call oauthConnect again.");
     }
@@ -445,6 +446,40 @@ public class OAuthClientService {
         return true;
     }
 
+    public boolean deleteProfile(String username, String clientName, String profileName) {
+        if (username == null || username.isBlank()) {
+            return false;
+        }
+        String normalizedClientName = normalizeClientName(clientName);
+        String normalizedProfileName = normalizeProfileName(profileName);
+        if (normalizedClientName == null || normalizedClientName.isBlank()) {
+            return false;
+        }
+
+        OAuthClient existing = loadClient(username, normalizedClientName, normalizedProfileName);
+        if (existing == null) {
+            return false;
+        }
+
+        clientRepository.delete(existing.uuid());
+
+        try (var sessions = connectSessionRepository.search(
+                0,
+                200,
+                "createdAt",
+                SortOrder.DESC,
+                SearchQuery.eq("userUuid", username),
+                SearchQuery.eq("clientName", normalizedClientName),
+                SearchQuery.eq("profileName", normalizedProfileName))) {
+            List<OAuthConnectSession> pending = sessions.toList();
+            for (OAuthConnectSession session : pending) {
+                connectSessionRepository.delete(session.uuid());
+            }
+        }
+
+        return true;
+    }
+
     public List<OAuthClientSummary> listConfiguredClients(String username) {
         log.debug("ENTER listConfiguredClients: user={}", username);
         if (username == null || username.isBlank()) {
@@ -517,6 +552,78 @@ public class OAuthClientService {
             return null;
         }
         return encryptionService.decrypt(client.accessTokenEncrypted());
+    }
+
+    public String resolveAccessToken(String username, String clientName, String profileName) {
+        if (username == null || username.isBlank()) {
+            return null;
+        }
+        String normalizedClientName = normalizeClientName(clientName);
+        String normalizedProfileName = normalizeProfileName(profileName);
+        if (normalizedClientName == null || normalizedClientName.isBlank()) {
+            return null;
+        }
+
+        OAuthClient client = loadClient(username, normalizedClientName, normalizedProfileName);
+        if (client == null) {
+            return null;
+        }
+        if (shouldRefresh(client)) {
+            try {
+                client = refreshAccessToken(client);
+            } catch (Exception ex) {
+                log.warn("OAuth refresh failed during direct token resolution [user={}, client={}, profile={}]: {}",
+                        username, normalizedClientName, normalizedProfileName, ex.getMessage());
+            }
+        }
+        if (!hasUsableAccessToken(client)) {
+            return null;
+        }
+        return encryptionService.decrypt(client.accessTokenEncrypted());
+    }
+
+    public OAuthClient ensureProfileFromTemplate(String username,
+                                                 String clientName,
+                                                 String profileName,
+                                                 String authorizeEndpoint,
+                                                 String tokenEndpoint,
+                                                 List<String> scopes,
+                                                 Map<String, String> authorizationParams) {
+        if (username == null || username.isBlank()) {
+            throw new IllegalArgumentException("Authenticated user is required");
+        }
+        String normalizedClientName = normalizeClientName(clientName);
+        String normalizedProfileName = normalizeProfileName(profileName);
+        if (normalizedClientName == null || normalizedClientName.isBlank()) {
+            throw new IllegalArgumentException("OAuth clientName is required");
+        }
+
+        OAuthClient existing = loadClient(username, normalizedClientName, normalizedProfileName);
+        long now = System.currentTimeMillis();
+
+        OAuthClient upsert = new OAuthClient(
+                existing != null ? existing.uuid() : clientUuid(username, normalizedClientName, normalizedProfileName),
+                username,
+                normalizedClientName,
+                normalizedProfileName,
+                existing != null && existing.isDefaultProfile(),
+                authorizeEndpoint == null ? (existing != null ? existing.authorizeEndpoint() : null) : authorizeEndpoint.trim(),
+                tokenEndpoint == null ? (existing != null ? existing.tokenEndpoint() : null) : tokenEndpoint.trim(),
+                existing != null ? existing.clientIdEncrypted() : null,
+                existing != null ? existing.clientSecretEncrypted() : null,
+                existing != null ? existing.redirectUri() : null,
+                scopes == null ? (existing != null ? existing.scopes() : List.of()) : sanitizeScopes(scopes),
+                authorizationParams == null
+                        ? (existing != null ? existing.authorizationParams() : Map.of())
+                        : sanitizeAuthorizationParams(authorizationParams),
+                existing != null ? existing.accessTokenEncrypted() : null,
+                existing != null ? existing.refreshTokenEncrypted() : null,
+                existing != null ? existing.accessTokenExpiresAt() : 0L,
+                existing != null ? existing.createdAt() : now,
+                now);
+
+        clientRepository.save(upsert);
+        return upsert;
     }
 
     private OAuthClient refreshAccessToken(OAuthClient client) throws Exception {
@@ -793,7 +900,7 @@ public class OAuthClientService {
      * <p>Subsequent requests for the same service/profile name reuse the existing connection.
      * Only if the profile name differs from the existing one should a new connection be created.
      */
-    private static String normalizeProfileName(String raw) {
+    public static String normalizeProfileName(String raw) {
         String normalized = normalizeClientName(raw);
         return normalized == null || normalized.isBlank() ? "default" : normalized;
     }

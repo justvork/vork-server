@@ -17,6 +17,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.Objects;
+import java.util.TreeMap;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
@@ -27,11 +29,15 @@ import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import sh.vork.ai.security.SkillSecretSubstitutor;
+import sh.vork.ai.function.OAuthConnectRequest;
+import sh.vork.oauth.OAuthTemplate;
 import sh.vork.oauth.OAuthClientService;
+import sh.vork.oauth.OAuthTemplateService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.RepositoryFactory;
 import sh.vork.security.SecureCredentialStore;
 import sh.vork.skill.SkillSecret;
+import sh.vork.web.RequestOriginContext;
 
 @Service
 public class ReflectionService {
@@ -40,6 +46,7 @@ public class ReflectionService {
 
     private static final Pattern REFLECTION_ID_PATTERN = Pattern.compile("^[A-Za-z0-9]+$");
     private static final Pattern BINDING_NAME_PATTERN = Pattern.compile("^[A-Za-z0-9._-]+$");
+    private static final Pattern TEMPLATE_TOKEN_PATTERN = Pattern.compile("\\{\\{\\s*([A-Za-z0-9._-]+)\\s*\\}\\}");
     private static final Set<String> METHODS_WITHOUT_BODY = Set.of("GET", "DELETE", "HEAD", "OPTIONS");
         private static final String CONTENT_TYPE_JSON = "application/json";
         private static final String CONTENT_TYPE_FORM = "application/x-www-form-urlencoded";
@@ -54,11 +61,14 @@ public class ReflectionService {
             "double",
             "boolean",
             "hidden");
+    private static final long PENDING_OAUTH_BINDING_TTL_MS = 15 * 60 * 1000L;
 
     private final DatabaseRepository<Reflection> reflectionRepository;
     private final DatabaseRepository<ReflectionGroup> reflectionGroupRepository;
     private final DatabaseRepository<ReflectionBinding> reflectionBindingRepository;
+    private final DatabaseRepository<PendingOAuthBindingAction> pendingOAuthBindingActionRepository;
     private final OAuthClientService oauthClientService;
+    private final OAuthTemplateService oauthTemplateService;
     private final SkillSecretSubstitutor skillSecretSubstitutor;
     private final SecureCredentialStore secureCredentialStore;
     private final ObjectMapper objectMapper;
@@ -67,6 +77,7 @@ public class ReflectionService {
     @Autowired
     public ReflectionService(RepositoryFactory factory,
                              OAuthClientService oauthClientService,
+                     OAuthTemplateService oauthTemplateService,
                              SkillSecretSubstitutor skillSecretSubstitutor,
                              SecureCredentialStore secureCredentialStore,
                              ObjectMapper objectMapper) {
@@ -74,17 +85,43 @@ public class ReflectionService {
                 factory.create(Reflection.class),
                 factory.create(ReflectionGroup.class),
                 factory.create(ReflectionBinding.class),
+                factory.create(PendingOAuthBindingAction.class),
                 oauthClientService,
+            oauthTemplateService,
                 skillSecretSubstitutor,
                 secureCredentialStore,
                 objectMapper,
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build());
     }
 
+        ReflectionService(DatabaseRepository<Reflection> reflectionRepository,
+                  DatabaseRepository<ReflectionGroup> reflectionGroupRepository,
+                  DatabaseRepository<ReflectionBinding> reflectionBindingRepository,
+                      DatabaseRepository<PendingOAuthBindingAction> pendingOAuthBindingActionRepository,
+                  OAuthClientService oauthClientService,
+                  SkillSecretSubstitutor skillSecretSubstitutor,
+                  SecureCredentialStore secureCredentialStore,
+                  ObjectMapper objectMapper,
+                  HttpClient httpClient) {
+        this(
+            reflectionRepository,
+            reflectionGroupRepository,
+            reflectionBindingRepository,
+            pendingOAuthBindingActionRepository,
+            oauthClientService,
+            null,
+            skillSecretSubstitutor,
+            secureCredentialStore,
+            objectMapper,
+            httpClient);
+        }
+
     ReflectionService(DatabaseRepository<Reflection> reflectionRepository,
                       DatabaseRepository<ReflectionGroup> reflectionGroupRepository,
                       DatabaseRepository<ReflectionBinding> reflectionBindingRepository,
+                      DatabaseRepository<PendingOAuthBindingAction> pendingOAuthBindingActionRepository,
                       OAuthClientService oauthClientService,
+                  OAuthTemplateService oauthTemplateService,
                       SkillSecretSubstitutor skillSecretSubstitutor,
                       SecureCredentialStore secureCredentialStore,
                       ObjectMapper objectMapper,
@@ -92,7 +129,9 @@ public class ReflectionService {
         this.reflectionRepository = reflectionRepository;
         this.reflectionGroupRepository = reflectionGroupRepository;
         this.reflectionBindingRepository = reflectionBindingRepository;
+        this.pendingOAuthBindingActionRepository = pendingOAuthBindingActionRepository;
         this.oauthClientService = oauthClientService;
+        this.oauthTemplateService = oauthTemplateService;
         this.skillSecretSubstitutor = skillSecretSubstitutor;
         this.secureCredentialStore = secureCredentialStore;
         this.objectMapper = objectMapper;
@@ -122,6 +161,8 @@ public class ReflectionService {
             throw new IllegalArgumentException("Group name is required.");
         }
         ReflectionType type = parseGroupType(request.type());
+        ReflectionAuthenticationMode authenticationMode = parseAuthenticationMode(request.authenticationMode());
+        String oauthTemplateId = normalizeAndValidateOAuthSettings(type, authenticationMode, request.oauthTemplateId());
         long now = System.currentTimeMillis();
         ReflectionGroup group = new ReflectionGroup(
                 UUID.randomUUID().toString(),
@@ -129,8 +170,11 @@ public class ReflectionService {
                 request.description() == null ? "" : request.description().trim(),
                 type,
             request.baseUrl() == null ? "" : request.baseUrl().trim(),
+            request.urlOverrideEnabled(),
             normalizeBindingSecrets(request.bindingSecrets()),
             normalizeBindingParameters(request.bindingParameters()),
+                authenticationMode,
+                oauthTemplateId,
                 1L,
                 now,
                 now);
@@ -149,14 +193,19 @@ public class ReflectionService {
             throw new IllegalArgumentException("Group name is required.");
         }
         ReflectionType type = parseGroupType(request.type());
+        ReflectionAuthenticationMode authenticationMode = parseAuthenticationMode(request.authenticationMode());
+        String oauthTemplateId = normalizeAndValidateOAuthSettings(type, authenticationMode, request.oauthTemplateId());
         ReflectionGroup updated = new ReflectionGroup(
                 existing.uuid(),
                 request.name().trim(),
                 request.description() == null ? "" : request.description().trim(),
                 type,
             request.baseUrl() == null ? "" : request.baseUrl().trim(),
+            request.urlOverrideEnabled(),
             normalizeBindingSecrets(request.bindingSecrets()),
             normalizeBindingParameters(request.bindingParameters()),
+                authenticationMode,
+                oauthTemplateId,
                 existing.version() + 1,
                 existing.createdAt(),
                 System.currentTimeMillis());
@@ -214,6 +263,7 @@ public class ReflectionService {
         requireUsername(username);
         ReflectionBinding normalized = normalizeBindingRequest(null, group, request);
         enforceDefaultBindingInvariant(groupUuid, null, normalized.name());
+        requireConnectedBindingOAuthProfile(username, group, normalized.name());
         reflectionBindingRepository.save(normalized);
         saveBindingSecrets(
                 username,
@@ -222,6 +272,173 @@ public class ReflectionService {
                 mergeSecretValuesFromSourceBinding(username, groupUuid, request));
         log.info("Reflection binding created [groupUuid={}, name={}]", groupUuid, normalized.name());
         return normalized;
+    }
+
+    public BindingSaveOutcome saveBindingWithOAuthFlow(String username,
+                                                       String groupUuid,
+                                                       String originalBindingName,
+                                                       ReflectionBindingRequest request) {
+        return saveBindingWithOAuthFlow(username, groupUuid, originalBindingName, request, null, null, null);
+    }
+
+    public BindingSaveOutcome saveBindingWithOAuthFlow(String username,
+                                                       String groupUuid,
+                                                       String originalBindingName,
+                                                       ReflectionBindingRequest request,
+                                                       String clientId,
+                                                       String clientSecret,
+                                                       String redirectUri) {
+        requireUsername(username);
+        ReflectionGroup group = requireGroup(groupUuid);
+
+        boolean update = originalBindingName != null && !originalBindingName.isBlank();
+        if (group.authenticationMode() != ReflectionAuthenticationMode.OAUTH) {
+            if (update) {
+                ReflectionBinding updated = updateBinding(username, groupUuid, originalBindingName, request);
+                if (updated == null) {
+                    return new BindingSaveOutcome("not_found", "Binding not found.", null, null);
+                }
+                return new BindingSaveOutcome("binding_saved", "Binding updated.", null, updated);
+            }
+            ReflectionBinding created = createBinding(username, groupUuid, request);
+            return new BindingSaveOutcome("binding_saved", "Binding created.", null, created);
+        }
+
+        ReflectionBinding existing = null;
+        if (update) {
+            existing = getBinding(groupUuid, originalBindingName);
+            if (existing == null) {
+                return new BindingSaveOutcome("not_found", "Binding not found.", null, null);
+            }
+        }
+
+        ReflectionBinding normalized = normalizeBindingRequest(existing, group, request);
+        enforceDefaultBindingInvariant(groupUuid, existing == null ? null : existing.name(), normalized.name());
+
+        OAuthTemplate template = resolveOAuthTemplate(group.oauthTemplateId());
+        String profileName = OAuthClientService.normalizeProfileName(normalized.name());
+
+        String effectiveRedirectUri = redirectUri == null ? "" : redirectUri.trim();
+        if (effectiveRedirectUri.isBlank()) {
+            String baseUrl = RequestOriginContext.resolveBaseUrlFromCurrentRequest();
+            if (baseUrl != null && !baseUrl.isBlank()) {
+                effectiveRedirectUri = baseUrl + "/api/oauth/callback";
+            }
+        }
+
+        Map<String, Object> connectResult = oauthClientService.connectOrEnsure(username, new OAuthConnectRequest(
+                template.clientName(),
+                profileName,
+                template.authorizeEndpoint() == null ? null : template.authorizeEndpoint().toString(),
+                template.tokenEndpoint() == null ? null : template.tokenEndpoint().toString(),
+                normalizeOptional(clientId),
+                normalizeOptional(clientSecret),
+                normalizeOptional(effectiveRedirectUri),
+                template.scopes(),
+                template.authorizationParameters(),
+                false,
+                "/reflections"));
+
+        String connectStatus = String.valueOf(connectResult.getOrDefault("status", ""));
+        if ("ready".equals(connectStatus)) {
+            if (update) {
+                ReflectionBinding updated = updateBinding(username, groupUuid, originalBindingName, request);
+                if (updated == null) {
+                    return new BindingSaveOutcome("not_found", "Binding not found.", null, null);
+                }
+                return new BindingSaveOutcome("binding_saved", "Binding updated.", null, updated);
+            }
+            ReflectionBinding created = createBinding(username, groupUuid, request);
+            return new BindingSaveOutcome("binding_saved", "Binding created.", null, created);
+        }
+
+        if ("connect_required".equals(connectStatus)) {
+            if (pendingOAuthBindingActionRepository == null) {
+                return new BindingSaveOutcome("error", "OAuth pending action storage is unavailable.", null, null);
+            }
+            String state = String.valueOf(connectResult.getOrDefault("state", ""));
+            String authorizationUrl = String.valueOf(connectResult.getOrDefault("authorizationUrl", ""));
+            if (state.isBlank() || authorizationUrl.isBlank()) {
+                return new BindingSaveOutcome("error", "OAuth connect flow could not be started.", null, null);
+            }
+            long now = System.currentTimeMillis();
+            pendingOAuthBindingActionRepository.save(new PendingOAuthBindingAction(
+                    state,
+                    username,
+                    groupUuid,
+                    update ? originalBindingName : "",
+                    normalized.name(),
+                    normalized.baseUrl(),
+                    normalized.parameterValues(),
+                    mergeSecretValuesFromSourceBinding(username, groupUuid, request),
+                    request.copySecretsFromBindingName(),
+                    now,
+                    now + PENDING_OAUTH_BINDING_TTL_MS));
+            return new BindingSaveOutcome(
+                    "connect_required",
+                    "Complete OAuth consent to finish saving the binding.",
+                    authorizationUrl,
+                    null);
+        }
+
+        String message = String.valueOf(connectResult.getOrDefault("message", "OAuth flow failed."));
+        return new BindingSaveOutcome("error", message, null, null);
+    }
+
+    private static String normalizeOptional(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String value = raw.trim();
+        return value.isBlank() ? null : value;
+    }
+
+    public PendingOAuthBindingCompletion completePendingOAuthBinding(String oauthState) {
+        if (oauthState == null || oauthState.isBlank() || pendingOAuthBindingActionRepository == null) {
+            return PendingOAuthBindingCompletion.notHandled();
+        }
+
+        PendingOAuthBindingAction pending = pendingOAuthBindingActionRepository.get(oauthState);
+        if (pending == null) {
+            return PendingOAuthBindingCompletion.notHandled();
+        }
+
+        if (pending.expiresAt() > 0 && pending.expiresAt() < System.currentTimeMillis()) {
+            pendingOAuthBindingActionRepository.delete(oauthState);
+            return PendingOAuthBindingCompletion.failed(
+                    pending.groupUuid(),
+                    pending.bindingName(),
+                    "OAuth approval expired before binding could be saved.");
+        }
+
+        try {
+            ReflectionBindingRequest request = new ReflectionBindingRequest(
+                    pending.bindingName(),
+                    pending.baseUrl(),
+                    pending.parameterValues(),
+                    pending.secretValues(),
+                    pending.copySecretsFromBindingName());
+
+            ReflectionBinding saved;
+            if (pending.originalBindingName() == null || pending.originalBindingName().isBlank()) {
+                saved = createBinding(pending.userUuid(), pending.groupUuid(), request);
+            } else {
+                saved = updateBinding(pending.userUuid(), pending.groupUuid(), pending.originalBindingName(), request);
+                if (saved == null) {
+                    pendingOAuthBindingActionRepository.delete(oauthState);
+                    return PendingOAuthBindingCompletion.failed(
+                            pending.groupUuid(),
+                            pending.bindingName(),
+                            "Binding not found for OAuth completion.");
+                }
+            }
+
+            pendingOAuthBindingActionRepository.delete(oauthState);
+            return PendingOAuthBindingCompletion.succeeded(pending.groupUuid(), saved.name());
+        } catch (IllegalArgumentException ex) {
+            pendingOAuthBindingActionRepository.delete(oauthState);
+            return PendingOAuthBindingCompletion.failed(pending.groupUuid(), pending.bindingName(), ex.getMessage());
+        }
     }
 
     public ReflectionBinding updateBinding(String username,
@@ -236,6 +453,7 @@ public class ReflectionService {
         }
         ReflectionBinding normalized = normalizeBindingRequest(existing, group, request);
         enforceDefaultBindingInvariant(groupUuid, existing.name(), normalized.name());
+        requireConnectedBindingOAuthProfile(username, group, normalized.name());
         reflectionBindingRepository.save(normalized);
         saveBindingSecrets(username, normalized, group.bindingSecrets(), request.secretValues());
         log.info("Reflection binding updated [groupUuid={}, name={}]", groupUuid, normalized.name());
@@ -244,15 +462,14 @@ public class ReflectionService {
 
     public boolean deleteBinding(String username, String groupUuid, String bindingName) {
         requireUsername(username);
+        ReflectionGroup group = requireGroup(groupUuid);
         ReflectionBinding existing = getBinding(groupUuid, bindingName);
         if (existing == null) {
             return false;
         }
-        if ("default".equalsIgnoreCase(existing.name())) {
-            throw new IllegalArgumentException("Default binding cannot be deleted.");
-        }
         reflectionBindingRepository.delete(existing.uuid());
         clearBindingSecrets(username, existing);
+        clearBindingOAuthProfile(username, group, existing.name());
         log.info("Reflection binding deleted [groupUuid={}, name={}]", groupUuid, bindingName);
         return true;
     }
@@ -337,8 +554,11 @@ public class ReflectionService {
                 group.description(),
                 group.type(),
             group.baseUrl(),
+            group.urlOverrideEnabled(),
             group.bindingSecrets(),
             group.bindingParameters(),
+                group.authenticationMode(),
+                group.oauthTemplateId(),
                 group.version(),
                 group.createdAt(),
                 group.updatedAt());
@@ -355,13 +575,7 @@ public class ReflectionService {
         }
 
         ReflectionGroup incomingGroup = pkg.group();
-        if (reflectionGroupRepository.get(incomingGroup.uuid()) != null) {
-            return new ReflectionGroupImportResult(
-                    "already_installed",
-                    incomingGroup.uuid(),
-                    List.of(),
-                    "Reflection group '" + incomingGroup.name() + "' is already installed.");
-        }
+        ReflectionGroup existingGroup = reflectionGroupRepository.get(incomingGroup.uuid());
 
         List<Reflection> incomingReflections = pkg.reflections().stream()
                 .filter(reflection -> reflection != null && reflection.uuid() != null && !reflection.uuid().isBlank())
@@ -370,54 +584,77 @@ public class ReflectionService {
             return new ReflectionGroupImportResult("error", incomingGroup.uuid(), List.of(), "No valid reflections in package.");
         }
 
+        Map<String, String> importTargetUuidByIncomingUuid = new LinkedHashMap<>();
         for (Reflection reflection : incomingReflections) {
-            if (reflectionRepository.get(reflection.uuid()) != null) {
-                return new ReflectionGroupImportResult(
-                        "already_installed",
-                        incomingGroup.uuid(),
-                        List.of(),
-                        "Reflection with UUID '" + reflection.uuid() + "' is already installed.");
-            }
+            Reflection existingByUuid = reflectionRepository.get(reflection.uuid());
 
             Reflection conflictById = getReflectionById(reflection.id());
-            if (conflictById != null) {
+            if (existingByUuid != null && conflictById != null && !existingByUuid.uuid().equals(conflictById.uuid())) {
                 return new ReflectionGroupImportResult(
                         "error",
                         incomingGroup.uuid(),
                         List.of(),
-                        "Reflection id '" + reflection.id() + "' already exists.");
+                        "Reflection import conflict for id '" + reflection.id() + "': different existing UUIDs would be overwritten.");
             }
+
+            String targetUuid;
+            if (existingByUuid != null) {
+                targetUuid = existingByUuid.uuid();
+            } else if (conflictById != null) {
+                targetUuid = conflictById.uuid();
+            } else {
+                targetUuid = reflection.uuid();
+            }
+            importTargetUuidByIncomingUuid.put(reflection.uuid(), targetUuid);
         }
 
         long now = System.currentTimeMillis();
+        ReflectionType normalizedType = incomingGroup.type() == null ? ReflectionType.REST : incomingGroup.type();
+        ReflectionAuthenticationMode normalizedAuthMode = incomingGroup.authenticationMode() == null
+            ? ReflectionAuthenticationMode.NONE
+            : incomingGroup.authenticationMode();
+        String normalizedOauthTemplateId = normalizeAndValidateOAuthSettings(
+            normalizedType,
+            normalizedAuthMode,
+            incomingGroup.oauthTemplateId());
         ReflectionGroup normalizedGroup = new ReflectionGroup(
                 incomingGroup.uuid(),
                 incomingGroup.name(),
                 incomingGroup.description(),
-                incomingGroup.type() == null ? ReflectionType.REST : incomingGroup.type(),
+            normalizedType,
             incomingGroup.baseUrl() == null ? "" : incomingGroup.baseUrl(),
+            incomingGroup.urlOverrideEnabled(),
             normalizeBindingSecrets(incomingGroup.bindingSecrets()),
             normalizeBindingParameters(incomingGroup.bindingParameters()),
+            normalizedAuthMode,
+            normalizedOauthTemplateId,
                 incomingGroup.version() < 1 ? 1 : incomingGroup.version(),
                 incomingGroup.createdAt() > 0 ? incomingGroup.createdAt() : now,
                 incomingGroup.updatedAt() > 0 ? incomingGroup.updatedAt() : now);
         reflectionGroupRepository.save(normalizedGroup);
 
         List<Reflection> normalizedReflections = incomingReflections.stream()
-                .map(reflection -> normalizeImportedReflection(reflection, normalizedGroup.uuid()))
+                .map(reflection -> {
+                    String targetUuid = importTargetUuidByIncomingUuid.getOrDefault(reflection.uuid(), reflection.uuid());
+                    Reflection existingTarget = reflectionRepository.get(targetUuid);
+                    return normalizeImportedReflection(reflection, normalizedGroup.uuid(), targetUuid, existingTarget);
+                })
                 .toList();
         for (Reflection reflection : normalizedReflections) {
             reflectionRepository.save(reflection);
         }
 
         List<String> importedUuids = normalizedReflections.stream().map(Reflection::uuid).toList();
-        return new ReflectionGroupImportResult("imported", normalizedGroup.uuid(), importedUuids, null);
+        String status = existingGroup == null ? "imported" : "updated";
+        return new ReflectionGroupImportResult(status, normalizedGroup.uuid(), importedUuids, null);
     }
 
     public String executeRestReflection(String reflectionId,
                                         Map<String, Object> runtimeInputs,
                                         String bindingName,
                                         String username) {
+        log.debug("ENTER executeRestReflection: [reflectionId={}, bindingName={}, username={}]",
+                reflectionId, bindingName, username);
         Reflection reflection = getReflectionById(reflectionId);
         if (reflection == null) {
             return jsonError("Reflection not found: " + reflectionId);
@@ -439,6 +676,10 @@ public class ReflectionService {
             Map<String, Object> cleanedRuntimeInputs = new LinkedHashMap<>(runtimeInputs == null ? Map.of() : runtimeInputs);
             cleanedRuntimeInputs.remove("bindingName");
             mergedInputs = applyBindingInputs(group.bindingParameters(), resolvedBinding, cleanedRuntimeInputs);
+            log.debug("Step executeRestReflection.bindingResolved: [groupUuid={}, bindingName={}, inputs={}]",
+                    group == null ? null : group.uuid(),
+                    resolvedBinding == null ? null : resolvedBinding.name(),
+                    sanitizeObjectMapForLog(mergedInputs));
         } catch (Exception ex) {
             return jsonError(ex.getMessage());
         }
@@ -463,6 +704,12 @@ public class ReflectionService {
             Map<String, String> stringInputs = toStringMap(mergedInputs);
 
             String rawUrl = applyTemplate(reflection.url(), stringInputs);
+            List<String> unresolvedUrlTokens = findUnresolvedTemplateTokens(rawUrl);
+            if (!unresolvedUrlTokens.isEmpty()) {
+                return jsonError("Unresolved URL template parameter(s): "
+                        + String.join(", ", unresolvedUrlTokens)
+                        + ". Ensure the selected binding has values and placeholder names match the binding parameters.");
+            }
             rawUrl = resolveRequestUrl(rawUrl, group, resolvedBinding);
             rawUrl = substituteSecrets(rawUrl, username, bindingSecretValues);
             URI requestUri = buildUri(rawUrl, reflection.queryParameters(), stringInputs, username, bindingSecretValues);
@@ -474,6 +721,8 @@ public class ReflectionService {
                 Map<String, String> resolvedHeaders = resolveHeaders(
                     reflection.headers(), stringInputs, username, bindingSecretValues);
 
+                applyGroupAuthentication(resolvedHeaders, group, resolvedBinding, username);
+
                 String body = resolveBody(
                     reflection,
                     method,
@@ -482,6 +731,14 @@ public class ReflectionService {
                     username,
                     bindingSecretValues,
                     requestContentType);
+
+            log.debug("Step executeRestReflection.requestPrepared: [reflectionId={}, method={}, uri={}, headers={}, contentType={}, bodyPreview={}]",
+                    reflection.id(),
+                    method,
+                    requestUri,
+                    sanitizeStringMapForLog(resolvedHeaders),
+                    requestContentType,
+                    sanitizeBodyForLog(body, requestContentType));
             if (body != null) {
                 putHeaderCaseInsensitive(resolvedHeaders, "Content-Type", requestContentType);
             }
@@ -510,6 +767,12 @@ public class ReflectionService {
             if (responseBody.length() > 20_000) {
                 responseBody = responseBody.substring(0, 20_000) + "\n...<truncated>";
             }
+
+            log.debug("EXIT executeRestReflection: [reflectionId={}, statusCode={}, responseHeaders={}, responseBodyPreview={}]",
+                    reflection.id(),
+                    response.statusCode(),
+                    response.headers().map(),
+                    responseBody.length() > 1000 ? responseBody.substring(0, 1000) + "...<truncated>" : responseBody);
 
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("status", "ok");
@@ -660,11 +923,48 @@ public class ReflectionService {
         if (rawType == null || rawType.isBlank()) {
             return ReflectionType.REST;
         }
+        String normalized = rawType.trim().toUpperCase(Locale.ROOT);
+        if ("OAUTH".equals(normalized)) {
+            throw new IllegalArgumentException("Reflection group type OAUTH is no longer supported. Use type REST with Authentication mode OAUTH.");
+        }
         try {
-            return ReflectionType.valueOf(rawType.trim().toUpperCase(Locale.ROOT));
+            return ReflectionType.valueOf(normalized);
         } catch (Exception ex) {
             throw new IllegalArgumentException("Unsupported reflection group type: " + rawType);
         }
+    }
+
+    private static ReflectionAuthenticationMode parseAuthenticationMode(String rawMode) {
+        return ReflectionAuthenticationMode.parse(rawMode);
+    }
+
+    private String normalizeAndValidateOAuthSettings(ReflectionType type,
+                                                     ReflectionAuthenticationMode authenticationMode,
+                                                     String oauthTemplateId) {
+        if (authenticationMode == ReflectionAuthenticationMode.NONE) {
+            return "";
+        }
+        if (type != ReflectionType.REST) {
+            throw new IllegalArgumentException("OAuth authentication is only supported for REST reflection groups.");
+        }
+        if (oauthTemplateId == null || oauthTemplateId.isBlank()) {
+            throw new IllegalArgumentException("OAuth template is required when authentication mode is OAUTH.");
+        }
+        String normalized = oauthTemplateId.trim();
+        if (oauthTemplateService == null) {
+            return normalized;
+        }
+        UUID templateId;
+        try {
+            templateId = UUID.fromString(normalized);
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("Invalid OAuth template id.");
+        }
+        OAuthTemplate template = oauthTemplateService.getTemplate(templateId);
+        if (template == null) {
+            throw new IllegalArgumentException("Selected OAuth template was not found.");
+        }
+        return normalized;
     }
 
     private static String normalizeMethod(String rawMethod) {
@@ -703,6 +1003,73 @@ public class ReflectionService {
         return resolved;
     }
 
+    private void applyGroupAuthentication(Map<String, String> resolvedHeaders,
+                                          ReflectionGroup group,
+                                          ReflectionBinding binding,
+                                          String username) {
+        if (group == null || group.authenticationMode() != ReflectionAuthenticationMode.OAUTH) {
+            return;
+        }
+        OAuthTemplate template = resolveOAuthTemplate(group.oauthTemplateId());
+        String clientName = template.clientName();
+        String profileName = OAuthClientService.normalizeProfileName(binding.name());
+        String token = oauthClientService.resolveAccessToken(username, clientName, profileName);
+        if (token == null || token.isBlank()) {
+            throw new IllegalArgumentException("OAuth token is unavailable for binding profile '"
+                    + profileName
+                    + "'. Connect OAuth for the selected template/client first.");
+        }
+        putHeaderCaseInsensitive(resolvedHeaders, "Authorization", "Bearer " + token);
+    }
+
+    private void requireConnectedBindingOAuthProfile(String username, ReflectionGroup group, String bindingName) {
+        if (group == null || group.authenticationMode() != ReflectionAuthenticationMode.OAUTH) {
+            return;
+        }
+        OAuthTemplate template = resolveOAuthTemplate(group.oauthTemplateId());
+        String profileName = OAuthClientService.normalizeProfileName(bindingName);
+        String token = oauthClientService.resolveAccessToken(username, template.clientName(), profileName);
+        if (token == null || token.isBlank()) {
+            throw new IllegalArgumentException("OAuth is required before creating binding '"
+                    + profileName
+                    + "'. Connect the template first via /api/oauth-templates/"
+                    + template.id()
+                    + "/connect for client '"
+                    + template.clientName()
+                    + "'.");
+        }
+    }
+
+    private void clearBindingOAuthProfile(String username, ReflectionGroup group, String bindingName) {
+        if (group == null || group.authenticationMode() != ReflectionAuthenticationMode.OAUTH) {
+            return;
+        }
+        OAuthTemplate template = resolveOAuthTemplate(group.oauthTemplateId());
+        oauthClientService.deleteProfile(username, template.clientName(), bindingName);
+    }
+
+    private OAuthTemplate resolveOAuthTemplate(String oauthTemplateId) {
+        if (oauthTemplateService == null) {
+            throw new IllegalArgumentException("OAuth template service is unavailable.");
+        }
+        if (oauthTemplateId == null || oauthTemplateId.isBlank()) {
+            throw new IllegalArgumentException("OAuth template is required for OAUTH authentication mode.");
+        }
+        try {
+            UUID templateId = UUID.fromString(oauthTemplateId.trim());
+            OAuthTemplate template = oauthTemplateService.getTemplate(templateId);
+            if (template == null) {
+                throw new IllegalArgumentException("Selected OAuth template was not found.");
+            }
+            return template;
+        } catch (IllegalArgumentException ex) {
+            if ("Selected OAuth template was not found.".equals(ex.getMessage())) {
+                throw ex;
+            }
+            throw new IllegalArgumentException("Invalid OAuth template id.");
+        }
+    }
+
     private URI buildUri(String rawUrl,
                          Map<String, String> baseQueryParams,
                          Map<String, String> inputValues,
@@ -717,11 +1084,6 @@ public class ReflectionService {
                 String resolvedValue = applyTemplate(entry.getValue(), inputValues);
                 resolvedValue = substituteSecrets(resolvedValue, username, bindingSecretValues);
                 merged.put(entry.getKey(), resolvedValue);
-            }
-        }
-        for (Map.Entry<String, String> entry : inputValues.entrySet()) {
-            if (!merged.containsKey(entry.getKey())) {
-                merged.put(entry.getKey(), entry.getValue());
             }
         }
 
@@ -1007,7 +1369,7 @@ public class ReflectionService {
                     UUID.randomUUID().toString(),
                     group.uuid(),
                     name,
-                    request.baseUrl() == null ? "" : request.baseUrl().trim(),
+                    isUrlOverrideEnabled(group) && request.baseUrl() != null ? request.baseUrl().trim() : "",
                     parameterValues,
                     1L,
                     now,
@@ -1018,11 +1380,15 @@ public class ReflectionService {
                 existing.uuid(),
                 group.uuid(),
                 name,
-                request.baseUrl() == null ? "" : request.baseUrl().trim(),
+                isUrlOverrideEnabled(group) && request.baseUrl() != null ? request.baseUrl().trim() : "",
                 parameterValues,
                 existing.version() + 1,
                 existing.createdAt(),
                 now);
+    }
+
+    private static boolean isUrlOverrideEnabled(ReflectionGroup group) {
+        return group == null || !Boolean.FALSE.equals(group.urlOverrideEnabled());
     }
 
     private static Map<String, String> normalizeAndValidateBindingValues(
@@ -1248,18 +1614,50 @@ public class ReflectionService {
         if (template == null || template.isBlank() || params == null || params.isEmpty()) {
             return template == null ? "" : template;
         }
-        String resolved = template;
-        for (Map.Entry<String, String> entry : params.entrySet()) {
-            String value = entry.getValue() == null ? "" : entry.getValue();
-            resolved = resolved.replace("{{" + entry.getKey() + "}}", value);
+        Map<String, String> caseInsensitive = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        caseInsensitive.putAll(params);
+
+        Matcher matcher = TEMPLATE_TOKEN_PATTERN.matcher(template);
+        StringBuffer out = new StringBuffer();
+        while (matcher.find()) {
+            String token = matcher.group(1);
+            if (!caseInsensitive.containsKey(token)) {
+                continue;
+            }
+            String value = caseInsensitive.get(token);
+            matcher.appendReplacement(out, Matcher.quoteReplacement(value == null ? "" : value));
         }
-        return resolved;
+        matcher.appendTail(out);
+        return out.toString();
     }
 
-    private Reflection normalizeImportedReflection(Reflection reflection, String groupUuid) {
+    private static List<String> findUnresolvedTemplateTokens(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        Matcher matcher = TEMPLATE_TOKEN_PATTERN.matcher(value);
+        LinkedHashSet<String> unresolved = new LinkedHashSet<>();
+        while (matcher.find()) {
+            unresolved.add(matcher.group(1));
+        }
+        return unresolved.isEmpty() ? List.of() : List.copyOf(unresolved);
+    }
+
+        private Reflection normalizeImportedReflection(Reflection reflection,
+                               String groupUuid,
+                               String targetUuid,
+                               Reflection existingTarget) {
         long now = System.currentTimeMillis();
+        long createdAt = existingTarget != null && existingTarget.createdAt() > 0
+            ? existingTarget.createdAt()
+            : (reflection.createdAt() > 0 ? reflection.createdAt() : now);
+        long updatedAt = now;
+        long version = existingTarget != null
+            ? Math.max(existingTarget.version() + 1, 1)
+            : (reflection.version() < 1 ? 1 : reflection.version());
+
         return new Reflection(
-                reflection.uuid(),
+            targetUuid,
                 reflection.id(),
                 reflection.name(),
                 reflection.description(),
@@ -1271,9 +1669,9 @@ public class ReflectionService {
                 normalizeStringMap(reflection.queryParameters()),
                 reflection.bodyTemplate() == null ? "" : reflection.bodyTemplate(),
                 normalizeRequestContentType(reflection.requestContentType()),
-                reflection.version() < 1 ? 1 : reflection.version(),
-                reflection.createdAt() > 0 ? reflection.createdAt() : now,
-                reflection.updatedAt() > 0 ? reflection.updatedAt() : now);
+                version,
+                createdAt,
+                updatedAt);
     }
 
     private static Map<String, String> toStringMap(Map<String, Object> rawInputs) {
@@ -1285,6 +1683,88 @@ public class ReflectionService {
             out.put(entry.getKey(), entry.getValue() == null ? "" : String.valueOf(entry.getValue()));
         }
         return out;
+    }
+
+    private static Map<String, Object> sanitizeObjectMapForLog(Map<String, Object> input) {
+        if (input == null || input.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> sanitized = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : input.entrySet()) {
+            String key = entry.getKey();
+            if (key == null) {
+                continue;
+            }
+            if (isSensitiveKey(key)) {
+                sanitized.put(key, "[REDACTED]");
+            } else {
+                sanitized.put(key, entry.getValue());
+            }
+        }
+        return Map.copyOf(sanitized);
+    }
+
+    private static Map<String, String> sanitizeStringMapForLog(Map<String, String> input) {
+        if (input == null || input.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> sanitized = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : input.entrySet()) {
+            String key = entry.getKey();
+            if (key == null) {
+                continue;
+            }
+            if (isSensitiveKey(key)) {
+                sanitized.put(key, "[REDACTED]");
+            } else {
+                sanitized.put(key, entry.getValue());
+            }
+        }
+        return Map.copyOf(sanitized);
+    }
+
+    private static String sanitizeBodyForLog(String body, String contentType) {
+        if (body == null) {
+            return "<none>";
+        }
+
+        String sanitized = body;
+        String normalizedType = contentType == null ? "" : contentType.toLowerCase(Locale.ROOT);
+        if (CONTENT_TYPE_FORM.equals(normalizedType)) {
+            StringBuilder out = new StringBuilder();
+            String[] pairs = body.split("&");
+            for (int i = 0; i < pairs.length; i++) {
+                if (i > 0) {
+                    out.append('&');
+                }
+                String pair = pairs[i];
+                int separator = pair.indexOf('=');
+                String key = separator < 0 ? pair : pair.substring(0, separator);
+                String value = separator < 0 ? "" : pair.substring(separator + 1);
+                if (isSensitiveKey(key)) {
+                    out.append(key).append("=[REDACTED]");
+                } else {
+                    out.append(key).append('=').append(value);
+                }
+            }
+            sanitized = out.toString();
+        } else {
+            sanitized = sanitized
+                    .replaceAll("(?i)(\\\"(?:password|secret|token|api[_-]?key)\\\"\\s*:\\s*\\\")([^\\\"]*)(\\\")", "$1[REDACTED]$3")
+                    .replaceAll("(?i)(password|secret|token|api[_-]?key)=([^&\\s]+)", "$1=[REDACTED]");
+        }
+
+        return sanitized.length() > 1000 ? sanitized.substring(0, 1000) + "...<truncated>" : sanitized;
+    }
+
+    private static boolean isSensitiveKey(String key) {
+        String normalized = key.toLowerCase(Locale.ROOT);
+        return normalized.contains("authorization")
+                || normalized.contains("password")
+                || normalized.contains("secret")
+                || normalized.contains("token")
+                || normalized.contains("api_key")
+                || normalized.contains("apikey");
     }
 
     private String jsonMissing(List<String> missing) {
@@ -1303,9 +1783,11 @@ public class ReflectionService {
         try {
             return objectMapper.writeValueAsString(Map.of(
                     "status", "error",
-                    "message", message == null ? "Unknown error" : message));
+                    "message", message == null ? "Unknown error" : message,
+                    "retryAllowed", false,
+                    "instruction", "Report this reflection error to the user and do not retry with different binding or profile names."));
         } catch (Exception ex) {
-            return "{\"status\":\"error\",\"message\":\"Unknown error\"}";
+            return "{\"status\":\"error\",\"message\":\"Unknown error\",\"retryAllowed\":false,\"instruction\":\"Report this reflection error to the user and do not retry with different binding or profile names.\"}";
         }
     }
 
@@ -1314,8 +1796,31 @@ public class ReflectionService {
             String description,
             String type,
             String baseUrl,
+            Boolean urlOverrideEnabled,
             List<SkillSecret> bindingSecrets,
-            List<ReflectionBindingParameter> bindingParameters) {}
+            List<ReflectionBindingParameter> bindingParameters,
+            String authenticationMode,
+            String oauthTemplateId) {
+
+            public ReflectionGroupRequest(String name,
+                                          String description,
+                                          String type,
+                                          String baseUrl,
+                                          Boolean urlOverrideEnabled,
+                                          List<SkillSecret> bindingSecrets,
+                                          List<ReflectionBindingParameter> bindingParameters) {
+                this(name, description, type, baseUrl, urlOverrideEnabled, bindingSecrets, bindingParameters, "NONE", "");
+            }
+
+            public ReflectionGroupRequest(String name,
+                                          String description,
+                                          String type,
+                                          String baseUrl,
+                                          List<SkillSecret> bindingSecrets,
+                                          List<ReflectionBindingParameter> bindingParameters) {
+                this(name, description, type, baseUrl, true, bindingSecrets, bindingParameters, "NONE", "");
+            }
+        }
 
         public record ReflectionBindingRequest(
             String name,
@@ -1347,6 +1852,32 @@ public class ReflectionService {
     ) {}
 
     public record GroupDeleteResult(boolean ok, String message) {}
+
+    public record BindingSaveOutcome(
+            String status,
+            String message,
+            String authorizationUrl,
+            ReflectionBinding binding) {}
+
+    public record PendingOAuthBindingCompletion(
+            boolean handled,
+            boolean success,
+            String message,
+            String groupUuid,
+            String bindingName) {
+
+        static PendingOAuthBindingCompletion notHandled() {
+            return new PendingOAuthBindingCompletion(false, false, "", null, null);
+        }
+
+        static PendingOAuthBindingCompletion succeeded(String groupUuid, String bindingName) {
+            return new PendingOAuthBindingCompletion(true, true, "", groupUuid, bindingName);
+        }
+
+        static PendingOAuthBindingCompletion failed(String groupUuid, String bindingName, String message) {
+            return new PendingOAuthBindingCompletion(true, false, message, groupUuid, bindingName);
+        }
+    }
 
             public record ReflectionGroupExportPackage(
                 String vorkReflectionGroupExport,

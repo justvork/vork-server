@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.reflection.ReflectionService;
 
 @RestController
 @RequestMapping("/api/oauth")
@@ -23,11 +24,14 @@ public class OAuthCallbackController {
 
     private final OAuthClientService oauthClientService;
     private final DatabaseRepository<AiSession> sessionRepository;
+    private final ReflectionService reflectionService;
 
     public OAuthCallbackController(OAuthClientService oauthClientService,
-                                   DatabaseRepository<AiSession> sessionRepository) {
+                                   DatabaseRepository<AiSession> sessionRepository,
+                                   ReflectionService reflectionService) {
         this.oauthClientService = oauthClientService;
         this.sessionRepository = sessionRepository;
+        this.reflectionService = reflectionService;
     }
 
     @GetMapping(value = "/callback", produces = MediaType.TEXT_HTML_VALUE)
@@ -36,10 +40,27 @@ public class OAuthCallbackController {
                                            @RequestParam(value = "error", required = false) String error) {
         Map<String, Object> result = oauthClientService.completeCallback(state, code, error);
         if ("ok".equals(result.get("status"))) {
+            ReflectionService.PendingOAuthBindingCompletion pendingBindingCompletion =
+                    reflectionService.completePendingOAuthBinding(state);
+
             String sessionUuid = String.valueOf(result.getOrDefault("sessionUuid", ""));
             SessionOriginMode originMode = resolveOriginMode(sessionUuid);
             String returnPath = sanitizeReturnPath((String) result.get("returnPath"));
             String webRedirectTarget = returnPath != null ? returnPath : "/index.html";
+            if (pendingBindingCompletion.handled()) {
+                if (pendingBindingCompletion.success()) {
+                    webRedirectTarget = appendQueryParam(webRedirectTarget, "oauthBindingStatus", "created");
+                    if (pendingBindingCompletion.bindingName() != null && !pendingBindingCompletion.bindingName().isBlank()) {
+                        webRedirectTarget = appendQueryParam(webRedirectTarget, "oauthBindingName", pendingBindingCompletion.bindingName());
+                    }
+                } else {
+                    webRedirectTarget = appendQueryParam(webRedirectTarget, "oauthBindingStatus", "error");
+                    webRedirectTarget = appendQueryParam(
+                            webRedirectTarget,
+                            "oauthBindingMessage",
+                            pendingBindingCompletion.message() == null ? "Failed to save binding after OAuth callback." : pendingBindingCompletion.message());
+                }
+            }
             String autoResumeScript = "";
             String followUpMessage;
             
@@ -83,7 +104,13 @@ public class OAuthCallbackController {
             }
 
             if (originMode == SessionOriginMode.WEB) {
-                followUpMessage = "Returning you to chat…";
+                if (pendingBindingCompletion.handled() && pendingBindingCompletion.success()) {
+                    followUpMessage = "OAuth connected and binding saved. Returning you to reflections…";
+                } else if (pendingBindingCompletion.handled()) {
+                    followUpMessage = "OAuth connected, but binding save failed. Returning you to reflections…";
+                } else {
+                    followUpMessage = "Returning you to chat…";
+                }
             } else if (originMode == SessionOriginMode.TELEGRAM) {
                 followUpMessage = "OAuth connected. You can return to Telegram and continue there.";
             } else if (originMode == SessionOriginMode.SLACK) {
@@ -139,5 +166,14 @@ public class OAuthCallbackController {
 
     private static String jsStringLiteral(String value) {
         return value.replace("\\", "\\\\").replace("'", "\\'");
+    }
+
+    private static String appendQueryParam(String path, String key, String value) {
+        if (path == null || path.isBlank()) {
+            return path;
+        }
+        String separator = path.contains("?") ? "&" : "?";
+        String encoded = java.net.URLEncoder.encode(value == null ? "" : value, java.nio.charset.StandardCharsets.UTF_8);
+        return path + separator + key + "=" + encoded;
     }
 }

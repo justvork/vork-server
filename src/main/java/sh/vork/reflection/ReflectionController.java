@@ -81,6 +81,35 @@ public class ReflectionController {
         }
     }
 
+    @PostMapping("/reflection-groups/{groupUuid}/bindings/oauth-flow")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> saveBindingWithOAuthFlow(
+            @PathVariable String groupUuid,
+            @RequestBody OAuthBindingFlowRequest request) {
+        try {
+            if (request == null || request.bindingRequest() == null) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Binding payload is required."));
+            }
+            ReflectionService.BindingSaveOutcome outcome = reflectionService.saveBindingWithOAuthFlow(
+                    currentUsername(),
+                    groupUuid,
+                    request.originalBindingName(),
+                    request.bindingRequest(),
+                    request.clientId(),
+                    request.clientSecret(),
+                    request.redirectUri());
+            if ("not_found".equals(outcome.status())) {
+                return ResponseEntity.status(404).body(Map.of("error", outcome.message()));
+            }
+            if ("error".equals(outcome.status())) {
+                return ResponseEntity.badRequest().body(Map.of("error", outcome.message()));
+            }
+            return ResponseEntity.ok(outcome);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
+    }
+
     @PutMapping("/reflection-groups/{groupUuid}/bindings/{bindingName}")
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
     public ResponseEntity<?> updateBinding(@PathVariable String groupUuid,
@@ -265,4 +294,11 @@ public class ReflectionController {
             ReflectionGroup group,
             List<Reflection> reflections,
             List<ReflectionBinding> bindings) {}
+
+        public record OAuthBindingFlowRequest(
+            String originalBindingName,
+            ReflectionService.ReflectionBindingRequest bindingRequest,
+            String clientId,
+            String clientSecret,
+            String redirectUri) {}
 }

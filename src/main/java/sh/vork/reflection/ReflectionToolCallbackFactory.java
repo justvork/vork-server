@@ -2,6 +2,7 @@ package sh.vork.reflection;
 
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import org.slf4j.Logger;
@@ -43,9 +44,11 @@ public class ReflectionToolCallbackFactory {
     }
 
     public ToolCallback create(Reflection reflection) {
-        String description = reflection.description() == null || reflection.description().isBlank()
+        String baseDescription = reflection.description() == null || reflection.description().isBlank()
                 ? reflection.name()
                 : reflection.description();
+        String description = baseDescription
+            + " If this tool returns an error, report that exact error to the user and do not retry with different bindingName/profile names.";
         String inputSchema = buildInputSchema(reflection.inputParameters());
 
         ToolDefinition definition = DefaultToolDefinition.builder()
@@ -80,10 +83,53 @@ public class ReflectionToolCallbackFactory {
                 }
 
                 String username = resolveUsername();
-                log.debug("Reflection tool invoked [id={}, username={}]", reflection.id(), username);
-                return reflectionService.executeRestReflection(reflection.id(), params, bindingName, username);
+                log.debug("ENTER reflectionToolCall [id={}, username={}, bindingName={}, params={}]",
+                        reflection.id(), username, bindingName, sanitizeForLogs(params));
+                String result = reflectionService.executeRestReflection(reflection.id(), params, bindingName, username);
+                String status = extractStatus(result);
+                log.debug("EXIT reflectionToolCall [id={}, username={}, bindingName={}, status={}]",
+                        reflection.id(), username, bindingName, status);
+                if ("error".equalsIgnoreCase(status)) {
+                    log.warn("Reflection tool failed [id={}, bindingName={}]. AI should report the error and stop without retrying alternative profiles.",
+                            reflection.id(), bindingName);
+                }
+                return result;
             }
         };
+    }
+
+    private static Map<String, Object> sanitizeForLogs(Map<String, Object> input) {
+        if (input == null || input.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> sanitized = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : input.entrySet()) {
+            String key = entry.getKey();
+            if (key == null) {
+                continue;
+            }
+            String lowered = key.toLowerCase(Locale.ROOT);
+            if (lowered.contains("secret") || lowered.contains("password") || lowered.contains("token") || lowered.contains("api_key") || lowered.contains("apikey")) {
+                sanitized.put(key, "[REDACTED]");
+            } else {
+                sanitized.put(key, entry.getValue());
+            }
+        }
+        return Map.copyOf(sanitized);
+    }
+
+    private String extractStatus(String result) {
+        if (result == null || result.isBlank()) {
+            return "unknown";
+        }
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> payload = objectMapper.readValue(result, Map.class);
+            Object status = payload.get("status");
+            return status == null ? "unknown" : String.valueOf(status);
+        } catch (Exception ex) {
+            return "unparsed";
+        }
     }
 
     private Map<String, Object> parseParams(String toolInput) {

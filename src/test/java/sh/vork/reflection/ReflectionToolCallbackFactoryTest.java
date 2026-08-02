@@ -57,6 +57,14 @@ class ReflectionToolCallbackFactoryTest {
     }
 
     @Test
+    void appendsNoRetryInstructionToToolDescription() {
+        Reflection reflection = sampleReflection();
+        ToolCallback callback = factory.create(reflection);
+
+        assertTrue(callback.getToolDefinition().description().contains("do not retry with different bindingName/profile names"));
+    }
+
+    @Test
     void returnsMissingParametersWhenRequiredFieldsAbsent() {
         Reflection reflection = sampleReflection();
         ToolCallback callback = factory.create(reflection);
