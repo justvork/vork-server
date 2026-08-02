@@ -16,6 +16,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Objects;
 import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
@@ -29,6 +30,8 @@ import sh.vork.ai.security.SkillSecretSubstitutor;
 import sh.vork.oauth.OAuthClientService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.RepositoryFactory;
+import sh.vork.security.SecureCredentialStore;
+import sh.vork.skill.SkillSecret;
 
 @Service
 public class ReflectionService {
@@ -36,6 +39,7 @@ public class ReflectionService {
     private static final Logger log = LoggerFactory.getLogger(ReflectionService.class);
 
     private static final Pattern REFLECTION_ID_PATTERN = Pattern.compile("^[A-Za-z0-9]+$");
+    private static final Pattern BINDING_NAME_PATTERN = Pattern.compile("^[A-Za-z0-9._-]+$");
     private static final Set<String> METHODS_WITHOUT_BODY = Set.of("GET", "DELETE", "HEAD", "OPTIONS");
         private static final String CONTENT_TYPE_JSON = "application/json";
         private static final String CONTENT_TYPE_FORM = "application/x-www-form-urlencoded";
@@ -44,11 +48,19 @@ public class ReflectionService {
             CONTENT_TYPE_JSON,
             CONTENT_TYPE_FORM,
             CONTENT_TYPE_TEXT);
+    private static final Set<String> SUPPORTED_BINDING_PARAMETER_TYPES = Set.of(
+            "string",
+            "int",
+            "double",
+            "boolean",
+            "hidden");
 
     private final DatabaseRepository<Reflection> reflectionRepository;
     private final DatabaseRepository<ReflectionGroup> reflectionGroupRepository;
+    private final DatabaseRepository<ReflectionBinding> reflectionBindingRepository;
     private final OAuthClientService oauthClientService;
     private final SkillSecretSubstitutor skillSecretSubstitutor;
+    private final SecureCredentialStore secureCredentialStore;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
 
@@ -56,26 +68,33 @@ public class ReflectionService {
     public ReflectionService(RepositoryFactory factory,
                              OAuthClientService oauthClientService,
                              SkillSecretSubstitutor skillSecretSubstitutor,
+                             SecureCredentialStore secureCredentialStore,
                              ObjectMapper objectMapper) {
         this(
                 factory.create(Reflection.class),
                 factory.create(ReflectionGroup.class),
+                factory.create(ReflectionBinding.class),
                 oauthClientService,
                 skillSecretSubstitutor,
+                secureCredentialStore,
                 objectMapper,
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build());
     }
 
     ReflectionService(DatabaseRepository<Reflection> reflectionRepository,
                       DatabaseRepository<ReflectionGroup> reflectionGroupRepository,
+                      DatabaseRepository<ReflectionBinding> reflectionBindingRepository,
                       OAuthClientService oauthClientService,
                       SkillSecretSubstitutor skillSecretSubstitutor,
+                      SecureCredentialStore secureCredentialStore,
                       ObjectMapper objectMapper,
                       HttpClient httpClient) {
         this.reflectionRepository = reflectionRepository;
         this.reflectionGroupRepository = reflectionGroupRepository;
+        this.reflectionBindingRepository = reflectionBindingRepository;
         this.oauthClientService = oauthClientService;
         this.skillSecretSubstitutor = skillSecretSubstitutor;
+        this.secureCredentialStore = secureCredentialStore;
         this.objectMapper = objectMapper;
         this.httpClient = httpClient;
     }
@@ -109,6 +128,9 @@ public class ReflectionService {
                 request.name().trim(),
                 request.description() == null ? "" : request.description().trim(),
                 type,
+            request.baseUrl() == null ? "" : request.baseUrl().trim(),
+            normalizeBindingSecrets(request.bindingSecrets()),
+            normalizeBindingParameters(request.bindingParameters()),
                 1L,
                 now,
                 now);
@@ -132,6 +154,9 @@ public class ReflectionService {
                 request.name().trim(),
                 request.description() == null ? "" : request.description().trim(),
                 type,
+            request.baseUrl() == null ? "" : request.baseUrl().trim(),
+            normalizeBindingSecrets(request.bindingSecrets()),
+            normalizeBindingParameters(request.bindingParameters()),
                 existing.version() + 1,
                 existing.createdAt(),
                 System.currentTimeMillis());
@@ -151,9 +176,85 @@ public class ReflectionService {
         if (!members.isEmpty()) {
             return new GroupDeleteResult(false, "Cannot delete non-empty group. Remove reflections first.");
         }
+        List<ReflectionBinding> bindings = bindingsForGroup(uuid);
+        if (!bindings.isEmpty()) {
+            return new GroupDeleteResult(false, "Cannot delete group with bindings. Remove bindings first.");
+        }
         reflectionGroupRepository.delete(uuid);
         log.info("Reflection group deleted [uuid={}]", uuid);
         return new GroupDeleteResult(true, null);
+    }
+
+    public List<ReflectionBinding> bindingsForGroup(String groupUuid) {
+        if (groupUuid == null || groupUuid.isBlank()) {
+            return List.of();
+        }
+        try (var stream = reflectionBindingRepository.list(0, Integer.MAX_VALUE)) {
+            return stream
+                    .filter(binding -> groupUuid.equals(binding.groupUuid()))
+                    .sorted(Comparator.comparing(
+                            binding -> binding.name() == null ? "" : binding.name(),
+                            String.CASE_INSENSITIVE_ORDER))
+                    .toList();
+        }
+    }
+
+    public ReflectionBinding getBinding(String groupUuid, String bindingName) {
+        if (groupUuid == null || groupUuid.isBlank() || bindingName == null || bindingName.isBlank()) {
+            return null;
+        }
+        return bindingsForGroup(groupUuid).stream()
+                .filter(binding -> bindingName.equalsIgnoreCase(binding.name()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    public ReflectionBinding createBinding(String username, String groupUuid, ReflectionBindingRequest request) {
+        ReflectionGroup group = requireGroup(groupUuid);
+        requireUsername(username);
+        ReflectionBinding normalized = normalizeBindingRequest(null, group, request);
+        enforceDefaultBindingInvariant(groupUuid, null, normalized.name());
+        reflectionBindingRepository.save(normalized);
+        saveBindingSecrets(
+                username,
+                normalized,
+                group.bindingSecrets(),
+                mergeSecretValuesFromSourceBinding(username, groupUuid, request));
+        log.info("Reflection binding created [groupUuid={}, name={}]", groupUuid, normalized.name());
+        return normalized;
+    }
+
+    public ReflectionBinding updateBinding(String username,
+                                           String groupUuid,
+                                           String bindingName,
+                                           ReflectionBindingRequest request) {
+        ReflectionGroup group = requireGroup(groupUuid);
+        requireUsername(username);
+        ReflectionBinding existing = getBinding(groupUuid, bindingName);
+        if (existing == null) {
+            return null;
+        }
+        ReflectionBinding normalized = normalizeBindingRequest(existing, group, request);
+        enforceDefaultBindingInvariant(groupUuid, existing.name(), normalized.name());
+        reflectionBindingRepository.save(normalized);
+        saveBindingSecrets(username, normalized, group.bindingSecrets(), request.secretValues());
+        log.info("Reflection binding updated [groupUuid={}, name={}]", groupUuid, normalized.name());
+        return normalized;
+    }
+
+    public boolean deleteBinding(String username, String groupUuid, String bindingName) {
+        requireUsername(username);
+        ReflectionBinding existing = getBinding(groupUuid, bindingName);
+        if (existing == null) {
+            return false;
+        }
+        if ("default".equalsIgnoreCase(existing.name())) {
+            throw new IllegalArgumentException("Default binding cannot be deleted.");
+        }
+        reflectionBindingRepository.delete(existing.uuid());
+        clearBindingSecrets(username, existing);
+        log.info("Reflection binding deleted [groupUuid={}, name={}]", groupUuid, bindingName);
+        return true;
     }
 
     public List<Reflection> listReflections() {
@@ -235,6 +336,9 @@ public class ReflectionService {
                 group.name(),
                 group.description(),
                 group.type(),
+            group.baseUrl(),
+            group.bindingSecrets(),
+            group.bindingParameters(),
                 group.version(),
                 group.createdAt(),
                 group.updatedAt());
@@ -291,6 +395,9 @@ public class ReflectionService {
                 incomingGroup.name(),
                 incomingGroup.description(),
                 incomingGroup.type() == null ? ReflectionType.REST : incomingGroup.type(),
+            incomingGroup.baseUrl() == null ? "" : incomingGroup.baseUrl(),
+            normalizeBindingSecrets(incomingGroup.bindingSecrets()),
+            normalizeBindingParameters(incomingGroup.bindingParameters()),
                 incomingGroup.version() < 1 ? 1 : incomingGroup.version(),
                 incomingGroup.createdAt() > 0 ? incomingGroup.createdAt() : now,
                 incomingGroup.updatedAt() > 0 ? incomingGroup.updatedAt() : now);
@@ -309,6 +416,7 @@ public class ReflectionService {
 
     public String executeRestReflection(String reflectionId,
                                         Map<String, Object> runtimeInputs,
+                                        String bindingName,
                                         String username) {
         Reflection reflection = getReflectionById(reflectionId);
         if (reflection == null) {
@@ -321,7 +429,20 @@ public class ReflectionService {
             return jsonError("Only REST reflections are executable at this time.");
         }
 
-        Map<String, Object> mergedInputs = runtimeInputs == null ? Map.of() : runtimeInputs;
+        ReflectionBinding resolvedBinding;
+        Map<String, String> bindingSecretValues;
+        Map<String, Object> mergedInputs;
+        try {
+            resolvedBinding = resolveBindingForExecution(group, bindingName);
+            bindingSecretValues = loadBindingSecretValues(username, resolvedBinding, group.bindingSecrets());
+
+            Map<String, Object> cleanedRuntimeInputs = new LinkedHashMap<>(runtimeInputs == null ? Map.of() : runtimeInputs);
+            cleanedRuntimeInputs.remove("bindingName");
+            mergedInputs = applyBindingInputs(group.bindingParameters(), resolvedBinding, cleanedRuntimeInputs);
+        } catch (Exception ex) {
+            return jsonError(ex.getMessage());
+        }
+
         List<String> missing = new ArrayList<>();
         for (ReflectionInputParameter parameter : reflection.inputParameters()) {
             if (!parameter.required()) {
@@ -342,16 +463,25 @@ public class ReflectionService {
             Map<String, String> stringInputs = toStringMap(mergedInputs);
 
             String rawUrl = applyTemplate(reflection.url(), stringInputs);
-            rawUrl = substituteSecrets(rawUrl, username);
-            URI requestUri = buildUri(rawUrl, reflection.queryParameters(), stringInputs);
+            rawUrl = resolveRequestUrl(rawUrl, group, resolvedBinding);
+            rawUrl = substituteSecrets(rawUrl, username, bindingSecretValues);
+            URI requestUri = buildUri(rawUrl, reflection.queryParameters(), stringInputs, username, bindingSecretValues);
 
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(requestUri)
                     .timeout(Duration.ofSeconds(30))
                     .header("User-Agent", "vork-reflection/1.0");
 
-            Map<String, String> resolvedHeaders = resolveHeaders(reflection.headers(), stringInputs, username);
+                Map<String, String> resolvedHeaders = resolveHeaders(
+                    reflection.headers(), stringInputs, username, bindingSecretValues);
 
-            String body = resolveBody(reflection, method, stringInputs, mergedInputs, username, requestContentType);
+                String body = resolveBody(
+                    reflection,
+                    method,
+                    stringInputs,
+                    mergedInputs,
+                    username,
+                    bindingSecretValues,
+                    requestContentType);
             if (body != null) {
                 putHeaderCaseInsensitive(resolvedHeaders, "Content-Type", requestContentType);
             }
@@ -558,14 +688,15 @@ public class ReflectionService {
 
     private Map<String, String> resolveHeaders(Map<String, String> headerTemplates,
                                                Map<String, String> inputValues,
-                                               String username) {
+                                               String username,
+                                               Map<String, String> bindingSecretValues) {
         Map<String, String> resolved = new LinkedHashMap<>();
         if (headerTemplates == null || headerTemplates.isEmpty()) {
             return resolved;
         }
         for (Map.Entry<String, String> entry : headerTemplates.entrySet()) {
             String value = applyTemplate(entry.getValue(), inputValues);
-            value = substituteSecrets(value, username);
+            value = substituteSecrets(value, username, bindingSecretValues);
             value = oauthClientService.resolveHeaderValue(username, value);
             resolved.put(entry.getKey(), value);
         }
@@ -574,14 +705,18 @@ public class ReflectionService {
 
     private URI buildUri(String rawUrl,
                          Map<String, String> baseQueryParams,
-                         Map<String, String> inputValues) {
+                         Map<String, String> inputValues,
+                         String username,
+                         Map<String, String> bindingSecretValues) {
         StringBuilder url = new StringBuilder(rawUrl == null ? "" : rawUrl.trim());
         boolean hasQuery = url.indexOf("?") >= 0;
 
         Map<String, String> merged = new LinkedHashMap<>();
         if (baseQueryParams != null) {
             for (Map.Entry<String, String> entry : baseQueryParams.entrySet()) {
-                merged.put(entry.getKey(), applyTemplate(entry.getValue(), inputValues));
+                String resolvedValue = applyTemplate(entry.getValue(), inputValues);
+                resolvedValue = substituteSecrets(resolvedValue, username, bindingSecretValues);
+                merged.put(entry.getKey(), resolvedValue);
             }
         }
         for (Map.Entry<String, String> entry : inputValues.entrySet()) {
@@ -613,6 +748,7 @@ public class ReflectionService {
                                Map<String, String> stringInputs,
                                Map<String, Object> rawInputs,
                                String username,
+                               Map<String, String> bindingSecretValues,
                                String requestContentType) throws Exception {
         if (METHODS_WITHOUT_BODY.contains(method)) {
             return null;
@@ -621,7 +757,7 @@ public class ReflectionService {
         String bodyTemplate = reflection.bodyTemplate();
         if (bodyTemplate != null && !bodyTemplate.isBlank()) {
             String body = applyBodyTemplate(bodyTemplate, stringInputs, requestContentType);
-            return substituteSecrets(body, username);
+            return substituteSecrets(body, username, bindingSecretValues);
         }
 
         if (rawInputs == null || rawInputs.isEmpty()) {
@@ -777,11 +913,335 @@ public class ReflectionService {
         return body.toString();
     }
 
-    private String substituteSecrets(String value, String username) {
+    private String substituteSecrets(String value, String username, Map<String, String> bindingSecretValues) {
         if (value == null) {
             return null;
         }
-        return skillSecretSubstitutor.substitute(value, username);
+        String resolved = value;
+        if (bindingSecretValues != null && !bindingSecretValues.isEmpty()) {
+            for (Map.Entry<String, String> entry : bindingSecretValues.entrySet()) {
+                resolved = resolved.replace("{{" + entry.getKey() + "}}", entry.getValue() == null ? "" : entry.getValue());
+            }
+        }
+        return skillSecretSubstitutor.substitute(resolved, username);
+    }
+
+    private ReflectionGroup requireGroup(String groupUuid) {
+        if (groupUuid == null || groupUuid.isBlank()) {
+            throw new IllegalArgumentException("groupUuid is required.");
+        }
+        ReflectionGroup group = reflectionGroupRepository.get(groupUuid);
+        if (group == null) {
+            throw new IllegalArgumentException("Reflection group not found.");
+        }
+        return group;
+    }
+
+    private static void requireUsername(String username) {
+        if (username == null || username.isBlank()) {
+            throw new IllegalArgumentException("Authenticated username is required.");
+        }
+    }
+
+    private static List<SkillSecret> normalizeBindingSecrets(List<SkillSecret> bindingSecrets) {
+        if (bindingSecrets == null || bindingSecrets.isEmpty()) {
+            return List.of();
+        }
+        List<SkillSecret> normalized = new ArrayList<>();
+        Set<String> names = new LinkedHashSet<>();
+        for (SkillSecret secret : bindingSecrets) {
+            if (secret == null || secret.name() == null || secret.name().isBlank()) {
+                continue;
+            }
+            String name = secret.name().trim();
+            if (!names.add(name.toUpperCase(Locale.ROOT))) {
+                throw new IllegalArgumentException("Duplicate binding secret name: " + name);
+            }
+            normalized.add(new SkillSecret(name, secret.description()));
+        }
+        return List.copyOf(normalized);
+    }
+
+    private static List<ReflectionBindingParameter> normalizeBindingParameters(
+            List<ReflectionBindingParameter> bindingParameters) {
+        if (bindingParameters == null || bindingParameters.isEmpty()) {
+            return List.of();
+        }
+        List<ReflectionBindingParameter> normalized = new ArrayList<>();
+        Set<String> names = new LinkedHashSet<>();
+        for (ReflectionBindingParameter parameter : bindingParameters) {
+            if (parameter == null || parameter.name() == null || parameter.name().isBlank()) {
+                continue;
+            }
+            String name = parameter.name().trim();
+            String type = parameter.type() == null ? "string" : parameter.type().trim().toLowerCase(Locale.ROOT);
+            if (!SUPPORTED_BINDING_PARAMETER_TYPES.contains(type)) {
+                throw new IllegalArgumentException("Unsupported binding parameter type: " + parameter.type());
+            }
+            if (!names.add(name.toLowerCase(Locale.ROOT))) {
+                throw new IllegalArgumentException("Duplicate binding parameter name: " + name);
+            }
+            normalized.add(new ReflectionBindingParameter(name, type, parameter.description(), parameter.defaultValue()));
+        }
+        return List.copyOf(normalized);
+    }
+
+    private ReflectionBinding normalizeBindingRequest(ReflectionBinding existing,
+                                                     ReflectionGroup group,
+                                                     ReflectionBindingRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("Binding payload is required.");
+        }
+        String name = request.name() == null ? "" : request.name().trim();
+        if (name.isBlank()) {
+            throw new IllegalArgumentException("Binding name is required.");
+        }
+        if (!BINDING_NAME_PATTERN.matcher(name).matches()) {
+            throw new IllegalArgumentException("Binding name can use letters, numbers, dot, underscore, and hyphen only.");
+        }
+
+        Map<String, String> parameterValues = normalizeAndValidateBindingValues(group.bindingParameters(), request.parameterValues());
+        long now = System.currentTimeMillis();
+        if (existing == null) {
+            return new ReflectionBinding(
+                    UUID.randomUUID().toString(),
+                    group.uuid(),
+                    name,
+                    request.baseUrl() == null ? "" : request.baseUrl().trim(),
+                    parameterValues,
+                    1L,
+                    now,
+                    now);
+        }
+
+        return new ReflectionBinding(
+                existing.uuid(),
+                group.uuid(),
+                name,
+                request.baseUrl() == null ? "" : request.baseUrl().trim(),
+                parameterValues,
+                existing.version() + 1,
+                existing.createdAt(),
+                now);
+    }
+
+    private static Map<String, String> normalizeAndValidateBindingValues(
+            List<ReflectionBindingParameter> definitions,
+            Map<String, String> values) {
+        Map<String, String> normalized = normalizeStringMap(values);
+        if (definitions == null || definitions.isEmpty()) {
+            return normalized;
+        }
+
+        Set<String> allowedNames = new LinkedHashSet<>();
+        for (ReflectionBindingParameter definition : definitions) {
+            allowedNames.add(definition.name().toLowerCase(Locale.ROOT));
+        }
+        for (String key : normalized.keySet()) {
+            if (!allowedNames.contains(key.toLowerCase(Locale.ROOT))) {
+                throw new IllegalArgumentException("Unknown binding parameter: " + key);
+            }
+        }
+        return normalized;
+    }
+
+    private void enforceDefaultBindingInvariant(String groupUuid, String existingName, String targetName) {
+        Set<String> names = new LinkedHashSet<>();
+        for (ReflectionBinding binding : bindingsForGroup(groupUuid)) {
+            String current = binding.name();
+            if (existingName != null && existingName.equalsIgnoreCase(current)) {
+                continue;
+            }
+            names.add(current.toLowerCase(Locale.ROOT));
+        }
+        names.add(targetName.toLowerCase(Locale.ROOT));
+        if (!names.contains("default")) {
+            throw new IllegalArgumentException("A default binding is required for this group.");
+        }
+    }
+
+    private void saveBindingSecrets(String username,
+                                    ReflectionBinding binding,
+                                    List<SkillSecret> secretDefinitions,
+                                    Map<String, String> secretValues) {
+        if (secretDefinitions == null || secretDefinitions.isEmpty() || secretValues == null || secretValues.isEmpty()) {
+            return;
+        }
+
+        Map<String, String> normalizedValues = normalizeStringMap(secretValues);
+        Set<String> allowed = new LinkedHashSet<>();
+        for (SkillSecret secret : secretDefinitions) {
+            allowed.add(secret.name().toUpperCase(Locale.ROOT));
+        }
+
+        for (Map.Entry<String, String> entry : normalizedValues.entrySet()) {
+            String key = entry.getKey().toUpperCase(Locale.ROOT);
+            if (!allowed.contains(key)) {
+                throw new IllegalArgumentException("Unknown binding secret: " + entry.getKey());
+            }
+            secureCredentialStore.saveSecretForUser(username, bindingSecretStorageKey(binding, key), entry.getValue());
+        }
+    }
+
+    private Map<String, String> mergeSecretValuesFromSourceBinding(String username,
+                                                                    String groupUuid,
+                                                                    ReflectionBindingRequest request) {
+        Map<String, String> merged = new LinkedHashMap<>(normalizeStringMap(request.secretValues()));
+
+        String sourceBindingName = request.copySecretsFromBindingName();
+        if (sourceBindingName == null || sourceBindingName.isBlank()) {
+            return Map.copyOf(merged);
+        }
+
+        ReflectionBinding source = getBinding(groupUuid, sourceBindingName);
+        if (source == null) {
+            return Map.copyOf(merged);
+        }
+
+        ReflectionGroup group = requireGroup(groupUuid);
+        for (SkillSecret secret : group.bindingSecrets()) {
+            String secretName = secret.name();
+            boolean alreadyProvided = merged.keySet().stream()
+                    .anyMatch(key -> key.equalsIgnoreCase(secretName));
+            if (alreadyProvided) {
+                continue;
+            }
+
+            String sourceValue = secureCredentialStore.getSecretForUser(
+                    username,
+                    bindingSecretStorageKey(source, secretName));
+            if (sourceValue != null && !sourceValue.isBlank()) {
+                merged.put(secretName, sourceValue);
+            }
+        }
+        return Map.copyOf(merged);
+    }
+
+    private void clearBindingSecrets(String username, ReflectionBinding binding) {
+        // Keep historical secret records untouched; deleting is optional and not required for runtime safety.
+        Objects.requireNonNull(username, "username");
+        Objects.requireNonNull(binding, "binding");
+    }
+
+    private static String bindingSecretStorageKey(ReflectionBinding binding, String secretName) {
+        String normalizedSecretName = secretName == null ? "" : secretName.toUpperCase(Locale.ROOT);
+        return "REFLECTION_BINDING:" + binding.groupUuid() + ":" + binding.name() + ":" + normalizedSecretName;
+    }
+
+    private ReflectionBinding resolveBindingForExecution(ReflectionGroup group, String bindingName) {
+        List<ReflectionBinding> bindings = bindingsForGroup(group.uuid());
+        if (bindings.isEmpty()) {
+            throw new IllegalArgumentException("No bindings configured for group: " + group.name());
+        }
+
+        if (bindingName != null && !bindingName.isBlank()) {
+            ReflectionBinding named = bindings.stream()
+                    .filter(binding -> bindingName.equalsIgnoreCase(binding.name()))
+                    .findFirst()
+                    .orElse(null);
+            if (named == null) {
+                throw new IllegalArgumentException("Binding not found: " + bindingName);
+            }
+            return named;
+        }
+
+        return bindings.stream()
+                .filter(binding -> "default".equalsIgnoreCase(binding.name()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Default binding not found for group: " + group.name()));
+    }
+
+    private Map<String, String> loadBindingSecretValues(String username,
+                                                        ReflectionBinding binding,
+                                                        List<SkillSecret> secretDefinitions) {
+        if (username == null || username.isBlank() || binding == null || secretDefinitions == null || secretDefinitions.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<String, String> values = new LinkedHashMap<>();
+        for (SkillSecret secret : secretDefinitions) {
+            String name = secret.name();
+            String value = secureCredentialStore.getSecretForUser(username, bindingSecretStorageKey(binding, name));
+            if (value != null) {
+                values.put(name, value);
+            }
+        }
+        return Map.copyOf(values);
+    }
+
+    private static Map<String, Object> applyBindingInputs(List<ReflectionBindingParameter> parameters,
+                                                          ReflectionBinding binding,
+                                                          Map<String, Object> runtimeInputs) {
+        Map<String, Object> merged = new LinkedHashMap<>();
+        if (parameters != null) {
+            for (ReflectionBindingParameter parameter : parameters) {
+                String name = parameter.name();
+                String defaultValue = parameter.defaultValue();
+                if (defaultValue != null && !defaultValue.isBlank()) {
+                    merged.put(name, coerceByType(defaultValue, parameter.type()));
+                }
+            }
+        }
+
+        if (binding != null && binding.parameterValues() != null) {
+            for (Map.Entry<String, String> entry : binding.parameterValues().entrySet()) {
+                String type = "string";
+                if (parameters != null) {
+                    for (ReflectionBindingParameter parameter : parameters) {
+                        if (parameter.name().equalsIgnoreCase(entry.getKey())) {
+                            type = parameter.type();
+                            break;
+                        }
+                    }
+                }
+                merged.put(entry.getKey(), coerceByType(entry.getValue(), type));
+            }
+        }
+
+        if (runtimeInputs != null) {
+            merged.putAll(runtimeInputs);
+        }
+        return merged;
+    }
+
+    private static String resolveRequestUrl(String reflectionUrl,
+                                            ReflectionGroup group,
+                                            ReflectionBinding binding) {
+        String url = reflectionUrl == null ? "" : reflectionUrl.trim();
+        if (url.isBlank()) {
+            return url;
+        }
+        if (isAbsoluteUrl(url)) {
+            return url;
+        }
+
+        String baseUrl = "";
+        if (binding != null && binding.baseUrl() != null && !binding.baseUrl().isBlank()) {
+            baseUrl = binding.baseUrl().trim();
+        } else if (group.baseUrl() != null && !group.baseUrl().isBlank()) {
+            baseUrl = group.baseUrl().trim();
+        }
+        if (baseUrl.isBlank()) {
+            throw new IllegalArgumentException("Relative URL requires a group or binding base URL.");
+        }
+
+        if (baseUrl.endsWith("/") && url.startsWith("/")) {
+            return baseUrl.substring(0, baseUrl.length() - 1) + url;
+        }
+        if (!baseUrl.endsWith("/") && !url.startsWith("/")) {
+            return baseUrl + "/" + url;
+        }
+        return baseUrl + url;
+    }
+
+    private static boolean isAbsoluteUrl(String url) {
+        try {
+            URI uri = URI.create(url);
+            return uri.getScheme() != null;
+        } catch (Exception ex) {
+            return false;
+        }
     }
 
     private static String applyTemplate(String template, Map<String, String> params) {
@@ -849,7 +1309,28 @@ public class ReflectionService {
         }
     }
 
-    public record ReflectionGroupRequest(String name, String description, String type) {}
+        public record ReflectionGroupRequest(
+            String name,
+            String description,
+            String type,
+            String baseUrl,
+            List<SkillSecret> bindingSecrets,
+            List<ReflectionBindingParameter> bindingParameters) {}
+
+        public record ReflectionBindingRequest(
+            String name,
+            String baseUrl,
+            Map<String, String> parameterValues,
+            Map<String, String> secretValues,
+            String copySecretsFromBindingName) {
+
+            public ReflectionBindingRequest(String name,
+                                            String baseUrl,
+                                            Map<String, String> parameterValues,
+                                            Map<String, String> secretValues) {
+                this(name, baseUrl, parameterValues, secretValues, null);
+            }
+        }
 
     public record ReflectionRequest(
             String id,

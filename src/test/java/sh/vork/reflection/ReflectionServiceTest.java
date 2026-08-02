@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.net.http.HttpClient;
@@ -28,16 +30,19 @@ import sh.vork.ai.security.SkillSecretSubstitutor;
 import sh.vork.oauth.OAuthClientService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.mock.MapDatabaseRepository;
+import sh.vork.security.SecureCredentialStore;
 
 class ReflectionServiceTest {
 
     private ReflectionService reflectionService;
     private HttpClient httpClient;
+        private SecureCredentialStore secureCredentialStore;
 
     @BeforeEach
     void setUp() {
         DatabaseRepository<Reflection> reflectionRepository = new MapDatabaseRepository<>(Reflection.class);
         DatabaseRepository<ReflectionGroup> groupRepository = new MapDatabaseRepository<>(ReflectionGroup.class);
+                DatabaseRepository<ReflectionBinding> bindingRepository = new MapDatabaseRepository<>(ReflectionBinding.class);
 
         OAuthClientService oauthClientService = mock(OAuthClientService.class);
         when(oauthClientService.resolveHeaderValue(any(), any())).thenAnswer(invocation -> invocation.getArgument(1));
@@ -45,13 +50,17 @@ class ReflectionServiceTest {
         SkillSecretSubstitutor skillSecretSubstitutor = mock(SkillSecretSubstitutor.class);
         when(skillSecretSubstitutor.substitute(any(), any())).thenAnswer(invocation -> invocation.getArgument(0));
 
+        secureCredentialStore = mock(SecureCredentialStore.class);
+
         httpClient = mock(HttpClient.class);
 
         reflectionService = new ReflectionService(
                 reflectionRepository,
                 groupRepository,
+                bindingRepository,
                 oauthClientService,
                 skillSecretSubstitutor,
+                secureCredentialStore,
                 new ObjectMapper(),
                 httpClient);
     }
@@ -59,7 +68,7 @@ class ReflectionServiceTest {
     @Test
     void createReflectionRejectsDuplicateAlphanumericId() {
         ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
-                "REST Group", "desc", "REST"));
+                "REST Group", "desc", "REST", "", List.of(), List.of()));
 
         ReflectionService.ReflectionRequest request = new ReflectionService.ReflectionRequest(
                 "WeatherLookup",
@@ -83,7 +92,9 @@ class ReflectionServiceTest {
     @Test
     void executeRestReflectionReturnsMissingParametersWhenRequiredInputNotProvided() {
         ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
-                "REST Group", "desc", "REST"));
+                "REST Group", "desc", "REST", "", List.of(), List.of()));
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
 
         reflectionService.createReflection(new ReflectionService.ReflectionRequest(
                 "WeatherLookup",
@@ -98,17 +109,107 @@ class ReflectionServiceTest {
                 "",
                 "application/json"));
 
-        String result = reflectionService.executeRestReflection("WeatherLookup", Map.of(), "alice");
+        String result = reflectionService.executeRestReflection("WeatherLookup", Map.of(), null, "alice");
 
         assertTrue(result.contains("missing_parameters"));
         assertTrue(result.contains("city"));
     }
 
     @Test
+    void createBindingCopiesMissingSecretsFromSourceBindingWhenRequested() {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group",
+                "desc",
+                "REST",
+                "",
+                List.of(new sh.vork.skill.SkillSecret("API_KEY", "API key")),
+                List.of()));
+
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+        when(secureCredentialStore.getSecretForUser(
+                eq("alice"),
+                eq("REFLECTION_BINDING:" + group.uuid() + ":default:API_KEY")))
+                .thenReturn("copied-secret-value");
+
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest(
+                        "sandbox",
+                        "",
+                        Map.of(),
+                        Map.of(),
+                        "default"));
+
+        verify(secureCredentialStore).saveSecretForUser(
+                eq("alice"),
+                eq("REFLECTION_BINDING:" + group.uuid() + ":sandbox:API_KEY"),
+                eq("copied-secret-value"));
+    }
+
+    @Test
+    void createBindingCopiesMissingSecretsFromSourceBindingWhenSecretNameIsLowercase() {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group",
+                "desc",
+                "REST",
+                "",
+                List.of(new sh.vork.skill.SkillSecret("api_key", "API key")),
+                List.of()));
+
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+        when(secureCredentialStore.getSecretForUser(
+                eq("alice"),
+                eq("REFLECTION_BINDING:" + group.uuid() + ":default:API_KEY")))
+                .thenReturn("copied-secret-value");
+
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest(
+                        "sandbox",
+                        "",
+                        Map.of(),
+                        Map.of(),
+                        "default"));
+
+        verify(secureCredentialStore).saveSecretForUser(
+                eq("alice"),
+                eq("REFLECTION_BINDING:" + group.uuid() + ":sandbox:API_KEY"),
+                eq("copied-secret-value"));
+    }
+
+        @Test
+        void executeRestReflectionReturnsErrorWhenNoBindingsConfigured() {
+                ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                                "REST Group", "desc", "REST", "", List.of(), List.of()));
+
+                reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                                "WeatherLookup",
+                                "Weather Lookup",
+                                "desc",
+                                group.uuid(),
+                                List.of(),
+                                "GET",
+                                "https://example.com/weather",
+                                Map.of(),
+                                Map.of(),
+                                "",
+                                "application/json"));
+
+                String result = reflectionService.executeRestReflection("WeatherLookup", Map.of(), null, "alice");
+
+                assertTrue(result.contains("\"status\":\"error\""));
+                assertTrue(result.contains("No bindings configured"));
+        }
+
+    @Test
     @SuppressWarnings({"unchecked", "rawtypes"})
     void executeRestReflectionMergesQueryParametersFromInputs() throws Exception {
         ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
-                "REST Group", "desc", "REST"));
+                "REST Group", "desc", "REST", "", List.of(), List.of()));
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
 
         reflectionService.createReflection(new ReflectionService.ReflectionRequest(
                 "getWeather",
@@ -129,7 +230,7 @@ class ReflectionServiceTest {
         when(response.headers()).thenReturn(HttpHeaders.of(Map.of("content-type", List.of("application/json")), (a, b) -> true));
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn((HttpResponse) response);
 
-        String result = reflectionService.executeRestReflection("getWeather", Map.of("city", "london"), "alice");
+        String result = reflectionService.executeRestReflection("getWeather", Map.of("city", "london"), null, "alice");
 
         assertTrue(result.contains("\"status\":\"ok\""));
         assertTrue(result.contains("\"statusCode\":200"));
@@ -144,9 +245,49 @@ class ReflectionServiceTest {
 
     @Test
     @SuppressWarnings({"unchecked", "rawtypes"})
+    void executeRestReflectionResolvesRelativeUrlWithBindingBaseUrl() throws Exception {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group", "desc", "REST", "", List.of(), List.of()));
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "https://example.com/api", Map.of(), Map.of()));
+
+        reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                "getWeatherRelative",
+                "Weather Relative",
+                "desc",
+                group.uuid(),
+                List.of(new ReflectionInputParameter("city", "string", "City", true)),
+                "GET",
+                "/weather",
+                Map.of(),
+                Map.of(),
+                "",
+                "application/json"));
+
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("{\"ok\":true}");
+        when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (a, b) -> true));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn((HttpResponse) response);
+
+        String result = reflectionService.executeRestReflection("getWeatherRelative", Map.of("city", "auckland"), null, "alice");
+
+        assertTrue(result.contains("\"status\":\"ok\""));
+
+        var requestCaptor = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
+        org.mockito.Mockito.verify(httpClient).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        String calledUrl = requestCaptor.getValue().uri().toString();
+        assertTrue(calledUrl.startsWith("https://example.com/api/weather"));
+        assertTrue(calledUrl.contains("city=auckland"));
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
     void executeRestReflectionGeneratesFormEncodedBodyWhenTemplateMissing() throws Exception {
         ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
-                "REST Group", "desc", "REST"));
+                "REST Group", "desc", "REST", "", List.of(), List.of()));
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
 
         reflectionService.createReflection(new ReflectionService.ReflectionRequest(
                 "postWeather",
@@ -172,6 +313,7 @@ class ReflectionServiceTest {
         String result = reflectionService.executeRestReflection(
                 "postWeather",
                 Map.of("city", "new york", "days", 3),
+                null,
                 "alice");
 
         assertTrue(result.contains("\"status\":\"ok\""));
@@ -189,7 +331,9 @@ class ReflectionServiceTest {
         @SuppressWarnings({"unchecked", "rawtypes"})
         void executeRestReflectionEncodesTemplateVariablesForFormContentType() throws Exception {
                 ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
-                                "REST Group", "desc", "REST"));
+                                "REST Group", "desc", "REST", "", List.of(), List.of()));
+                reflectionService.createBinding("alice", group.uuid(),
+                                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
 
                 reflectionService.createReflection(new ReflectionService.ReflectionRequest(
                                 "postForm",
@@ -210,7 +354,7 @@ class ReflectionServiceTest {
                 when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (a, b) -> true));
                 when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn((HttpResponse) response);
 
-                reflectionService.executeRestReflection("postForm", Map.of("city", "new york"), "alice");
+                reflectionService.executeRestReflection("postForm", Map.of("city", "new york"), null, "alice");
 
                 var requestCaptor = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
                 org.mockito.Mockito.verify(httpClient).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
@@ -225,7 +369,9 @@ class ReflectionServiceTest {
         @SuppressWarnings({"unchecked", "rawtypes"})
         void executeRestReflectionEscapesTemplateVariablesForJsonContentType() throws Exception {
                 ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
-                                "REST Group", "desc", "REST"));
+                                "REST Group", "desc", "REST", "", List.of(), List.of()));
+                reflectionService.createBinding("alice", group.uuid(),
+                                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
 
                 reflectionService.createReflection(new ReflectionService.ReflectionRequest(
                                 "postJson",
@@ -246,7 +392,7 @@ class ReflectionServiceTest {
                 when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (a, b) -> true));
                 when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn((HttpResponse) response);
 
-                reflectionService.executeRestReflection("postJson", Map.of("note", "He said \"hello\""), "alice");
+                reflectionService.executeRestReflection("postJson", Map.of("note", "He said \"hello\""), null, "alice");
 
                 var requestCaptor = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
                 org.mockito.Mockito.verify(httpClient).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));

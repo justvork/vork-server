@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -88,13 +89,13 @@ class ReflectionToolCallbackFactoryTest {
                 List.of(),
                 List.of(),
                 List.of()));
-        when(reflectionService.executeRestReflection(eq("getWeather"), any(), eq("alice")))
+        when(reflectionService.executeRestReflection(eq("getWeather"), any(), isNull(), eq("alice")))
                 .thenReturn("{\"status\":\"ok\"}");
 
         String result = callback.call("{\"city\":\"London\"}");
 
         assertEquals("{\"status\":\"ok\"}", result);
-        verify(reflectionService).executeRestReflection(eq("getWeather"), any(), eq("alice"));
+        verify(reflectionService).executeRestReflection(eq("getWeather"), any(), isNull(), eq("alice"));
     }
 
     private static Reflection sampleReflection() {

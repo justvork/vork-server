@@ -10,6 +10,10 @@ let reflections = [];
 let modalParameters = [];
 let modalHeaders = [];
 let modalQueryParameters = [];
+let modalGroupBindingParameters = [];
+let modalGroupBindingSecrets = [];
+let modalBindingParameterValues = {};
+let modalBindingSecretValues = {};
 
 const alertArea = document.getElementById('alert-area');
 
@@ -39,6 +43,14 @@ function bindEvents() {
     document.getElementById('group-modal-close').addEventListener('click', closeGroupModal);
     document.getElementById('group-modal-cancel').addEventListener('click', closeGroupModal);
     document.getElementById('group-modal-save').addEventListener('click', saveGroup);
+    document.getElementById('add-group-binding-param-btn').addEventListener('click', function () {
+        modalGroupBindingParameters.push({ name: '', type: 'string', description: '', defaultValue: '' });
+        renderGroupBindingParameters();
+    });
+    document.getElementById('add-group-binding-secret-btn').addEventListener('click', function () {
+        modalGroupBindingSecrets.push({ name: '', description: '' });
+        renderGroupBindingSecrets();
+    });
 
     document.getElementById('reflection-modal-close').addEventListener('click', closeReflectionModal);
     document.getElementById('reflection-modal-cancel').addEventListener('click', closeReflectionModal);
@@ -59,10 +71,15 @@ function bindEvents() {
         renderParameters();
     });
 
+    document.getElementById('binding-modal-close').addEventListener('click', closeBindingModal);
+    document.getElementById('binding-modal-cancel').addEventListener('click', closeBindingModal);
+    document.getElementById('binding-modal-save').addEventListener('click', saveBinding);
+
     document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape') {
             closeGroupModal();
             closeReflectionModal();
+            closeBindingModal();
         }
     });
 }
@@ -126,6 +143,9 @@ function renderGroups() {
             + '<td class="px-3 py-3">'
             + renderReflectionPillsHtml(groupReflections, group.uuid)
             + '</td>'
+            + '<td class="px-3 py-3">'
+            + renderBindingPillsHtml(entry.bindings || [], group.uuid)
+            + '</td>'
             + '<td class="px-3 py-3 text-right">'
             + '  <div class="inline-flex gap-1 justify-end">'
             + (isReadOnly ? '' : ''
@@ -173,13 +193,50 @@ function renderReflectionPillsHtml(groupReflections, groupUuid) {
                 + '    <span class="rounded bg-zinc-800 px-1 py-0.5 text-[10px] font-semibold text-zinc-300">' + method + '</span>'
                 + '    <span class="font-mono">' + id + '</span>'
                 + '  </button>'
-                + (isReadOnly ? '' : '  <button class="ml-1 rounded border border-zinc-600 px-1.5 py-0.5 text-[10px] text-zinc-300 transition-colors hover:border-cyan-400/60 hover:text-cyan-300" data-action="copy-reflection" data-id="' + escapeHtml(reflection.uuid) + '" title="Copy ' + title + '"><i class="fa-solid fa-copy"></i></button>')
+                + (isReadOnly ? '' : '  <button class="ml-1 px-1 py-0.5 text-[10px] text-zinc-300 transition-colors hover:text-cyan-300" data-action="copy-reflection" data-id="' + escapeHtml(reflection.uuid) + '" title="Copy ' + title + '"><i class="fa-solid fa-copy"></i></button>')
+                + (isReadOnly ? '' : '  <button class="px-1 py-0.5 text-[10px] text-rose-300 transition-colors hover:text-rose-200" data-action="delete-reflection" data-id="' + escapeHtml(reflection.uuid) + '" title="Delete ' + title + '"><i class="fa-solid fa-trash"></i></button>')
                 + '</span>';
         }).join('');
 
     const addButton = isReadOnly
         ? ''
         : '<button class="mb-1 inline-flex items-center rounded-full border border-dashed border-zinc-600 px-2.5 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" data-action="add-reflection" data-group-id="' + escapeHtml(groupUuid) + '" title="Add reflection to group"><i class="fa-solid fa-plus mr-1"></i>Add</button>';
+
+    return pills + addButton;
+}
+
+function renderBindingPillsHtml(bindings, groupUuid) {
+    const sorted = (bindings || []).slice().sort(function (a, b) {
+        return String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });
+    });
+
+    if (sorted.length === 0) {
+        if (isReadOnly) {
+            return '<span class="text-xs text-zinc-500">No bindings</span>';
+        }
+        return ''
+            + '<button class="rounded-full border border-dashed border-zinc-600 px-3 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" '
+            + 'data-action="add-binding" data-group-id="' + escapeHtml(groupUuid) + '">'
+            + '<i class="fa-solid fa-plus mr-1"></i>Add default binding</button>';
+    }
+
+    const pills = sorted.map(function (binding) {
+        const bindingName = escapeHtml(binding.name || 'default');
+        const baseUrl = escapeHtml(binding.baseUrl || '');
+        const pillTitle = baseUrl ? ('Binding: ' + bindingName + ' (' + baseUrl + ')') : ('Binding: ' + bindingName);
+        return ''
+            + '<span class="mr-1 mb-1 inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-xs text-zinc-200">'
+            + '  <button class="inline-flex items-center gap-1 transition-colors hover:text-cyan-300" data-action="edit-binding" data-group-id="' + escapeHtml(groupUuid) + '" data-name="' + bindingName + '" title="' + escapeHtml(pillTitle) + '">'
+            + '    <span class="font-mono">' + bindingName + '</span>'
+            + '  </button>'
+            + (isReadOnly ? '' : '  <button class="ml-1 px-1 py-0.5 text-[10px] text-zinc-300 transition-colors hover:text-cyan-300" data-action="copy-binding" data-group-id="' + escapeHtml(groupUuid) + '" data-name="' + bindingName + '" title="Copy binding"><i class="fa-solid fa-copy"></i></button>')
+            + (isReadOnly || String(binding.name || '').toLowerCase() === 'default' ? '' : '  <button class="px-1 py-0.5 text-[10px] text-rose-300 transition-colors hover:text-rose-200" data-action="delete-binding" data-group-id="' + escapeHtml(groupUuid) + '" data-name="' + bindingName + '" title="Delete binding"><i class="fa-solid fa-trash"></i></button>')
+            + '</span>';
+    }).join('');
+
+    const addButton = isReadOnly
+        ? ''
+        : '<button class="mb-1 inline-flex items-center rounded-full border border-dashed border-zinc-600 px-2.5 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" data-action="add-binding" data-group-id="' + escapeHtml(groupUuid) + '" title="Add binding"><i class="fa-solid fa-plus mr-1"></i>Add</button>';
 
     return pills + addButton;
 }
@@ -219,6 +276,31 @@ function bindDynamicTableEvents(root) {
             openCopyReflectionModal(button.getAttribute('data-id'));
         });
     });
+    root.querySelectorAll('button[data-action="delete-reflection"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            deleteReflection(button.getAttribute('data-id'));
+        });
+    });
+    root.querySelectorAll('button[data-action="add-binding"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            openCreateBindingModal(button.getAttribute('data-group-id'));
+        });
+    });
+    root.querySelectorAll('button[data-action="edit-binding"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            openEditBindingModal(button.getAttribute('data-group-id'), button.getAttribute('data-name'));
+        });
+    });
+    root.querySelectorAll('button[data-action="copy-binding"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            openCopyBindingModal(button.getAttribute('data-group-id'), button.getAttribute('data-name'));
+        });
+    });
+    root.querySelectorAll('button[data-action="delete-binding"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            deleteBinding(button.getAttribute('data-group-id'), button.getAttribute('data-name'));
+        });
+    });
 }
 
 function openCreateGroupModal() {
@@ -227,15 +309,17 @@ function openCreateGroupModal() {
     document.getElementById('group-name').value = '';
     document.getElementById('group-description').value = '';
     document.getElementById('group-type').value = 'REST';
+    document.getElementById('group-base-url').value = '';
+    modalGroupBindingParameters = [];
+    modalGroupBindingSecrets = [];
+    renderGroupBindingParameters();
+    renderGroupBindingSecrets();
     clearGroupModalAlert();
     showModal('group-modal');
 }
 
 function openEditGroupModal(uuid) {
-    const entry = groups.find(function (item) {
-        const group = item.group || item;
-        return group.uuid === uuid;
-    });
+    const entry = findGroupEntry(uuid);
     if (!entry) {
         showAlert('Group not found. Reload and try again.', 'warning');
         return;
@@ -246,6 +330,23 @@ function openEditGroupModal(uuid) {
     document.getElementById('group-name').value = group.name || '';
     document.getElementById('group-description').value = group.description || '';
     document.getElementById('group-type').value = group.type || 'REST';
+    document.getElementById('group-base-url').value = group.baseUrl || '';
+    modalGroupBindingParameters = (group.bindingParameters || []).map(function (parameter) {
+        return {
+            name: parameter.name || '',
+            type: parameter.type || 'string',
+            description: parameter.description || '',
+            defaultValue: parameter.defaultValue || ''
+        };
+    });
+    modalGroupBindingSecrets = (group.bindingSecrets || []).map(function (secret) {
+        return {
+            name: secret.name || '',
+            description: secret.description || ''
+        };
+    });
+    renderGroupBindingParameters();
+    renderGroupBindingSecrets();
     clearGroupModalAlert();
     showModal('group-modal');
 }
@@ -255,7 +356,10 @@ async function saveGroup() {
     const payload = {
         name: document.getElementById('group-name').value.trim(),
         description: document.getElementById('group-description').value.trim(),
-        type: document.getElementById('group-type').value
+        type: document.getElementById('group-type').value,
+        baseUrl: document.getElementById('group-base-url').value.trim(),
+        bindingParameters: sanitizeBindingParameterSchema(modalGroupBindingParameters),
+        bindingSecrets: sanitizeBindingSecretSchema(modalGroupBindingSecrets)
     };
 
     if (!payload.name) {
@@ -281,6 +385,402 @@ async function saveGroup() {
     } catch (_error) {
         showGroupModalAlert('Network error while saving group.', 'danger');
     }
+}
+
+function renderGroupBindingParameters() {
+    const container = document.getElementById('group-binding-params-list');
+    if (!container) {
+        return;
+    }
+    container.innerHTML = '';
+
+    if (!modalGroupBindingParameters || modalGroupBindingParameters.length === 0) {
+        container.innerHTML = '<p class="text-xs text-zinc-500">No binding parameters defined.</p>';
+        return;
+    }
+
+    const header = document.createElement('div');
+    header.className = 'grid grid-cols-12 gap-2 mb-1 text-xs text-zinc-500';
+    header.innerHTML = ''
+        + '<div class="col-span-3">Name</div>'
+        + '<div class="col-span-2">Type</div>'
+        + '<div class="col-span-3">Description</div>'
+        + '<div class="col-span-3">Default</div>'
+        + '<div class="col-span-1"></div>';
+    container.appendChild(header);
+
+    modalGroupBindingParameters.forEach(function (parameter, index) {
+        const row = document.createElement('div');
+        row.className = 'grid grid-cols-12 gap-2 mb-2';
+        row.innerHTML = ''
+            + '<input class="col-span-3 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 group-binding-param-name" data-index="' + index + '" value="' + escapeHtml(parameter.name || '') + '" placeholder="tenantId">'
+            + '<select class="col-span-2 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 group-binding-param-type" data-index="' + index + '">'
+            + '  <option value="string">string</option>'
+            + '  <option value="int">int</option>'
+            + '  <option value="double">double</option>'
+            + '  <option value="boolean">boolean</option>'
+            + '  <option value="hidden">hidden</option>'
+            + '</select>'
+            + '<input class="col-span-3 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 group-binding-param-description" data-index="' + index + '" value="' + escapeHtml(parameter.description || '') + '" placeholder="Tenant identifier">'
+            + '<input class="col-span-3 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 group-binding-param-default" data-index="' + index + '" value="' + escapeHtml(parameter.defaultValue || '') + '" placeholder="optional default">'
+            + '<button type="button" class="col-span-1 rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 remove-group-binding-param" data-index="' + index + '" title="Remove"><i class="fa-solid fa-xmark"></i></button>';
+        container.appendChild(row);
+        const typeSelect = row.querySelector('.group-binding-param-type');
+        if (typeSelect) {
+            typeSelect.value = parameter.type || 'string';
+        }
+    });
+
+    container.querySelectorAll('.group-binding-param-name').forEach(function (input) {
+        input.addEventListener('input', function () {
+            const index = Number(input.getAttribute('data-index'));
+            modalGroupBindingParameters[index].name = input.value;
+        });
+    });
+    container.querySelectorAll('.group-binding-param-type').forEach(function (input) {
+        input.addEventListener('change', function () {
+            const index = Number(input.getAttribute('data-index'));
+            modalGroupBindingParameters[index].type = input.value;
+        });
+    });
+    container.querySelectorAll('.group-binding-param-description').forEach(function (input) {
+        input.addEventListener('input', function () {
+            const index = Number(input.getAttribute('data-index'));
+            modalGroupBindingParameters[index].description = input.value;
+        });
+    });
+    container.querySelectorAll('.group-binding-param-default').forEach(function (input) {
+        input.addEventListener('input', function () {
+            const index = Number(input.getAttribute('data-index'));
+            modalGroupBindingParameters[index].defaultValue = input.value;
+        });
+    });
+    container.querySelectorAll('.remove-group-binding-param').forEach(function (button) {
+        button.addEventListener('click', function () {
+            const index = Number(button.getAttribute('data-index'));
+            modalGroupBindingParameters.splice(index, 1);
+            renderGroupBindingParameters();
+        });
+    });
+}
+
+function renderGroupBindingSecrets() {
+    const container = document.getElementById('group-binding-secrets-list');
+    if (!container) {
+        return;
+    }
+    container.innerHTML = '';
+
+    if (!modalGroupBindingSecrets || modalGroupBindingSecrets.length === 0) {
+        container.innerHTML = '<p class="text-xs text-zinc-500">No binding secrets defined.</p>';
+        return;
+    }
+
+    const header = document.createElement('div');
+    header.className = 'grid grid-cols-12 gap-2 mb-1 text-xs text-zinc-500';
+    header.innerHTML = ''
+        + '<div class="col-span-4">Name</div>'
+        + '<div class="col-span-7">Description</div>'
+        + '<div class="col-span-1"></div>';
+    container.appendChild(header);
+
+    modalGroupBindingSecrets.forEach(function (secret, index) {
+        const row = document.createElement('div');
+        row.className = 'grid grid-cols-12 gap-2 mb-2';
+        row.innerHTML = ''
+            + '<input class="col-span-4 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 group-binding-secret-name" data-index="' + index + '" value="' + escapeHtml(secret.name || '') + '" placeholder="API_KEY">'
+            + '<input class="col-span-7 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 group-binding-secret-description" data-index="' + index + '" value="' + escapeHtml(secret.description || '') + '" placeholder="API key used by this connection">'
+            + '<button type="button" class="col-span-1 rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 remove-group-binding-secret" data-index="' + index + '" title="Remove"><i class="fa-solid fa-xmark"></i></button>';
+        container.appendChild(row);
+    });
+
+    container.querySelectorAll('.group-binding-secret-name').forEach(function (input) {
+        input.addEventListener('input', function () {
+            const index = Number(input.getAttribute('data-index'));
+            modalGroupBindingSecrets[index].name = input.value;
+        });
+    });
+    container.querySelectorAll('.group-binding-secret-description').forEach(function (input) {
+        input.addEventListener('input', function () {
+            const index = Number(input.getAttribute('data-index'));
+            modalGroupBindingSecrets[index].description = input.value;
+        });
+    });
+    container.querySelectorAll('.remove-group-binding-secret').forEach(function (button) {
+        button.addEventListener('click', function () {
+            const index = Number(button.getAttribute('data-index'));
+            modalGroupBindingSecrets.splice(index, 1);
+            renderGroupBindingSecrets();
+        });
+    });
+}
+
+function sanitizeBindingParameterSchema(parameters) {
+    return (parameters || [])
+        .filter(function (parameter) {
+            return parameter.name && parameter.name.trim();
+        })
+        .map(function (parameter) {
+            return {
+                name: parameter.name.trim(),
+                type: (parameter.type || 'string').trim(),
+                description: (parameter.description || '').trim(),
+                defaultValue: (parameter.defaultValue || '').trim()
+            };
+        });
+}
+
+function sanitizeBindingSecretSchema(secrets) {
+    return (secrets || [])
+        .filter(function (secret) {
+            return secret.name && secret.name.trim();
+        })
+        .map(function (secret) {
+            return {
+                name: secret.name.trim(),
+                description: (secret.description || '').trim()
+            };
+        });
+}
+
+function findGroupEntry(groupUuid) {
+    return (groups || []).find(function (item) {
+        const group = item.group || item;
+        return group.uuid === groupUuid;
+    });
+}
+
+function openCreateBindingModal(groupUuid) {
+    const entry = findGroupEntry(groupUuid);
+    if (!entry) {
+        showAlert('Group not found. Reload and try again.', 'warning');
+        return;
+    }
+    const group = entry.group || entry;
+
+    document.getElementById('binding-modal-title').textContent = 'New Binding';
+    document.getElementById('binding-group-uuid').value = groupUuid;
+    document.getElementById('binding-original-name').value = '';
+    document.getElementById('binding-copy-source-name').value = '';
+    document.getElementById('binding-name').value = (entry.bindings || []).length === 0 ? 'default' : '';
+    document.getElementById('binding-base-url').value = '';
+    modalBindingParameterValues = {};
+    modalBindingSecretValues = {};
+    renderBindingParameterFields(group.bindingParameters || []);
+    renderBindingSecretFields(group.bindingSecrets || []);
+    clearBindingModalAlert();
+    showModal('binding-modal');
+}
+
+function openEditBindingModal(groupUuid, bindingName) {
+    const entry = findGroupEntry(groupUuid);
+    if (!entry) {
+        showAlert('Group not found. Reload and try again.', 'warning');
+        return;
+    }
+    const group = entry.group || entry;
+    const binding = (entry.bindings || []).find(function (item) {
+        return String(item.name || '').toLowerCase() === String(bindingName || '').toLowerCase();
+    });
+    if (!binding) {
+        showAlert('Binding not found. Reload and try again.', 'warning');
+        return;
+    }
+
+    document.getElementById('binding-modal-title').textContent = 'Edit Binding';
+    document.getElementById('binding-group-uuid').value = groupUuid;
+    document.getElementById('binding-original-name').value = binding.name || '';
+    document.getElementById('binding-copy-source-name').value = '';
+    document.getElementById('binding-name').value = binding.name || '';
+    document.getElementById('binding-base-url').value = binding.baseUrl || '';
+    modalBindingParameterValues = Object.assign({}, binding.parameterValues || {});
+    modalBindingSecretValues = {};
+    renderBindingParameterFields(group.bindingParameters || []);
+    renderBindingSecretFields(group.bindingSecrets || []);
+    clearBindingModalAlert();
+    showModal('binding-modal');
+}
+
+function openCopyBindingModal(groupUuid, bindingName) {
+    const entry = findGroupEntry(groupUuid);
+    if (!entry) {
+        showAlert('Group not found. Reload and try again.', 'warning');
+        return;
+    }
+    const group = entry.group || entry;
+    const binding = (entry.bindings || []).find(function (item) {
+        return String(item.name || '').toLowerCase() === String(bindingName || '').toLowerCase();
+    });
+    if (!binding) {
+        showAlert('Binding not found. Reload and try again.', 'warning');
+        return;
+    }
+
+    document.getElementById('binding-modal-title').textContent = 'Copy Binding';
+    document.getElementById('binding-group-uuid').value = groupUuid;
+    document.getElementById('binding-original-name').value = '';
+    document.getElementById('binding-copy-source-name').value = binding.name || '';
+    document.getElementById('binding-name').value = '';
+    document.getElementById('binding-base-url').value = binding.baseUrl || '';
+    modalBindingParameterValues = Object.assign({}, binding.parameterValues || {});
+    modalBindingSecretValues = {};
+    renderBindingParameterFields(group.bindingParameters || []);
+    renderBindingSecretFields(group.bindingSecrets || []);
+    clearBindingModalAlert();
+    showModal('binding-modal');
+}
+
+function renderBindingParameterFields(parameterSchema) {
+    const container = document.getElementById('binding-params-list');
+    if (!container) {
+        return;
+    }
+    container.innerHTML = '';
+
+    const schema = parameterSchema || [];
+    if (schema.length === 0) {
+        container.innerHTML = '<p class="text-xs text-zinc-500">This group has no binding parameters.</p>';
+        return;
+    }
+
+    schema.forEach(function (parameter) {
+        const name = parameter.name || '';
+        const value = modalBindingParameterValues[name] == null ? '' : String(modalBindingParameterValues[name]);
+        const row = document.createElement('div');
+        row.className = 'mb-2 grid grid-cols-12 gap-2';
+        row.innerHTML = ''
+            + '<div class="col-span-4 text-xs text-zinc-300 pt-2"><span class="font-mono">' + escapeHtml(name) + '</span><div class="text-zinc-500">' + escapeHtml(parameter.type || 'string') + '</div></div>'
+            + '<input class="col-span-8 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 binding-param-value" data-name="' + escapeHtml(name) + '" placeholder="' + escapeHtml(parameter.defaultValue || '') + '" value="' + escapeHtml(value) + '">';
+        container.appendChild(row);
+    });
+
+    container.querySelectorAll('.binding-param-value').forEach(function (input) {
+        input.addEventListener('input', function () {
+            const name = input.getAttribute('data-name');
+            modalBindingParameterValues[name] = input.value;
+        });
+    });
+}
+
+function renderBindingSecretFields(secretSchema) {
+    const container = document.getElementById('binding-secrets-list');
+    if (!container) {
+        return;
+    }
+    container.innerHTML = '';
+
+    const schema = secretSchema || [];
+    if (schema.length === 0) {
+        container.innerHTML = '<p class="text-xs text-zinc-500">This group has no binding secrets.</p>';
+        return;
+    }
+
+    schema.forEach(function (secret) {
+        const name = secret.name || '';
+        const value = modalBindingSecretValues[name] == null ? '' : String(modalBindingSecretValues[name]);
+        const row = document.createElement('div');
+        row.className = 'mb-2 grid grid-cols-12 gap-2';
+        row.innerHTML = ''
+            + '<div class="col-span-4 text-xs text-zinc-300 pt-2"><span class="font-mono">' + escapeHtml(name) + '</span><div class="text-zinc-500">' + escapeHtml(secret.description || '') + '</div></div>'
+            + '<input class="col-span-8 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 binding-secret-value" data-name="' + escapeHtml(name) + '" placeholder="Enter new value to update" value="' + escapeHtml(value) + '">';
+        container.appendChild(row);
+    });
+
+    container.querySelectorAll('.binding-secret-value').forEach(function (input) {
+        input.addEventListener('input', function () {
+            const name = input.getAttribute('data-name');
+            modalBindingSecretValues[name] = input.value;
+        });
+    });
+}
+
+async function saveBinding() {
+    const groupUuid = document.getElementById('binding-group-uuid').value;
+    const originalName = document.getElementById('binding-original-name').value.trim();
+    const copySourceName = document.getElementById('binding-copy-source-name').value.trim();
+    const bindingName = document.getElementById('binding-name').value.trim();
+    const baseUrl = document.getElementById('binding-base-url').value.trim();
+
+    if (!groupUuid) {
+        showBindingModalAlert('Group context is missing.', 'danger');
+        return;
+    }
+    if (!bindingName) {
+        showBindingModalAlert('Binding name is required.', 'warning');
+        return;
+    }
+
+    const payload = {
+        name: bindingName,
+        baseUrl: baseUrl,
+        parameterValues: sanitizeBindingValueMap(modalBindingParameterValues),
+        secretValues: sanitizeBindingValueMap(modalBindingSecretValues),
+        copySecretsFromBindingName: (!originalName && copySourceName) ? copySourceName : null
+    };
+
+    const isUpdate = !!originalName;
+    const path = isUpdate
+        ? '/api/reflection-groups/' + encodeURIComponent(groupUuid) + '/bindings/' + encodeURIComponent(originalName)
+        : '/api/reflection-groups/' + encodeURIComponent(groupUuid) + '/bindings';
+
+    try {
+        const response = await fetch(path, {
+            method: isUpdate ? 'PUT' : 'POST',
+            headers: buildJsonHeaders(),
+            body: JSON.stringify(payload)
+        });
+        const result = await parseJson(response);
+        if (!response.ok) {
+            showBindingModalAlert(result.error || 'Failed to save binding.', 'danger');
+            return;
+        }
+
+        closeBindingModal();
+        showAlert(isUpdate ? 'Binding updated.' : 'Binding created.', 'success');
+        await loadAll();
+    } catch (_error) {
+        showBindingModalAlert('Network error while saving binding.', 'danger');
+    }
+}
+
+async function deleteBinding(groupUuid, bindingName) {
+    if (!confirm('Delete binding "' + bindingName + '"?')) {
+        return;
+    }
+    try {
+        const response = await fetch(
+            '/api/reflection-groups/' + encodeURIComponent(groupUuid) + '/bindings/' + encodeURIComponent(bindingName),
+            {
+                method: 'DELETE',
+                headers: buildCsrfHeaders()
+            }
+        );
+        const result = await parseJson(response);
+        if (!response.ok) {
+            showAlert(result.error || 'Failed to delete binding.', 'danger');
+            return;
+        }
+        showAlert('Binding deleted.', 'success');
+        await loadAll();
+    } catch (_error) {
+        showAlert('Network error while deleting binding.', 'danger');
+    }
+}
+
+function sanitizeBindingValueMap(values) {
+    const out = {};
+    Object.keys(values || {}).forEach(function (key) {
+        const raw = values[key];
+        if (raw == null) {
+            return;
+        }
+        const value = String(raw).trim();
+        if (!value) {
+            return;
+        }
+        out[key] = value;
+    });
+    return out;
 }
 
 async function deleteGroup(uuid) {
@@ -715,6 +1215,10 @@ function closeReflectionModal() {
     hideModal('reflection-modal');
 }
 
+function closeBindingModal() {
+    hideModal('binding-modal');
+}
+
 function showModal(id) {
     document.getElementById(id).classList.remove('hidden');
 }
@@ -741,6 +1245,14 @@ function showReflectionModalAlert(message, type) {
 
 function clearReflectionModalAlert() {
     document.getElementById('reflection-modal-alert').innerHTML = '';
+}
+
+function showBindingModalAlert(message, type) {
+    document.getElementById('binding-modal-alert').innerHTML = '<div class="rounded-lg border px-3 py-2 text-sm ' + alertClass(type) + '">' + escapeHtml(message) + '</div>';
+}
+
+function clearBindingModalAlert() {
+    document.getElementById('binding-modal-alert').innerHTML = '';
 }
 
 function alertClass(type) {

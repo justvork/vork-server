@@ -18,4 +18,9 @@ public class ReflectionConfig {
     public DatabaseRepository<ReflectionGroup> reflectionGroupRepository(RepositoryFactory factory) {
         return factory.create(ReflectionGroup.class);
     }
+
+    @Bean
+    public DatabaseRepository<ReflectionBinding> reflectionBindingRepository(RepositoryFactory factory) {
+        return factory.create(ReflectionBinding.class);
+    }
 }

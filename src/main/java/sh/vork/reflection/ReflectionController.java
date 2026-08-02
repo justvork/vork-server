@@ -9,6 +9,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -39,7 +40,10 @@ public class ReflectionController {
     @GetMapping("/reflection-groups")
     public ResponseEntity<?> listGroups() {
         List<ReflectionGroupView> groups = reflectionService.listGroups().stream()
-                .map(group -> new ReflectionGroupView(group, reflectionService.reflectionsForGroup(group.uuid())))
+            .map(group -> new ReflectionGroupView(
+                group,
+                reflectionService.reflectionsForGroup(group.uuid()),
+                reflectionService.bindingsForGroup(group.uuid())))
                 .toList();
         return ResponseEntity.ok(groups);
     }
@@ -50,7 +54,62 @@ public class ReflectionController {
         if (group == null) {
             return ResponseEntity.notFound().build();
         }
-        return ResponseEntity.ok(new ReflectionGroupView(group, reflectionService.reflectionsForGroup(uuid)));
+        return ResponseEntity.ok(new ReflectionGroupView(
+                group,
+                reflectionService.reflectionsForGroup(uuid),
+                reflectionService.bindingsForGroup(uuid)));
+    }
+
+    @GetMapping("/reflection-groups/{groupUuid}/bindings")
+    public ResponseEntity<?> listBindings(@PathVariable String groupUuid) {
+        ReflectionGroup group = reflectionService.getGroup(groupUuid);
+        if (group == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(reflectionService.bindingsForGroup(groupUuid));
+    }
+
+    @PostMapping("/reflection-groups/{groupUuid}/bindings")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> createBinding(@PathVariable String groupUuid,
+                                           @RequestBody ReflectionService.ReflectionBindingRequest request) {
+        try {
+            ReflectionBinding created = reflectionService.createBinding(currentUsername(), groupUuid, request);
+            return ResponseEntity.ok(created);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
+    }
+
+    @PutMapping("/reflection-groups/{groupUuid}/bindings/{bindingName}")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> updateBinding(@PathVariable String groupUuid,
+                                           @PathVariable String bindingName,
+                                           @RequestBody ReflectionService.ReflectionBindingRequest request) {
+        try {
+            ReflectionBinding updated = reflectionService.updateBinding(currentUsername(), groupUuid, bindingName, request);
+            if (updated == null) {
+                return ResponseEntity.notFound().build();
+            }
+            return ResponseEntity.ok(updated);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/reflection-groups/{groupUuid}/bindings/{bindingName}")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> deleteBinding(@PathVariable String groupUuid,
+                                           @PathVariable String bindingName) {
+        try {
+            boolean deleted = reflectionService.deleteBinding(currentUsername(), groupUuid, bindingName);
+            if (!deleted) {
+                return ResponseEntity.notFound().build();
+            }
+            return ResponseEntity.ok(Map.of("ok", true));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
     }
 
     @PostMapping("/reflection-groups")
@@ -194,5 +253,16 @@ public class ReflectionController {
         ));
     }
 
-    public record ReflectionGroupView(ReflectionGroup group, List<Reflection> reflections) {}
+    private String currentUsername() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getName() == null || auth.getName().isBlank()) {
+            throw new IllegalArgumentException("Authenticated user is required.");
+        }
+        return auth.getName();
+    }
+
+    public record ReflectionGroupView(
+            ReflectionGroup group,
+            List<Reflection> reflections,
+            List<ReflectionBinding> bindings) {}
 }

@@ -73,9 +73,15 @@ public class ReflectionToolCallbackFactory {
                     return jsonMissing(missing);
                 }
 
+                String bindingName = null;
+                Object bindingValue = params.get("bindingName");
+                if (bindingValue != null) {
+                    bindingName = String.valueOf(bindingValue);
+                }
+
                 String username = resolveUsername();
                 log.debug("Reflection tool invoked [id={}, username={}]", reflection.id(), username);
-                return reflectionService.executeRestReflection(reflection.id(), params, username);
+                return reflectionService.executeRestReflection(reflection.id(), params, bindingName, username);
             }
         };
     }
@@ -154,6 +160,11 @@ public class ReflectionToolCallbackFactory {
                 .map(name -> "\"" + name + "\"")
                 .reduce((a, b) -> a + "," + b)
                 .orElse("");
+
+        if (properties.length() > 0) {
+            properties.append(',');
+        }
+        properties.append("\"bindingName\":{\"type\":\"string\",\"description\":\"Optional binding name. Uses default binding when omitted.\"}");
 
         return "{\"type\":\"object\",\"properties\":{" + properties + "},\"required\":[" + required + "]}";
     }
