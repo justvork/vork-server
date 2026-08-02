@@ -1828,6 +1828,7 @@ if (sidebarToggles && sidebarToggles.length > 0) {
 
 /** All available tools from /api/chat/tools — loaded once on demand. */
 let _toolsCache = null;
+let _toolsCacheLoadedAt = 0;
 /** All skills — we get them from agent-config + search as needed. */
 let _skillsSearchCache = null;
 
@@ -1992,10 +1993,15 @@ function setupToolSearch() {
         dropdown.classList.add('hidden');
         dropdown.innerHTML = '';
         if (query.length < 1) return;
-        if (!_toolsCache) {
+        const now = Date.now();
+        const cacheExpired = !_toolsCache || (now - _toolsCacheLoadedAt) > 30000;
+        if (cacheExpired) {
             try {
                 const resp = await fetch('/api/chat/tools');
-                if (resp.ok) _toolsCache = await resp.json();
+                if (resp.ok) {
+                    _toolsCache = await resp.json();
+                    _toolsCacheLoadedAt = now;
+                }
             } catch (e) { _toolsCache = []; }
         }
         const matches = (_toolsCache || []).filter(function (t) {

@@ -121,18 +121,22 @@ function renderGroupTable() {
         tr.className = 'border-b border-zinc-800/80 last:border-0';
 
         const pills = skills.length === 0
-            ? '<span class="text-xs text-zinc-500">No skills</span>'
+            ? '<button class="rounded-full border border-dashed border-zinc-600 px-3 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" onclick="openCreate(\'' + escapeHtml(group.uuid) + '\')"><i class="fa-solid fa-plus mr-1"></i>Add first skill</button>'
             : skills.map(function (s) {
                 const isPrivate = (s.visibility || 'PUBLIC') === 'PRIVATE';
-                const visibilityIcon = isPrivate
-                    ? ' <i class="fa-solid fa-lock text-warning" title="Private skill"></i>'
-                    : ' <i class="fa-solid fa-globe text-info" title="Public skill"></i>';
-                return '<span class="skill-pill mr-1 mb-1">'
-                    + '<span>' + escapeHtml(s.name) + visibilityIcon + '</span>'
-                    + '<span class="remove-skill" title="Edit skill" onclick="openEdit(\'' + escapeHtml(s.uuid) + '\')"><i class="fa-solid fa-pen"></i></span>'
-                    + '<span class="remove-skill text-danger" title="Delete skill" onclick="deleteSkill(\'' + escapeHtml(s.uuid) + '\')"><i class="fa-solid fa-trash"></i></span>'
+                const visibilityBadge = isPrivate
+                    ? '<span class="rounded bg-zinc-800 px-1 py-0.5 text-[10px] font-semibold text-zinc-300" title="Private skill"><i class="fa-solid fa-lock"></i></span>'
+                    : '<span class="rounded bg-zinc-800 px-1 py-0.5 text-[10px] font-semibold text-zinc-300" title="Public skill"><i class="fa-solid fa-globe"></i></span>';
+                return '<span class="mr-1 mb-1 inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-xs text-zinc-200">'
+                    + '  <button class="inline-flex items-center gap-1 transition-colors hover:text-cyan-300" title="Edit skill" onclick="openEdit(\'' + escapeHtml(s.uuid) + '\')">'
+                    + '    ' + visibilityBadge
+                    + '    <span>' + escapeHtml(s.name) + '</span>'
+                    + '  </button>'
+                    + '  <button class="text-zinc-300 transition-colors hover:text-cyan-300" title="Copy skill" onclick="openCopy(\'' + escapeHtml(s.uuid) + '\')"><i class="fa-solid fa-copy"></i></button>'
+                    + '  <button class="text-rose-300 transition-colors hover:text-rose-200" title="Delete skill" onclick="deleteSkill(\'' + escapeHtml(s.uuid) + '\')"><i class="fa-solid fa-trash"></i></button>'
                     + '</span>';
-            }).join('');
+                    }).join('')
+                    + '<button class="mb-1 inline-flex items-center rounded-full border border-dashed border-zinc-600 px-2.5 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" onclick="openCreate(\'' + escapeHtml(group.uuid) + '\')" title="Add skill to group"><i class="fa-solid fa-plus mr-1"></i>Add</button>';
 
         tr.innerHTML = ''
             + '<td class="px-3 py-2 font-semibold text-zinc-100">' + escapeHtml(group.name || '') + '</td>'
@@ -179,7 +183,7 @@ function populateCategorySelect(selected) {
 }
 
 // ── Open modal ────────────────────────────────────────────────────────────────
-function openCreate() {
+function openCreate(groupUuid) {
     if (!allGroups || allGroups.length === 0) {
         showAlert('Create a group first before creating skills.', 'warning');
         return;
@@ -191,12 +195,54 @@ function openCreate() {
     document.getElementById('skill-instructions').value         = '';
     document.getElementById('skill-visibility').value           = 'PUBLIC';
     document.getElementById('btn-delete-skill').classList.add('hidden');
-    populateGroupSelect('');
+    populateGroupSelect(groupUuid || '');
     modalTools      = [];
     modalTypes      = [];
     modalSubSkills  = [];
     modalParams     = [];
     modalSecrets    = [];
+    clearAlert('skill-modal-alert');
+    renderToolPills();
+    renderTypePills();
+    renderSubSkillPills();
+    renderParams();
+    renderSecrets();
+    skillModal.show();
+}
+
+function openCopy(id) {
+    const skill = allSkills.find(function (s) { return s.uuid === id; });
+    if (!skill) { showAlert('Skill not found — reload the page.', 'warning'); return; }
+
+    document.getElementById('skillModalLabel').textContent      = 'Copy Skill: ' + skill.name;
+    document.getElementById('skill-id').value                   = '';
+    document.getElementById('skill-name').value                 = skill.name || '';
+    document.getElementById('skill-description').value          = skill.description || '';
+    document.getElementById('skill-instructions').value         = skill.instructions || '';
+    populateGroupSelect(skill.groupUuid || '');
+    document.getElementById('skill-visibility').value           = skill.visibility || 'PUBLIC';
+    document.getElementById('btn-delete-skill').classList.add('hidden');
+    modalTools      = skill.allowedTools  ? skill.allowedTools.slice()  : [];
+    modalTypes      = skill.allowedTypes  ? skill.allowedTypes.slice()  : [];
+    modalSubSkills  = skill.subSkillUuids ? skill.subSkillUuids.slice() : [];
+    modalParams     = skill.parameters    ? skill.parameters.map(function (p) {
+        let inputMode = p.inputMode || 'AI_REQUIRED';
+        if (!p.inputMode && p.forceUserInput === true) inputMode = 'USER_ALWAYS_PROMPT';
+        if (!p.inputMode && p.forceUserInput === false) inputMode = 'AI_REQUIRED';
+        const normalizedType = (p.type || 'string').toLowerCase() === 'secret' ? 'string' : (p.type || 'string');
+        return {
+            name: p.name || '',
+            type: normalizedType,
+            description: p.description || '',
+            inputMode: inputMode
+        };
+    }) : [];
+    modalSecrets = skill.secrets ? skill.secrets.map(function (s) {
+        return {
+            name: s.name || '',
+            description: s.description || ''
+        };
+    }) : [];
     clearAlert('skill-modal-alert');
     renderToolPills();
     renderTypePills();

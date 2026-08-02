@@ -36,6 +36,8 @@ import sh.vork.ai.service.ChatService;
 import sh.vork.ai.terminal.TerminalStreamRouter;
 import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.reflection.Reflection;
+import sh.vork.reflection.ReflectionService;
 import sh.vork.skill.Skill;
 import sh.vork.web.RequestOriginContext;
 
@@ -64,6 +66,7 @@ public class ChatController {
     private final ToolRegistry           toolRegistry;
     private final DatabaseRepository<Skill> skillRepo;
     private final SessionEnvironmentService sessionEnvironmentService;
+    private final ReflectionService reflectionService;
 
 
 
@@ -73,7 +76,8 @@ public class ChatController {
                           AiModelService modelService,
                           ToolRegistry toolRegistry,
                           DatabaseRepository<Skill> skillRepository,
-                          SessionEnvironmentService sessionEnvironmentService) {
+                          SessionEnvironmentService sessionEnvironmentService,
+                          ReflectionService reflectionService) {
         this.chatService = chatService;
         this.messaging   = messaging;
         this.aiOrchestrationService = aiOrchestrationService;
@@ -82,6 +86,7 @@ public class ChatController {
         this.toolRegistry = toolRegistry;
         this.skillRepo = skillRepository;
         this.sessionEnvironmentService = sessionEnvironmentService;
+        this.reflectionService = reflectionService;
     }
 
     // ── HTTP ──────────────────────────────────────────────────────────────────
@@ -297,11 +302,24 @@ public class ChatController {
     public List<ToolSummary> listTools(
             @RequestParam(required = false) String category) {
         log.debug("ENTER listTools: [category={}]", category);
-        return toolRegistry.getAvailableTools().stream()
+        java.util.Map<String, ToolSummary> merged = new java.util.LinkedHashMap<>();
+
+        toolRegistry.getAvailableTools().stream()
                 .filter(d -> category == null || category.isBlank() || d.category().equalsIgnoreCase(category))
                 .map(d -> new ToolSummary(d.id(), d.friendlyName(), d.category(), d.description()))
-                .sorted(Comparator.comparing(ToolSummary::category).thenComparing(ToolSummary::name))
-                .toList();
+            .forEach(summary -> merged.put(summary.id(), summary));
+
+        if (category == null || category.isBlank() || "reflection".equalsIgnoreCase(category)
+            || "reflections".equalsIgnoreCase(category)) {
+            for (Reflection reflection : reflectionService.listReflections()) {
+            ToolSummary summary = reflectionToToolSummary(reflection);
+            merged.putIfAbsent(summary.id(), summary);
+            }
+        }
+
+        return merged.values().stream()
+            .sorted(Comparator.comparing(ToolSummary::category).thenComparing(ToolSummary::name))
+            .toList();
     }
 
     /** Returns the agent config and session extras for the sidebar panel. */
@@ -332,20 +350,14 @@ public class ChatController {
             // Agent tools (from allowedTools list)
             List<ToolSummary> agentTools = tpl != null && tpl.allowedTools() != null
                     ? tpl.allowedTools().stream()
-                            .map(id -> toolRegistry.getAvailableTools().stream()
-                                    .filter(d -> d.id().equals(id))
-                                    .findFirst().orElse(null))
+                        .map(this::resolveToolSummaryById)
                             .filter(java.util.Objects::nonNull)
-                            .map(d -> new ToolSummary(d.id(), d.friendlyName(), d.category(), d.description()))
                             .toList()
                     : List.of();
             // Session tools
             List<ToolSummary> sessionTools = session.sessionToolIds().stream()
-                    .map(id -> toolRegistry.getAvailableTools().stream()
-                            .filter(d -> d.id().equals(id))
-                            .findFirst().orElse(null))
+                    .map(this::resolveToolSummaryById)
                     .filter(java.util.Objects::nonNull)
-                    .map(d -> new ToolSummary(d.id(), d.friendlyName(), d.category(), d.description()))
                     .toList();
             return ResponseEntity.ok(new AgentConfigResponse(
                     tpl != null ? tpl.uuid() : null,
@@ -446,6 +458,35 @@ public class ChatController {
     record SkillSummary(String uuid, String name, String description, String toolName) {}
 
     record ToolSummary(String id, String name, String category, String description) {}
+
+    private ToolSummary resolveToolSummaryById(String toolId) {
+        if (toolId == null || toolId.isBlank()) {
+            return null;
+        }
+
+        ToolSummary fromRegistry = toolRegistry.getAvailableTools().stream()
+                .filter(d -> d.id().equals(toolId))
+                .findFirst()
+                .map(d -> new ToolSummary(d.id(), d.friendlyName(), d.category(), d.description()))
+                .orElse(null);
+        if (fromRegistry != null) {
+            return fromRegistry;
+        }
+
+        Reflection reflection = reflectionService.getReflectionById(toolId);
+        if (reflection == null) {
+            return null;
+        }
+        return reflectionToToolSummary(reflection);
+    }
+
+    private static ToolSummary reflectionToToolSummary(Reflection reflection) {
+        String description = reflection.description();
+        if (description == null || description.isBlank()) {
+            description = "Reflection tool";
+        }
+        return new ToolSummary(reflection.id(), reflection.name(), "Reflections", description);
+    }
 
     record AgentConfigResponse(
             String agentUuid,

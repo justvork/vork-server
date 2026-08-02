@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <title>Reflections - Vork</title>
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="/css/settings.css" th:href="@{/css/settings.css}">
+</head>
+<body class="bg-zinc-950 text-zinc-100" th:attr="data-reflections-read-only=${!canManageUsers}">
+<div th:replace="~{fragments/header :: header}"></div>
+
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
+        <div>
+            <h2 class="flex items-center gap-2 text-2xl font-bold text-zinc-100"><i class="fa-solid fa-wand-magic-sparkles text-[#fdaa02]"></i>Reflections</h2>
+            <p class="vork-page-subtitle">Organize reflections by group. Each reflection is exposed as a tool by its alphanumeric ID.</p>
+        </div>
+        <div class="vork-page-header-actions">
+            <button th:if="${canManageUsers}" id="import-reflections-btn" class="rounded-lg border border-emerald-500/40 px-3 py-2 text-sm font-medium text-emerald-300 transition-colors hover:bg-emerald-500/15">
+                <i class="fa-solid fa-file-import mr-2"></i>Import
+            </button>
+            <input th:if="${canManageUsers}" id="import-reflections-input" type="file" accept="application/json" class="hidden">
+            <button th:if="${canManageUsers}" id="new-group-btn" class="rounded-lg border border-cyan-500/40 px-3 py-2 text-sm font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15">
+                <i class="fa-solid fa-layer-group mr-2"></i>New Group
+            </button>
+        </div>
+    </div>
+
+    <div class="vork-content-stack">
+        <div id="alert-area"></div>
+
+        <div class="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
+            <div id="groups-empty" class="vork-empty-state-card hidden">
+                <i class="fa-solid fa-layer-group vork-empty-icon"></i>
+                <p class="vork-empty-title">No reflection groups yet</p>
+                <p class="vork-empty-hint">Create a group, then add reflections inside it.</p>
+            </div>
+            <div id="groups-table-wrap" class="overflow-x-auto hidden">
+                <table class="min-w-full text-left text-sm text-zinc-200">
+                    <thead>
+                    <tr class="border-b border-zinc-800 text-xs uppercase tracking-wide text-zinc-400">
+                        <th class="px-3 py-2">Group</th>
+                        <th class="px-3 py-2">Type</th>
+                        <th class="px-3 py-2">Reflections</th>
+                        <th class="px-3 py-2 text-right">Actions</th>
+                    </tr>
+                    </thead>
+                    <tbody id="groups-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="group-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div class="w-full max-w-lg rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
+            <h3 id="group-modal-title" class="text-lg font-semibold text-zinc-100">New Reflection Group</h3>
+            <button id="group-modal-close" class="rounded-md border border-zinc-700 px-2 py-1 text-zinc-300 transition-colors hover:bg-zinc-800" aria-label="Close">x</button>
+        </div>
+        <div class="space-y-3 px-5 py-4">
+            <div id="group-modal-alert"></div>
+            <input id="group-id" type="hidden">
+            <div>
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="group-name">Name <span class="text-rose-400">*</span></label>
+                <input id="group-name" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="e.g. Weather API">
+            </div>
+            <div>
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="group-description">Description</label>
+                <input id="group-description" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="Short description">
+            </div>
+            <div>
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="group-type">Type</label>
+                <select id="group-type" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
+                    <option value="REST">REST</option>
+                    <option value="OAUTH">OAUTH (future)</option>
+                    <option value="MONGO">MONGO (future)</option>
+                </select>
+            </div>
+        </div>
+        <div class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">
+            <button id="group-modal-cancel" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm font-medium text-zinc-200">Cancel</button>
+            <button id="group-modal-save" class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-sm font-semibold text-black">Save Group</button>
+        </div>
+    </div>
+</div>
+
+<div id="reflection-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div class="w-full max-w-5xl rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
+            <h3 id="reflection-modal-title" class="text-lg font-semibold text-zinc-100">New Reflection</h3>
+            <button id="reflection-modal-close" class="rounded-md border border-zinc-700 px-2 py-1 text-zinc-300 transition-colors hover:bg-zinc-800" aria-label="Close">x</button>
+        </div>
+        <div class="space-y-3 px-5 py-4">
+            <div id="reflection-modal-alert"></div>
+            <input id="reflection-uuid" type="hidden">
+
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-id">Tool ID <span class="text-rose-400">*</span></label>
+                    <input id="reflection-id" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="getWeather">
+                    <div class="mt-1 text-xs text-zinc-500">Alphanumeric only. This becomes the tool name.</div>
+                </div>
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-name">Name <span class="text-rose-400">*</span></label>
+                    <input id="reflection-name" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="Get Weather">
+                </div>
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-group">Group <span class="text-rose-400">*</span></label>
+                    <select id="reflection-group" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"></select>
+                </div>
+            </div>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-description">Description</label>
+                <input id="reflection-description" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="What this reflection does">
+            </div>
+
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-method">HTTP Method</label>
+                    <select id="reflection-method" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
+                        <option>GET</option>
+                        <option>POST</option>
+                        <option>PUT</option>
+                        <option>PATCH</option>
+                        <option>DELETE</option>
+                    </select>
+                </div>
+                <div id="request-content-type-section">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-content-type">Request Content Type</label>
+                    <select id="reflection-content-type" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
+                        <option value="application/json">application/json</option>
+                        <option value="application/x-www-form-urlencoded">application/x-www-form-urlencoded</option>
+                        <option value="text/plain">text/plain</option>
+                    </select>
+                </div>
+            </div>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-url">URL <span class="text-rose-400">*</span></label>
+                <input id="reflection-url" type="url" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="https://api.example.com/weather/{{city}}">
+            </div>
+
+            <div>
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-headers">Headers</label>
+                    <div id="headers-list" class="space-y-2"></div>
+                    <button id="add-header-btn" type="button" class="mt-2 rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200">
+                        <i class="fa-solid fa-plus mr-1"></i>Add Header
+                    </button>
+                    <div class="mt-1 text-xs text-zinc-500">Define headers as name/value pairs. Supports placeholders.</div>
+                </div>
+            </div>
+
+            <div>
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-query">Additional Parameters</label>
+                    <div id="query-params-list" class="space-y-2"></div>
+                    <button id="add-query-param-btn" type="button" class="mt-2 rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200">
+                        <i class="fa-solid fa-plus mr-1"></i>Add Parameter
+                    </button>
+                    <div class="mt-1 text-xs text-zinc-500">Additional name/value query parameters merged with runtime input values.</div>
+                </div>
+            </div>
+
+            <div id="request-template-section">
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-body">Request Template</label>
+                <textarea id="reflection-body" class="min-h-28 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-100" placeholder='{"city":"{{city}}"}'></textarea>
+                <div class="mt-1 text-xs text-zinc-500">Optional. If blank for body-capable methods, request payload is generated from input parameters using Request Content Type.</div>
+            </div>
+
+            <div>
+                <div class="mb-1 flex items-center justify-between">
+                    <label class="block text-sm font-medium text-zinc-300">Input Parameters</label>
+                    <button id="add-param-btn" type="button" class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200">
+                        <i class="fa-solid fa-plus mr-1"></i>Add
+                    </button>
+                </div>
+                <div id="params-list"></div>
+            </div>
+        </div>
+        <div class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">
+            <button id="reflection-modal-cancel" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm font-medium text-zinc-200">Cancel</button>
+            <button id="reflection-modal-save" class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-sm font-semibold text-black">Save Reflection</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/reflections.js" th:src="@{/js/reflections.js}"></script>
+</body>
+</html>

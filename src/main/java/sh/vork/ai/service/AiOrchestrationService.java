@@ -22,6 +22,7 @@ import org.springframework.ai.content.Media;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.util.ClassUtils;
 
@@ -39,6 +40,7 @@ import sh.vork.ai.provider.AiChatClientFactory;
 import sh.vork.ai.registry.ToolDepends;
 import sh.vork.ai.session.SessionToolStore;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.reflection.Reflection;
 
 /**
  * Routes AI generation requests to the appropriate {@link ChatClient} at runtime.
@@ -176,6 +178,14 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         private final sh.vork.ai.security.SkillSecretSubstitutor skillSecretSubstitutor;
         private final ConfigurableListableBeanFactory beanFactory;
         private final ObjectMapper objectMapper;
+
+        @org.springframework.beans.factory.annotation.Autowired
+        @Lazy
+        private sh.vork.reflection.ReflectionService reflectionService;
+
+        @org.springframework.beans.factory.annotation.Autowired
+        @Lazy
+        private sh.vork.reflection.ReflectionToolCallbackFactory reflectionToolCallbackFactory;
 
         @org.springframework.beans.factory.annotation.Autowired
         public AiOrchestrationService(Map<AiProvider, ChatClient> chatClientRegistry,
@@ -875,6 +885,29 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         if (presentNames.add("listAvailableTools"))  merged.add(listAvailableToolsCallback);
                         if (isConciergeSession() && presentNames.add("listAgentTemplates"))
                                 merged.add(listAgentTemplatesCallback);
+
+                        // Inject reflection tools dynamically using the reflection ID as the
+                        // external tool name (contract: one tool per reflection definition).
+                        if (reflectionService != null && reflectionToolCallbackFactory != null) {
+                                int reflectionInjected = 0;
+                                for (Reflection reflection : reflectionService.listReflections()) {
+                                        try {
+                                                ToolCallback reflectionTool = reflectionToolCallbackFactory.create(reflection);
+                                                String reflectionToolName = reflectionTool.getToolDefinition().name();
+                                                if (presentNames.add(reflectionToolName)) {
+                                                        merged.add(reflectionTool);
+                                                        reflectionInjected++;
+                                                } else {
+                                                        log.warn("Reflection tool name collision — skipping [toolName={}, reflectionUuid={}]",
+                                                                reflectionToolName, reflection.uuid());
+                                                }
+                                        } catch (Exception ex) {
+                                                log.warn("Failed to inject reflection tool [reflectionUuid={}]: {}",
+                                                        reflection.uuid(), ex.getMessage());
+                                        }
+                                }
+                                log.debug("Reflection tools injected [session={}, count={}]", sessionUuid, reflectionInjected);
+                        }
                 }
                 if (!sessionTools.isEmpty()) {
                         int beforeMerge = merged.size();

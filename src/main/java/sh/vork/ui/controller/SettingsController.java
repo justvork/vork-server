@@ -94,6 +94,11 @@ public class SettingsController {
         return "settings/oauth-templates";
     }
 
+    @GetMapping("/reflections")
+    public String reflections(Model model) {
+        return "redirect:/reflections";
+    }
+
     @PostMapping("/oauth-clients/{clientUuid}/delete")
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
     public String deleteOAuthClient(@PathVariable String clientUuid, RedirectAttributes redirectAttributes) {
