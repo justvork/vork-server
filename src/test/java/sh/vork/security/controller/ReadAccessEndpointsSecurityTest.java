@@ -21,6 +21,7 @@ import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.agent.AgentType;
 import sh.vork.ai.controller.AgentController;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.reflection.ReflectionService;
 import sh.vork.setup.SetupService;
 import sh.vork.skill.Skill;
 import sh.vork.skill.SkillCategoryService;
@@ -53,6 +54,9 @@ class ReadAccessEndpointsSecurityTest {
 
     @MockitoBean
     private SkillCategoryService skillCategoryService;
+
+        @MockitoBean
+        private ReflectionService reflectionService;
 
         @MockitoBean
         private SetupService setupService;

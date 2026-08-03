@@ -11,12 +11,16 @@ let allGroupViews = [];
 let allTools      = [];
 let allTypes      = [];
 let allCategories = [];
+let allReflections = [];
+let allReflectionGroups = [];
+let allReflectionBindingOptions = [];
 let categoriesLoadFailed = false;
 let modalTools      = [];
 let modalTypes      = [];
 let modalSubSkills  = [];
 let modalParams     = []; // [{name, type, description, inputMode}]
 let modalSecrets    = []; // [{name, description}]
+let modalBindingUuids = []; // selected reflection binding UUIDs
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function () {
@@ -47,17 +51,22 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!e.target.closest('#subskill-search') && !e.target.closest('#subskill-dropdown')) {
             document.getElementById('subskill-dropdown').classList.add('hidden');
         }
+        if (!e.target.closest('#reflection-binding-search') && !e.target.closest('#reflection-binding-dropdown')) {
+            document.getElementById('reflection-binding-dropdown').classList.add('hidden');
+        }
     });
 });
 
 async function loadData() {
     try {
-        const [skillsRes, groupsRes, toolsRes, typesRes, catsRes] = await Promise.all([
+        const [skillsRes, groupsRes, toolsRes, typesRes, catsRes, reflectionsRes, reflectionGroupsRes] = await Promise.all([
             fetch('/api/skills?includePrivate=true'),
             fetch('/api/skill-groups'),
             fetch('/api/management/tools'),
             fetch('/api/types/java-types'),
-            fetch('/api/skills/categories')
+            fetch('/api/skills/categories'),
+            fetch('/api/reflections'),
+            fetch('/api/reflection-groups')
         ]);
         allSkills     = skillsRes.ok ? await skillsRes.json() : [];
         allGroupViews = groupsRes.ok ? await groupsRes.json() : [];
@@ -65,6 +74,9 @@ async function loadData() {
         allTools      = toolsRes.ok  ? await toolsRes.json()  : [];
         allTypes      = typesRes.ok  ? await typesRes.json()  : [];
         allCategories = catsRes.ok   ? await catsRes.json()   : [];
+        allReflections = reflectionsRes.ok ? await reflectionsRes.json() : [];
+        allReflectionGroups = reflectionGroupsRes.ok ? await reflectionGroupsRes.json() : [];
+        allReflectionBindingOptions = buildReflectionBindingOptions();
         categoriesLoadFailed = !catsRes.ok;
         updateCategoryHelp();
         renderGroupTable();
@@ -115,6 +127,7 @@ function renderGroupTable() {
     allGroupViews.forEach(function (entry) {
         const group = entry.group || entry;
         const skills = entry.skills || allSkills.filter(function (s) { return s.groupUuid === group.uuid; });
+        const groupBindingSummary = renderGroupBindingSummaryHtml(skills);
 
         const tr = document.createElement('tr');
         tr.id = 'group-row-' + group.uuid;
@@ -142,6 +155,7 @@ function renderGroupTable() {
             + '<td class="px-3 py-2 font-semibold text-zinc-100">' + escapeHtml(group.name || '') + '</td>'
             + '<td class="px-3 py-2"><span class="inline-flex rounded-md border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-400">' + escapeHtml(group.category || '—') + '</span></td>'
             + '<td class="px-3 py-2">' + pills + '</td>'
+            + '<td class="px-3 py-2">' + groupBindingSummary + '</td>'
             + '<td class="px-3 py-2 text-xs text-zinc-400">' + escapeHtml(group.author || '—') + '</td>'
             + '<td class="px-3 py-2 text-right">'
             + '  <div class="inline-flex gap-1 justify-end">'
@@ -153,6 +167,57 @@ function renderGroupTable() {
 
         body.appendChild(tr);
     });
+}
+
+function renderGroupBindingSummaryHtml(skills) {
+    const uniqueLabels = [];
+    (skills || []).forEach(function (skill) {
+        const labels = bindingLabelsForSkill(skill);
+        labels.forEach(function (label) {
+            if (!uniqueLabels.includes(label)) uniqueLabels.push(label);
+        });
+    });
+
+    if (uniqueLabels.length === 0) {
+        return '<span class="text-xs text-zinc-500">— none —</span>';
+    }
+
+    return uniqueLabels.map(function (label) {
+        return '<span class="mr-1 mb-1 inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-xs text-zinc-200">'
+            + '<i class="fa-solid fa-link text-zinc-400"></i>'
+            + '<span>' + escapeHtml(label) + '</span>'
+            + '</span>';
+    }).join('');
+}
+
+function bindingLabelsForSkill(skill) {
+    const labels = [];
+    const assignments = skill && skill.reflectionBindings ? skill.reflectionBindings : [];
+    assignments.forEach(function (assignment) {
+        (assignment.bindingUuids || []).forEach(function (bindingUuid) {
+            const label = resolveBindingLabel(bindingUuid);
+            if (label && !labels.includes(label)) labels.push(label);
+        });
+    });
+    return labels;
+}
+
+function resolveBindingLabel(bindingUuid) {
+    if (!bindingUuid) return null;
+    for (let i = 0; i < allReflectionGroups.length; i++) {
+        const entry = allReflectionGroups[i] || {};
+        const group = entry.group || entry;
+        const groupName = (group && group.name) ? group.name : (group && group.uuid ? group.uuid : 'Group');
+        const bindings = entry.bindings || [];
+        for (let j = 0; j < bindings.length; j++) {
+            const binding = bindings[j];
+            if (binding && binding.uuid === bindingUuid) {
+                const bindingName = binding.name || binding.uuid;
+                return groupName + ' (' + bindingName + ')';
+            }
+        }
+    }
+    return bindingUuid;
 }
 
 function populateGroupSelect(selected) {
@@ -201,8 +266,10 @@ function openCreate(groupUuid) {
     modalSubSkills  = [];
     modalParams     = [];
     modalSecrets    = [];
+    modalBindingUuids = [];
     clearAlert('skill-modal-alert');
     renderToolPills();
+    renderReflectionBindingPills();
     renderTypePills();
     renderSubSkillPills();
     renderParams();
@@ -243,8 +310,10 @@ function openCopy(id) {
             description: s.description || ''
         };
     }) : [];
+    modalBindingUuids = extractBindingUuidsFromAssignments(skill.reflectionBindings);
     clearAlert('skill-modal-alert');
     renderToolPills();
+    renderReflectionBindingPills();
     renderTypePills();
     renderSubSkillPills();
     renderParams();
@@ -285,8 +354,10 @@ function openEdit(id) {
             description: s.description || ''
         };
     }) : [];
+    modalBindingUuids = extractBindingUuidsFromAssignments(skill.reflectionBindings);
     clearAlert('skill-modal-alert');
     renderToolPills();
+    renderReflectionBindingPills();
     renderTypePills();
     renderSubSkillPills();
     renderParams();
@@ -500,6 +571,144 @@ function addTool(toolId) {
     if (!modalTools.includes(toolId)) { modalTools.push(toolId); renderToolPills(); }
 }
 
+// ── Reflection bindings ─────────────────────────────────────────────────────
+function buildReflectionBindingOptions() {
+    const options = [];
+    (allReflectionGroups || []).forEach(function (entry) {
+        const group = entry.group || entry;
+        const groupName = group && group.name ? group.name : (group && group.uuid ? group.uuid : 'Group');
+        const bindings = entry && entry.bindings ? entry.bindings : [];
+        bindings.forEach(function (binding) {
+            if (!binding || !binding.uuid) return;
+            options.push({
+                uuid: binding.uuid,
+                groupUuid: group.uuid,
+                bindingName: binding.name || binding.uuid,
+                groupName: groupName,
+                label: groupName + ' (' + (binding.name || binding.uuid) + ')'
+            });
+        });
+    });
+    return options;
+}
+
+function extractBindingUuidsFromAssignments(assignments) {
+    const unique = [];
+    (assignments || []).forEach(function (assignment) {
+        (assignment.bindingUuids || []).forEach(function (uuid) {
+            if (uuid && !unique.includes(uuid)) unique.push(uuid);
+        });
+    });
+    return unique;
+}
+
+function renderReflectionBindingPills() {
+    const container = document.getElementById('reflection-binding-pill-container');
+    if (!container) return;
+    container.innerHTML = '';
+    if (!modalBindingUuids || modalBindingUuids.length === 0) {
+        container.innerHTML = '<span class="text-xs text-zinc-500">No reflection bindings assigned.</span>';
+        return;
+    }
+
+    modalBindingUuids.forEach(function (uuid) {
+        const option = allReflectionBindingOptions.find(function (item) { return item.uuid === uuid; });
+        const label = option ? option.label : uuid;
+        const pill = document.createElement('span');
+        pill.className = 'tool-pill';
+        pill.innerHTML = ''
+            + '<i class="fa-solid fa-link"></i>'
+            + '<span>' + escapeHtml(label) + '</span>'
+            + '<span class="remove-tool" title="Remove reflection binding">✕</span>';
+        pill.querySelector('.remove-tool').addEventListener('click', function () {
+            removeReflectionBinding(uuid);
+        });
+        container.appendChild(pill);
+    });
+}
+
+function removeReflectionBinding(uuid) {
+    modalBindingUuids = (modalBindingUuids || []).filter(function (id) { return id !== uuid; });
+    renderReflectionBindingPills();
+    filterReflectionBindings();
+}
+
+function filterReflectionBindings() {
+    const query = document.getElementById('reflection-binding-search').value.toLowerCase().trim();
+    const dropdown = document.getElementById('reflection-binding-dropdown');
+    const list = document.getElementById('reflection-binding-options');
+    if (!dropdown || !list) return;
+
+    const matches = allReflectionBindingOptions.filter(function (option) {
+        if ((modalBindingUuids || []).includes(option.uuid)) return false;
+        if (!query) return true;
+        return (option.label || '').toLowerCase().includes(query);
+    });
+
+    list.innerHTML = '';
+    if (matches.length === 0) {
+        dropdown.classList.add('hidden');
+        return;
+    }
+
+    matches.forEach(function (option) {
+        const li = document.createElement('li');
+        li.className = 'tool-list-item cursor-pointer px-2 py-1.5 hover:bg-zinc-800';
+        li.innerHTML = ''
+            + '<div class="flex items-center gap-2">'
+            + '  <i class="fa-solid fa-link fa-xs text-zinc-400"></i>'
+            + '  <span class="text-xs font-semibold text-zinc-100">' + escapeHtml(option.label) + '</span>'
+            + '</div>';
+        li.addEventListener('click', function () {
+            addReflectionBinding(option.uuid);
+            document.getElementById('reflection-binding-search').value = '';
+            dropdown.classList.add('hidden');
+        });
+        list.appendChild(li);
+    });
+
+    dropdown.classList.remove('hidden');
+}
+
+function addReflectionBinding(uuid) {
+    if (!uuid) return;
+    if (!modalBindingUuids.includes(uuid)) {
+        modalBindingUuids.push(uuid);
+        renderReflectionBindingPills();
+    }
+}
+
+function reflectionBindingsPayloadFromSelection() {
+    const selected = (modalBindingUuids || []).slice();
+    if (selected.length === 0) return [];
+
+    const groupedByReflection = {};
+    selected.forEach(function (bindingUuid) {
+        const option = allReflectionBindingOptions.find(function (item) { return item.uuid === bindingUuid; });
+        if (!option) return;
+
+        const reflectionsInGroup = (allReflections || []).filter(function (reflection) {
+            return reflection && reflection.groupUuid === option.groupUuid;
+        });
+
+        reflectionsInGroup.forEach(function (reflection) {
+            const reflectionId = reflection.id;
+            if (!reflectionId) return;
+            if (!groupedByReflection[reflectionId]) groupedByReflection[reflectionId] = [];
+            if (!groupedByReflection[reflectionId].includes(bindingUuid)) {
+                groupedByReflection[reflectionId].push(bindingUuid);
+            }
+        });
+    });
+
+    return Object.keys(groupedByReflection).map(function (reflectionId) {
+        return {
+            reflectionId: reflectionId,
+            bindingUuids: groupedByReflection[reflectionId]
+        };
+    });
+}
+
 // ── Type pills ────────────────────────────────────────────────────────────────
 function renderTypePills() {
     const container = document.getElementById('type-pill-container');
@@ -691,7 +900,8 @@ async function saveSkill() {
                 name: (s.name || '').trim(),
                 description: s.description || ''
             };
-        })
+        }),
+        reflectionBindings: reflectionBindingsPayloadFromSelection()
     };
 
     const btn = document.getElementById('btn-save-skill');

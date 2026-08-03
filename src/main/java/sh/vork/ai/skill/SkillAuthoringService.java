@@ -179,6 +179,7 @@ public class SkillAuthoringService {
                 allowedTools,
                 List.of(),
                 subSkillUuids,
+                List.of(),
                 List.of());
 
         boolean feasible = !allowedTools.isEmpty();

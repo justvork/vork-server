@@ -3,9 +3,11 @@ package sh.vork.ai.controller;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.http.ResponseEntity;
 import sh.vork.ai.AiProvider;
 import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiChatMessage.AttachmentRef;
+import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
 import sh.vork.ai.terminal.TerminalStreamRouter;
@@ -13,14 +15,17 @@ import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.ai.provider.AiModelService;
 import sh.vork.ai.registry.ToolRegistry;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.reflection.Reflection;
 import sh.vork.reflection.ReflectionService;
 import sh.vork.skill.Skill;
 
 import java.security.Principal;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -90,4 +95,93 @@ class ChatControllerAttachmentBroadcastTest {
         assertEquals("bundle.zip", broadcast.attachments().get(0).name());
         assertEquals("application/zip", broadcast.attachments().get(0).mimeType());
     }
+
+        @SuppressWarnings("unchecked")
+        @Test
+        void addSessionTool_rejectsDirectReflectionToolId() {
+                ChatService chatService = mock(ChatService.class);
+                ReflectionService reflectionService = mock(ReflectionService.class);
+
+                when(reflectionService.getReflectionById("reflection-tool-id")).thenReturn(new Reflection(
+                                "r-uuid",
+                                "reflection-tool-id",
+                                "Reflection Tool",
+                                "desc",
+                                "group-1",
+                                List.of(),
+                                "GET",
+                                "https://example.com",
+                                Map.of(),
+                                Map.of(),
+                                "",
+                                "application/json",
+                                1L,
+                                System.currentTimeMillis(),
+                                System.currentTimeMillis()));
+
+                ChatController controller = new ChatController(
+                                chatService,
+                                mock(SimpMessagingTemplate.class),
+                                mock(AiOrchestrationService.class),
+                                mock(TerminalStreamRouter.class),
+                                mock(AiModelService.class),
+                                mock(ToolRegistry.class),
+                                (DatabaseRepository<Skill>) mock(DatabaseRepository.class),
+                                mock(SessionEnvironmentService.class),
+                                reflectionService
+                );
+
+                ResponseEntity<?> response = controller.addSessionTool("session-1", "reflection-tool-id");
+
+                assertEquals(400, response.getStatusCode().value());
+                @SuppressWarnings("rawtypes")
+                Map body = (Map) response.getBody();
+                assertEquals("ERROR", body.get("status"));
+                assertTrue(String.valueOf(body.get("message")).contains("not directly assignable"));
+        }
+
+        @SuppressWarnings("unchecked")
+        @Test
+        void addSessionTool_allowsNonReflectionToolId() {
+                ChatService chatService = mock(ChatService.class);
+                ReflectionService reflectionService = mock(ReflectionService.class);
+
+                when(reflectionService.getReflectionById("listFiles")).thenReturn(null);
+                AiSession updated = new AiSession(
+                                "session-1",
+                                AiProvider.GEMINI.name(),
+                                sh.vork.ai.entity.SessionOriginMode.WEB,
+                                "alice",
+                                "Session",
+                                System.currentTimeMillis(),
+                                0,
+                                List.of(),
+                                AiSession.defaultEnvironmentVariables(),
+                                sh.vork.ai.entity.AiSessionStatus.RUNNING,
+                                null,
+                                null,
+                                List.of(),
+                                List.of(),
+                                List.of("listFiles"));
+                when(chatService.addSessionTool("session-1", "listFiles")).thenReturn(updated);
+
+                ChatController controller = new ChatController(
+                                chatService,
+                                mock(SimpMessagingTemplate.class),
+                                mock(AiOrchestrationService.class),
+                                mock(TerminalStreamRouter.class),
+                                mock(AiModelService.class),
+                                mock(ToolRegistry.class),
+                                (DatabaseRepository<Skill>) mock(DatabaseRepository.class),
+                                mock(SessionEnvironmentService.class),
+                                reflectionService
+                );
+
+                ResponseEntity<?> response = controller.addSessionTool("session-1", "listFiles");
+
+                assertEquals(200, response.getStatusCode().value());
+                @SuppressWarnings("rawtypes")
+                Map body = (Map) response.getBody();
+                assertEquals("OK", body.get("status"));
+        }
 }

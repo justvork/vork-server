@@ -2,6 +2,7 @@ package sh.vork.skill;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import sh.vork.orm.DatabaseEntity;
+import sh.vork.reflection.ReflectionBindingAssignment;
 import sh.vork.typegen.ExportableType;
 
 import java.util.List;
@@ -48,7 +49,8 @@ public record Skill(
         long                  version,
         long                  createdAt,
         long                  updatedAt,
-        List<SkillSecret>     secrets
+        List<SkillSecret>     secrets,
+        List<ReflectionBindingAssignment> reflectionBindings
 ) implements DatabaseEntity {
 
     public Skill {
@@ -63,6 +65,26 @@ public record Skill(
         if (subSkillUuids == null)           subSkillUuids = List.of();
         if (version < 1)                     version = 1;
         if (secrets == null)                 secrets = List.of();
+        if (reflectionBindings == null)      reflectionBindings = List.of();
+        }
+
+        public Skill(String uuid,
+             String name,
+             String description,
+             String groupUuid,
+             SkillVisibility visibility,
+             List<SkillParameter> parameters,
+             String instructions,
+             List<String> allowedTools,
+             List<String> allowedTypes,
+             List<String> subSkillUuids,
+             long version,
+             long createdAt,
+             long updatedAt,
+             List<SkillSecret> secrets) {
+        this(uuid, name, description, groupUuid, visibility, parameters, instructions,
+            allowedTools, allowedTypes, subSkillUuids, version, createdAt, updatedAt,
+            secrets, List.of());
     }
 
     /**

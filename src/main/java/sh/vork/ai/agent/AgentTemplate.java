@@ -1,6 +1,7 @@
 package sh.vork.ai.agent;
 
 import sh.vork.orm.DatabaseEntity;
+import sh.vork.reflection.ReflectionBindingAssignment;
 
 import java.util.List;
 
@@ -33,7 +34,8 @@ public record AgentTemplate(
         List<String> allowedTools,
         boolean      systemAgent,
         List<String> skillUuids,
-        AgentType    agentType
+    AgentType    agentType,
+    List<ReflectionBindingAssignment> reflectionBindings
 ) implements DatabaseEntity {
 
     public AgentTemplate {
@@ -52,5 +54,18 @@ public record AgentTemplate(
         if (agentType == null) {
             agentType = AgentType.INTERACTIVE;
         }
+        if (reflectionBindings == null) {
+            reflectionBindings = List.of();
+        }
+    }
+
+    public AgentTemplate(String uuid,
+                         String name,
+                         String systemPrompt,
+                         List<String> allowedTools,
+                         boolean systemAgent,
+                         List<String> skillUuids,
+                         AgentType agentType) {
+        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType, List.of());
     }
 }

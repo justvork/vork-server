@@ -37,6 +37,7 @@ import sh.vork.ai.terminal.TerminalStreamRouter;
 import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.reflection.Reflection;
+import sh.vork.reflection.ReflectionBinding;
 import sh.vork.reflection.ReflectionService;
 import sh.vork.skill.Skill;
 import sh.vork.web.RequestOriginContext;
@@ -276,9 +277,17 @@ public class ChatController {
                                              @PathVariable String toolId) {
         log.debug("ENTER addSessionTool: [session={}, tool={}]", sessionUuid, toolId);
         try {
+            Reflection reflection = reflectionService.getReflectionById(toolId);
+            if (reflection != null) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "status", "ERROR",
+                        "message", "Reflections are not directly assignable tools. Assign reflection bindings instead."));
+            }
             AiSession updated = chatService.addSessionTool(sessionUuid, toolId);
             return ResponseEntity.ok(Map.of("status", "OK",
                     "sessionToolIds", updated.sessionToolIds()));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", ex.getMessage()));
         } catch (IllegalStateException ex) {
             return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
         }
@@ -297,6 +306,56 @@ public class ChatController {
         }
     }
 
+    @PostMapping("/session/{sessionUuid}/session-reflection-bindings/{bindingUuid}")
+    public ResponseEntity<?> addSessionReflectionBinding(@PathVariable String sessionUuid,
+                                                         @PathVariable String bindingUuid) {
+        log.debug("ENTER addSessionReflectionBinding: [session={}, bindingUuid={}]", sessionUuid, bindingUuid);
+        try {
+            ReflectionBinding binding = reflectionService.getBindingByUuid(bindingUuid);
+            if (binding == null) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "status", "ERROR",
+                        "message", "Unknown reflection binding UUID: " + bindingUuid));
+            }
+            AiSession updated = chatService.addSessionReflectionBinding(sessionUuid, bindingUuid);
+            return ResponseEntity.ok(Map.of(
+                    "status", "OK",
+                    "sessionReflectionBindingUuids", chatService.getSessionReflectionBindingUuids(updated)));
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/session/{sessionUuid}/session-reflection-bindings/{bindingUuid}")
+    public ResponseEntity<?> removeSessionReflectionBinding(@PathVariable String sessionUuid,
+                                                            @PathVariable String bindingUuid) {
+        log.debug("ENTER removeSessionReflectionBinding: [session={}, bindingUuid={}]", sessionUuid, bindingUuid);
+        try {
+            AiSession updated = chatService.removeSessionReflectionBinding(sessionUuid, bindingUuid);
+            return ResponseEntity.ok(Map.of(
+                    "status", "OK",
+                    "sessionReflectionBindingUuids", chatService.getSessionReflectionBindingUuids(updated)));
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
+        }
+    }
+
+    @GetMapping("/reflection-bindings")
+    public List<ReflectionBindingSummary> listReflectionBindings() {
+        log.debug("ENTER listReflectionBindings");
+        return reflectionService.listGroups().stream()
+                .sorted(Comparator.comparing(g -> g.name() == null ? "" : g.name(), String.CASE_INSENSITIVE_ORDER))
+                .flatMap(group -> reflectionService.bindingsForGroup(group.uuid()).stream()
+                        .sorted(Comparator.comparing(b -> b.name() == null ? "" : b.name(), String.CASE_INSENSITIVE_ORDER))
+                        .map(binding -> new ReflectionBindingSummary(
+                                binding.uuid(),
+                                group.uuid(),
+                                group.name(),
+                                binding.name(),
+                                (group.name() == null ? group.uuid() : group.name()) + " (" + binding.name() + ")")))
+                .toList();
+    }
+
     /** Returns all non-hidden tools from the registry, optionally filtered by category. */
     @GetMapping("/tools")
     public List<ToolSummary> listTools(
@@ -308,14 +367,6 @@ public class ChatController {
                 .filter(d -> category == null || category.isBlank() || d.category().equalsIgnoreCase(category))
                 .map(d -> new ToolSummary(d.id(), d.friendlyName(), d.category(), d.description()))
             .forEach(summary -> merged.put(summary.id(), summary));
-
-        if (category == null || category.isBlank() || "reflection".equalsIgnoreCase(category)
-            || "reflections".equalsIgnoreCase(category)) {
-            for (Reflection reflection : reflectionService.listReflections()) {
-            ToolSummary summary = reflectionToToolSummary(reflection);
-            merged.putIfAbsent(summary.id(), summary);
-            }
-        }
 
         return merged.values().stream()
             .sorted(Comparator.comparing(ToolSummary::category).thenComparing(ToolSummary::name))
@@ -359,10 +410,28 @@ public class ChatController {
                     .map(this::resolveToolSummaryById)
                     .filter(java.util.Objects::nonNull)
                     .toList();
+                List<ReflectionBindingSummary> sessionReflectionBindings = chatService
+                    .getSessionReflectionBindingUuids(session)
+                    .stream()
+                    .map(reflectionService::getBindingByUuid)
+                    .filter(java.util.Objects::nonNull)
+                    .map(binding -> {
+                    var group = reflectionService.getGroup(binding.groupUuid());
+                    String groupName = group != null ? group.name() : binding.groupUuid();
+                    String bindingName = binding.name() == null ? binding.uuid() : binding.name();
+                    String label = (groupName == null ? binding.groupUuid() : groupName) + " (" + bindingName + ")";
+                    return new ReflectionBindingSummary(
+                        binding.uuid(),
+                        binding.groupUuid(),
+                        groupName,
+                        bindingName,
+                        label);
+                    })
+                    .toList();
             return ResponseEntity.ok(new AgentConfigResponse(
                     tpl != null ? tpl.uuid() : null,
                     tpl != null ? tpl.name() : null,
-                    agentSkills, sessionSkills, agentTools, sessionTools));
+                    agentSkills, sessionSkills, agentTools, sessionTools, sessionReflectionBindings));
         } catch (IllegalStateException ex) {
             return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
         }
@@ -459,6 +528,12 @@ public class ChatController {
 
     record ToolSummary(String id, String name, String category, String description) {}
 
+    record ReflectionBindingSummary(String uuid,
+                                    String groupUuid,
+                                    String groupName,
+                                    String bindingName,
+                                    String label) {}
+
     private ToolSummary resolveToolSummaryById(String toolId) {
         if (toolId == null || toolId.isBlank()) {
             return null;
@@ -473,19 +548,7 @@ public class ChatController {
             return fromRegistry;
         }
 
-        Reflection reflection = reflectionService.getReflectionById(toolId);
-        if (reflection == null) {
-            return null;
-        }
-        return reflectionToToolSummary(reflection);
-    }
-
-    private static ToolSummary reflectionToToolSummary(Reflection reflection) {
-        String description = reflection.description();
-        if (description == null || description.isBlank()) {
-            description = "Reflection tool";
-        }
-        return new ToolSummary(reflection.id(), reflection.name(), "Reflections", description);
+        return null;
     }
 
     record AgentConfigResponse(
@@ -494,5 +557,6 @@ public class ChatController {
             List<SkillSummary> agentSkills,
             List<SkillSummary> sessionSkills,
             List<ToolSummary> agentTools,
-            List<ToolSummary> sessionTools) {}
+            List<ToolSummary> sessionTools,
+            List<ReflectionBindingSummary> sessionReflectionBindings) {}
 }

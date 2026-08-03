@@ -45,6 +45,7 @@
                         <th>System Prompt</th>
                         <th>Tools</th>
                         <th>Skills</th>
+                        <th>Reflection Bindings</th>
                         <th class="text-end">Actions</th>
                     </tr>
                 </thead>
@@ -79,6 +80,9 @@
                                     <span th:text="${skillNames.getOrDefault(sid, sid)}"></span>
                                 </span>
                             </div>
+                        </td>
+                        <td th:attr="id='agent-bindings-' + ${agent.uuid()}">
+                            <span class="text-muted small">—</span>
                         </td>
                         <td class="text-end">
                             <div class="d-flex gap-1 justify-content-end">
@@ -143,6 +147,21 @@
                     </div>
                     <div id="tool-dropdown" class="card agent-dropdown hidden">
                         <ul id="tool-list" class="list-group list-group-flush"></ul>
+                    </div>
+                </div>
+
+                <!-- Reflection Bindings ─────────────────────────────────── -->
+                <div class="mb-3">
+                    <label class="form-label">Reflection Bindings
+                        <span class="text-muted small">(empty = none assigned)</span>
+                    </label>
+                    <div id="reflection-binding-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary agent-pill-container"></div>
+                    <div class="input-group mb-1">
+                        <span class="input-group-text"><i class="fa-solid fa-link"></i></span>
+                        <input type="text" id="reflection-binding-search" class="form-control" placeholder="Search reflection bindings to assign..." oninput="filterReflectionBindings()">
+                    </div>
+                    <div id="reflection-binding-dropdown" class="card agent-dropdown hidden">
+                        <ul id="reflection-binding-options" class="list-group list-group-flush"></ul>
                     </div>
                 </div>
 

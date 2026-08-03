@@ -89,6 +89,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 "listFiles",
                 "downloadFolderAsZip",
                 "createPdf");
+        private static final String SESSION_REFLECTION_BINDING_UUIDS_ENV = "SESSION_REFLECTION_BINDING_UUIDS";
 
         /**
          * Builds the structured-output mandate injected at the end of every system prompt.
@@ -824,20 +825,6 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         }
                 }
 
-                // oauthConnect frequently expects profile discovery in the same turn.
-                // Ensure discovery is always callable whenever oauthConnect is exposed,
-                // even when agent/skill filtering omitted it.
-                if (presentNames.contains("oauthConnect") && !presentNames.contains("oauthDiscoverProfiles")) {
-                        ToolCallback discoverProfiles = securedToolCallbackMap.get("oauthDiscoverProfiles");
-                        if (discoverProfiles != null) {
-                                merged.add(discoverProfiles);
-                                presentNames.add("oauthDiscoverProfiles");
-                                log.debug("Auto-injected oauthDiscoverProfiles because oauthConnect is available [session={}]", sessionUuid);
-                        } else {
-                                log.warn("oauthConnect is available but oauthDiscoverProfiles callback is missing from secured map [session={}]", sessionUuid);
-                        }
-                }
-
                 // Inject skill tools and concierge tools only when NOT inside a skill frame.
                 if (!inSkillFrame) {
                         // Inject each assigned skill as its own ToolCallback so the AI sees
@@ -897,28 +884,32 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 merged.add(listAgentTemplatesCallback);
                         }
 
-                        // Inject reflection tools dynamically using the reflection ID as the
-                        // external tool name (contract: one tool per reflection definition).
-                        if (reflectionService != null && reflectionToolCallbackFactory != null) {
-                                int reflectionInjected = 0;
-                                for (Reflection reflection : reflectionService.listReflections()) {
-                                        try {
-                                                ToolCallback reflectionTool = reflectionToolCallbackFactory.create(reflection);
-                                                String reflectionToolName = reflectionTool.getToolDefinition().name();
-                                                if (presentNames.add(reflectionToolName)) {
-                                                        merged.add(reflectionTool);
-                                                        reflectionInjected++;
-                                                } else {
-                                                        log.warn("Reflection tool name collision — skipping [toolName={}, reflectionUuid={}]",
-                                                                reflectionToolName, reflection.uuid());
-                                                }
-                                        } catch (Exception ex) {
-                                                log.warn("Failed to inject reflection tool [reflectionUuid={}]: {}",
-                                                        reflection.uuid(), ex.getMessage());
+                }
+
+                // Inject reflection tools dynamically only when binding assignments are present.
+                if (reflectionService != null && reflectionToolCallbackFactory != null && sessionForSkillCheck != null) {
+                        List<ResolvedReflectionBindings> effectiveReflectionBindings =
+                                resolveEffectiveReflectionBindings(sessionForSkillCheck, inSkillFrame);
+                        int reflectionInjected = 0;
+                        for (ResolvedReflectionBindings resolved : effectiveReflectionBindings) {
+                                try {
+                                        ToolCallback reflectionTool = reflectionToolCallbackFactory.create(
+                                                resolved.reflection(),
+                                                resolved.bindings());
+                                        String reflectionToolName = reflectionTool.getToolDefinition().name();
+                                        if (presentNames.add(reflectionToolName)) {
+                                                merged.add(reflectionTool);
+                                                reflectionInjected++;
+                                        } else {
+                                                log.warn("Reflection tool name collision — skipping [toolName={}, reflectionUuid={}]",
+                                                        reflectionToolName, resolved.reflection().uuid());
                                         }
+                                } catch (Exception ex) {
+                                        log.warn("Failed to inject reflection tool [reflectionUuid={}]: {}",
+                                                resolved.reflection().uuid(), ex.getMessage());
                                 }
-                                log.debug("Reflection tools injected [session={}, count={}]", sessionUuid, reflectionInjected);
                         }
+                        log.debug("Reflection tools injected [session={}, count={}]", sessionUuid, reflectionInjected);
                 }
                 if (!sessionTools.isEmpty()) {
                         int beforeMerge = merged.size();
@@ -1269,6 +1260,146 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         }
                 }
                 return List.copyOf(expanded.values());
+        }
+
+        private List<ResolvedReflectionBindings> resolveEffectiveReflectionBindings(AiSession session,
+                                                                                    boolean inSkillFrame) {
+                if (session == null || reflectionService == null) {
+                        return List.of();
+                }
+
+                LinkedHashMap<String, LinkedHashSet<String>> assignmentMap = new LinkedHashMap<>();
+
+                // Session-level binding attachments apply to all reflections in the binding's group.
+                List<String> sessionBindingUuids = parseSessionReflectionBindingUuids(session);
+                if (!sessionBindingUuids.isEmpty()) {
+                        List<Reflection> allReflections = reflectionService.listReflections();
+                        for (String bindingUuid : sessionBindingUuids) {
+                                sh.vork.reflection.ReflectionBinding binding = reflectionService.getBindingByUuid(bindingUuid);
+                                if (binding == null) {
+                                        log.warn("Skipping session reflection binding UUID: unknown binding [bindingUuid={}]", bindingUuid);
+                                        continue;
+                                }
+                                for (Reflection reflection : allReflections) {
+                                        if (reflection != null && reflection.groupUuid().equals(binding.groupUuid())) {
+                                                assignmentMap
+                                                        .computeIfAbsent(reflection.id(), ignored -> new LinkedHashSet<>())
+                                                        .add(binding.uuid());
+                                        }
+                                }
+                        }
+                }
+
+                AgentTemplate template = null;
+                if (session.getActiveAgentTemplateId() != null && !session.getActiveAgentTemplateId().isBlank()) {
+                        template = agentTemplateRepo.get(session.getActiveAgentTemplateId());
+                }
+                if (template != null) {
+                        mergeReflectionAssignments(assignmentMap, template.reflectionBindings());
+                }
+
+                if (inSkillFrame && session.skillStack() != null && !session.skillStack().isEmpty()) {
+                        sh.vork.skill.SkillFrame top = session.skillStack().getLast();
+                        sh.vork.skill.Skill activeSkill = skillRepo.get(top.skillUuid());
+                        if (activeSkill != null) {
+                                mergeReflectionAssignments(assignmentMap, activeSkill.reflectionBindings());
+                        }
+                } else {
+                        LinkedHashSet<String> rootSkillUuids = new LinkedHashSet<>();
+                        if (template != null && template.skillUuids() != null) {
+                                rootSkillUuids.addAll(template.skillUuids());
+                        }
+                        if (session.sessionSkillUuids() != null) {
+                                rootSkillUuids.addAll(session.sessionSkillUuids());
+                        }
+                        for (sh.vork.skill.Skill skill : expandRootSkillsWithEffectiveSubs(List.copyOf(rootSkillUuids))) {
+                                mergeReflectionAssignments(assignmentMap, skill.reflectionBindings());
+                        }
+                }
+
+                if (assignmentMap.isEmpty()) {
+                        return List.of();
+                }
+
+                List<ResolvedReflectionBindings> resolved = new ArrayList<>();
+                for (Map.Entry<String, LinkedHashSet<String>> entry : assignmentMap.entrySet()) {
+                        Reflection reflection = reflectionService.getReflectionById(entry.getKey());
+                        if (reflection == null) {
+                                log.warn("Skipping reflection assignment: unknown reflection ID [id={}]", entry.getKey());
+                                continue;
+                        }
+
+                        LinkedHashMap<String, sh.vork.reflection.ReflectionBinding> bindingsByUuid = new LinkedHashMap<>();
+                        for (String bindingUuid : entry.getValue()) {
+                                sh.vork.reflection.ReflectionBinding binding = reflectionService.getBindingByUuid(bindingUuid);
+                                if (binding == null) {
+                                        log.warn("Skipping reflection assignment: unknown binding UUID [reflectionId={}, bindingUuid={}]",
+                                                reflection.id(), bindingUuid);
+                                        continue;
+                                }
+                                if (!reflection.groupUuid().equals(binding.groupUuid())) {
+                                        log.warn("Skipping reflection assignment: binding group mismatch [reflectionId={}, bindingUuid={}, bindingGroup={}, reflectionGroup={}]",
+                                                reflection.id(), binding.uuid(), binding.groupUuid(), reflection.groupUuid());
+                                        continue;
+                                }
+                                bindingsByUuid.put(binding.uuid(), binding);
+                        }
+
+                        if (!bindingsByUuid.isEmpty()) {
+                                resolved.add(new ResolvedReflectionBindings(reflection, List.copyOf(bindingsByUuid.values())));
+                        }
+                }
+
+                return resolved;
+        }
+
+        private List<String> parseSessionReflectionBindingUuids(AiSession session) {
+                if (session == null || session.environmentVariables() == null) {
+                        return List.of();
+                }
+                String raw = session.environmentVariables().get(SESSION_REFLECTION_BINDING_UUIDS_ENV);
+                if (raw == null || raw.isBlank()) {
+                        return List.of();
+                }
+                LinkedHashSet<String> parsed = new LinkedHashSet<>();
+                for (String token : raw.split(",")) {
+                        if (token == null) {
+                                continue;
+                        }
+                        String trimmed = token.trim();
+                        if (!trimmed.isBlank()) {
+                                parsed.add(trimmed);
+                        }
+                }
+                return List.copyOf(parsed);
+        }
+
+        private void mergeReflectionAssignments(LinkedHashMap<String, LinkedHashSet<String>> target,
+                                                List<sh.vork.reflection.ReflectionBindingAssignment> assignments) {
+                if (assignments == null || assignments.isEmpty()) {
+                        return;
+                }
+                for (sh.vork.reflection.ReflectionBindingAssignment assignment : assignments) {
+                        if (assignment == null || assignment.reflectionId() == null || assignment.reflectionId().isBlank()) {
+                                continue;
+                        }
+                        LinkedHashSet<String> bucket = target.computeIfAbsent(
+                                assignment.reflectionId().trim(),
+                                ignored -> new LinkedHashSet<>());
+                        if (assignment.bindingUuids() != null) {
+                                for (String bindingUuid : assignment.bindingUuids()) {
+                                        if (bindingUuid == null || bindingUuid.isBlank()) {
+                                                continue;
+                                        }
+                                        bucket.add(bindingUuid.trim());
+                                }
+                        }
+                }
+        }
+
+        private record ResolvedReflectionBindings(
+                Reflection reflection,
+                List<sh.vork.reflection.ReflectionBinding> bindings) {
         }
 
         /**

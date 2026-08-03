@@ -78,7 +78,16 @@ class ReflectionToolCallbackFactoryTest {
     @Test
     void delegatesExecutionWithSessionUsername() {
         Reflection reflection = sampleReflection();
-        ToolCallback callback = factory.create(reflection);
+        ReflectionBinding binding = new ReflectionBinding(
+            "binding-1",
+            "group-1",
+            "default",
+            "",
+            Map.of(),
+            1L,
+            System.currentTimeMillis(),
+            System.currentTimeMillis());
+        ToolCallback callback = factory.create(reflection, List.of(binding));
 
         ToolExecutionContext.bindSessionUuid("session-1");
         when(aiSessionRepository.get("session-1")).thenReturn(new AiSession(
@@ -97,14 +106,91 @@ class ReflectionToolCallbackFactoryTest {
                 List.of(),
                 List.of(),
                 List.of()));
-        when(reflectionService.executeRestReflection(eq("getWeather"), any(), isNull(), eq("alice")))
+        when(reflectionService.executeRestReflection(eq("getWeather"), any(), eq("default"), eq("alice")))
                 .thenReturn("{\"status\":\"ok\"}");
 
         String result = callback.call("{\"city\":\"London\"}");
 
         assertEquals("{\"status\":\"ok\"}", result);
-        verify(reflectionService).executeRestReflection(eq("getWeather"), any(), isNull(), eq("alice"));
+        verify(reflectionService).executeRestReflection(eq("getWeather"), any(), eq("default"), eq("alice"));
     }
+
+        @Test
+        void requiresBindingNameWhenMultipleBindingsAreAssigned() {
+        Reflection reflection = sampleReflection();
+        ReflectionBinding defaultBinding = new ReflectionBinding(
+            "binding-1",
+            "group-1",
+            "default",
+            "",
+            Map.of(),
+            1L,
+            System.currentTimeMillis(),
+            System.currentTimeMillis());
+        ReflectionBinding sandboxBinding = new ReflectionBinding(
+            "binding-2",
+            "group-1",
+            "sandbox",
+            "",
+            Map.of(),
+            1L,
+            System.currentTimeMillis(),
+            System.currentTimeMillis());
+        ToolCallback callback = factory.create(reflection, List.of(defaultBinding, sandboxBinding));
+
+        String result = callback.call("{\"city\":\"London\"}");
+
+        assertTrue(result.contains("Invalid or missing bindingName"));
+        }
+
+        @Test
+        void acceptsBindingUuidWhenMultipleBindingsAreAssigned() {
+        Reflection reflection = sampleReflection();
+        ReflectionBinding defaultBinding = new ReflectionBinding(
+            "binding-1",
+            "group-1",
+            "default",
+            "",
+            Map.of(),
+            1L,
+            System.currentTimeMillis(),
+            System.currentTimeMillis());
+        ReflectionBinding sandboxBinding = new ReflectionBinding(
+            "binding-2",
+            "group-1",
+            "sandbox",
+            "",
+            Map.of(),
+            1L,
+            System.currentTimeMillis(),
+            System.currentTimeMillis());
+        ToolCallback callback = factory.create(reflection, List.of(defaultBinding, sandboxBinding));
+
+        ToolExecutionContext.bindSessionUuid("session-1");
+        when(aiSessionRepository.get("session-1")).thenReturn(new AiSession(
+            "session-1",
+            "GEMINI",
+            SessionOriginMode.WEB,
+            "alice",
+            "Session",
+            System.currentTimeMillis(),
+            0,
+            List.of(),
+            Map.of(),
+            AiSessionStatus.RUNNING,
+            null,
+            null,
+            List.of(),
+            List.of(),
+            List.of()));
+        when(reflectionService.executeRestReflection(eq("getWeather"), any(), eq("sandbox"), eq("alice")))
+            .thenReturn("{\"status\":\"ok\"}");
+
+        String result = callback.call("{\"city\":\"London\",\"bindingName\":\"binding-2\"}");
+
+        assertEquals("{\"status\":\"ok\"}", result);
+        verify(reflectionService).executeRestReflection(eq("getWeather"), any(), eq("sandbox"), eq("alice"));
+        }
 
     private static Reflection sampleReflection() {
         return new Reflection(

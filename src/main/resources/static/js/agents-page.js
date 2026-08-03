@@ -4,8 +4,12 @@ let agentModal;
 let allAgents = [];
 let allTools = [];
 let allSkills = [];
+let allReflections = [];
+let allReflectionGroups = [];
+let allReflectionBindingOptions = [];
 let modalTools = [];
 let modalSkills = [];
+let modalBindingUuids = [];
 
 document.addEventListener('DOMContentLoaded', function () {
     agentModal = new VorkModal(document.getElementById('agentModal'));
@@ -25,6 +29,9 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!e.target.closest('#skill-search') && !e.target.closest('#skill-dropdown')) {
             document.getElementById('skill-dropdown').classList.add('hidden');
         }
+        if (!e.target.closest('#reflection-binding-search') && !e.target.closest('#reflection-binding-dropdown')) {
+            document.getElementById('reflection-binding-dropdown').classList.add('hidden');
+        }
     });
 });
 
@@ -33,17 +40,58 @@ async function loadData() {
         const results = await Promise.all([
             fetch('/api/agents'),
             fetch('/api/management/tools'),
-            fetch('/api/skills')
+            fetch('/api/skills'),
+            fetch('/api/reflections'),
+            fetch('/api/reflection-groups')
         ]);
         const agentsRes = results[0];
         const toolsRes = results[1];
         const skillsRes = results[2];
+        const reflectionsRes = results[3];
+        const reflectionGroupsRes = results[4];
         allAgents = agentsRes.ok ? await agentsRes.json() : [];
         allTools = toolsRes.ok ? await toolsRes.json() : [];
         allSkills = skillsRes.ok ? await skillsRes.json() : [];
+        allReflections = reflectionsRes.ok ? await reflectionsRes.json() : [];
+        allReflectionGroups = reflectionGroupsRes.ok ? await reflectionGroupsRes.json() : [];
+        allReflectionBindingOptions = buildReflectionBindingOptions();
+        renderAgentBindingColumn();
     } catch (_e) {
         showAlert('Failed to load data.', 'warning');
     }
+}
+
+function renderAgentBindingColumn() {
+    (allAgents || []).forEach(function (agent) {
+        const cell = document.getElementById('agent-bindings-' + agent.uuid);
+        if (!cell) return;
+
+        const labels = bindingLabelsForAgent(agent);
+        if (labels.length === 0) {
+            cell.innerHTML = '<span class="text-muted small">— none —</span>';
+            return;
+        }
+
+        cell.innerHTML = labels.map(function (label) {
+            return '<span class="tool-pill">'
+                + '<i class="fa-solid fa-link"></i>'
+                + '<span>' + escapeHtml(label) + '</span>'
+                + '</span>';
+        }).join(' ');
+    });
+}
+
+function bindingLabelsForAgent(agent) {
+    const labels = [];
+    const assignments = agent && agent.reflectionBindings ? agent.reflectionBindings : [];
+    assignments.forEach(function (assignment) {
+        (assignment.bindingUuids || []).forEach(function (bindingUuid) {
+            const option = allReflectionBindingOptions.find(function (item) { return item.uuid === bindingUuid; });
+            const label = option ? option.label : bindingUuid;
+            if (label && !labels.includes(label)) labels.push(label);
+        });
+    });
+    return labels;
 }
 
 function openCreate() {
@@ -53,8 +101,10 @@ function openCreate() {
     document.getElementById('agent-prompt').value = '';
     modalTools = [];
     modalSkills = [];
+    modalBindingUuids = [];
     renderToolPills();
     renderSkillPills();
+    renderReflectionBindingPills();
     agentModal.show();
 }
 
@@ -71,8 +121,10 @@ function openEdit(id) {
     document.getElementById('agent-prompt').value = agent.systemPrompt || '';
     modalTools = agent.allowedTools ? agent.allowedTools.slice() : [];
     modalSkills = agent.skillUuids ? agent.skillUuids.slice() : [];
+    modalBindingUuids = extractBindingUuidsFromAssignments(agent.reflectionBindings);
     renderToolPills();
     renderSkillPills();
+    renderReflectionBindingPills();
     agentModal.show();
 }
 
@@ -222,6 +274,143 @@ function addSkill(uuid) {
     }
 }
 
+function buildReflectionBindingOptions() {
+    const options = [];
+    (allReflectionGroups || []).forEach(function (entry) {
+        const group = entry.group || entry;
+        const groupName = group && group.name ? group.name : (group && group.uuid ? group.uuid : 'Group');
+        const bindings = entry && entry.bindings ? entry.bindings : [];
+        bindings.forEach(function (binding) {
+            if (!binding || !binding.uuid) return;
+            options.push({
+                uuid: binding.uuid,
+                groupUuid: group.uuid,
+                bindingName: binding.name || binding.uuid,
+                groupName: groupName,
+                label: groupName + ' (' + (binding.name || binding.uuid) + ')'
+            });
+        });
+    });
+    return options;
+}
+
+function extractBindingUuidsFromAssignments(assignments) {
+    const unique = [];
+    (assignments || []).forEach(function (assignment) {
+        (assignment.bindingUuids || []).forEach(function (uuid) {
+            if (uuid && !unique.includes(uuid)) unique.push(uuid);
+        });
+    });
+    return unique;
+}
+
+function renderReflectionBindingPills() {
+    const container = document.getElementById('reflection-binding-pill-container');
+    if (!container) return;
+    container.innerHTML = '';
+    if (!modalBindingUuids || modalBindingUuids.length === 0) {
+        container.innerHTML = '<span class="text-muted small">No reflection bindings assigned.</span>';
+        return;
+    }
+
+    modalBindingUuids.forEach(function (uuid) {
+        const option = allReflectionBindingOptions.find(function (item) { return item.uuid === uuid; });
+        const label = option ? option.label : uuid;
+        const pill = document.createElement('span');
+        pill.className = 'tool-pill';
+        pill.innerHTML = ''
+            + '<i class="fa-solid fa-link"></i>'
+            + '<span>' + escapeHtml(label) + '</span>'
+            + '<span class="remove-tool" title="Remove reflection binding">✕</span>';
+        pill.querySelector('.remove-tool').addEventListener('click', function () {
+            removeReflectionBinding(uuid);
+        });
+        container.appendChild(pill);
+    });
+}
+
+function removeReflectionBinding(uuid) {
+    modalBindingUuids = (modalBindingUuids || []).filter(function (id) { return id !== uuid; });
+    renderReflectionBindingPills();
+    filterReflectionBindings();
+}
+
+function filterReflectionBindings() {
+    const query = document.getElementById('reflection-binding-search').value.toLowerCase().trim();
+    const dropdown = document.getElementById('reflection-binding-dropdown');
+    const list = document.getElementById('reflection-binding-options');
+    if (!dropdown || !list) return;
+
+    const matches = allReflectionBindingOptions.filter(function (option) {
+        if ((modalBindingUuids || []).includes(option.uuid)) return false;
+        if (!query) return true;
+        return (option.label || '').toLowerCase().includes(query);
+    });
+
+    list.innerHTML = '';
+    if (matches.length === 0) {
+        dropdown.classList.add('hidden');
+        return;
+    }
+
+    matches.forEach(function (option) {
+        const li = document.createElement('li');
+        li.className = 'list-group-item list-group-item-action tool-list-item py-1 px-2';
+        li.innerHTML = ''
+            + '<div class="d-flex align-items-center gap-2">'
+            + '  <i class="fa-solid fa-link fa-xs text-secondary"></i>'
+            + '  <span class="fw-semibold small">' + escapeHtml(option.label) + '</span>'
+            + '</div>';
+        li.addEventListener('click', function () {
+            addReflectionBinding(option.uuid);
+            document.getElementById('reflection-binding-search').value = '';
+            dropdown.classList.add('hidden');
+        });
+        list.appendChild(li);
+    });
+
+    dropdown.classList.remove('hidden');
+}
+
+function addReflectionBinding(uuid) {
+    if (!uuid) return;
+    if (!modalBindingUuids.includes(uuid)) {
+        modalBindingUuids.push(uuid);
+        renderReflectionBindingPills();
+    }
+}
+
+function reflectionBindingsPayloadFromSelection() {
+    const selected = (modalBindingUuids || []).slice();
+    if (selected.length === 0) return [];
+
+    const groupedByReflection = {};
+    selected.forEach(function (bindingUuid) {
+        const option = allReflectionBindingOptions.find(function (item) { return item.uuid === bindingUuid; });
+        if (!option) return;
+
+        const reflectionsInGroup = (allReflections || []).filter(function (reflection) {
+            return reflection && reflection.groupUuid === option.groupUuid;
+        });
+
+        reflectionsInGroup.forEach(function (reflection) {
+            const reflectionId = reflection.id;
+            if (!reflectionId) return;
+            if (!groupedByReflection[reflectionId]) groupedByReflection[reflectionId] = [];
+            if (!groupedByReflection[reflectionId].includes(bindingUuid)) {
+                groupedByReflection[reflectionId].push(bindingUuid);
+            }
+        });
+    });
+
+    return Object.keys(groupedByReflection).map(function (reflectionId) {
+        return {
+            reflectionId: reflectionId,
+            bindingUuids: groupedByReflection[reflectionId]
+        };
+    });
+}
+
 async function saveAgent() {
     const id = document.getElementById('agent-id').value.trim();
     const name = document.getElementById('agent-name').value.trim();
@@ -234,7 +423,8 @@ async function saveAgent() {
         name: name,
         systemPrompt: document.getElementById('agent-prompt').value,
         allowedTools: modalTools.slice(),
-        skillUuids: modalSkills.slice()
+        skillUuids: modalSkills.slice(),
+        reflectionBindings: reflectionBindingsPayloadFromSelection()
     };
 
     const btn = document.getElementById('btn-save-agent');

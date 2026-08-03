@@ -258,6 +258,13 @@ public class ReflectionService {
                 .orElse(null);
     }
 
+    public ReflectionBinding getBindingByUuid(String bindingUuid) {
+        if (bindingUuid == null || bindingUuid.isBlank()) {
+            return null;
+        }
+        return reflectionBindingRepository.get(bindingUuid);
+    }
+
     public ReflectionBinding createBinding(String username, String groupUuid, ReflectionBindingRequest request) {
         ReflectionGroup group = requireGroup(groupUuid);
         requireUsername(username);

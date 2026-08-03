@@ -1831,6 +1831,9 @@ let _toolsCache = null;
 let _toolsCacheLoadedAt = 0;
 /** All skills — we get them from agent-config + search as needed. */
 let _skillsSearchCache = null;
+/** Reflection bindings loaded from /api/chat/reflection-bindings. */
+let _reflectionBindingsCache = null;
+let _reflectionBindingsCacheLoadedAt = 0;
 
 async function loadSkillsPanel(uuid) {
     if (!uuid) return;
@@ -1847,6 +1850,11 @@ async function loadSkillsPanel(uuid) {
     renderSkillPills('session-skills-list', config.sessionSkills || [], true, false, uuid);
     renderToolPills('agent-tools-list', config.agentTools || [], false, uuid);
     renderToolPills('session-tools-list', config.sessionTools || [], true, uuid);
+    renderReflectionBindingPills(
+        'session-reflection-bindings-list',
+        config.sessionReflectionBindings || [],
+        true,
+        uuid);
 }
 
 function renderSkillPills(containerId, skills, removable, _unused, sessionUuidRef) {
@@ -1903,6 +1911,35 @@ function renderToolPills(containerId, tools, removable, sessionUuidRef) {
     });
 }
 
+function renderReflectionBindingPills(containerId, bindings, removable, sessionUuidRef) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.innerHTML = '';
+    if (bindings.length === 0) {
+        el.innerHTML = '<span class="text-xs text-zinc-500">' + (removable ? 'None' : 'None assigned') + '</span>';
+        return;
+    }
+    bindings.forEach(function (binding) {
+        const pill = document.createElement('span');
+        pill.className = 'tool-pill ' + (removable ? 'session-tool-pill' : 'agent-tool-pill');
+        const label = binding.label || ((binding.groupName || binding.groupUuid || 'Group')
+            + ' (' + (binding.bindingName || binding.uuid) + ')');
+        pill.title = label;
+        pill.textContent = label;
+        if (removable) {
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'pill-remove';
+            removeBtn.innerHTML = '&times;';
+            removeBtn.title = 'Remove';
+            removeBtn.addEventListener('click', function () {
+                removeSessionReflectionBindingAction(sessionUuidRef, binding.uuid);
+            });
+            pill.appendChild(removeBtn);
+        }
+        el.appendChild(pill);
+    });
+}
+
 async function removeSessionSkillAction(uuid, skillUuid) {
     try {
         const resp = await fetch('/api/chat/session/' + encodeURIComponent(uuid)
@@ -1933,6 +1970,22 @@ async function addSessionToolAction(uuid, toolId) {
             + '/session-tools/' + encodeURIComponent(toolId), { method: 'POST' });
         if (resp.ok) loadSkillsPanel(uuid);
     } catch (e) { console.error('addSessionTool failed:', e); }
+}
+
+async function removeSessionReflectionBindingAction(uuid, bindingUuid) {
+    try {
+        const resp = await fetch('/api/chat/session/' + encodeURIComponent(uuid)
+            + '/session-reflection-bindings/' + encodeURIComponent(bindingUuid), { method: 'DELETE' });
+        if (resp.ok) loadSkillsPanel(uuid);
+    } catch (e) { console.error('removeSessionReflectionBinding failed:', e); }
+}
+
+async function addSessionReflectionBindingAction(uuid, bindingUuid) {
+    try {
+        const resp = await fetch('/api/chat/session/' + encodeURIComponent(uuid)
+            + '/session-reflection-bindings/' + encodeURIComponent(bindingUuid), { method: 'POST' });
+        if (resp.ok) loadSkillsPanel(uuid);
+    } catch (e) { console.error('addSessionReflectionBinding failed:', e); }
 }
 
 // ── Skill search autocomplete ─────────────────────────────────────────────────
@@ -2032,8 +2085,61 @@ function setupToolSearch() {
     });
 }
 
+// ── Reflection binding search autocomplete ───────────────────────────────────
+
+function setupReflectionBindingSearch() {
+    const input = document.getElementById('reflection-binding-search-input');
+    const dropdown = document.getElementById('reflection-binding-search-results');
+    if (!input || !dropdown) return;
+
+    input.addEventListener('input', async function () {
+        const query = input.value.trim().toLowerCase();
+        dropdown.classList.add('hidden');
+        dropdown.innerHTML = '';
+        if (query.length < 1) return;
+        const now = Date.now();
+        const cacheExpired = !_reflectionBindingsCache || (now - _reflectionBindingsCacheLoadedAt) > 30000;
+        if (cacheExpired) {
+            try {
+                const resp = await fetch('/api/chat/reflection-bindings');
+                if (resp.ok) {
+                    _reflectionBindingsCache = await resp.json();
+                    _reflectionBindingsCacheLoadedAt = now;
+                }
+            } catch (e) { _reflectionBindingsCache = []; }
+        }
+        const matches = (_reflectionBindingsCache || []).filter(function (b) {
+            const label = (b.label || '').toLowerCase();
+            const groupName = (b.groupName || '').toLowerCase();
+            const bindingName = (b.bindingName || '').toLowerCase();
+            return label.includes(query) || groupName.includes(query) || bindingName.includes(query);
+        }).slice(0, 10);
+        if (matches.length === 0) return;
+        matches.forEach(function (binding) {
+            const item = document.createElement('div');
+            item.className = 'skills-search-item';
+            item.textContent = binding.label || ((binding.groupName || binding.groupUuid || 'Group')
+                + ' (' + (binding.bindingName || binding.uuid) + ')');
+            item.addEventListener('click', function () {
+                if (sessionUuid) addSessionReflectionBindingAction(sessionUuid, binding.uuid);
+                input.value = '';
+                dropdown.classList.add('hidden');
+            });
+            dropdown.appendChild(item);
+        });
+        dropdown.classList.remove('hidden');
+    });
+
+    document.addEventListener('click', function (e) {
+        if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+            dropdown.classList.add('hidden');
+        }
+    });
+}
+
 setupSkillSearch();
 setupToolSearch();
+setupReflectionBindingSearch();
 initThinkingToggle();
 
 if (newChatBtn) {

@@ -4,6 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,12 +45,23 @@ public class ReflectionToolCallbackFactory {
     }
 
     public ToolCallback create(Reflection reflection) {
+        return create(reflection, List.of());
+    }
+
+    public ToolCallback create(Reflection reflection, List<ReflectionBinding> assignedBindings) {
+        List<ReflectionBinding> effectiveBindings = assignedBindings == null ? List.of() : List.copyOf(assignedBindings);
         String baseDescription = reflection.description() == null || reflection.description().isBlank()
                 ? reflection.name()
                 : reflection.description();
+        String bindingMetadata = effectiveBindings.isEmpty()
+                ? "No bindings are assigned."
+                : "Assigned bindings: " + effectiveBindings.stream()
+                        .map(b -> b.name() + " (" + b.uuid() + ")")
+                        .collect(Collectors.joining(", "));
         String description = baseDescription
+            + " " + bindingMetadata
             + " If this tool returns an error, report that exact error to the user and do not retry with different bindingName/profile names.";
-        String inputSchema = buildInputSchema(reflection.inputParameters());
+        String inputSchema = buildInputSchema(reflection.inputParameters(), effectiveBindings);
 
         ToolDefinition definition = DefaultToolDefinition.builder()
                 .name(reflection.id())
@@ -82,20 +94,55 @@ public class ReflectionToolCallbackFactory {
                     bindingName = String.valueOf(bindingValue);
                 }
 
+                if (effectiveBindings.isEmpty()) {
+                    return "{\"status\":\"error\",\"message\":\"This reflection has no assigned bindings and is not callable in this context.\"}";
+                }
+
+                String resolvedBindingName = resolveBindingName(bindingName, effectiveBindings);
+                if (resolvedBindingName == null) {
+                    String allowedNames = effectiveBindings.stream()
+                            .map(ReflectionBinding::name)
+                            .collect(Collectors.joining(", "));
+                    return "{\"status\":\"error\",\"message\":\"Invalid or missing bindingName. Allowed bindings: "
+                            + allowedNames.replace("\"", "'") + "\"}";
+                }
+
                 String username = resolveUsername();
                 log.debug("ENTER reflectionToolCall [id={}, username={}, bindingName={}, params={}]",
-                        reflection.id(), username, bindingName, sanitizeForLogs(params));
-                String result = reflectionService.executeRestReflection(reflection.id(), params, bindingName, username);
+                        reflection.id(), username, resolvedBindingName, sanitizeForLogs(params));
+                String result = reflectionService.executeRestReflection(reflection.id(), params, resolvedBindingName, username);
                 String status = extractStatus(result);
                 log.debug("EXIT reflectionToolCall [id={}, username={}, bindingName={}, status={}]",
-                        reflection.id(), username, bindingName, status);
+                        reflection.id(), username, resolvedBindingName, status);
                 if ("error".equalsIgnoreCase(status)) {
                     log.warn("Reflection tool failed [id={}, bindingName={}]. AI should report the error and stop without retrying alternative profiles.",
-                            reflection.id(), bindingName);
+                            reflection.id(), resolvedBindingName);
                 }
                 return result;
             }
         };
+    }
+
+    private String resolveBindingName(String requestedBindingName, List<ReflectionBinding> assignedBindings) {
+        if (assignedBindings == null || assignedBindings.isEmpty()) {
+            return null;
+        }
+
+        if (assignedBindings.size() == 1) {
+            return assignedBindings.getFirst().name();
+        }
+
+        if (requestedBindingName == null || requestedBindingName.isBlank()) {
+            return null;
+        }
+
+        for (ReflectionBinding binding : assignedBindings) {
+            if (requestedBindingName.equalsIgnoreCase(binding.name())
+                    || requestedBindingName.equalsIgnoreCase(binding.uuid())) {
+                return binding.name();
+            }
+        }
+        return null;
     }
 
     private static Map<String, Object> sanitizeForLogs(Map<String, Object> input) {
@@ -173,14 +220,12 @@ public class ReflectionToolCallbackFactory {
         }
     }
 
-    private String buildInputSchema(List<ReflectionInputParameter> parameters) {
-        if (parameters == null || parameters.isEmpty()) {
-            return "{\"type\":\"object\",\"properties\":{}}";
-        }
-
+    private String buildInputSchema(List<ReflectionInputParameter> parameters,
+                                    List<ReflectionBinding> assignedBindings) {
         StringBuilder properties = new StringBuilder();
         boolean first = true;
-        for (ReflectionInputParameter parameter : parameters) {
+        List<ReflectionInputParameter> safeParameters = parameters == null ? List.of() : parameters;
+        for (ReflectionInputParameter parameter : safeParameters) {
             if (parameter == null || parameter.name() == null || parameter.name().isBlank()) {
                 continue;
             }
@@ -199,7 +244,7 @@ public class ReflectionToolCallbackFactory {
             first = false;
         }
 
-        String required = parameters.stream()
+        String required = safeParameters.stream()
                 .filter(ReflectionInputParameter::required)
                 .map(ReflectionInputParameter::name)
                 .filter(name -> name != null && !name.isBlank())
@@ -210,7 +255,20 @@ public class ReflectionToolCallbackFactory {
         if (properties.length() > 0) {
             properties.append(',');
         }
-        properties.append("\"bindingName\":{\"type\":\"string\",\"description\":\"Optional binding name. Uses default binding when omitted.\"}");
+        String bindingProperty = "\"bindingName\":{\"type\":\"string\",\"description\":\"Binding name.\"";
+        if (assignedBindings != null && !assignedBindings.isEmpty()) {
+            String enumValues = assignedBindings.stream()
+                    .map(ReflectionBinding::name)
+                    .map(name -> "\"" + name.replace("\\", "\\\\").replace("\"", "\\\"") + "\"")
+                    .collect(Collectors.joining(","));
+            bindingProperty += ",\"enum\":[" + enumValues + "]";
+        }
+        bindingProperty += "}";
+        properties.append(bindingProperty);
+
+        if (assignedBindings != null && assignedBindings.size() > 1) {
+            required = required.isBlank() ? "\"bindingName\"" : required + ",\"bindingName\"";
+        }
 
         return "{\"type\":\"object\",\"properties\":{" + properties + "},\"required\":[" + required + "]}";
     }

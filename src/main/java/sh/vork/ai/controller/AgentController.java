@@ -23,6 +23,10 @@ import org.springframework.web.bind.annotation.ResponseBody;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.agent.AgentType;
+import sh.vork.reflection.Reflection;
+import sh.vork.reflection.ReflectionBinding;
+import sh.vork.reflection.ReflectionBindingAssignment;
+import sh.vork.reflection.ReflectionService;
 import sh.vork.skill.Skill;
 import sh.vork.skill.SkillVisibility;
 
@@ -39,11 +43,14 @@ public class AgentController {
 
     private final DatabaseRepository<AgentTemplate> agentRepository;
     private final DatabaseRepository<Skill> skillRepository;
+    private final ReflectionService reflectionService;
 
     public AgentController(DatabaseRepository<AgentTemplate> agentRepository,
-                           DatabaseRepository<Skill> skillRepository) {
+                           DatabaseRepository<Skill> skillRepository,
+                           ReflectionService reflectionService) {
         this.agentRepository = agentRepository;
         this.skillRepository = skillRepository;
+        this.reflectionService = reflectionService;
     }
 
     // ── Page ──────────────────────────────────────────────────────────────────
@@ -85,11 +92,19 @@ public class AgentController {
         log.debug("ENTER createAgent: [name={}]", req.name());
         String err = validate(req);
         if (err != null) return ResponseEntity.badRequest().body(Map.of("error", err));
+        String reflectionToolErr = validateNoReflectionToolIds(req.allowedTools());
+        if (reflectionToolErr != null) return ResponseEntity.badRequest().body(Map.of("error", reflectionToolErr));
         if (isAgentNameInUse(req.name(), null)) {
             return ResponseEntity.badRequest().body(Map.of("error", "Agent name already exists."));
         }
         String skillErr = validateAssignableSkillUuids(req.skillUuids());
         if (skillErr != null) return ResponseEntity.badRequest().body(Map.of("error", skillErr));
+        List<ReflectionBindingAssignment> reflectionBindings;
+        try {
+            reflectionBindings = normalizeAndValidateReflectionBindings(req.reflectionBindings());
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
 
         AgentTemplate agent = new AgentTemplate(
                 UUID.randomUUID().toString(),
@@ -98,7 +113,8 @@ public class AgentController {
                 req.allowedTools() != null ? List.copyOf(req.allowedTools()) : List.of(),
                 false,
                 req.skillUuids() != null ? List.copyOf(req.skillUuids()) : List.of(),
-                req.agentType() != null ? req.agentType() : AgentType.INTERACTIVE);
+                req.agentType() != null ? req.agentType() : AgentType.INTERACTIVE,
+                reflectionBindings);
         agentRepository.save(agent);
         log.info("Agent created [id={}, name={}]", agent.uuid(), agent.name());
         return ResponseEntity.ok(agent);
@@ -116,11 +132,19 @@ public class AgentController {
 
         String err = validate(req);
         if (err != null) return ResponseEntity.badRequest().body(Map.of("error", err));
+        String reflectionToolErr = validateNoReflectionToolIds(req.allowedTools());
+        if (reflectionToolErr != null) return ResponseEntity.badRequest().body(Map.of("error", reflectionToolErr));
         if (isAgentNameInUse(req.name(), id)) {
             return ResponseEntity.badRequest().body(Map.of("error", "Agent name already exists."));
         }
         String skillErr = validateAssignableSkillUuids(req.skillUuids());
         if (skillErr != null) return ResponseEntity.badRequest().body(Map.of("error", skillErr));
+        List<ReflectionBindingAssignment> reflectionBindings;
+        try {
+            reflectionBindings = normalizeAndValidateReflectionBindings(req.reflectionBindings());
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
 
         if (existing.systemAgent()) {
             boolean instructionsChanged = !Objects.equals(
@@ -128,7 +152,9 @@ public class AgentController {
                     existing.systemPrompt());
             boolean toolsChanged = req.allowedTools() != null
                     && !req.allowedTools().equals(existing.allowedTools());
-            if (instructionsChanged || toolsChanged) {
+            boolean reflectionBindingsChanged = req.reflectionBindings() != null
+                    && !reflectionBindings.equals(existing.reflectionBindings());
+            if (instructionsChanged || toolsChanged || reflectionBindingsChanged) {
                 log.warn("Refused to update instructions/tools of system agent [id={}]", id);
                 return ResponseEntity.status(403).body(Map.of(
                         "error", "System agent instructions and tools are managed by the seeder "
@@ -143,7 +169,8 @@ public class AgentController {
                 req.allowedTools() != null ? List.copyOf(req.allowedTools()) : List.of(),
                 existing.systemAgent(), // preserve system flag
                 req.skillUuids() != null ? List.copyOf(req.skillUuids()) : existing.skillUuids(),
-                req.agentType() != null ? req.agentType() : existing.agentType());
+                req.agentType() != null ? req.agentType() : existing.agentType(),
+                reflectionBindings);
         agentRepository.save(updated);
         log.info("Agent updated [id={}, name={}]", id, req.name());
         return ResponseEntity.ok(updated);
@@ -208,6 +235,60 @@ public class AgentController {
         return null;
     }
 
+    private String validateNoReflectionToolIds(List<String> allowedTools) {
+        if (allowedTools == null || allowedTools.isEmpty()) {
+            return null;
+        }
+        for (String toolId : allowedTools) {
+            if (toolId == null || toolId.isBlank()) {
+                continue;
+            }
+            Reflection reflection = reflectionService.getReflectionById(toolId.trim());
+            if (reflection != null) {
+                return "Reflections are not directly assignable tools. Assign reflection bindings instead for reflection ID: "
+                        + reflection.id();
+            }
+        }
+        return null;
+    }
+
+    private List<ReflectionBindingAssignment> normalizeAndValidateReflectionBindings(
+            List<ReflectionBindingAssignment> reflectionBindings) {
+        if (reflectionBindings == null || reflectionBindings.isEmpty()) {
+            return List.of();
+        }
+
+        java.util.LinkedHashMap<String, java.util.LinkedHashSet<String>> merged = new java.util.LinkedHashMap<>();
+        for (ReflectionBindingAssignment assignment : reflectionBindings) {
+            if (assignment == null || assignment.reflectionId() == null || assignment.reflectionId().isBlank()) {
+                continue;
+            }
+            String reflectionId = assignment.reflectionId().trim();
+            Reflection reflection = reflectionService.getReflectionById(reflectionId);
+            if (reflection == null) {
+                throw new IllegalArgumentException("Unknown reflection ID in reflectionBindings: " + reflectionId);
+            }
+
+            java.util.LinkedHashSet<String> bucket = merged.computeIfAbsent(reflectionId,
+                    ignored -> new java.util.LinkedHashSet<>());
+            for (String bindingUuid : assignment.bindingUuids()) {
+                ReflectionBinding binding = reflectionService.getBindingByUuid(bindingUuid);
+                if (binding == null) {
+                    throw new IllegalArgumentException("Unknown reflection binding UUID in reflectionBindings: " + bindingUuid);
+                }
+                if (!reflection.groupUuid().equals(binding.groupUuid())) {
+                    throw new IllegalArgumentException(
+                            "Binding UUID " + bindingUuid + " does not belong to reflection '" + reflectionId + "' group.");
+                }
+                bucket.add(binding.uuid());
+            }
+        }
+
+        return merged.entrySet().stream()
+                .map(entry -> new ReflectionBindingAssignment(entry.getKey(), List.copyOf(entry.getValue())))
+                .toList();
+    }
+
     // ── DTO ───────────────────────────────────────────────────────────────────
 
     record AgentRequest(
@@ -215,6 +296,7 @@ public class AgentController {
             String       systemPrompt,
             List<String> allowedTools,
             List<String> skillUuids,
-            AgentType    agentType
+            AgentType    agentType,
+            List<ReflectionBindingAssignment> reflectionBindings
     ) {}
 }

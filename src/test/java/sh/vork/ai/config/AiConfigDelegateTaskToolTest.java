@@ -14,6 +14,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 
@@ -46,6 +47,9 @@ class AiConfigDelegateTaskToolTest {
         JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
         TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
         AiSchedulerService schedulerService = mock(AiSchedulerService.class);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<AiSchedulerService> schedulerProvider = mock(ObjectProvider.class);
+        when(schedulerProvider.getIfAvailable()).thenReturn(schedulerService);
 
         @SuppressWarnings("unchecked")
         DatabaseRepository<AgentTemplate> agentRepo = mock(DatabaseRepository.class);
@@ -90,7 +94,7 @@ class AiConfigDelegateTaskToolTest {
                 new UsernamePasswordAuthenticationToken("alice", "n/a"));
 
         AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
-        ToolCallback tool = config.delegateTask(schedulerService, agentRepo, sessionRepo);
+        ToolCallback tool = config.delegateTask(schedulerProvider, agentRepo, sessionRepo);
 
         String output = tool.call("{\"agentName\":\"Triage Agent\",\"prompt\":\"Classify this content\"}");
         Map<String, Object> result = objectMapper.readValue(output, new TypeReference<>() {});
@@ -114,6 +118,9 @@ class AiConfigDelegateTaskToolTest {
         JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
         TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
         AiSchedulerService schedulerService = mock(AiSchedulerService.class);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<AiSchedulerService> schedulerProvider = mock(ObjectProvider.class);
+        when(schedulerProvider.getIfAvailable()).thenReturn(schedulerService);
 
         @SuppressWarnings("unchecked")
         DatabaseRepository<AgentTemplate> agentRepo = mock(DatabaseRepository.class);
@@ -128,7 +135,7 @@ class AiConfigDelegateTaskToolTest {
                 new UsernamePasswordAuthenticationToken("alice", "n/a"));
 
         AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
-        ToolCallback tool = config.delegateTask(schedulerService, agentRepo, sessionRepo);
+        ToolCallback tool = config.delegateTask(schedulerProvider, agentRepo, sessionRepo);
 
         String output = tool.call("{\"agentName\":\"Triage Agent\",\"prompt\":\"Classify this content\"}");
         Map<String, Object> result = objectMapper.readValue(output, new TypeReference<>() {});
@@ -143,6 +150,9 @@ class AiConfigDelegateTaskToolTest {
         JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
         TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
         AiSchedulerService schedulerService = mock(AiSchedulerService.class);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<AiSchedulerService> schedulerProvider = mock(ObjectProvider.class);
+        when(schedulerProvider.getIfAvailable()).thenReturn(schedulerService);
 
         @SuppressWarnings("unchecked")
         DatabaseRepository<AgentTemplate> agentRepo = mock(DatabaseRepository.class);
@@ -163,7 +173,7 @@ class AiConfigDelegateTaskToolTest {
                 new UsernamePasswordAuthenticationToken("alice", "n/a"));
 
         AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
-        ToolCallback tool = config.delegateTask(schedulerService, agentRepo, sessionRepo);
+        ToolCallback tool = config.delegateTask(schedulerProvider, agentRepo, sessionRepo);
 
         String output = tool.call("{\"agentName\":\"Support Agent\",\"prompt\":\"Classify this content\"}");
         Map<String, Object> result = objectMapper.readValue(output, new TypeReference<>() {});
