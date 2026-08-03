@@ -7,9 +7,11 @@ let allSkills = [];
 let allReflections = [];
 let allReflectionGroups = [];
 let allReflectionBindingOptions = [];
+let allUsers = [];
 let modalTools = [];
 let modalSkills = [];
 let modalBindingUuids = [];
+let modalAssignedUsers = [];
 
 document.addEventListener('DOMContentLoaded', function () {
     agentModal = new VorkModal(document.getElementById('agentModal'));
@@ -18,8 +20,10 @@ document.addEventListener('DOMContentLoaded', function () {
     document.getElementById('agentModal').addEventListener('hidden.bs.modal', function () {
         document.getElementById('tool-search').value = '';
         document.getElementById('skill-search').value = '';
+        document.getElementById('assigned-user-search').value = '';
         document.getElementById('tool-dropdown').classList.add('hidden');
         document.getElementById('skill-dropdown').classList.add('hidden');
+        document.getElementById('assigned-user-dropdown').classList.add('hidden');
     });
 
     document.addEventListener('click', function (e) {
@@ -32,6 +36,9 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!e.target.closest('#reflection-binding-search') && !e.target.closest('#reflection-binding-dropdown')) {
             document.getElementById('reflection-binding-dropdown').classList.add('hidden');
         }
+        if (!e.target.closest('#assigned-user-search') && !e.target.closest('#assigned-user-dropdown')) {
+            document.getElementById('assigned-user-dropdown').classList.add('hidden');
+        }
     });
 });
 
@@ -42,20 +49,24 @@ async function loadData() {
             fetch('/api/management/tools'),
             fetch('/api/skills'),
             fetch('/api/reflections'),
-            fetch('/api/reflection-groups')
+            fetch('/api/reflection-groups'),
+            fetch('/api/users')
         ]);
         const agentsRes = results[0];
         const toolsRes = results[1];
         const skillsRes = results[2];
         const reflectionsRes = results[3];
         const reflectionGroupsRes = results[4];
+        const usersRes = results[5];
         allAgents = agentsRes.ok ? await agentsRes.json() : [];
         allTools = toolsRes.ok ? await toolsRes.json() : [];
         allSkills = skillsRes.ok ? await skillsRes.json() : [];
         allReflections = reflectionsRes.ok ? await reflectionsRes.json() : [];
         allReflectionGroups = reflectionGroupsRes.ok ? await reflectionGroupsRes.json() : [];
+        allUsers = usersRes.ok ? await usersRes.json() : [];
         allReflectionBindingOptions = buildReflectionBindingOptions();
         renderAgentBindingColumn();
+        renderAgentUsersColumn();
     } catch (_e) {
         showAlert('Failed to load data.', 'warning');
     }
@@ -94,6 +105,28 @@ function bindingLabelsForAgent(agent) {
     return labels;
 }
 
+function renderAgentUsersColumn() {
+    (allAgents || []).forEach(function (agent) {
+        const cell = document.getElementById('agent-users-' + agent.uuid);
+        if (!cell) return;
+
+        if (agent.name && agent.name.toLowerCase() === 'concierge') {
+            cell.innerHTML = '<span class="tool-pill"><i class="fa-solid fa-users"></i><span>All users</span></span>';
+            return;
+        }
+
+        const users = agent.assignedUsernames || [];
+        if (users.length === 0) {
+            cell.innerHTML = '<span class="text-muted small">Admins only (auto)</span>';
+            return;
+        }
+
+        cell.innerHTML = users.map(function (username) {
+            return '<span class="tool-pill"><i class="fa-solid fa-user"></i><span>' + escapeHtml(username) + '</span></span>';
+        }).join(' ');
+    });
+}
+
 function openCreate() {
     document.getElementById('agentModalLabel').textContent = 'New Agent';
     document.getElementById('agent-id').value = '';
@@ -102,9 +135,11 @@ function openCreate() {
     modalTools = [];
     modalSkills = [];
     modalBindingUuids = [];
+    modalAssignedUsers = [];
     renderToolPills();
     renderSkillPills();
     renderReflectionBindingPills();
+    renderAssignedUserPills();
     agentModal.show();
 }
 
@@ -122,9 +157,11 @@ function openEdit(id) {
     modalTools = agent.allowedTools ? agent.allowedTools.slice() : [];
     modalSkills = agent.skillUuids ? agent.skillUuids.slice() : [];
     modalBindingUuids = extractBindingUuidsFromAssignments(agent.reflectionBindings);
+    modalAssignedUsers = agent.assignedUsernames ? agent.assignedUsernames.slice() : [];
     renderToolPills();
     renderSkillPills();
     renderReflectionBindingPills();
+    renderAssignedUserPills();
     agentModal.show();
 }
 
@@ -411,6 +448,84 @@ function reflectionBindingsPayloadFromSelection() {
     });
 }
 
+function renderAssignedUserPills() {
+    const container = document.getElementById('assigned-user-pill-container');
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (!modalAssignedUsers || modalAssignedUsers.length === 0) {
+        container.innerHTML = '<span class="text-muted small">No explicit users assigned (admins still have access).</span>';
+        return;
+    }
+
+    modalAssignedUsers.forEach(function (username) {
+        const pill = document.createElement('span');
+        pill.className = 'tool-pill';
+        pill.innerHTML = ''
+            + '<i class="fa-solid fa-user"></i>'
+            + '<span>' + escapeHtml(username) + '</span>'
+            + '<span class="remove-tool" title="Remove user assignment">✕</span>';
+        pill.querySelector('.remove-tool').addEventListener('click', function () {
+            removeAssignedUser(username);
+        });
+        container.appendChild(pill);
+    });
+}
+
+function removeAssignedUser(username) {
+    modalAssignedUsers = (modalAssignedUsers || []).filter(function (u) { return u !== username; });
+    renderAssignedUserPills();
+    filterAssignedUsers();
+}
+
+function addAssignedUser(username) {
+    if (!username) return;
+    if (!modalAssignedUsers.includes(username)) {
+        modalAssignedUsers.push(username);
+        renderAssignedUserPills();
+    }
+}
+
+function filterAssignedUsers() {
+    const query = document.getElementById('assigned-user-search').value.toLowerCase().trim();
+    const dropdown = document.getElementById('assigned-user-dropdown');
+    const list = document.getElementById('assigned-user-options');
+    if (!dropdown || !list) return;
+
+    const matches = (allUsers || []).filter(function (user) {
+        const username = user.username || '';
+        if (modalAssignedUsers.includes(username)) return false;
+        if (!query) return true;
+        return username.toLowerCase().includes(query)
+            || (user.role || '').toLowerCase().includes(query);
+    });
+
+    list.innerHTML = '';
+    if (matches.length === 0) {
+        dropdown.classList.add('hidden');
+        return;
+    }
+
+    matches.forEach(function (user) {
+        const li = document.createElement('li');
+        li.className = 'list-group-item list-group-item-action tool-list-item py-1 px-2';
+        li.innerHTML = ''
+            + '<div class="d-flex align-items-center gap-2">'
+            + '  <i class="fa-solid fa-user fa-xs text-secondary"></i>'
+            + '  <span class="fw-semibold small">' + escapeHtml(user.username || '') + '</span>'
+            + (user.role ? '  <span class="badge bg-dark border border-secondary text-secondary tool-meta-badge">' + escapeHtml(user.role) + '</span>' : '')
+            + '</div>';
+        li.addEventListener('click', function () {
+            addAssignedUser(user.username);
+            document.getElementById('assigned-user-search').value = '';
+            dropdown.classList.add('hidden');
+        });
+        list.appendChild(li);
+    });
+
+    dropdown.classList.remove('hidden');
+}
+
 async function saveAgent() {
     const id = document.getElementById('agent-id').value.trim();
     const name = document.getElementById('agent-name').value.trim();
@@ -424,7 +539,8 @@ async function saveAgent() {
         systemPrompt: document.getElementById('agent-prompt').value,
         allowedTools: modalTools.slice(),
         skillUuids: modalSkills.slice(),
-        reflectionBindings: reflectionBindingsPayloadFromSelection()
+        reflectionBindings: reflectionBindingsPayloadFromSelection(),
+        assignedUsernames: modalAssignedUsers.slice()
     };
 
     const btn = document.getElementById('btn-save-agent');

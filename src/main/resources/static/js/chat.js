@@ -1834,6 +1834,8 @@ let _skillsSearchCache = null;
 /** Reflection bindings loaded from /api/chat/reflection-bindings. */
 let _reflectionBindingsCache = null;
 let _reflectionBindingsCacheLoadedAt = 0;
+const CONCIERGE_AGENT_ID = 'agent-tpl-concierge-001';
+let _canManageSessionExtras = false;
 
 async function loadSkillsPanel(uuid) {
     if (!uuid) return;
@@ -1846,15 +1848,54 @@ async function loadSkillsPanel(uuid) {
         console.warn('loadSkillsPanel failed:', e);
         return;
     }
+    _canManageSessionExtras = !!config.canManageSessionExtras;
+    applySessionExtrasEditability(_canManageSessionExtras);
     renderSkillPills('agent-skills-list', config.agentSkills || [], false, false, uuid);
-    renderSkillPills('session-skills-list', config.sessionSkills || [], true, false, uuid);
+    renderSkillPills('session-skills-list', config.sessionSkills || [], _canManageSessionExtras, false, uuid);
     renderToolPills('agent-tools-list', config.agentTools || [], false, uuid);
-    renderToolPills('session-tools-list', config.sessionTools || [], true, uuid);
+    renderToolPills('session-tools-list', config.sessionTools || [], _canManageSessionExtras, uuid);
+    renderReflectionBindingPills(
+        'agent-reflection-bindings-list',
+        config.agentReflectionBindings || [],
+        false,
+        uuid);
     renderReflectionBindingPills(
         'session-reflection-bindings-list',
         config.sessionReflectionBindings || [],
-        true,
+        _canManageSessionExtras,
         uuid);
+}
+
+function applySessionExtrasEditability(canManage) {
+    const ids = [
+        'skill-search-input',
+        'tool-search-input',
+        'reflection-binding-search-input'
+    ];
+    ids.forEach(function (id) {
+        const input = document.getElementById(id);
+        if (!input) return;
+
+        const searchBox = input.closest('.skills-search-box');
+        if (searchBox) {
+            searchBox.style.display = canManage ? '' : 'none';
+        }
+
+        input.disabled = !canManage;
+        if (!canManage) {
+            input.value = '';
+            const dropdownId = id.replace('-input', '-results');
+            const dropdown = document.getElementById(dropdownId);
+            if (dropdown) {
+                dropdown.classList.add('hidden');
+                dropdown.innerHTML = '';
+            }
+        } else {
+            if (id === 'skill-search-input') input.placeholder = 'Add skill...';
+            if (id === 'tool-search-input') input.placeholder = 'Add tool...';
+            if (id === 'reflection-binding-search-input') input.placeholder = 'Add reflection binding...';
+        }
+    });
 }
 
 function renderSkillPills(containerId, skills, removable, _unused, sessionUuidRef) {
@@ -2385,15 +2426,22 @@ function loadAgents(activeAgentTemplateId) {
     fetch('/api/chat/agents?type=INTERACTIVE')
         .then(function (resp) { return resp.ok ? resp.json() : Promise.resolve([]); })
         .then(function (agents) {
-            // Preserve the default option and repopulate the rest
-            agentSel.innerHTML = '<option value="">Default (Concierge)</option>';
-            agents.forEach(function (agent) {
+            // Keep Concierge always visible/selectable as the stable default entry.
+            agentSel.innerHTML = '<option value="' + CONCIERGE_AGENT_ID + '">Default (Concierge)</option>';
+            (agents || [])
+                .filter(function (agent) { return agent && agent.uuid !== CONCIERGE_AGENT_ID; })
+                .forEach(function (agent) {
                 const opt = document.createElement('option');
                 opt.value = agent.uuid;
                 opt.textContent = agent.name;
                 agentSel.appendChild(opt);
             });
-            agentSel.value = activeAgentTemplateId || '';
+
+            const targetValue = (!activeAgentTemplateId || activeAgentTemplateId === CONCIERGE_AGENT_ID)
+                ? CONCIERGE_AGENT_ID
+                : activeAgentTemplateId;
+            const hasTarget = Array.from(agentSel.options).some(function (o) { return o.value === targetValue; });
+            agentSel.value = hasTarget ? targetValue : CONCIERGE_AGENT_ID;
         })
         .catch(function () { /* non-critical */ });
 }
@@ -2403,13 +2451,11 @@ agentSel.addEventListener('change', function () {
     const agentTemplateId = agentSel.value;
     const selectedLabel = agentSel.options[agentSel.selectedIndex].text;
     // Derive the display name: strip the "Default (...)" wrapper if present
-    const agentDisplayName = agentTemplateId
-        ? selectedLabel
-        : 'Concierge';
+    const agentDisplayName = agentTemplateId === CONCIERGE_AGENT_ID ? 'Concierge' : selectedLabel;
     fetch('/api/chat/session/' + encodeURIComponent(sessionUuid) + '/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentTemplateId: agentTemplateId || '' })
+        body: JSON.stringify({ agentTemplateId: agentTemplateId || CONCIERGE_AGENT_ID })
     })
         .then(function (resp) {
             if (!resp.ok) {

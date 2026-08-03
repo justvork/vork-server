@@ -11,6 +11,7 @@ import org.slf4j.MDC;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -218,16 +219,17 @@ public class ChatController {
     @GetMapping("/agents")
     public List<AgentTemplateSummary> listAgents(
             @RequestParam(required = false) String type) {
-        var stream = chatService.listAgentTemplates().stream();
+        AgentType agentType = null;
         if (type != null && !type.isBlank()) {
             try {
-                AgentType agentType = AgentType.valueOf(type.toUpperCase());
-                stream = stream.filter(t -> t.agentType() == agentType);
+                agentType = AgentType.valueOf(type.toUpperCase());
             } catch (IllegalArgumentException ignored) {
                 log.warn("listAgents: unknown type filter ignored [type={}]", type);
             }
         }
-        return stream
+
+        return chatService.listAssignedAgentTemplatesForCurrentUser(agentType, true)
+            .stream()
                 .map(t -> new AgentTemplateSummary(t.uuid(), t.name(), t.agentType().name()))
                 .toList();
     }
@@ -247,6 +249,7 @@ public class ChatController {
     // ── Session extras: skills & tools ────────────────────────────────────────
 
     @PostMapping("/session/{sessionUuid}/session-skills/{skillUuid}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> addSessionSkill(@PathVariable String sessionUuid,
                                               @PathVariable String skillUuid) {
         log.debug("ENTER addSessionSkill: [session={}, skill={}]", sessionUuid, skillUuid);
@@ -260,6 +263,7 @@ public class ChatController {
     }
 
     @DeleteMapping("/session/{sessionUuid}/session-skills/{skillUuid}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> removeSessionSkill(@PathVariable String sessionUuid,
                                                  @PathVariable String skillUuid) {
         log.debug("ENTER removeSessionSkill: [session={}, skill={}]", sessionUuid, skillUuid);
@@ -273,6 +277,7 @@ public class ChatController {
     }
 
     @PostMapping("/session/{sessionUuid}/session-tools/{toolId}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> addSessionTool(@PathVariable String sessionUuid,
                                              @PathVariable String toolId) {
         log.debug("ENTER addSessionTool: [session={}, tool={}]", sessionUuid, toolId);
@@ -294,6 +299,7 @@ public class ChatController {
     }
 
     @DeleteMapping("/session/{sessionUuid}/session-tools/{toolId}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> removeSessionTool(@PathVariable String sessionUuid,
                                                 @PathVariable String toolId) {
         log.debug("ENTER removeSessionTool: [session={}, tool={}]", sessionUuid, toolId);
@@ -307,6 +313,7 @@ public class ChatController {
     }
 
     @PostMapping("/session/{sessionUuid}/session-reflection-bindings/{bindingUuid}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> addSessionReflectionBinding(@PathVariable String sessionUuid,
                                                          @PathVariable String bindingUuid) {
         log.debug("ENTER addSessionReflectionBinding: [session={}, bindingUuid={}]", sessionUuid, bindingUuid);
@@ -327,6 +334,7 @@ public class ChatController {
     }
 
     @DeleteMapping("/session/{sessionUuid}/session-reflection-bindings/{bindingUuid}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> removeSessionReflectionBinding(@PathVariable String sessionUuid,
                                                             @PathVariable String bindingUuid) {
         log.debug("ENTER removeSessionReflectionBinding: [session={}, bindingUuid={}]", sessionUuid, bindingUuid);
@@ -405,11 +413,38 @@ public class ChatController {
                             .filter(java.util.Objects::nonNull)
                             .toList()
                     : List.of();
+                List<ReflectionBindingSummary> agentReflectionBindings = tpl != null
+                    && tpl.reflectionBindings() != null
+                    ? tpl.reflectionBindings().stream()
+                    .flatMap(assignment -> assignment.bindingUuids().stream())
+                    .distinct()
+                    .map(reflectionService::getBindingByUuid)
+                    .filter(java.util.Objects::nonNull)
+                    .map(binding -> {
+                    var group = reflectionService.getGroup(binding.groupUuid());
+                    String groupName = group != null ? group.name() : binding.groupUuid();
+                    String bindingName = binding.name() == null ? binding.uuid() : binding.name();
+                    String label = (groupName == null ? binding.groupUuid() : groupName) + " (" + bindingName + ")";
+                    return new ReflectionBindingSummary(
+                        binding.uuid(),
+                        binding.groupUuid(),
+                        groupName,
+                        bindingName,
+                        label);
+                    })
+                    .toList()
+                    : List.of();
             // Session tools
             List<ToolSummary> sessionTools = session.sessionToolIds().stream()
                     .map(this::resolveToolSummaryById)
                     .filter(java.util.Objects::nonNull)
                     .toList();
+                boolean canManageSessionExtras = org.springframework.security.core.context.SecurityContextHolder
+                    .getContext()
+                    .getAuthentication()
+                    .getAuthorities()
+                    .stream()
+                    .anyMatch(a -> "ROLE_ADMIN".equalsIgnoreCase(a.getAuthority()));
                 List<ReflectionBindingSummary> sessionReflectionBindings = chatService
                     .getSessionReflectionBindingUuids(session)
                     .stream()
@@ -431,7 +466,13 @@ public class ChatController {
             return ResponseEntity.ok(new AgentConfigResponse(
                     tpl != null ? tpl.uuid() : null,
                     tpl != null ? tpl.name() : null,
-                    agentSkills, sessionSkills, agentTools, sessionTools, sessionReflectionBindings));
+                    agentSkills,
+                    sessionSkills,
+                    agentTools,
+                    sessionTools,
+                    agentReflectionBindings,
+                    sessionReflectionBindings,
+                    canManageSessionExtras));
         } catch (IllegalStateException ex) {
             return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
         }
@@ -558,5 +599,7 @@ public class ChatController {
             List<SkillSummary> sessionSkills,
             List<ToolSummary> agentTools,
             List<ToolSummary> sessionTools,
-            List<ReflectionBindingSummary> sessionReflectionBindings) {}
+            List<ReflectionBindingSummary> agentReflectionBindings,
+            List<ReflectionBindingSummary> sessionReflectionBindings,
+            boolean canManageSessionExtras) {}
 }

@@ -23,6 +23,8 @@ import org.springframework.web.bind.annotation.ResponseBody;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.agent.AgentType;
+import sh.vork.ai.service.AgentAssignmentService;
+import sh.vork.ai.lifecycle.AgentTemplateSeeder;
 import sh.vork.reflection.Reflection;
 import sh.vork.reflection.ReflectionBinding;
 import sh.vork.reflection.ReflectionBindingAssignment;
@@ -44,13 +46,16 @@ public class AgentController {
     private final DatabaseRepository<AgentTemplate> agentRepository;
     private final DatabaseRepository<Skill> skillRepository;
     private final ReflectionService reflectionService;
+    private final AgentAssignmentService agentAssignmentService;
 
     public AgentController(DatabaseRepository<AgentTemplate> agentRepository,
                            DatabaseRepository<Skill> skillRepository,
-                           ReflectionService reflectionService) {
+                           ReflectionService reflectionService,
+                           AgentAssignmentService agentAssignmentService) {
         this.agentRepository = agentRepository;
         this.skillRepository = skillRepository;
         this.reflectionService = reflectionService;
+        this.agentAssignmentService = agentAssignmentService;
     }
 
     // ── Page ──────────────────────────────────────────────────────────────────
@@ -105,6 +110,12 @@ public class AgentController {
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
         }
+        List<String> assignedUsernames;
+        try {
+            assignedUsernames = agentAssignmentService.normalizeAndValidateAssignedUsernames(req.assignedUsernames());
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
 
         AgentTemplate agent = new AgentTemplate(
                 UUID.randomUUID().toString(),
@@ -114,7 +125,8 @@ public class AgentController {
                 false,
                 req.skillUuids() != null ? List.copyOf(req.skillUuids()) : List.of(),
                 req.agentType() != null ? req.agentType() : AgentType.INTERACTIVE,
-                reflectionBindings);
+                reflectionBindings,
+                assignedUsernames);
         agentRepository.save(agent);
         log.info("Agent created [id={}, name={}]", agent.uuid(), agent.name());
         return ResponseEntity.ok(agent);
@@ -145,6 +157,15 @@ public class AgentController {
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
         }
+        List<String> assignedUsernames;
+        try {
+            assignedUsernames = agentAssignmentService.normalizeAndValidateAssignedUsernames(req.assignedUsernames());
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
+        if (AgentTemplateSeeder.UUID_CONCIERGE.equals(existing.uuid())) {
+            assignedUsernames = List.of();
+        }
 
         if (existing.systemAgent()) {
             boolean instructionsChanged = !Objects.equals(
@@ -170,7 +191,8 @@ public class AgentController {
                 existing.systemAgent(), // preserve system flag
                 req.skillUuids() != null ? List.copyOf(req.skillUuids()) : existing.skillUuids(),
                 req.agentType() != null ? req.agentType() : existing.agentType(),
-                reflectionBindings);
+            reflectionBindings,
+            assignedUsernames);
         agentRepository.save(updated);
         log.info("Agent updated [id={}, name={}]", id, req.name());
         return ResponseEntity.ok(updated);
@@ -297,6 +319,7 @@ public class AgentController {
             List<String> allowedTools,
             List<String> skillUuids,
             AgentType    agentType,
-            List<ReflectionBindingAssignment> reflectionBindings
+            List<ReflectionBindingAssignment> reflectionBindings,
+            List<String> assignedUsernames
     ) {}
 }

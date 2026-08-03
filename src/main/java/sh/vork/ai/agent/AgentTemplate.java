@@ -35,7 +35,8 @@ public record AgentTemplate(
         boolean      systemAgent,
         List<String> skillUuids,
     AgentType    agentType,
-    List<ReflectionBindingAssignment> reflectionBindings
+    List<ReflectionBindingAssignment> reflectionBindings,
+    List<String> assignedUsernames
 ) implements DatabaseEntity {
 
     public AgentTemplate {
@@ -57,6 +58,18 @@ public record AgentTemplate(
         if (reflectionBindings == null) {
             reflectionBindings = List.of();
         }
+        if (assignedUsernames == null || assignedUsernames.isEmpty()) {
+            assignedUsernames = List.of();
+        } else {
+            java.util.LinkedHashSet<String> normalized = new java.util.LinkedHashSet<>();
+            for (String username : assignedUsernames) {
+                if (username == null || username.isBlank()) {
+                    continue;
+                }
+                normalized.add(username.trim());
+            }
+            assignedUsernames = List.copyOf(normalized);
+        }
     }
 
     public AgentTemplate(String uuid,
@@ -66,6 +79,17 @@ public record AgentTemplate(
                          boolean systemAgent,
                          List<String> skillUuids,
                          AgentType agentType) {
-        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType, List.of());
+        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType, List.of(), List.of());
+    }
+
+    public AgentTemplate(String uuid,
+                         String name,
+                         String systemPrompt,
+                         List<String> allowedTools,
+                         boolean systemAgent,
+                         List<String> skillUuids,
+                         AgentType agentType,
+                         List<ReflectionBindingAssignment> reflectionBindings) {
+        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType, reflectionBindings, List.of());
     }
 }

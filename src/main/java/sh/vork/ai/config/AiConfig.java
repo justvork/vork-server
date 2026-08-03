@@ -125,6 +125,7 @@ import sh.vork.ai.registry.Hidden;
 import sh.vork.ai.registry.ToolCategory;
 import sh.vork.ai.registry.ToolDepends;
 import sh.vork.ai.registry.ToolRegistry;
+import sh.vork.ai.service.AgentAssignmentService;
 import sh.vork.ai.security.AuthorizationRuleEngine;
 import sh.vork.ai.security.LoggedToolCallback;
 import sh.vork.ai.security.Restricted;
@@ -383,12 +384,30 @@ the protocol and will break the system. Do not converse. Execute.
     @Bean
     @Hidden
     @ToolCategory("Agent Orchestration")
-    public ToolCallback listAgentTemplates(DatabaseRepository<AgentTemplate> agentTemplateRepository) {
+    public ToolCallback listAgentTemplates(DatabaseRepository<AgentTemplate> agentTemplateRepository,
+                                           AgentAssignmentService agentAssignmentService,
+                                           DatabaseRepository<AiSession> aiSessionRepository) {
         return FunctionToolCallback
                 .builder("listAgentTemplates", (ListAgentTemplatesRequest req) -> {
+                    String sessionUuid = resolveSessionUuid();
+                    String username = resolveUsername();
+                    if ((username == null || username.isBlank())
+                            && sessionUuid != null
+                            && !sessionUuid.isBlank()
+                            && !"system".equals(sessionUuid)) {
+                        AiSession session = aiSessionRepository.get(sessionUuid);
+                        if (session != null && session.username() != null && !session.username().isBlank()) {
+                            username = session.username();
+                        }
+                    }
                     List<Object> entries = new ArrayList<>();
                     try (var stream = agentTemplateRepository.list(0, Integer.MAX_VALUE)) {
-                        stream.forEach(t -> entries.add(java.util.Map.of(
+                        String effectiveUsername = username;
+                        stream
+                            .filter(t -> effectiveUsername != null
+                                    && !effectiveUsername.isBlank()
+                                    && agentAssignmentService.isAssignedToUser(t, effectiveUsername))
+                            .forEach(t -> entries.add(java.util.Map.of(
                                 "uuid",         t.uuid(),
                                 "name",         t.name(),
                                 "agentType",    t.agentType().name(),
@@ -543,7 +562,8 @@ the protocol and will break the system. Do not converse. Execute.
     @ToolCategory("Scheduling")
     public ToolCallback delegateTask(ObjectProvider<AiSchedulerService> aiSchedulerServiceProvider,
                                      DatabaseRepository<AgentTemplate> agentTemplateRepository,
-                                     DatabaseRepository<AiSession> aiSessionRepository) {
+                                     DatabaseRepository<AiSession> aiSessionRepository,
+                                     AgentAssignmentService agentAssignmentService) {
         return FunctionToolCallback
                 .builder("delegateTask", (DelegateTaskRequest req) -> {
                     try {
@@ -593,6 +613,12 @@ the protocol and will break the system. Do not converse. Execute.
                         }
 
                         AgentTemplate target = matches.get(0);
+                        if (!agentAssignmentService.isAssignedToUser(target, username)) {
+                            return objectMapper.writeValueAsString(Map.of(
+                                    "status", "error",
+                                    "message", "Agent is not assigned to the current user.",
+                                    "agentName", req.agentName()));
+                        }
                         if (target.agentType() != sh.vork.ai.agent.AgentType.BACKGROUND) {
                             return objectMapper.writeValueAsString(Map.of(
                                     "status", "error",

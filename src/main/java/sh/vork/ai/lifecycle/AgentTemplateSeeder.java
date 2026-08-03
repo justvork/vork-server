@@ -322,6 +322,10 @@ Rules:
             // Preserve operator-assigned skillUuids — never overwrite them on reseed.
             List<String> preservedSkills = existing.skillUuids() != null
                     ? existing.skillUuids() : List.of();
+            List<sh.vork.reflection.ReflectionBindingAssignment> preservedReflectionBindings =
+                    existing.reflectionBindings() != null ? existing.reflectionBindings() : List.of();
+            List<String> preservedAssignedUsernames = existing.assignedUsernames() != null
+                    ? existing.assignedUsernames() : List.of();
             AgentTemplate updated = new AgentTemplate(
                     template.uuid(),
                     template.name(),
@@ -329,7 +333,9 @@ Rules:
                     List.copyOf(mergedTools),
                     template.systemAgent(),
                     preservedSkills,
-                    template.agentType());
+                    template.agentType(),
+                    preservedReflectionBindings,
+                    preservedAssignedUsernames);
             agentTemplateRepository.save(updated);
             log.info("Step update: refreshed built-in agent template [uuid={}, name={}, tools={}, preservedSkills={}]",
                     template.uuid(), template.name(), mergedTools.size(), preservedSkills.size());

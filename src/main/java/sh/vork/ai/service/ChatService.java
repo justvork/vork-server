@@ -44,6 +44,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import sh.vork.ai.AiProvider;
 import sh.vork.ai.agent.AgentTemplate;
+import sh.vork.ai.agent.AgentType;
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiChatMessage.AttachmentRef;
@@ -106,6 +107,10 @@ public class ChatService {
     private final RelayHttpClient               relayHttpClient;
     private final SystemSettingsService         systemSettingsService;
     private final TelegramChatResumptionService telegramChatResumptionService;
+
+    @Lazy
+    @Autowired
+    private AgentAssignmentService agentAssignmentService;
 
     @Value("${vork.app.base-url:}")
     private String configuredRelayHost;
@@ -272,7 +277,8 @@ public class ChatService {
         if (!username.equals(session.username())) {
             throw new IllegalStateException("Access denied for session: " + sessionUuid);
         }
-        return ensureWebSessionToggleTool(session);
+        session = ensureWebSessionToggleTool(session);
+        return ensureActiveAgentAccessForSession(session, username);
     }
 
     public List<AiSession> listSessionsForCurrentUser() {
@@ -506,6 +512,7 @@ public class ChatService {
         if (!username.equals(session.username())) {
             throw new IllegalStateException("Access denied for session: " + sessionUuid);
         }
+        session = ensureActiveAgentAccessForSession(session, username);
 
         // Ensure tools running on non-web threads (Telegram, background) can resolve the principal
         SecurityContext prevCtx = SecurityContextHolder.getContext();
@@ -715,7 +722,7 @@ public class ChatService {
             }
 
             if ("DELEGATE_TURN".equals(structured.status())) {
-                String targetId = resolveAgentByName(structured.targetAgent(), sessionUuid);
+                String targetId = resolveAgentByName(structured.targetAgent(), currentSession.username(), sessionUuid);
                 if (targetId != null) {
                     AiSession current = sessionRepo.get(sessionUuid);
                     if (current == null) {
@@ -747,7 +754,7 @@ public class ChatService {
             }
 
             if ("SWITCH_AGENT".equals(structured.status())) {
-                String targetId = resolveAgentByName(structured.targetAgent(), sessionUuid);
+                String targetId = resolveAgentByName(structured.targetAgent(), currentSession.username(), sessionUuid);
                 if (targetId != null) {
                     AiSession current = sessionRepo.get(sessionUuid);
                     if (current == null) {
@@ -1034,7 +1041,8 @@ public class ChatService {
      * @return the UUID of the newly active agent template, or {@code null} if not found
      */
     public String switchActiveAgentByName(String sessionUuid, String agentName) {
-        String targetId = resolveAgentByName(agentName, sessionUuid);
+        AiSession session = getSessionForCurrentUser(sessionUuid);
+        String targetId = resolveAgentByName(agentName, session.username(), sessionUuid);
         if (targetId == null) {
             log.warn("switchActiveAgentByName: agent not found [name={}, session={}]", agentName, sessionUuid);
             return null;
@@ -1051,9 +1059,14 @@ public class ChatService {
      * @return the UUID of the newly active agent template, or {@code null} if not found / not owned
      */
     public String switchActiveAgentById(String sessionUuid, String agentTemplateId) {
-        if (agentTemplateRepo.get(agentTemplateId) == null) {
+        AiSession session = getSessionForCurrentUser(sessionUuid);
+        AgentTemplate template = agentTemplateRepo.get(agentTemplateId);
+        if (template == null) {
             log.warn("switchActiveAgentById: template not found [id={}, session={}]", agentTemplateId, sessionUuid);
             return null;
+        }
+        if (!isAssignedToUser(template, session.username())) {
+            throw new IllegalStateException("Agent is not assigned to current user: " + template.name());
         }
         return applyAgentSwitch(sessionUuid, agentTemplateId);
     }
@@ -1083,6 +1096,23 @@ public class ChatService {
         try (var stream = agentTemplateRepo.list(0, Integer.MAX_VALUE)) {
             return stream.toList();
         }
+    }
+
+    public List<AgentTemplate> listAssignedAgentTemplatesForCurrentUser(AgentType type,
+                                                                         boolean includeConcierge) {
+        String username = resolveUsername();
+        List<AgentTemplate> candidates = agentAssignmentService != null
+                ? agentAssignmentService.listAssignedAgentsForUser(username, type)
+                : listAgentTemplates().stream()
+                        .filter(template -> type == null || template.agentType() == type)
+                        .toList();
+
+        if (includeConcierge) {
+            return candidates;
+        }
+        return candidates.stream()
+                .filter(template -> !isConciergeAgent(template))
+                .toList();
     }
 
     /** Adds a skill UUID to the session's {@code sessionSkillUuids} list. */
@@ -1591,21 +1621,73 @@ public class ChatService {
      * Resolves an {@link AgentTemplate} UUID by display {@code name}.
      * Returns {@code null} when no template with that name exists.
      */
-    private String resolveAgentByName(String targetName, String sessionUuid) {
+    private String resolveAgentByName(String targetName, String username, String sessionUuid) {
         if (targetName == null || targetName.isBlank()) {
             log.warn("resolveAgentByName: null/blank target name [session={}]", sessionUuid);
             return null;
         }
-        try (var stream = agentTemplateRepo.search(0, 1, "name", SortOrder.ASC,
-                SearchQuery.eq("name", targetName))) {
-            return stream.findFirst()
-                    .map(AgentTemplate::uuid)
-                    .orElseGet(() -> {
-                        log.warn("resolveAgentByName: no template found [name={}, session={}]",
-                                targetName, sessionUuid);
-                        return null;
-                    });
+        AgentTemplate template;
+        if (agentAssignmentService != null) {
+            template = agentAssignmentService.resolveAssignedAgentByName(username, targetName);
+        } else {
+            try (var stream = agentTemplateRepo.search(0, 1, "name", SortOrder.ASC,
+                    SearchQuery.eq("name", targetName))) {
+                template = stream.findFirst().orElse(null);
+            }
         }
+        if (template == null) {
+            log.warn("resolveAgentByName: no accessible template found [name={}, user={}, session={}]",
+                    targetName, username, sessionUuid);
+            return null;
+        }
+        return template.uuid();
+    }
+
+    private AiSession ensureActiveAgentAccessForSession(AiSession session, String username) {
+        if (session == null || username == null || username.isBlank()) {
+            return session;
+        }
+        String activeAgentId = session.activeAgentTemplateId();
+        if (activeAgentId == null || activeAgentId.isBlank()) {
+            return session;
+        }
+        AgentTemplate activeTemplate = agentTemplateRepo.get(activeAgentId);
+        if (activeTemplate != null && isAssignedToUser(activeTemplate, username)) {
+            return session;
+        }
+
+        log.warn("Active agent is not assigned to user; resetting to Concierge [session={}, user={}, agentId={}]",
+                session.uuid(), username, activeAgentId);
+        AiSession adjusted = new AiSession(
+                session.uuid(), session.provider(), session.originMode(),
+                session.username(), session.name(), session.createdAt(),
+                session.currentRoundCount(), session.messages(),
+                session.environmentVariables(), session.status(),
+                AgentTemplateSeeder.UUID_CONCIERGE, session.modelId(),
+                session.skillStack(), session.sessionSkillUuids(), session.sessionToolIds());
+        sessionRepo.save(adjusted);
+        return adjusted;
+    }
+
+    private boolean isAssignedToUser(AgentTemplate template, String username) {
+        if (template == null || username == null || username.isBlank()) {
+            return false;
+        }
+        if (agentAssignmentService == null) {
+            return true;
+        }
+        return agentAssignmentService.isAssignedToUser(template, username);
+    }
+
+    private boolean isConciergeAgent(AgentTemplate template) {
+        if (template == null) {
+            return false;
+        }
+        if (agentAssignmentService == null) {
+            return AgentTemplateSeeder.UUID_CONCIERGE.equals(template.uuid())
+                    || (template.name() != null && "Concierge".equalsIgnoreCase(template.name()));
+        }
+        return agentAssignmentService.isConciergeAgent(template);
     }
 
     private String safeGenerateWithHistory(List<Message> history, String effectiveContent, AiProvider provider) {
