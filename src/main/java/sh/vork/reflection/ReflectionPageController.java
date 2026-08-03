@@ -1,6 +1,7 @@
 package sh.vork.reflection;
 
 import org.springframework.security.core.Authentication;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -15,6 +16,7 @@ import sh.vork.security.Permission;
 public class ReflectionPageController {
 
     @GetMapping("/reflections")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
     public String reflectionsPage(Model model) {
         model.addAttribute("canManageUsers", hasAuthority(Permission.USERS_MANAGE.authority()));
         return "reflections";

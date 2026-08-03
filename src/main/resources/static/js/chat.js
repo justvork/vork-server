@@ -1831,6 +1831,17 @@ async function loadSkillsPanel(uuid) {
 }
 
 function applySessionExtrasEditability(canManage) {
+    const sectionIds = [
+        'session-skills-section',
+        'session-tools-section',
+        'session-reflection-bindings-section'
+    ];
+    sectionIds.forEach(function (sectionId) {
+        const section = document.getElementById(sectionId);
+        if (!section) return;
+        section.classList.toggle('hidden', !canManage);
+    });
+
     const ids = [
         'skill-search-input',
         'tool-search-input',

@@ -62,6 +62,7 @@ public class AgentController {
     // ── Page ──────────────────────────────────────────────────────────────────
 
     @GetMapping("/agents")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
     public String agentsPage(Model model) {
         log.debug("ENTER agentsPage");
         List<AgentTemplate> agents;

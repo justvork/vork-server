@@ -43,6 +43,7 @@ public class SkillController {
     // -- Page ----------------------------------------------------------------
 
     @GetMapping("/skills")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
     public String skillsPage(Model model) {
         log.debug("ENTER skillsPage");
         model.addAttribute("skills", skillService.list());

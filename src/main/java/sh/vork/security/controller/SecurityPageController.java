@@ -69,4 +69,15 @@ public class SecurityPageController {
         
         return "authorization";
     }
+
+    /**
+     * Display a friendly message when an authenticated user lacks permission
+     * to access an admin-only page.
+     *
+     * @return View name "access-denied"
+     */
+    @GetMapping("/access-denied")
+    public String accessDenied() {
+        return "access-denied";
+    }
 }

@@ -29,19 +29,19 @@
            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800">
             <i class="fa-solid fa-bell"></i>
         </a>
-        <a href="/agents" th:href="@{/agents}" title="Agents"
+        <a th:if="${canManageUsers}" href="/agents" th:href="@{/agents}" title="Agents"
            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800">
             <i class="fa-solid fa-robot"></i>
         </a>
-        <a href="/skills" th:href="@{/skills}" title="Skills"
+        <a th:if="${canManageUsers}" href="/skills" th:href="@{/skills}" title="Skills"
            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800">
             <i class="fa-solid fa-bolt"></i>
         </a>
-        <a href="/reflections" th:href="@{/reflections}" title="Reflections"
+        <a th:if="${canManageUsers}" href="/reflections" th:href="@{/reflections}" title="Reflections"
            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800">
             <i class="fa-solid fa-wand-magic-sparkles"></i>
         </a>
-        <a href="/jobs" th:href="@{/jobs}" title="Jobs"
+        <a th:if="${canManageUsers}" href="/jobs" th:href="@{/jobs}" title="Jobs"
            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800">
             <i class="fa-solid fa-clock-rotate-left"></i>
         </a>
@@ -49,11 +49,11 @@
            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800">
             <i class="fa-solid fa-inbox"></i>
         </a>
-        <a href="/data-inspector" th:href="@{/data-inspector}" title="Data Inspector"
+        <a th:if="${canManageUsers}" href="/data-inspector" th:href="@{/data-inspector}" title="Data Inspector"
            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800">
             <i class="fa-solid fa-table-list"></i>
         </a>
-        <a href="/settings" th:href="@{/settings}" title="Settings"
+        <a th:if="${canManageUsers}" href="/settings" th:href="@{/settings}" title="Settings"
            id="settings-btn"
            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800">
             <i class="fa-solid fa-gear"></i>

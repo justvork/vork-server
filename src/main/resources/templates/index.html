@@ -28,6 +28,9 @@
     <aside id="chat-sidebar" class="chat-sidebar">
         <!-- Vertical icon-tab strip -->
         <div class="sidebar-tabs">
+            <button id="sidebar-toggle-side" data-role="sidebar-toggle" class="sidebar-tab-btn" type="button" title="Collapse menu">
+                <i class="fa-solid fa-bars"></i>
+            </button>
             <button class="sidebar-tab-btn active" data-tab="chats" title="Chats">
                 <i class="fa-solid fa-comments"></i>
             </button>
@@ -35,9 +38,6 @@
                 <i class="fa-solid fa-puzzle-piece"></i>
             </button>
             <div class="sidebar-tabs-spacer"></div>
-            <button id="sidebar-toggle-side" data-role="sidebar-toggle" class="sidebar-tab-btn" type="button" title="Collapse menu">
-                <i class="fa-solid fa-bars"></i>
-            </button>
         </div>
         <!-- Chats tab content -->
         <div class="sidebar-tab-content" id="tab-chats">
@@ -69,28 +69,34 @@
                     <span class="text-xs text-zinc-500">Loading&hellip;</span>
                 </div>
                 <!-- Session skills (removable + add) -->
-                <div class="sidebar-section-title mt-2">Session Skills</div>
-                <div id="session-skills-list" class="skills-pill-list"></div>
-                <div class="skills-search-box mt-1">
-                    <input id="skill-search-input" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"
-                           placeholder="Add skill&hellip;" autocomplete="off">
-                    <div id="skill-search-results" class="skills-search-dropdown hidden"></div>
+                <div id="session-skills-section" class="hidden">
+                    <div class="sidebar-section-title mt-2">Session Skills</div>
+                    <div id="session-skills-list" class="skills-pill-list"></div>
+                    <div class="skills-search-box mt-1">
+                        <input id="skill-search-input" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"
+                               placeholder="Add skill&hellip;" autocomplete="off">
+                        <div id="skill-search-results" class="skills-search-dropdown hidden"></div>
+                    </div>
                 </div>
                 <!-- Session tools (removable + add) -->
-                <div class="sidebar-section-title mt-2">Session Tools</div>
-                <div id="session-tools-list" class="skills-pill-list"></div>
-                <div class="skills-search-box mt-1">
-                    <input id="tool-search-input" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"
-                           placeholder="Add tool&hellip;" autocomplete="off">
-                    <div id="tool-search-results" class="skills-search-dropdown hidden"></div>
+                <div id="session-tools-section" class="hidden">
+                    <div class="sidebar-section-title mt-2">Session Tools</div>
+                    <div id="session-tools-list" class="skills-pill-list"></div>
+                    <div class="skills-search-box mt-1">
+                        <input id="tool-search-input" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"
+                               placeholder="Add tool&hellip;" autocomplete="off">
+                        <div id="tool-search-results" class="skills-search-dropdown hidden"></div>
+                    </div>
                 </div>
                 <!-- Session reflection bindings (removable + add) -->
-                <div class="sidebar-section-title mt-2">Session Reflection Bindings</div>
-                <div id="session-reflection-bindings-list" class="skills-pill-list"></div>
-                <div class="skills-search-box mt-1">
-                    <input id="reflection-binding-search-input" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"
-                           placeholder="Add reflection binding&hellip;" autocomplete="off">
-                    <div id="reflection-binding-search-results" class="skills-search-dropdown hidden"></div>
+                <div id="session-reflection-bindings-section" class="hidden">
+                    <div class="sidebar-section-title mt-2">Session Reflection Bindings</div>
+                    <div id="session-reflection-bindings-list" class="skills-pill-list"></div>
+                    <div class="skills-search-box mt-1">
+                        <input id="reflection-binding-search-input" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"
+                               placeholder="Add reflection binding&hellip;" autocomplete="off">
+                        <div id="reflection-binding-search-results" class="skills-search-dropdown hidden"></div>
+                    </div>
                 </div>
             </div>
         </div>

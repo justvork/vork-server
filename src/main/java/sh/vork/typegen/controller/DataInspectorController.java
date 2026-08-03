@@ -2,6 +2,7 @@ package sh.vork.typegen.controller;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
 
@@ -17,6 +18,7 @@ public class DataInspectorController {
     private static final Logger log = LoggerFactory.getLogger(DataInspectorController.class);
 
     @GetMapping("/data-inspector")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
     public String dataInspectorPage() {
         log.debug("ENTER dataInspectorPage");
         return "data-inspector";

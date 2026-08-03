@@ -60,6 +60,9 @@ public class SecurityConfig {
                 .deleteCookies("JSESSIONID")
                 .permitAll()
             )
+            .exceptionHandling(ex -> ex
+                .accessDeniedPage("/access-denied")
+            )
             .csrf(csrf -> csrf
                 .ignoringRequestMatchers("/api/authorization/**", "/api/chat/**", "/ws/**", "/logout",
                         "/api/setup/**", "/api/system/**", "/api/ai/**", "/api/agents/**",

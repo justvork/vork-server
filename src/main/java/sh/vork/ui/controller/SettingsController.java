@@ -27,6 +27,7 @@ import java.util.Map;
 
 @Controller
 @RequestMapping("/settings")
+@PreAuthorize("hasAuthority('USERS_MANAGE')")
 public class SettingsController {
     private final SettingsPageRegistry registry;
     private final ToolRegistry toolRegistry;

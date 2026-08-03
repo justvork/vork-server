@@ -7,6 +7,7 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Controller;
@@ -59,6 +60,7 @@ public class JobsController {
     // ── Page ──────────────────────────────────────────────────────────────────
 
     @GetMapping("/jobs")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
     public String jobsPage(Model model, @AuthenticationPrincipal UserDetails user) {
         log.debug("ENTER jobsPage: [user={}]", user.getUsername());
         model.addAttribute("jobs", schedulerService.listJobsForUser(user.getUsername()));

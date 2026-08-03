@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Access Denied — Vork</title>
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+</head>
+<body class="bg-zinc-950 text-zinc-100">
+<div th:replace="~{fragments/header :: header}"></div>
+
+<div class="vork-page-shell py-5">
+    <div class="mx-auto max-w-2xl rounded-xl border border-amber-500/30 bg-zinc-900 p-6">
+        <div class="mb-4 flex items-center gap-3 text-amber-300">
+            <i class="fa-solid fa-shield-halved text-2xl"></i>
+            <h1 class="text-xl font-semibold">Access denied</h1>
+        </div>
+        <p class="mb-4 text-zinc-300">
+            This area is restricted to administrative users. Your account does not currently have the required permissions.
+        </p>
+        <div class="flex flex-wrap gap-2">
+            <a href="/index.html" th:href="@{/index.html}"
+               class="rounded-lg bg-[#fdaa02] px-3 py-2 text-sm font-semibold text-black transition-colors hover:bg-[#e89a02]">
+                Return to chat
+            </a>
+        </div>
+    </div>
+</div>
+</body>
+</html>
