@@ -36,7 +36,8 @@ public record AgentTemplate(
         List<String> skillUuids,
     AgentType    agentType,
     List<ReflectionBindingAssignment> reflectionBindings,
-    List<String> assignedUsernames
+    List<String> assignedUsernames,
+    String       recommendedModel
 ) implements DatabaseEntity {
 
     public AgentTemplate {
@@ -70,6 +71,21 @@ public record AgentTemplate(
             }
             assignedUsernames = List.copyOf(normalized);
         }
+        if (recommendedModel != null) {
+            String normalized = recommendedModel.trim();
+            if (normalized.isBlank()) {
+                recommendedModel = null;
+            } else {
+                int sep = normalized.indexOf(':');
+                if (sep > 0) {
+                    String provider = normalized.substring(0, sep).trim().toUpperCase();
+                    String modelId = normalized.substring(sep + 1).trim();
+                    recommendedModel = provider + ":" + modelId;
+                } else {
+                    recommendedModel = normalized.toUpperCase();
+                }
+            }
+        }
     }
 
     public AgentTemplate(String uuid,
@@ -79,7 +95,7 @@ public record AgentTemplate(
                          boolean systemAgent,
                          List<String> skillUuids,
                          AgentType agentType) {
-        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType, List.of(), List.of());
+        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType, List.of(), List.of(), null);
     }
 
     public AgentTemplate(String uuid,
@@ -90,6 +106,19 @@ public record AgentTemplate(
                          List<String> skillUuids,
                          AgentType agentType,
                          List<ReflectionBindingAssignment> reflectionBindings) {
-        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType, reflectionBindings, List.of());
+        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType, reflectionBindings, List.of(), null);
+    }
+
+    public AgentTemplate(String uuid,
+                         String name,
+                         String systemPrompt,
+                         List<String> allowedTools,
+                         boolean systemAgent,
+                         List<String> skillUuids,
+                         AgentType agentType,
+                         List<ReflectionBindingAssignment> reflectionBindings,
+                         List<String> assignedUsernames) {
+        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
+                reflectionBindings, assignedUsernames, null);
     }
 }

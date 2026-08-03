@@ -179,6 +179,7 @@ public class TelegramSuspensionRenderer {
     }
 
     /** Self-hosted path: generates a token URL pointing to this app's {@code /input-form} endpoint. */
+    @SuppressWarnings("unused")
     private void renderWebFormSelfHosted(String chatId, String botToken, AiSession session,
                                           UiEventFrame promptEvent, String title, String description,
                                           String codeContent, String baseUrl) {

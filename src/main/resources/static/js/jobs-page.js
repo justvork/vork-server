@@ -2,18 +2,11 @@
 
 let jobModal;
 let allJobs = [];
-let _jobToolsCache = null;
-let _jobSkillsCache = null;
-let pendingJobSkillUuids = [];
-let pendingJobToolIds = [];
 
 document.addEventListener('DOMContentLoaded', function () {
     jobModal = new VorkModal(document.getElementById('jobModal'));
     loadAgents();
-    loadModels();
     loadJobsJson();
-    setupJobSkillSearch();
-    setupJobToolSearch();
 });
 
 function loadAgents() {
@@ -34,24 +27,6 @@ function loadAgents() {
         .catch(function () {});
 }
 
-function loadModels() {
-    fetch('/api/chat/models')
-        .then(function (r) { return r.ok ? r.json() : []; })
-        .then(function (groups) {
-            const sel = document.getElementById('job-model');
-            groups.forEach(function (g) {
-                if (!g.configured) return;
-                g.models.forEach(function (m) {
-                    const opt = document.createElement('option');
-                    opt.value = g.providerKey + ':' + m.modelId;
-                    opt.textContent = g.providerLabel + ' - ' + m.label;
-                    sel.appendChild(opt);
-                });
-            });
-        })
-        .catch(function () {});
-}
-
 function loadJobsJson() {
     fetch('/api/jobs')
         .then(function (r) { return r.ok ? r.json() : []; })
@@ -68,13 +43,8 @@ function openCreate() {
     document.getElementById('job-repeat-duration').value = 1;
     document.getElementById('job-duration-type').value = 'HOURS';
     document.getElementById('job-agent').value = 'agent-tpl-automation-reporter-001';
-    document.getElementById('job-model').value = '';
     document.getElementById('job-oob-timeout').value = 240;
     document.querySelectorAll('input[name="invocationType"]').forEach(function (r) { r.checked = false; });
-    pendingJobSkillUuids = [];
-    pendingJobToolIds = [];
-    renderJobSkillPills();
-    renderJobToolPills();
     document.getElementById('modal-alert-area').innerHTML = '';
     onTypeChange();
     jobModal.show();
@@ -93,9 +63,6 @@ function openEdit(id) {
     document.getElementById('job-prompt').value = job.aiPrompt;
     document.getElementById('job-agent').value = job.agentTemplateId || '';
 
-    const modelKey = job.provider ? job.provider + ':' + (job.modelId || '') : '';
-    document.getElementById('job-model').value = modelKey;
-
     const typeRadio = document.getElementById('type-' + job.invocationType);
     if (typeRadio) typeRadio.checked = true;
     onTypeChange();
@@ -107,10 +74,6 @@ function openEdit(id) {
     document.getElementById('job-repeat-duration').value = job.repeatDuration || 1;
     document.getElementById('job-duration-type').value = job.durationType || 'HOURS';
     document.getElementById('job-oob-timeout').value = job.oobTimeoutMinutes > 0 ? job.oobTimeoutMinutes : 240;
-    pendingJobSkillUuids = job.skillUuids ? job.skillUuids.slice() : [];
-    pendingJobToolIds = job.toolIds ? job.toolIds.slice() : [];
-    renderJobSkillPills();
-    renderJobToolPills();
     document.getElementById('modal-alert-area').innerHTML = '';
     jobModal.show();
 }
@@ -137,11 +100,6 @@ async function saveJob() {
         return;
     }
 
-    const modelVal = document.getElementById('job-model').value;
-    const sep = modelVal ? modelVal.indexOf(':') : -1;
-    const provider = sep >= 0 ? modelVal.substring(0, sep) : null;
-    const modelId = sep >= 0 ? modelVal.substring(sep + 1) : null;
-
     const body = {
         name: document.getElementById('job-name').value.trim(),
         aiPrompt: document.getElementById('job-prompt').value.trim(),
@@ -150,11 +108,11 @@ async function saveJob() {
         repeatDuration: parseInt(document.getElementById('job-repeat-duration').value) || 0,
         durationType: document.getElementById('job-duration-type').value,
         agentTemplateId: document.getElementById('job-agent').value || null,
-        provider: provider,
-        modelId: modelId,
+        provider: null,
+        modelId: null,
         oobTimeoutMinutes: parseInt(document.getElementById('job-oob-timeout').value) || 240,
-        skillUuids: pendingJobSkillUuids.slice(),
-        toolIds: pendingJobToolIds.slice()
+        skillUuids: [],
+        toolIds: []
     };
 
     const btn = document.getElementById('btn-save-job');
@@ -243,148 +201,6 @@ async function resumeJob(id) {
     } catch (_e) {
         showAlert('Network error resuming job.', 'danger');
     }
-}
-
-function renderJobSkillPills() {
-    const container = document.getElementById('job-skills-pills');
-    if (!container) return;
-    container.innerHTML = '';
-    pendingJobSkillUuids.forEach(function (uuid) {
-        const skill = (_jobSkillsCache || []).find(function (s) { return s.uuid === uuid; });
-        const label = skill ? skill.name : uuid;
-        const pill = document.createElement('span');
-        pill.className = 'extra-pill skill-pill';
-        pill.textContent = label;
-        const btn = document.createElement('button');
-        btn.className = 'pill-remove';
-        btn.innerHTML = '&times;';
-        btn.addEventListener('click', function () {
-            pendingJobSkillUuids = pendingJobSkillUuids.filter(function (u) { return u !== uuid; });
-            renderJobSkillPills();
-        });
-        pill.appendChild(btn);
-        container.appendChild(pill);
-    });
-}
-
-function renderJobToolPills() {
-    const container = document.getElementById('job-tools-pills');
-    if (!container) return;
-    container.innerHTML = '';
-    pendingJobToolIds.forEach(function (id) {
-        const tool = (_jobToolsCache || []).find(function (t) { return t.id === id; });
-        const label = tool ? tool.name : id;
-        const pill = document.createElement('span');
-        pill.className = 'extra-pill tool-pill';
-        pill.textContent = label;
-        const btn = document.createElement('button');
-        btn.className = 'pill-remove';
-        btn.innerHTML = '&times;';
-        btn.addEventListener('click', function () {
-            pendingJobToolIds = pendingJobToolIds.filter(function (i) { return i !== id; });
-            renderJobToolPills();
-        });
-        pill.appendChild(btn);
-        container.appendChild(pill);
-    });
-}
-
-function setupJobSkillSearch() {
-    const input = document.getElementById('job-skill-search');
-    const dropdown = document.getElementById('job-skill-dropdown');
-    if (!input || !dropdown) return;
-
-    input.addEventListener('input', async function () {
-        const q = input.value.trim().toLowerCase();
-        dropdown.classList.add('hidden');
-        dropdown.innerHTML = '';
-        if (q.length < 1) return;
-        if (!_jobSkillsCache) {
-            try {
-                const r = await fetch('/api/skills?page=0&pageSize=100');
-                if (r.ok) _jobSkillsCache = await r.json();
-            } catch (_e) {
-                _jobSkillsCache = [];
-            }
-        }
-        const matches = (_jobSkillsCache || []).filter(function (s) {
-            return s.name.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q);
-        }).slice(0, 10);
-        if (!matches.length) return;
-
-        matches.forEach(function (skill) {
-            const item = document.createElement('div');
-            item.className = 'skills-search-item';
-            item.textContent = skill.name;
-            item.title = skill.description || '';
-            item.addEventListener('click', function () {
-                if (!pendingJobSkillUuids.includes(skill.uuid)) {
-                    pendingJobSkillUuids.push(skill.uuid);
-                    renderJobSkillPills();
-                }
-                input.value = '';
-                dropdown.classList.add('hidden');
-            });
-            dropdown.appendChild(item);
-        });
-        dropdown.classList.remove('hidden');
-    });
-
-    document.addEventListener('click', function (e) {
-        if (!input.contains(e.target) && !dropdown.contains(e.target)) {
-            dropdown.classList.add('hidden');
-        }
-    });
-}
-
-function setupJobToolSearch() {
-    const input = document.getElementById('job-tool-search');
-    const dropdown = document.getElementById('job-tool-dropdown');
-    if (!input || !dropdown) return;
-
-    input.addEventListener('input', async function () {
-        const q = input.value.trim().toLowerCase();
-        dropdown.classList.add('hidden');
-        dropdown.innerHTML = '';
-        if (q.length < 1) return;
-        if (!_jobToolsCache) {
-            try {
-                const r = await fetch('/api/chat/tools');
-                if (r.ok) _jobToolsCache = await r.json();
-            } catch (_e) {
-                _jobToolsCache = [];
-            }
-        }
-        const matches = (_jobToolsCache || []).filter(function (t) {
-            return t.name.toLowerCase().includes(q)
-                || (t.description || '').toLowerCase().includes(q)
-                || (t.category || '').toLowerCase().includes(q);
-        }).slice(0, 10);
-        if (!matches.length) return;
-
-        matches.forEach(function (tool) {
-            const item = document.createElement('div');
-            item.className = 'skills-search-item';
-            item.textContent = tool.name + (tool.category ? '  [' + tool.category + ']' : '');
-            item.title = tool.description || '';
-            item.addEventListener('click', function () {
-                if (!pendingJobToolIds.includes(tool.id)) {
-                    pendingJobToolIds.push(tool.id);
-                    renderJobToolPills();
-                }
-                input.value = '';
-                dropdown.classList.add('hidden');
-            });
-            dropdown.appendChild(item);
-        });
-        dropdown.classList.remove('hidden');
-    });
-
-    document.addEventListener('click', function (e) {
-        if (!input.contains(e.target) && !dropdown.contains(e.target)) {
-            dropdown.classList.add('hidden');
-        }
-    });
 }
 
 function showAlert(msg, type) {

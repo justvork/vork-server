@@ -326,6 +326,9 @@ Rules:
                     existing.reflectionBindings() != null ? existing.reflectionBindings() : List.of();
             List<String> preservedAssignedUsernames = existing.assignedUsernames() != null
                     ? existing.assignedUsernames() : List.of();
+            String effectiveRecommendedModel = template.recommendedModel() != null
+                    ? template.recommendedModel()
+                    : existing.recommendedModel();
             AgentTemplate updated = new AgentTemplate(
                     template.uuid(),
                     template.name(),
@@ -335,7 +338,8 @@ Rules:
                     preservedSkills,
                     template.agentType(),
                     preservedReflectionBindings,
-                    preservedAssignedUsernames);
+                    preservedAssignedUsernames,
+                    effectiveRecommendedModel);
             agentTemplateRepository.save(updated);
             log.info("Step update: refreshed built-in agent template [uuid={}, name={}, tools={}, preservedSkills={}]",
                     template.uuid(), template.name(), mergedTools.size(), preservedSkills.size());

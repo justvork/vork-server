@@ -452,6 +452,13 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
      * @return the model's response as a plain string
      */
     public String generateWithHistory(List<Message> conversationHistory, String newUserMessage, AiProvider provider) {
+                return generateWithHistory(conversationHistory, newUserMessage, provider, null);
+        }
+
+        public String generateWithHistory(List<Message> conversationHistory,
+                                                                          String newUserMessage,
+                                                                          AiProvider provider,
+                                                                          String modelOverride) {
         ChatClient base = resolveClient(provider);
 
         String promptPreview = sanitizeInputForLog(newUserMessage);
@@ -469,7 +476,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         String effectiveUser   = withBackgroundDirective(newUserMessage, provider);
         String response = callWithFallback(
                 builder -> builder.build().prompt().messages(historyArray).user(effectiveUser).call().content(),
-                base, provider);
+                base, provider, modelOverride);
 
         log.info("Chat response received [provider={}, length={}]",
                 provider, response == null ? 0 : response.length());
@@ -497,6 +504,14 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                               String userText,
                                               List<Media> media,
                                               AiProvider provider) {
+                return generateWithHistoryAndMedia(conversationHistory, userText, media, provider, null);
+        }
+
+        public String generateWithHistoryAndMedia(List<Message> conversationHistory,
+                                                                                          String userText,
+                                                                                          List<Media> media,
+                                                                                          AiProvider provider,
+                                                                                          String modelOverride) {
         ChatClient base = resolveClient(provider);
 
         String effectiveUserText = (userText == null || userText.isBlank())
@@ -521,7 +536,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         Message[] allMsgsArray = allMessages.toArray(Message[]::new);
         String response = callWithFallback(
                 builder -> builder.build().prompt().messages(allMsgsArray).call().content(),
-                base, provider);
+                base, provider, modelOverride);
 
         log.info("Chat response with media received [provider={}, length={}]",
                 provider, response == null ? 0 : response.length());
@@ -756,16 +771,6 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         }
 
         /**
-         * Returns the model ID stored on the active session, or {@code null} if none set.
-         */
-        private String resolveSessionModelId() {
-                String sessionUuid = ToolExecutionContext.getSessionUuid();
-                if (sessionUuid == null || sessionUuid.isBlank()) return null;
-                AiSession session = sessionRepo.get(sessionUuid);
-                return session != null ? session.modelId() : null;
-        }
-
-        /**
          * Builds a mutated {@link ChatClient.Builder} from the shared base client with the
          * composed system prompt and, when an active {@link AgentTemplate} restricts the
          * allowed tools, the filtered tool set applied.  If the session has a specific model
@@ -969,7 +974,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         .defaultSystem(composeSystemPrompt())
                         .defaultToolCallbacks(tools);
 
-                String modelId = (forcedModel != null) ? forcedModel : resolveSessionModelId();
+                String modelId = forcedModel;
                 if (modelId != null && !modelId.isBlank()) {
                         log.debug("Applying model override: {}", modelId);
                         builder.defaultOptions(ChatOptions.builder().model(modelId).build());
@@ -1007,7 +1012,17 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         private String callWithFallback(Function<ChatClient.Builder, String> callFn,
                                         ChatClient base,
                                         AiProvider provider) {
+                return callWithFallback(callFn, base, provider, null);
+        }
+
+        private String callWithFallback(Function<ChatClient.Builder, String> callFn,
+                                        ChatClient base,
+                                        AiProvider provider,
+                                        String modelOverride) {
                 try {
+                        if (modelOverride != null && !modelOverride.isBlank()) {
+                                return callFn.apply(buildMutatedClientWithModel(base, modelOverride));
+                        }
                         return callFn.apply(buildMutatedClient(base));
                 } catch (RuntimeException e) {
                         if (!isModelCompatibilityError(e)) throw e;

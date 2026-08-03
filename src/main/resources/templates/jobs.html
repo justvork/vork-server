@@ -43,7 +43,7 @@
                         <th>Name</th>
                         <th>Type</th>
                         <th>Schedule</th>
-                        <th>Agent / Model</th>
+                        <th>Agent</th>
                         <th>Status</th>
                         <th>Last Run</th>
                         <th>Next Run</th>
@@ -72,8 +72,7 @@
                         </td>
                         <td class="small text-muted">
                             <div th:if="${job.agentTemplateId() != null}" th:text="'Agent: ' + ${job.agentTemplateId()}"></div>
-                            <div th:if="${job.provider() != null}" th:text="${job.provider()} + ' / ' + ${job.modelId() != null ? job.modelId() : '—'}"></div>
-                            <span th:if="${job.agentTemplateId() == null and job.provider() == null}">—</span>
+                            <span th:if="${job.agentTemplateId() == null}">—</span>
                         </td>
                         <td>
                             <span class="badge"
@@ -235,14 +234,7 @@
                         <select id="job-agent" class="form-select">
                             <option value="">— none (use default) —</option>
                         </select>
-                    </div>
-
-                    <!-- Provider / Model -->
-                    <div class="col-md-6">
-                        <label class="form-label" for="job-model">Provider &amp; Model</label>
-                        <select id="job-model" class="form-select">
-                            <option value="">— none (use global default) —</option>
-                        </select>
+                        <div class="form-text">Model selection follows system defaults, with agent/skill recommended model overrides.</div>
                     </div>
 
                     <!-- OOB Timeout -->
@@ -253,29 +245,6 @@
                         <div class="form-text">How long the relay authorization link remains valid. Default: 240 min (4 hrs).</div>
                     </div>
 
-                    <!-- Session Skills -->
-                    <div class="col-12">
-                        <label class="form-label">Session Skills</label>
-                        <div id="job-skills-pills" class="d-flex flex-wrap gap-1 mb-1"></div>
-                        <div class="input-group input-group-sm jobs-search-wrap">
-                            <input id="job-skill-search" type="text" class="form-control"
-                                   placeholder="Search and add skill…" autocomplete="off">
-                            <div id="job-skill-dropdown" class="skills-search-dropdown jobs-search-dropdown hidden"></div>
-                        </div>
-                        <div class="form-text">Extra skills available to this job's AI session.</div>
-                    </div>
-
-                    <!-- Session Tools -->
-                    <div class="col-12">
-                        <label class="form-label">Session Tools</label>
-                        <div id="job-tools-pills" class="d-flex flex-wrap gap-1 mb-1"></div>
-                        <div class="input-group input-group-sm jobs-search-wrap">
-                            <input id="job-tool-search" type="text" class="form-control"
-                                   placeholder="Search and add tool…" autocomplete="off">
-                            <div id="job-tool-dropdown" class="skills-search-dropdown jobs-search-dropdown hidden"></div>
-                        </div>
-                        <div class="form-text">Extra tools available to this job's AI session.</div>
-                    </div>
                 </div>
             </div>
             <div class="modal-footer flex-column align-items-stretch gap-2">

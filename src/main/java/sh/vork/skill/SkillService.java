@@ -200,6 +200,7 @@ public class SkillService {
                 req.allowedTools() != null ? List.copyOf(req.allowedTools()) : List.of(),
                 req.allowedTypes() != null ? List.copyOf(req.allowedTypes()) : List.of(),
                 req.subSkillUuids() != null ? List.copyOf(req.subSkillUuids()) : List.of(),
+            req.recommendedModel(),
                 1L,
                 now,
                 now,
@@ -239,6 +240,7 @@ public class SkillService {
                 req.allowedTools() != null ? List.copyOf(req.allowedTools()) : List.of(),
                 req.allowedTypes() != null ? List.copyOf(req.allowedTypes()) : List.of(),
                 req.subSkillUuids() != null ? List.copyOf(req.subSkillUuids()) : List.of(),
+                req.recommendedModel(),
                 existing.version() + 1,
                 existing.createdAt(),
                 System.currentTimeMillis(),
@@ -669,6 +671,7 @@ public class SkillService {
                 skill.allowedTools() != null ? List.copyOf(skill.allowedTools()) : List.of(),
                 skill.allowedTypes() != null ? List.copyOf(skill.allowedTypes()) : List.of(),
                 skill.subSkillUuids() != null ? List.copyOf(skill.subSkillUuids()) : List.of(),
+            skill.recommendedModel(),
                 skill.version() < 1 ? 1 : skill.version(),
                 skill.createdAt() > 0 ? skill.createdAt() : now,
                 skill.updatedAt() > 0 ? skill.updatedAt() : now,
@@ -911,6 +914,7 @@ public class SkillService {
             List<String> allowedTools,
             List<String> allowedTypes,
             List<String> subSkillUuids,
+            String recommendedModel,
             List<SkillSecret> secrets,
             List<ReflectionBindingAssignment> reflectionBindings) {}
 }

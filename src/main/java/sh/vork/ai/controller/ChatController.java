@@ -16,7 +16,6 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -30,7 +29,6 @@ import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.protocol.UiEventFrame;
-import sh.vork.ai.provider.AiModelService;
 import sh.vork.ai.registry.ToolRegistry;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
@@ -64,7 +62,6 @@ public class ChatController {
     private final SimpMessagingTemplate  messaging;
     private final AiOrchestrationService aiOrchestrationService;
     private final TerminalStreamRouter   terminalStreamRouter;
-    private final AiModelService         modelService;
     private final ToolRegistry           toolRegistry;
     private final DatabaseRepository<Skill> skillRepo;
     private final SessionEnvironmentService sessionEnvironmentService;
@@ -75,7 +72,6 @@ public class ChatController {
     public ChatController(ChatService chatService, SimpMessagingTemplate messaging,
                           AiOrchestrationService aiOrchestrationService,
                           TerminalStreamRouter terminalStreamRouter,
-                          AiModelService modelService,
                           ToolRegistry toolRegistry,
                           DatabaseRepository<Skill> skillRepository,
                           SessionEnvironmentService sessionEnvironmentService,
@@ -84,7 +80,6 @@ public class ChatController {
         this.messaging   = messaging;
         this.aiOrchestrationService = aiOrchestrationService;
         this.terminalStreamRouter = terminalStreamRouter;
-        this.modelService = modelService;
         this.toolRegistry = toolRegistry;
         this.skillRepo = skillRepository;
         this.sessionEnvironmentService = sessionEnvironmentService;
@@ -149,33 +144,6 @@ public class ChatController {
                 session.messages() == null ? 0 : session.messages().size(),
                 session.modelId());
             }
-
-    @PutMapping("/session/{sessionUuid}/model")
-    public ResponseEntity<?> updateSessionModel(@PathVariable String sessionUuid,
-                                                @RequestBody ModelSelectionRequest request) {
-        log.debug("ENTER updateSessionModel: [session={}, provider={}, model={}]",
-                sessionUuid, request.provider(), request.modelId());
-        try {
-            AiSession session = chatService.updateSessionModel(sessionUuid,
-                    request.provider(), request.modelId());
-            log.info("Session model updated [session={}, provider={}, model={}]",
-                    sessionUuid, session.provider(), session.modelId());
-            return ResponseEntity.ok(Map.of(
-                    "status", "OK",
-                    "provider", session.provider(),
-                    "modelId", session.modelId() != null ? session.modelId() : ""));
-        } catch (IllegalStateException ex) {
-            log.warn("updateSessionModel denied [session={}, reason={}]", sessionUuid, ex.getMessage());
-            return ResponseEntity.status(403)
-                    .body(Map.of("status", "ERROR", "message", "Access denied"));
-        }
-    }
-
-    @GetMapping("/models")
-    public List<AiModelService.ProviderModelGroup> getModels() {
-        log.debug("ENTER getModels");
-        return modelService.getConfiguredProviders();
-    }
 
     @PostMapping("/session/{sessionUuid}/agent")
     public ResponseEntity<?> switchAgent(@PathVariable String sessionUuid,
@@ -489,7 +457,7 @@ public class ChatController {
                 request.attachmentUuids() == null ? 0 : request.attachmentUuids().size());
             try {
             String username = (principal != null && principal.getName() != null) ? principal.getName() : "anonymous";
-            AiProvider provider = resolveProvider(request.provider());
+            AiProvider provider = resolveProviderOptional(request.provider());
             AiChatMessage response = chatService.sendMessageAsUser(
                 username, request.sessionUuid(), request.content(), request.attachmentUuids(), provider);
             if (response != null) {
@@ -517,6 +485,18 @@ public class ChatController {
         } catch (IllegalArgumentException e) {
             log.warn("Unknown provider '{}', defaulting to GEMINI", name);
             return AiProvider.GEMINI;
+        }
+    }
+
+    private static AiProvider resolveProviderOptional(String name) {
+        if (name == null || name.isBlank()) {
+            return null;
+        }
+        try {
+            return AiProvider.valueOf(name.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            log.warn("Unknown provider '{}' in chat request, deferring to runtime defaults", name);
+            return null;
         }
     }
 
@@ -560,8 +540,6 @@ public class ChatController {
     record RenameSessionRequest(String name) {}
 
     record ChatRequest(String sessionUuid, String content, String provider, List<String> attachmentUuids) {}
-
-    record ModelSelectionRequest(String provider, String modelId) {}
 
     record AgentTemplateSummary(String uuid, String name, String agentType) {}
 

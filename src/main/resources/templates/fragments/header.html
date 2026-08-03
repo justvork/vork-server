@@ -24,9 +24,6 @@
         <select th:if="${isChatPage}" id="agent-select" class="min-w-[180px] rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" title="Active agent">
             <option value="">Default (Concierge)</option>
         </select>
-        <select th:if="${isChatPage}" id="provider-select" class="min-w-[220px] rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" title="AI Provider / Model">
-            <option value="GEMINI:gemini-2.5-flash" selected>Gemini — Flash 2.5</option>
-        </select>
 
         <a href="/notifications" th:href="@{/notifications}" title="My Notifications"
            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800">

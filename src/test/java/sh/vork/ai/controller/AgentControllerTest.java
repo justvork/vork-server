@@ -38,7 +38,7 @@ class AgentControllerTest {
 
         AgentController controller = new AgentController(agentRepo, skillRepo, reflectionService, agentAssignmentService);
         AgentController.AgentRequest req = new AgentController.AgentRequest(
-                "triage agent", "", List.of(), List.of(), AgentType.BACKGROUND, List.of(), List.of());
+                "triage agent", "", List.of(), List.of(), AgentType.BACKGROUND, List.of(), List.of(), null);
 
         ResponseEntity<?> response = controller.createAgent(req);
 
@@ -66,7 +66,7 @@ class AgentControllerTest {
 
         AgentController controller = new AgentController(agentRepo, skillRepo, reflectionService, agentAssignmentService);
         AgentController.AgentRequest req = new AgentController.AgentRequest(
-                "Triage Agent", "", List.of(), List.of(), AgentType.INTERACTIVE, List.of(), List.of());
+                "Triage Agent", "", List.of(), List.of(), AgentType.INTERACTIVE, List.of(), List.of(), null);
 
         ResponseEntity<?> response = controller.updateAgent("a2", req);
 
@@ -105,7 +105,7 @@ class AgentControllerTest {
 
                 AgentController controller = new AgentController(agentRepo, skillRepo, reflectionService, agentAssignmentService);
                 AgentController.AgentRequest req = new AgentController.AgentRequest(
-                                "triage agent", "", List.of("reflection-tool-id"), List.of(), AgentType.BACKGROUND, List.of(), List.of());
+                                "triage agent", "", List.of("reflection-tool-id"), List.of(), AgentType.BACKGROUND, List.of(), List.of(), null);
 
                 ResponseEntity<?> response = controller.createAgent(req);
 

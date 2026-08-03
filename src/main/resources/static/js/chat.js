@@ -9,7 +9,6 @@ const typingEl       = document.getElementById('typing-indicator');
 const messageInput   = document.getElementById('message-input');
 const sendBtn        = document.getElementById('send-btn');
 const chatForm       = document.getElementById('chat-form');
-const providerSel    = document.getElementById('provider-select');
 const agentSel       = document.getElementById('agent-select');
 const statusDot      = document.getElementById('status-dot');
 const sessionDisplay = document.getElementById('session-display');
@@ -34,54 +33,19 @@ let thinkingEnabled = true;
 
 const THINKING_TOGGLE_STORAGE_KEY = 'vork.thinking.enabled';
 
-// Populated on page load from /api/chat/models
-let availableModels = [];
+let defaultProvider = 'GEMINI';
 
-// Load available provider/model options and populate the dropdown
-function loadAvailableModels() {
-    return fetch('/api/chat/models')
-        .then(function (r) { return r.ok ? r.json() : Promise.reject(r.statusText); })
-        .then(function (groups) {
-            availableModels = groups;
-            providerSel.innerHTML = '';
-            groups.forEach(function (group) {
-                if (!group.configured) return; // only show configured providers
-                group.models.forEach(function (m) {
-                    const opt = document.createElement('option');
-                    opt.value = group.providerKey + ':' + m.modelId;
-                    opt.textContent = group.providerLabel + ' \u2014 ' + m.label;
-                    if (m.isDefault) opt.setAttribute('data-default', 'true');
-                    providerSel.appendChild(opt);
-                });
-            });
-            // Try to select the global default; fall back to first option
-            return fetch('/api/system/settings')
-                .then(function (r) { return r.ok ? r.json() : null; })
-                .then(function (s) {
-                    if (s && s.defaultProvider && s.defaultModelId) {
-                        var key = s.defaultProvider + ':' + s.defaultModelId;
-                        var opt = providerSel.querySelector('option[value="' + key + '"]');
-                        if (opt) { providerSel.value = key; return; }
-                    }
-                    if (providerSel.options.length > 0 && !providerSel.value) {
-                        providerSel.selectedIndex = 0;
-                    }
-                })
-                .catch(function () {
-                    if (providerSel.options.length > 0 && !providerSel.value) {
-                        providerSel.selectedIndex = 0;
-                    }
-                });
+function loadSystemDefaults() {
+    return fetch('/api/system/settings')
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (s) {
+            if (s && s.defaultProvider) {
+                defaultProvider = s.defaultProvider;
+            }
         })
-        .catch(function () { /* keep existing placeholder option */ });
-}
-
-/** Parse the combined PROVIDER:modelId value into {provider, modelId}. */
-function parseProviderModel(combined) {
-    if (!combined) return { provider: 'GEMINI', modelId: '' };
-    const sep = combined.indexOf(':');
-    if (sep === -1) return { provider: combined, modelId: '' };
-    return { provider: combined.substring(0, sep), modelId: combined.substring(sep + 1) };
+        .catch(function () {
+            defaultProvider = 'GEMINI';
+        });
 }
 
 const terminalState = {
@@ -2470,9 +2434,7 @@ agentSel.addEventListener('change', function () {
 });
 
 function loadSession(targetSessionUuid) {
-    const { provider, modelId } = parseProviderModel(providerSel.value);
-    let url = '/api/chat/session?provider=' + encodeURIComponent(provider);
-    if (modelId) url += '&modelId=' + encodeURIComponent(modelId);
+    let url = '/api/chat/session?provider=' + encodeURIComponent(defaultProvider);
     if (targetSessionUuid) {
         url += '&sessionUuid=' + encodeURIComponent(targetSessionUuid);
     }
@@ -2500,18 +2462,6 @@ function loadSession(targetSessionUuid) {
                 subscribeToCurrentSession();
             }
 
-            if (data.provider) {
-                // Build combined key and try to select the matching option
-                const combinedKey = data.provider + ':' + (data.modelId || '');
-                const matchFull = providerSel.querySelector('option[value="' + combinedKey + '"]');
-                const matchProvider = providerSel.querySelector('option[value^="' + data.provider + ':"]');
-                if (matchFull) {
-                    providerSel.value = combinedKey;
-                } else if (matchProvider) {
-                    providerSel.value = matchProvider.value;
-                }
-            }
-
             loadSessionList();
             focusMessageInput();
             checkPendingSessions();
@@ -2520,7 +2470,7 @@ function loadSession(targetSessionUuid) {
             if (messages.length === 0) {
                 showTyping(true);
                 setInputEnabled(false);
-                fetch('/api/chat/welcome?provider=' + encodeURIComponent(provider))
+                fetch('/api/chat/welcome?provider=' + encodeURIComponent(defaultProvider))
                     .then(function (resp) { return resp.ok ? resp.json() : Promise.reject(resp.statusText); })
                     .then(function (welcome) {
                         showTyping(false);
@@ -2547,9 +2497,7 @@ function loadSession(targetSessionUuid) {
 }
 
 function createNewChat() {
-    const { provider, modelId } = parseProviderModel(providerSel.value);
-    let url = '/api/chat/session/new?provider=' + encodeURIComponent(provider);
-    if (modelId) url += '&modelId=' + encodeURIComponent(modelId);
+    let url = '/api/chat/session/new?provider=' + encodeURIComponent(defaultProvider);
     fetch(url)
         .then(function (resp) {
             if (!resp.ok) { throw new Error('HTTP ' + resp.status + ' — ' + resp.statusText); }
@@ -2625,7 +2573,6 @@ chatForm.addEventListener('submit', function (e) {
         body: JSON.stringify({
             sessionUuid:     sessionUuid,
             content:         content,
-            provider:        parseProviderModel(providerSel.value).provider,
             attachmentUuids: attachmentUuids
         })
     });
@@ -2738,23 +2685,4 @@ function checkPendingSessions() {
         .catch(function () { /* silent — non-critical */ });
 }
 
-// Load available provider/model options first, then initialise the session.
-// The dropdown is pre-seeded with a Gemini placeholder so the UI is usable
-// even if the models endpoint is slow.
-loadAvailableModels().then(function () { initSession(); }).catch(function () { initSession(); });
-
-// When the user switches provider/model, persist the choice to the active session.
-providerSel.addEventListener('change', function () {
-    if (!sessionUuid) return;
-    const { provider, modelId } = parseProviderModel(providerSel.value);
-    const selectedOpt = providerSel.options[providerSel.selectedIndex];
-    const label = selectedOpt ? selectedOpt.text : (provider + (modelId ? ' \u2014 ' + modelId : ''));
-    renderModelSwitch('Switched to ' + label);
-    fetch('/api/chat/session/' + encodeURIComponent(sessionUuid) + '/model', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: provider, modelId: modelId })
-    }).catch(function (err) {
-        console.warn('Failed to update session model:', err);
-    });
-});
+loadSystemDefaults().then(function () { initSession(); }).catch(function () { initSession(); });

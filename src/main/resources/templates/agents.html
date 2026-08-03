@@ -45,6 +45,7 @@
                         <th>System Prompt</th>
                         <th>Tools</th>
                         <th>Skills</th>
+                        <th>Recommended Model</th>
                         <th>Reflection Bindings</th>
                         <th>Assigned Users</th>
                         <th class="text-end">Actions</th>
@@ -81,6 +82,9 @@
                                     <span th:text="${skillNames.getOrDefault(sid, sid)}"></span>
                                 </span>
                             </div>
+                        </td>
+                        <td th:attr="id='agent-model-' + ${agent.uuid()}">
+                            <span class="text-muted small">—</span>
                         </td>
                         <td th:attr="id='agent-bindings-' + ${agent.uuid()}">
                             <span class="text-muted small">—</span>
@@ -133,6 +137,18 @@
                     <label class="form-label" for="agent-prompt">System Prompt</label>
                     <textarea id="agent-prompt" class="form-control font-monospace" rows="8"
                               placeholder="Instructions prepended to every conversation for this agent…"></textarea>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label" for="agent-recommended-model">Recommended Model</label>
+                    <input type="text" id="agent-recommended-model" class="form-control"
+                           placeholder="PROVIDER:model-id (optional, e.g. GEMINI:gemini-2.5-flash)" oninput="syncRecommendedModelLookup('agent-recommended-model', 'agent-recommended-model-lookup')">
+                    <div class="form-text">If set, this model is preferred for turns handled by this agent unless a skill recommendation overrides it.</div>
+                    <div class="input-group input-group-sm mt-2">
+                        <select id="agent-recommended-model-lookup" class="form-select" onchange="setRecommendedModelFromLookup('agent-recommended-model', 'agent-recommended-model-lookup')">
+                            <option value="">-- Select from configured provider models --</option>
+                        </select>
+                    </div>
                 </div>
 
                 <!-- Allowed Tools ─────────────────────────────────────────── -->

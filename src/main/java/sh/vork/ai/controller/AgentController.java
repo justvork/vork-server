@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.ResponseBody;
 
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.ai.AiProvider;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.agent.AgentType;
 import sh.vork.ai.service.AgentAssignmentService;
@@ -104,6 +105,12 @@ public class AgentController {
         }
         String skillErr = validateAssignableSkillUuids(req.skillUuids());
         if (skillErr != null) return ResponseEntity.badRequest().body(Map.of("error", skillErr));
+        String recommendedModel;
+        try {
+            recommendedModel = normalizeRecommendedModel(req.recommendedModel());
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
         List<ReflectionBindingAssignment> reflectionBindings;
         try {
             reflectionBindings = normalizeAndValidateReflectionBindings(req.reflectionBindings());
@@ -126,7 +133,8 @@ public class AgentController {
                 req.skillUuids() != null ? List.copyOf(req.skillUuids()) : List.of(),
                 req.agentType() != null ? req.agentType() : AgentType.INTERACTIVE,
                 reflectionBindings,
-                assignedUsernames);
+                assignedUsernames,
+                recommendedModel);
         agentRepository.save(agent);
         log.info("Agent created [id={}, name={}]", agent.uuid(), agent.name());
         return ResponseEntity.ok(agent);
@@ -151,6 +159,12 @@ public class AgentController {
         }
         String skillErr = validateAssignableSkillUuids(req.skillUuids());
         if (skillErr != null) return ResponseEntity.badRequest().body(Map.of("error", skillErr));
+        String recommendedModel;
+        try {
+            recommendedModel = normalizeRecommendedModel(req.recommendedModel());
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
         List<ReflectionBindingAssignment> reflectionBindings;
         try {
             reflectionBindings = normalizeAndValidateReflectionBindings(req.reflectionBindings());
@@ -192,7 +206,8 @@ public class AgentController {
                 req.skillUuids() != null ? List.copyOf(req.skillUuids()) : existing.skillUuids(),
                 req.agentType() != null ? req.agentType() : existing.agentType(),
             reflectionBindings,
-            assignedUsernames);
+            assignedUsernames,
+            recommendedModel);
         agentRepository.save(updated);
         log.info("Agent updated [id={}, name={}]", id, req.name());
         return ResponseEntity.ok(updated);
@@ -223,6 +238,31 @@ public class AgentController {
     private static String validate(AgentRequest req) {
         if (req.name() == null || req.name().isBlank()) return "Name is required.";
         return null;
+    }
+
+    private static String normalizeRecommendedModel(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String normalized = raw.trim();
+        if (normalized.isBlank()) {
+            return null;
+        }
+        int sep = normalized.indexOf(':');
+        if (sep <= 0 || sep == normalized.length() - 1) {
+            throw new IllegalArgumentException("recommendedModel must use format PROVIDER:model-id");
+        }
+        String providerKey = normalized.substring(0, sep).trim().toUpperCase();
+        String modelId = normalized.substring(sep + 1).trim();
+        if (modelId.isBlank()) {
+            throw new IllegalArgumentException("recommendedModel must include a non-empty model id");
+        }
+        try {
+            AiProvider.valueOf(providerKey);
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("Unknown provider in recommendedModel: " + providerKey);
+        }
+        return providerKey + ":" + modelId;
     }
 
     private boolean isAgentNameInUse(String name, String excludeId) {
@@ -320,6 +360,7 @@ public class AgentController {
             List<String> skillUuids,
             AgentType    agentType,
             List<ReflectionBindingAssignment> reflectionBindings,
-            List<String> assignedUsernames
+            List<String> assignedUsernames,
+            String       recommendedModel
     ) {}
 }

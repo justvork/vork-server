@@ -14,6 +14,8 @@ let allCategories = [];
 let allReflections = [];
 let allReflectionGroups = [];
 let allReflectionBindingOptions = [];
+let providerGroups = [];
+let providerGroupByKey = {};
 let categoriesLoadFailed = false;
 let modalTools      = [];
 let modalTypes      = [];
@@ -59,14 +61,15 @@ document.addEventListener('DOMContentLoaded', function () {
 
 async function loadData() {
     try {
-        const [skillsRes, groupsRes, toolsRes, typesRes, catsRes, reflectionsRes, reflectionGroupsRes] = await Promise.all([
+        const [skillsRes, groupsRes, toolsRes, typesRes, catsRes, reflectionsRes, reflectionGroupsRes, providersRes] = await Promise.all([
             fetch('/api/skills?includePrivate=true'),
             fetch('/api/skill-groups'),
             fetch('/api/management/tools'),
             fetch('/api/types/java-types'),
             fetch('/api/skills/categories'),
             fetch('/api/reflections'),
-            fetch('/api/reflection-groups')
+            fetch('/api/reflection-groups'),
+            fetch('/api/ai/providers')
         ]);
         allSkills     = skillsRes.ok ? await skillsRes.json() : [];
         allGroupViews = groupsRes.ok ? await groupsRes.json() : [];
@@ -76,6 +79,14 @@ async function loadData() {
         allCategories = catsRes.ok   ? await catsRes.json()   : [];
         allReflections = reflectionsRes.ok ? await reflectionsRes.json() : [];
         allReflectionGroups = reflectionGroupsRes.ok ? await reflectionGroupsRes.json() : [];
+        providerGroups = providersRes.ok ? await providersRes.json() : [];
+        providerGroupByKey = (providerGroups || []).reduce(function (acc, group) {
+            if (group && group.providerKey) {
+                acc[group.providerKey.toUpperCase()] = group;
+            }
+            return acc;
+        }, {});
+        buildRecommendedModelLookupOptions('skill-recommended-model-lookup', '');
         allReflectionBindingOptions = buildReflectionBindingOptions();
         categoriesLoadFailed = !catsRes.ok;
         updateCategoryHelp();
@@ -140,11 +151,13 @@ function renderGroupTable() {
                 const visibilityBadge = isPrivate
                     ? '<span class="rounded bg-zinc-800 px-1 py-0.5 text-[10px] font-semibold text-zinc-300" title="Private skill"><i class="fa-solid fa-lock"></i></span>'
                     : '<span class="rounded bg-zinc-800 px-1 py-0.5 text-[10px] font-semibold text-zinc-300" title="Public skill"><i class="fa-solid fa-globe"></i></span>';
+                const modelBadge = renderRecommendedModelBadgeHtml(s.recommendedModel);
                 return '<span class="mr-1 mb-1 inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-xs text-zinc-200">'
                     + '  <button class="inline-flex items-center gap-1 transition-colors hover:text-cyan-300" title="Edit skill" onclick="openEdit(\'' + escapeHtml(s.uuid) + '\')">'
                     + '    ' + visibilityBadge
                     + '    <span>' + escapeHtml(s.name) + '</span>'
                     + '  </button>'
+                    +      modelBadge
                     + '  <button class="text-zinc-300 transition-colors hover:text-cyan-300" title="Copy skill" onclick="openCopy(\'' + escapeHtml(s.uuid) + '\')"><i class="fa-solid fa-copy"></i></button>'
                     + '  <button class="text-rose-300 transition-colors hover:text-rose-200" title="Delete skill" onclick="deleteSkill(\'' + escapeHtml(s.uuid) + '\')"><i class="fa-solid fa-trash"></i></button>'
                     + '</span>';
@@ -167,6 +180,129 @@ function renderGroupTable() {
 
         body.appendChild(tr);
     });
+}
+
+function parseRecommendedModel(raw) {
+    if (!raw || typeof raw !== 'string') return null;
+    const trimmed = raw.trim();
+    const sep = trimmed.indexOf(':');
+    if (sep <= 0 || sep >= trimmed.length - 1) return null;
+    const provider = trimmed.substring(0, sep).trim().toUpperCase();
+    const modelId = trimmed.substring(sep + 1).trim();
+    if (!provider || !modelId) return null;
+    return { provider: provider, modelId: modelId };
+}
+
+function evaluateRecommendedModel(raw) {
+    if (!raw || !String(raw).trim()) {
+        return { text: '', warning: null };
+    }
+    const parsed = parseRecommendedModel(raw);
+    if (!parsed) {
+        return { text: raw, warning: 'Invalid recommended model format' };
+    }
+    const group = providerGroupByKey[parsed.provider];
+    if (!group || !group.configured) {
+        return { text: parsed.provider + ':' + parsed.modelId, warning: 'Provider not configured' };
+    }
+    const hasModel = (group.models || []).some(function (m) {
+        return (m.modelId || '').toLowerCase() === parsed.modelId.toLowerCase();
+    });
+    if (!hasModel) {
+        return { text: parsed.provider + ':' + parsed.modelId, warning: 'Model not available' };
+    }
+    return { text: parsed.provider + ':' + parsed.modelId, warning: null };
+}
+
+function renderRecommendedModelBadgeHtml(raw) {
+    const evalResult = evaluateRecommendedModel(raw);
+    if (!evalResult.text) {
+        return '';
+    }
+    if (evalResult.warning) {
+        return '<span class="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-300" title="'
+            + escapeHtml(evalResult.warning)
+            + '"><i class="fa-solid fa-triangle-exclamation"></i><span>'
+            + escapeHtml(evalResult.text)
+            + '</span></span>';
+    }
+    return '<span class="inline-flex items-center gap-1 rounded-full border border-zinc-600 px-2 py-0.5 text-[10px] text-zinc-300" title="Recommended model">'
+        + '<i class="fa-solid fa-microchip"></i><span>' + escapeHtml(evalResult.text) + '</span></span>';
+}
+
+function buildRecommendedModelLookupOptions(selectId, selectedRaw) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+
+    const normalizedSelected = selectedRaw ? String(selectedRaw).trim().toUpperCase() : '';
+    select.innerHTML = '<option value="">-- Select from configured provider models --</option>';
+
+    let optionCount = 0;
+    (providerGroups || []).forEach(function (group) {
+        if (!group || !group.configured || !group.providerKey) return;
+        const models = Array.isArray(group.models) ? group.models : [];
+        if (models.length === 0) return;
+
+        const optGroup = document.createElement('optgroup');
+        optGroup.label = group.providerLabel || group.providerKey;
+
+        models.forEach(function (model) {
+            const modelId = model && model.modelId ? String(model.modelId).trim() : '';
+            if (!modelId) return;
+
+            const value = String(group.providerKey).toUpperCase() + ':' + modelId;
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = (group.providerLabel || group.providerKey) + ' - ' + (model.label || modelId);
+            if (normalizedSelected && value.toUpperCase() === normalizedSelected) {
+                option.selected = true;
+            }
+            optGroup.appendChild(option);
+            optionCount++;
+        });
+
+        if (optGroup.children.length > 0) {
+            select.appendChild(optGroup);
+        }
+    });
+
+    if (optionCount === 0) {
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = '-- No configured provider models available --';
+        empty.disabled = true;
+        select.appendChild(empty);
+    }
+
+    syncRecommendedModelLookup('skill-recommended-model', selectId);
+}
+
+function setRecommendedModelFromLookup(inputId, selectId) {
+    const input = document.getElementById(inputId);
+    const select = document.getElementById(selectId);
+    if (!input || !select) return;
+    if (!select.value) return;
+    input.value = select.value;
+}
+
+function syncRecommendedModelLookup(inputId, selectId) {
+    const input = document.getElementById(inputId);
+    const select = document.getElementById(selectId);
+    if (!input || !select) return;
+
+    const normalized = input.value ? String(input.value).trim().toUpperCase() : '';
+    let matched = false;
+    for (let i = 0; i < select.options.length; i++) {
+        const option = select.options[i];
+        if (option.value && option.value.toUpperCase() === normalized) {
+            select.value = option.value;
+            matched = true;
+            break;
+        }
+    }
+    if (!matched) {
+        select.value = '';
+    }
 }
 
 function renderGroupBindingSummaryHtml(skills) {
@@ -257,6 +393,8 @@ function openCreate(groupUuid) {
     document.getElementById('skill-id').value                   = '';
     document.getElementById('skill-name').value                 = '';
     document.getElementById('skill-description').value          = '';
+    document.getElementById('skill-recommended-model').value    = '';
+    buildRecommendedModelLookupOptions('skill-recommended-model-lookup', '');
     document.getElementById('skill-instructions').value         = '';
     document.getElementById('skill-visibility').value           = 'PUBLIC';
     document.getElementById('btn-delete-skill').classList.add('hidden');
@@ -285,6 +423,8 @@ function openCopy(id) {
     document.getElementById('skill-id').value                   = '';
     document.getElementById('skill-name').value                 = skill.name || '';
     document.getElementById('skill-description').value          = skill.description || '';
+    document.getElementById('skill-recommended-model').value    = skill.recommendedModel || '';
+    buildRecommendedModelLookupOptions('skill-recommended-model-lookup', skill.recommendedModel || '');
     document.getElementById('skill-instructions').value         = skill.instructions || '';
     populateGroupSelect(skill.groupUuid || '');
     document.getElementById('skill-visibility').value           = skill.visibility || 'PUBLIC';
@@ -329,6 +469,8 @@ function openEdit(id) {
     document.getElementById('skill-id').value                   = skill.uuid;
     document.getElementById('skill-name').value                 = skill.name;
     document.getElementById('skill-description').value          = skill.description || '';
+    document.getElementById('skill-recommended-model').value    = skill.recommendedModel || '';
+    buildRecommendedModelLookupOptions('skill-recommended-model-lookup', skill.recommendedModel || '');
     document.getElementById('skill-instructions').value         = skill.instructions || '';
     populateGroupSelect(skill.groupUuid || '');
     document.getElementById('skill-visibility').value           = skill.visibility || 'PUBLIC';
@@ -846,6 +988,7 @@ async function saveSkill() {
     const groupUuid      = document.getElementById('skill-group').value;
     const visibility     = document.getElementById('skill-visibility').value || 'PUBLIC';
     const description    = document.getElementById('skill-description').value;
+    const recommendedModel = document.getElementById('skill-recommended-model').value.trim();
     const instructions   = document.getElementById('skill-instructions').value;
 
     if (!name) { showAlertIn('skill-modal-alert', 'Name is required.', 'warning'); return; }
@@ -892,6 +1035,7 @@ async function saveSkill() {
             };
         }),
         instructions:   instructions,
+        recommendedModel: recommendedModel,
         allowedTools:   modalTools.slice(),
         allowedTypes:   modalTypes.slice(),
         subSkillUuids:  modalSubSkills.slice(),

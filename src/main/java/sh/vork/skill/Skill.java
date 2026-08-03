@@ -46,6 +46,7 @@ public record Skill(
         List<String>          allowedTools,
         List<String>          allowedTypes,
         List<String>          subSkillUuids,
+        String                recommendedModel,
         long                  version,
         long                  createdAt,
         long                  updatedAt,
@@ -63,6 +64,21 @@ public record Skill(
         if (allowedTools == null)            allowedTools = List.of();
         if (allowedTypes == null)            allowedTypes = List.of();
         if (subSkillUuids == null)           subSkillUuids = List.of();
+        if (recommendedModel != null) {
+            String normalized = recommendedModel.trim();
+            if (normalized.isBlank()) {
+                recommendedModel = null;
+            } else {
+                int sep = normalized.indexOf(':');
+                if (sep > 0) {
+                    String provider = normalized.substring(0, sep).trim().toUpperCase();
+                    String modelId = normalized.substring(sep + 1).trim();
+                    recommendedModel = provider + ":" + modelId;
+                } else {
+                    recommendedModel = normalized.toUpperCase();
+                }
+            }
+        }
         if (version < 1)                     version = 1;
         if (secrets == null)                 secrets = List.of();
         if (reflectionBindings == null)      reflectionBindings = List.of();
@@ -83,9 +99,29 @@ public record Skill(
              long updatedAt,
              List<SkillSecret> secrets) {
         this(uuid, name, description, groupUuid, visibility, parameters, instructions,
-            allowedTools, allowedTypes, subSkillUuids, version, createdAt, updatedAt,
+                allowedTools, allowedTypes, subSkillUuids, null, version, createdAt, updatedAt,
             secrets, List.of());
     }
+
+            public Skill(String uuid,
+                 String name,
+                 String description,
+                 String groupUuid,
+                 SkillVisibility visibility,
+                 List<SkillParameter> parameters,
+                 String instructions,
+                 List<String> allowedTools,
+                 List<String> allowedTypes,
+                 List<String> subSkillUuids,
+                 long version,
+                 long createdAt,
+                 long updatedAt,
+                 List<SkillSecret> secrets,
+                 List<ReflectionBindingAssignment> reflectionBindings) {
+            this(uuid, name, description, groupUuid, visibility, parameters, instructions,
+                allowedTools, allowedTypes, subSkillUuids, null,
+                version, createdAt, updatedAt, secrets, reflectionBindings);
+            }
 
     /**
      * Derives a stable machine tool name from the skill group + skill name.

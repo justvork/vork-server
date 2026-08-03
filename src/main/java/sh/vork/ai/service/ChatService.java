@@ -54,6 +54,7 @@ import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.exception.ToolSuspensionException;
 import sh.vork.ai.lifecycle.AgentTemplateSeeder;
+import sh.vork.ai.provider.AiModelService;
 import sh.vork.ai.protocol.StructuredAgentResponse;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.protocol.interaction.FieldSource;
@@ -71,7 +72,9 @@ import sh.vork.relay.RelayHttpClient;
 import sh.vork.relay.lib.model.RelaySubmission;
 import sh.vork.scheduling.service.SystemBackgroundAuthentication;
 import sh.vork.scheduling.service.SystemNotificationService;
+import sh.vork.setup.SystemSettings;
 import sh.vork.setup.SystemSettingsService;
+import sh.vork.skill.Skill;
 import sh.vork.skill.SkillFrame;
 
 /**
@@ -97,7 +100,9 @@ public class ChatService {
 
     private final DatabaseRepository<AiSession>     sessionRepo;
     private final DatabaseRepository<AgentTemplate> agentTemplateRepo;
+    private final DatabaseRepository<Skill>         skillRepo;
     private final AiOrchestrationService            aiService;
+    private final AiModelService                    aiModelService;
     private final SessionFileSystem             sessionFileSystem;
     private final SimpMessagingTemplate         messaging;
     private final ObjectMapper                  objectMapper;
@@ -120,7 +125,9 @@ public class ChatService {
     @Autowired
     public ChatService(DatabaseRepository<AiSession> aiSessionRepository,
                        DatabaseRepository<AgentTemplate> agentTemplateRepository,
+                       DatabaseRepository<Skill> skillRepository,
                        AiOrchestrationService aiOrchestrationService,
+                       AiModelService aiModelService,
                        SessionFileSystem sessionFileSystem,
                        SimpMessagingTemplate messaging,
                        ObjectMapper objectMapper,
@@ -133,7 +140,9 @@ public class ChatService {
                        @Lazy TelegramChatResumptionService telegramChatResumptionService) {
         this.sessionRepo = aiSessionRepository;
         this.agentTemplateRepo = agentTemplateRepository;
+        this.skillRepo = skillRepository;
         this.aiService = aiOrchestrationService;
+        this.aiModelService = aiModelService;
         this.sessionFileSystem = sessionFileSystem;
         this.messaging = messaging;
         this.objectMapper = objectMapper;
@@ -145,7 +154,70 @@ public class ChatService {
         this.telegramChatResumptionService = telegramChatResumptionService;
     }
 
+    // Backward-compatible constructor for tests that do not require skill/model routing dependencies.
+    public ChatService(DatabaseRepository<AiSession> aiSessionRepository,
+                       DatabaseRepository<AgentTemplate> agentTemplateRepository,
+                       AiOrchestrationService aiOrchestrationService,
+                       SessionFileSystem sessionFileSystem,
+                       SimpMessagingTemplate messaging,
+                       ObjectMapper objectMapper,
+                       List<ToolCallback> toolCallbacks,
+                       SystemNotificationService systemNotificationService,
+                       @Qualifier("aiBackgroundExecutor") Executor aiBackgroundExecutor,
+                       RelayEncryptionService relayEncryptionService,
+                       RelayHttpClient relayHttpClient,
+                       SystemSettingsService systemSettingsService,
+                       @Lazy TelegramChatResumptionService telegramChatResumptionService) {
+        this(aiSessionRepository,
+                agentTemplateRepository,
+                null,
+                aiOrchestrationService,
+                null,
+                sessionFileSystem,
+                messaging,
+                objectMapper,
+                toolCallbacks,
+                systemNotificationService,
+                aiBackgroundExecutor,
+                relayEncryptionService,
+                relayHttpClient,
+                systemSettingsService,
+                telegramChatResumptionService);
+    }
+
     // Test/backward-compatible constructor (no SessionFileSystem support).
+    public ChatService(DatabaseRepository<AiSession> aiSessionRepository,
+                       DatabaseRepository<AgentTemplate> agentTemplateRepository,
+                       DatabaseRepository<Skill> skillRepository,
+                       AiOrchestrationService aiOrchestrationService,
+                       AiModelService aiModelService,
+                       SimpMessagingTemplate messaging,
+                       ObjectMapper objectMapper,
+                       List<ToolCallback> toolCallbacks,
+                       SystemNotificationService systemNotificationService,
+                       Executor aiBackgroundExecutor,
+                       RelayEncryptionService relayEncryptionService,
+                       RelayHttpClient relayHttpClient,
+                       SystemSettingsService systemSettingsService,
+                       TelegramChatResumptionService telegramChatResumptionService) {
+        this(aiSessionRepository,
+                agentTemplateRepository,
+            skillRepository,
+                aiOrchestrationService,
+            aiModelService,
+                null,
+                messaging,
+                objectMapper,
+                toolCallbacks,
+                systemNotificationService,
+                aiBackgroundExecutor,
+                relayEncryptionService,
+                relayHttpClient,
+                systemSettingsService,
+                telegramChatResumptionService);
+    }
+
+    // Backward-compatible constructor for tests that do not require skill/model routing dependencies.
     public ChatService(DatabaseRepository<AiSession> aiSessionRepository,
                        DatabaseRepository<AgentTemplate> agentTemplateRepository,
                        AiOrchestrationService aiOrchestrationService,
@@ -160,6 +232,7 @@ public class ChatService {
                        TelegramChatResumptionService telegramChatResumptionService) {
         this(aiSessionRepository,
                 agentTemplateRepository,
+                null,
                 aiOrchestrationService,
                 null,
                 messaging,
@@ -689,6 +762,7 @@ public class ChatService {
         String currentPrompt = initialPrompt;
         final int MAX_ITERATIONS = 15;
         List<AiChatMessage> transitionMsgs = new ArrayList<>();
+        String lastModelWarning = null;
 
         for (int i = 0; i < MAX_ITERATIONS; i++) {
             AiSession currentSession = sessionRepo.get(sessionUuid);
@@ -698,9 +772,17 @@ public class ChatService {
             log.debug("Agent loop iteration {} [session={}, agent={}]",
                     i, sessionUuid, currentSession.getActiveAgentTemplateId());
 
+            TurnModelSelection turnModel = resolveTurnModelSelection(currentSession, provider);
+            if (turnModel.warningMessage() != null && !turnModel.warningMessage().equals(lastModelWarning)) {
+                lastModelWarning = turnModel.warningMessage();
+                emitModelSelectionWarning(sessionUuid, transitionMsgs, turnModel.warningMessage());
+            }
+
                 String rawResponse = (i == 0 && !media.isEmpty())
-                    ? safeGenerateWithHistoryAndMedia(history, currentPrompt, media, provider)
-                    : safeGenerateWithHistory(history, currentPrompt, provider);
+                    ? safeGenerateWithHistoryAndMedia(history, currentPrompt, media,
+                            turnModel.provider(), turnModel.modelId())
+                    : safeGenerateWithHistory(history, currentPrompt,
+                            turnModel.provider(), turnModel.modelId());
                 log.debug("Agent loop raw response [session={}, iteration={}, response={}]",
                 sessionUuid, i, rawResponse);
 
@@ -1072,24 +1154,6 @@ public class ChatService {
     }
 
     /**
-     * Updates the provider and model stored in a session.
-     * Validates that the session belongs to the current user.
-     */
-    public AiSession updateSessionModel(String sessionUuid, String provider, String modelId) {
-        AiSession session = getSessionForCurrentUser(sessionUuid);
-        AiSession updated = new AiSession(
-                session.uuid(), provider != null ? provider : session.provider(),
-                session.originMode(), session.username(), session.name(),
-                session.createdAt(), session.currentRoundCount(), session.messages(),
-                session.environmentVariables(), session.status(),
-                session.activeAgentTemplateId(), modelId, session.skillStack(),
-                session.sessionSkillUuids(), session.sessionToolIds());
-        sessionRepo.save(updated);
-        log.info("Session model updated [session={}, provider={}, model={}]", sessionUuid, provider, modelId);
-        return updated;
-    }
-
-    /**
      * Returns all configured {@link sh.vork.ai.agent.AgentTemplate} records.
      */
     public List<AgentTemplate> listAgentTemplates() {
@@ -1345,6 +1409,7 @@ public class ChatService {
         // the skill sub-loop and cause the model to recycle stale data instead of running
         // the skill's actual commands.
         List<Message> skillHistory = new ArrayList<>();
+        String lastModelWarning = null;
 
         for (int i = 0; i < MAX_SKILL_ITERATIONS; i++) {
             if (System.currentTimeMillis() - startedAt > MAX_SKILL_RUNTIME_MS) {
@@ -1363,7 +1428,20 @@ public class ChatService {
             log.debug("Skill sub-loop iteration {} [session={}, skill={}]", i, sessionUuid, ex.getSkillName());
 
             // safeGenerateWithHistory reads the session and applies the skill frame's tools/prompt
-            String rawResponse = safeGenerateWithHistory(skillHistory, currentPrompt, provider);
+            AiSession sessionForTurn = sessionRepo.get(sessionUuid);
+            if (sessionForTurn == null) {
+                sessionForTurn = sessionAtStart;
+            }
+            TurnModelSelection turnModel = resolveTurnModelSelection(sessionForTurn, provider);
+            if (turnModel.warningMessage() != null && !turnModel.warningMessage().equals(lastModelWarning)) {
+                lastModelWarning = turnModel.warningMessage();
+                emitModelSelectionWarning(sessionUuid, null, turnModel.warningMessage());
+            }
+            String rawResponse = safeGenerateWithHistory(
+                    skillHistory,
+                    currentPrompt,
+                    turnModel.provider(),
+                    turnModel.modelId());
             log.debug("Skill sub-loop raw response [session={}, skill={}, iteration={}, response={}]",
                     sessionUuid, ex.getSkillName(), i, rawResponse);
 
@@ -1690,9 +1768,192 @@ public class ChatService {
         return agentAssignmentService.isConciergeAgent(template);
     }
 
-    private String safeGenerateWithHistory(List<Message> history, String effectiveContent, AiProvider provider) {
+    private TurnModelSelection resolveTurnModelSelection(AiSession session, AiProvider fallbackProvider) {
+        if (session == null) {
+            return new TurnModelSelection(fallbackProvider == null ? AiProvider.GEMINI : fallbackProvider, null, null);
+        }
+
+        String recommendedModel = null;
+        String source = "default";
+
+        if (session.skillStack() != null && !session.skillStack().isEmpty()) {
+            SkillFrame top = session.skillStack().getLast();
+            Skill activeSkill = (top == null || skillRepo == null) ? null : skillRepo.get(top.skillUuid());
+            if (activeSkill != null && activeSkill.recommendedModel() != null && !activeSkill.recommendedModel().isBlank()) {
+                recommendedModel = activeSkill.recommendedModel();
+                source = "skill:" + activeSkill.name();
+            }
+        }
+
+        if (recommendedModel == null && session.activeAgentTemplateId() != null && !session.activeAgentTemplateId().isBlank()) {
+            AgentTemplate agent = agentTemplateRepo.get(session.activeAgentTemplateId());
+            if (agent != null && agent.recommendedModel() != null && !agent.recommendedModel().isBlank()) {
+                recommendedModel = agent.recommendedModel();
+                source = "agent:" + agent.name();
+            }
+        }
+
+        DefaultModelSelection defaults = resolveDefaultModelSelection(session, fallbackProvider);
+        if (recommendedModel == null) {
+            return new TurnModelSelection(defaults.provider(), defaults.modelId(), null);
+        }
+
+        ParsedRecommendedModel parsed = parseRecommendedModel(recommendedModel);
+        if (parsed == null) {
+            return new TurnModelSelection(
+                    defaults.provider(),
+                    defaults.modelId(),
+                    "Warning: " + source + " recommended model '" + recommendedModel
+                            + "' is invalid (expected PROVIDER:model-id). Using "
+                            + defaults.provider().name() + modelSuffix(defaults.modelId()) + ".");
+        }
+
+        if (!isModelAvailable(parsed.providerKey(), parsed.modelId())) {
+            return new TurnModelSelection(
+                    defaults.provider(),
+                    defaults.modelId(),
+                    "Warning: " + source + " recommended model '" + parsed.providerKey() + ":"
+                            + parsed.modelId() + "' is unavailable. Using "
+                            + defaults.provider().name() + modelSuffix(defaults.modelId()) + ".");
+        }
+
+        return new TurnModelSelection(parsed.provider(), parsed.modelId(), null);
+    }
+
+    private DefaultModelSelection resolveDefaultModelSelection(AiSession session, AiProvider fallbackProvider) {
+        SystemSettings settings = systemSettingsService.getGlobal();
+        String providerName = settings != null ? settings.defaultProvider() : null;
+        String modelId = settings != null ? settings.defaultModelId() : null;
+
+        AiProvider provider = tryResolveProvider(providerName);
+        if (provider == null && session.provider() != null) {
+            provider = tryResolveProvider(session.provider());
+        }
+        if (provider == null) {
+            provider = fallbackProvider != null ? fallbackProvider : AiProvider.GEMINI;
+        }
+
+        if (provider == AiProvider.BACKGROUND_SCHEDULER || provider == AiProvider.ANTHROPIC) {
+            provider = AiProvider.GEMINI;
+        }
+
+        if (!isProviderConfigured(provider.name())) {
+            provider = AiProvider.GEMINI;
+            modelId = null;
+        }
+
+        if (modelId == null || modelId.isBlank()) {
+            modelId = aiModelService != null
+                    ? aiModelService.defaultModelFor(provider)
+                    : AiModelService.DEFAULT_MODELS.getOrDefault(provider, "");
+        }
+
+        if (modelId != null && !modelId.isBlank() && !isModelAvailable(provider.name(), modelId)) {
+            modelId = aiModelService != null
+                    ? aiModelService.defaultModelFor(provider)
+                    : AiModelService.DEFAULT_MODELS.getOrDefault(provider, "");
+        }
+
+        return new DefaultModelSelection(provider, modelId);
+    }
+
+    private void emitModelSelectionWarning(String sessionUuid,
+                                           List<AiChatMessage> transitionAccumulator,
+                                           String warning) {
+        if (warning == null || warning.isBlank()) {
+            return;
+        }
+        UiEventFrame event = new UiEventFrame(
+                UUID.randomUUID().toString(),
+                "TEXT_RESPONSE",
+                "CHAT_OUTPUT",
+                warning,
+                null);
+        messaging.convertAndSend("/topic/chat/" + sessionUuid, event);
+        if (transitionAccumulator != null) {
+            transitionAccumulator.add(new AiChatMessage(
+                    UUID.randomUUID().toString(),
+                    "ASSISTANT",
+                    warning,
+                    System.currentTimeMillis(),
+                    null));
+        }
+    }
+
+    private boolean isProviderConfigured(String providerKey) {
+        if (providerKey == null || providerKey.isBlank()) {
+            return false;
+        }
+        if (aiModelService == null) {
+            return "GEMINI".equalsIgnoreCase(providerKey)
+                    || "BACKGROUND_SCHEDULER".equalsIgnoreCase(providerKey);
+        }
+        return aiModelService.getAllProviders().stream()
+                .anyMatch(group -> providerKey.equalsIgnoreCase(group.providerKey()) && group.configured());
+    }
+
+    private boolean isModelAvailable(String providerKey, String modelId) {
+        if (providerKey == null || providerKey.isBlank() || modelId == null || modelId.isBlank()) {
+            return false;
+        }
+        if (aiModelService == null) {
+            return true;
+        }
+        return aiModelService.getAllProviders().stream()
+                .filter(group -> providerKey.equalsIgnoreCase(group.providerKey()))
+                .filter(AiModelService.ProviderModelGroup::configured)
+                .flatMap(group -> group.models().stream())
+                .anyMatch(model -> modelId.equalsIgnoreCase(model.modelId()));
+    }
+
+    private static AiProvider tryResolveProvider(String providerKey) {
+        if (providerKey == null || providerKey.isBlank()) {
+            return null;
+        }
         try {
-            return aiService.generateWithHistory(history, effectiveContent, provider);
+            return AiProvider.valueOf(providerKey.trim().toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    private static ParsedRecommendedModel parseRecommendedModel(String recommendedModel) {
+        if (recommendedModel == null || recommendedModel.isBlank()) {
+            return null;
+        }
+        String normalized = recommendedModel.trim();
+        int sep = normalized.indexOf(':');
+        if (sep <= 0 || sep == normalized.length() - 1) {
+            return null;
+        }
+        String providerKey = normalized.substring(0, sep).trim().toUpperCase();
+        String modelId = normalized.substring(sep + 1).trim();
+        AiProvider provider = tryResolveProvider(providerKey);
+        if (provider == null || provider == AiProvider.ANTHROPIC || provider == AiProvider.BACKGROUND_SCHEDULER) {
+            return null;
+        }
+        if (modelId.isBlank()) {
+            return null;
+        }
+        return new ParsedRecommendedModel(provider, providerKey, modelId);
+    }
+
+    private static String modelSuffix(String modelId) {
+        return (modelId == null || modelId.isBlank()) ? "" : ":" + modelId;
+    }
+
+    private record ParsedRecommendedModel(AiProvider provider, String providerKey, String modelId) {}
+
+    private record TurnModelSelection(AiProvider provider, String modelId, String warningMessage) {}
+
+    private record DefaultModelSelection(AiProvider provider, String modelId) {}
+
+    private String safeGenerateWithHistory(List<Message> history,
+                                           String effectiveContent,
+                                           AiProvider provider,
+                                           String modelId) {
+        try {
+            return aiService.generateWithHistory(history, effectiveContent, provider, modelId);
         } catch (NoSuchElementException ex) {
             // Guard against occasional provider responses without candidates.
             log.warn("Model returned no candidate for history call; retrying with simplified prompt path [provider={}]", provider);
@@ -1708,9 +1969,10 @@ public class ChatService {
     private String safeGenerateWithHistoryAndMedia(List<Message> history,
                                                    String effectiveContent,
                                                    List<Media> media,
-                                                   AiProvider provider) {
+                                                   AiProvider provider,
+                                                   String modelId) {
         try {
-            return aiService.generateWithHistoryAndMedia(history, effectiveContent, media, provider);
+            return aiService.generateWithHistoryAndMedia(history, effectiveContent, media, provider, modelId);
         } catch (NoSuchElementException ex) {
             log.warn("Model returned no candidate for media call; retrying with text-only fallback [provider={}]", provider);
             try {

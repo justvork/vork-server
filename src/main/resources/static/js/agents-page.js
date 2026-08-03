@@ -8,6 +8,8 @@ let allReflections = [];
 let allReflectionGroups = [];
 let allReflectionBindingOptions = [];
 let allUsers = [];
+let providerGroups = [];
+let providerGroupByKey = {};
 let modalTools = [];
 let modalSkills = [];
 let modalBindingUuids = [];
@@ -50,7 +52,8 @@ async function loadData() {
             fetch('/api/skills'),
             fetch('/api/reflections'),
             fetch('/api/reflection-groups'),
-            fetch('/api/users')
+            fetch('/api/users'),
+            fetch('/api/ai/providers')
         ]);
         const agentsRes = results[0];
         const toolsRes = results[1];
@@ -58,15 +61,25 @@ async function loadData() {
         const reflectionsRes = results[3];
         const reflectionGroupsRes = results[4];
         const usersRes = results[5];
+        const providerRes = results[6];
         allAgents = agentsRes.ok ? await agentsRes.json() : [];
         allTools = toolsRes.ok ? await toolsRes.json() : [];
         allSkills = skillsRes.ok ? await skillsRes.json() : [];
         allReflections = reflectionsRes.ok ? await reflectionsRes.json() : [];
         allReflectionGroups = reflectionGroupsRes.ok ? await reflectionGroupsRes.json() : [];
         allUsers = usersRes.ok ? await usersRes.json() : [];
+        providerGroups = providerRes.ok ? await providerRes.json() : [];
+        providerGroupByKey = (providerGroups || []).reduce(function (acc, group) {
+            if (group && group.providerKey) {
+                acc[group.providerKey.toUpperCase()] = group;
+            }
+            return acc;
+        }, {});
+        buildRecommendedModelLookupOptions('agent-recommended-model-lookup', '');
         allReflectionBindingOptions = buildReflectionBindingOptions();
         renderAgentBindingColumn();
         renderAgentUsersColumn();
+        renderAgentRecommendedModelColumn();
     } catch (_e) {
         showAlert('Failed to load data.', 'warning');
     }
@@ -127,11 +140,147 @@ function renderAgentUsersColumn() {
     });
 }
 
+function parseRecommendedModel(raw) {
+    if (!raw || typeof raw !== 'string') return null;
+    const trimmed = raw.trim();
+    const sep = trimmed.indexOf(':');
+    if (sep <= 0 || sep >= trimmed.length - 1) return null;
+    const provider = trimmed.substring(0, sep).trim().toUpperCase();
+    const modelId = trimmed.substring(sep + 1).trim();
+    if (!provider || !modelId) return null;
+    return { provider: provider, modelId: modelId };
+}
+
+function evaluateRecommendedModel(raw) {
+    if (!raw || !String(raw).trim()) {
+        return { text: '—', warning: null, configured: false };
+    }
+    const parsed = parseRecommendedModel(raw);
+    if (!parsed) {
+        return { text: raw, warning: 'Invalid format (expected PROVIDER:model-id)', configured: false };
+    }
+    const group = providerGroupByKey[parsed.provider];
+    if (!group || !group.configured) {
+        return { text: parsed.provider + ':' + parsed.modelId, warning: 'Provider not configured', configured: false };
+    }
+    const hasModel = (group.models || []).some(function (m) {
+        return (m.modelId || '').toLowerCase() === parsed.modelId.toLowerCase();
+    });
+    if (!hasModel) {
+        return { text: parsed.provider + ':' + parsed.modelId, warning: 'Model not available', configured: true };
+    }
+    return { text: parsed.provider + ':' + parsed.modelId, warning: null, configured: true };
+}
+
+function renderAgentRecommendedModelColumn() {
+    (allAgents || []).forEach(function (agent) {
+        const cell = document.getElementById('agent-model-' + agent.uuid);
+        if (!cell) return;
+
+        const evalResult = evaluateRecommendedModel(agent.recommendedModel);
+        if (evalResult.text === '—') {
+            cell.innerHTML = '<span class="text-muted small">—</span>';
+            return;
+        }
+        if (evalResult.warning) {
+            cell.innerHTML = ''
+                + '<span class="tool-pill">'
+                + '  <i class="fa-solid fa-triangle-exclamation text-warning"></i>'
+                + '  <span>' + escapeHtml(evalResult.text) + '</span>'
+                + '</span>'
+                + '<div class="text-warning small mt-1">' + escapeHtml(evalResult.warning) + '</div>';
+            return;
+        }
+        cell.innerHTML = ''
+            + '<span class="tool-pill">'
+            + '  <i class="fa-solid fa-microchip"></i>'
+            + '  <span>' + escapeHtml(evalResult.text) + '</span>'
+            + '</span>';
+    });
+}
+
+function buildRecommendedModelLookupOptions(selectId, selectedRaw) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+
+    const normalizedSelected = selectedRaw ? String(selectedRaw).trim().toUpperCase() : '';
+    select.innerHTML = '<option value="">-- Select from configured provider models --</option>';
+
+    let optionCount = 0;
+    (providerGroups || []).forEach(function (group) {
+        if (!group || !group.configured || !group.providerKey) return;
+        const models = Array.isArray(group.models) ? group.models : [];
+        if (models.length === 0) return;
+
+        const optGroup = document.createElement('optgroup');
+        optGroup.label = group.providerLabel || group.providerKey;
+
+        models.forEach(function (model) {
+            const modelId = model && model.modelId ? String(model.modelId).trim() : '';
+            if (!modelId) return;
+
+            const value = String(group.providerKey).toUpperCase() + ':' + modelId;
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = (group.providerLabel || group.providerKey) + ' - ' + (model.label || modelId);
+            if (normalizedSelected && value.toUpperCase() === normalizedSelected) {
+                option.selected = true;
+            }
+            optGroup.appendChild(option);
+            optionCount++;
+        });
+
+        if (optGroup.children.length > 0) {
+            select.appendChild(optGroup);
+        }
+    });
+
+    if (optionCount === 0) {
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = '-- No configured provider models available --';
+        empty.disabled = true;
+        select.appendChild(empty);
+    }
+
+    syncRecommendedModelLookup('agent-recommended-model', selectId);
+}
+
+function setRecommendedModelFromLookup(inputId, selectId) {
+    const input = document.getElementById(inputId);
+    const select = document.getElementById(selectId);
+    if (!input || !select) return;
+    if (!select.value) return;
+    input.value = select.value;
+}
+
+function syncRecommendedModelLookup(inputId, selectId) {
+    const input = document.getElementById(inputId);
+    const select = document.getElementById(selectId);
+    if (!input || !select) return;
+
+    const normalized = input.value ? String(input.value).trim().toUpperCase() : '';
+    let matched = false;
+    for (let i = 0; i < select.options.length; i++) {
+        const option = select.options[i];
+        if (option.value && option.value.toUpperCase() === normalized) {
+            select.value = option.value;
+            matched = true;
+            break;
+        }
+    }
+    if (!matched) {
+        select.value = '';
+    }
+}
+
 function openCreate() {
     document.getElementById('agentModalLabel').textContent = 'New Agent';
     document.getElementById('agent-id').value = '';
     document.getElementById('agent-name').value = '';
     document.getElementById('agent-prompt').value = '';
+    document.getElementById('agent-recommended-model').value = '';
+    buildRecommendedModelLookupOptions('agent-recommended-model-lookup', '');
     modalTools = [];
     modalSkills = [];
     modalBindingUuids = [];
@@ -154,6 +303,8 @@ function openEdit(id) {
     document.getElementById('agent-id').value = agent.uuid;
     document.getElementById('agent-name').value = agent.name;
     document.getElementById('agent-prompt').value = agent.systemPrompt || '';
+    document.getElementById('agent-recommended-model').value = agent.recommendedModel || '';
+    buildRecommendedModelLookupOptions('agent-recommended-model-lookup', agent.recommendedModel || '');
     modalTools = agent.allowedTools ? agent.allowedTools.slice() : [];
     modalSkills = agent.skillUuids ? agent.skillUuids.slice() : [];
     modalBindingUuids = extractBindingUuidsFromAssignments(agent.reflectionBindings);
@@ -537,6 +688,7 @@ async function saveAgent() {
     const body = {
         name: name,
         systemPrompt: document.getElementById('agent-prompt').value,
+        recommendedModel: document.getElementById('agent-recommended-model').value.trim(),
         allowedTools: modalTools.slice(),
         skillUuids: modalSkills.slice(),
         reflectionBindings: reflectionBindingsPayloadFromSelection(),

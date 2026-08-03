@@ -103,6 +103,18 @@
                            placeholder="Brief description of what this skill does">
                 </div>
 
+                <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="skill-recommended-model">Recommended Model</label>
+                    <input type="text" id="skill-recommended-model" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"
+                           placeholder="PROVIDER:model-id (optional, e.g. OPENAI:gpt-4o)" oninput="syncRecommendedModelLookup('skill-recommended-model', 'skill-recommended-model-lookup')">
+                    <div class="mt-1 text-xs text-zinc-500">If set, this model is preferred while the skill is active and overrides any agent recommendation.</div>
+                    <div class="mt-2 flex items-center gap-2">
+                        <select id="skill-recommended-model-lookup" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" onchange="setRecommendedModelFromLookup('skill-recommended-model', 'skill-recommended-model-lookup')">
+                            <option value="">-- Select from configured provider models --</option>
+                        </select>
+                    </div>
+                </div>
+
                 <!-- Input Parameters ────────────────────────────────────── -->
                 <div class="mb-3">
                     <label class="mb-1 block text-sm font-medium text-zinc-300">Input Parameters</label>

@@ -21,6 +21,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 
+import sh.vork.ai.AiProvider;
+
 /**
  * Serves the Skills management page and REST API.
  */
@@ -77,6 +79,10 @@ public class SkillController {
         if (req.groupUuid() == null || req.groupUuid().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "groupUuid is required."));
         }
+        String modelError = validateRecommendedModel(req.recommendedModel());
+        if (modelError != null) {
+            return ResponseEntity.badRequest().body(Map.of("error", modelError));
+        }
         try {
             Skill created = skillService.create(req);
             return ResponseEntity.ok(created);
@@ -95,6 +101,10 @@ public class SkillController {
         }
         if (req.groupUuid() == null || req.groupUuid().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "groupUuid is required."));
+        }
+        String modelError = validateRecommendedModel(req.recommendedModel());
+        if (modelError != null) {
+            return ResponseEntity.badRequest().body(Map.of("error", modelError));
         }
         try {
             Skill updated = skillService.update(uuid, req);
@@ -200,6 +210,28 @@ public class SkillController {
         boolean match = supported.stream().anyMatch(c -> c.equalsIgnoreCase(category.trim()));
         if (!match) {
             return "Unsupported category. Choose one of the supported categories.";
+        }
+        return null;
+    }
+
+    private static String validateRecommendedModel(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String normalized = raw.trim();
+        int sep = normalized.indexOf(':');
+        if (sep <= 0 || sep == normalized.length() - 1) {
+            return "recommendedModel must use format PROVIDER:model-id";
+        }
+        String providerKey = normalized.substring(0, sep).trim().toUpperCase();
+        String modelId = normalized.substring(sep + 1).trim();
+        if (modelId.isBlank()) {
+            return "recommendedModel must include a non-empty model id";
+        }
+        try {
+            AiProvider.valueOf(providerKey);
+        } catch (IllegalArgumentException ex) {
+            return "Unknown provider in recommendedModel: " + providerKey;
         }
         return null;
     }

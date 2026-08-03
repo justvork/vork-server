@@ -12,7 +12,6 @@ import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
 import sh.vork.ai.terminal.TerminalStreamRouter;
 import sh.vork.ai.memory.SessionEnvironmentService;
-import sh.vork.ai.provider.AiModelService;
 import sh.vork.ai.registry.ToolRegistry;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.reflection.Reflection;
@@ -45,7 +44,6 @@ class ChatControllerAttachmentBroadcastTest {
                 messaging,
                 mock(AiOrchestrationService.class),
                 mock(TerminalStreamRouter.class),
-                mock(AiModelService.class),
                 mock(ToolRegistry.class),
                 (DatabaseRepository<Skill>) mock(DatabaseRepository.class),
                 mock(SessionEnvironmentService.class),
@@ -70,7 +68,7 @@ class ChatControllerAttachmentBroadcastTest {
                 null
         );
 
-        when(chatService.sendMessageAsUser(eq("alice"), eq(sessionUuid), eq("zip this"), any(), eq(AiProvider.GEMINI)))
+        when(chatService.sendMessageAsUser(eq("alice"), eq(sessionUuid), eq("zip this"), any(), any()))
                 .thenReturn(aiMessage);
 
         Principal principal = () -> "alice";
@@ -124,7 +122,6 @@ class ChatControllerAttachmentBroadcastTest {
                                 mock(SimpMessagingTemplate.class),
                                 mock(AiOrchestrationService.class),
                                 mock(TerminalStreamRouter.class),
-                                mock(AiModelService.class),
                                 mock(ToolRegistry.class),
                                 (DatabaseRepository<Skill>) mock(DatabaseRepository.class),
                                 mock(SessionEnvironmentService.class),
@@ -170,7 +167,6 @@ class ChatControllerAttachmentBroadcastTest {
                                 mock(SimpMessagingTemplate.class),
                                 mock(AiOrchestrationService.class),
                                 mock(TerminalStreamRouter.class),
-                                mock(AiModelService.class),
                                 mock(ToolRegistry.class),
                                 (DatabaseRepository<Skill>) mock(DatabaseRepository.class),
                                 mock(SessionEnvironmentService.class),
