@@ -66,6 +66,12 @@ function bindEvents() {
     document.getElementById('reflection-response-content-type').addEventListener('change', function () {
         updateOutputSchemaVisibility();
     });
+    document.querySelectorAll('.reflection-tab-btn').forEach(function (button) {
+        button.addEventListener('click', function () {
+            const tab = button.getAttribute('data-tab') || 'request';
+            setReflectionTab(tab);
+        });
+    });
     document.getElementById('add-header-btn').addEventListener('click', function () {
         modalHeaders.push({ name: '', value: '' });
         renderKeyValueRows('headers-list', modalHeaders, 'header');
@@ -1045,6 +1051,7 @@ function openCreateReflectionModal(defaultGroupUuid) {
     populateGroupSelect(defaultGroupUuid || '');
     updateRequestTemplateVisibility();
     updateOutputSchemaVisibility();
+    setReflectionTab('request');
     renderKeyValueRows('headers-list', modalHeaders, 'header');
     renderKeyValueRows('query-params-list', modalQueryParameters, 'query');
     renderParameters();
@@ -1100,6 +1107,7 @@ function populateReflectionModalFromReflection(reflection, asCopy) {
     populateGroupSelect(reflection.groupUuid || '');
     updateRequestTemplateVisibility();
     updateOutputSchemaVisibility();
+    setReflectionTab('request');
     renderKeyValueRows('headers-list', modalHeaders, 'header');
     renderKeyValueRows('query-params-list', modalQueryParameters, 'query');
     renderParameters();
@@ -1452,6 +1460,39 @@ function closeGroupModal() {
 
 function closeReflectionModal() {
     hideModal('reflection-modal');
+}
+
+function setReflectionTab(tab) {
+    const requestBtn = document.getElementById('reflection-tab-request');
+    const responseBtn = document.getElementById('reflection-tab-response');
+    const requestPanel = document.getElementById('reflection-tab-panel-request');
+    const responsePanel = document.getElementById('reflection-tab-panel-response');
+    const active = tab === 'response' ? 'response' : 'request';
+
+    if (!requestBtn || !responseBtn || !requestPanel || !responsePanel) {
+        return;
+    }
+
+    const activate = function (button) {
+        button.classList.remove('bg-zinc-950', 'text-zinc-400');
+        button.classList.add('bg-zinc-900', 'text-zinc-100');
+    };
+    const deactivate = function (button) {
+        button.classList.remove('bg-zinc-900', 'text-zinc-100');
+        button.classList.add('bg-zinc-950', 'text-zinc-400');
+    };
+
+    if (active === 'request') {
+        activate(requestBtn);
+        deactivate(responseBtn);
+        requestPanel.classList.remove('hidden');
+        responsePanel.classList.add('hidden');
+    } else {
+        activate(responseBtn);
+        deactivate(requestBtn);
+        responsePanel.classList.remove('hidden');
+        requestPanel.classList.add('hidden');
+    }
 }
 
 function closeBindingModal() {

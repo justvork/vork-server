@@ -110,6 +110,8 @@
 
 .bubble pre {
     margin: 0.5rem 0;
+    padding: 0.65rem;
+    background-color: rgba(0, 0, 0, 0.3);
     border-radius: 0.375rem;
     overflow-x: auto;
 }
@@ -117,6 +119,74 @@
 .bubble code {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     font-size: 0.8125rem;
+}
+
+.bubble h1,
+.bubble h2,
+.bubble h3,
+.bubble h4,
+.bubble h5,
+.bubble h6 {
+    margin: 0.5rem 0 0.35rem;
+    line-height: 1.25;
+}
+
+.bubble h1 { font-size: 1.05rem; }
+.bubble h2 { font-size: 0.98rem; }
+.bubble h3 { font-size: 0.93rem; }
+
+.bubble p {
+    margin: 0 0 0.45rem;
+}
+
+.bubble ul,
+.bubble ol {
+    margin: 0 0 0.5rem;
+    padding-left: 1.35rem;
+}
+
+.bubble li {
+    margin: 0.15rem 0;
+}
+
+.bubble blockquote {
+    margin: 0.4rem 0 0.6rem;
+    padding: 0.2rem 0 0.2rem 0.7rem;
+    border-left: 3px solid #52525b;
+    color: #a1a1aa;
+}
+
+.bubble table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 0.4rem 0 0.7rem;
+}
+
+.bubble th,
+.bubble td {
+    border: 1px solid #3f3f46;
+    padding: 0.28rem 0.55rem;
+    text-align: left;
+}
+
+.bubble th {
+    background-color: #18181b;
+}
+
+.bubble hr {
+    border: 0;
+    border-top: 1px solid #3f3f46;
+    margin: 0.55rem 0;
+}
+
+.bubble.assistant a {
+    color: #93c5fd;
+    text-decoration: underline;
+}
+
+.bubble.user a {
+    color: #dcfce7;
+    text-decoration: underline;
 }
 
 .bubble p:first-child { margin-top: 0; }
