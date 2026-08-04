@@ -21,6 +21,8 @@ public record Reflection(
         Map<String, String> queryParameters,
         String bodyTemplate,
         String requestContentType,
+        String responseContentType,
+        String outputSchema,
         long version,
         long createdAt,
         long updatedAt
@@ -59,6 +61,12 @@ public record Reflection(
         }
         if (requestContentType == null || requestContentType.isBlank()) {
             requestContentType = "application/json";
+        }
+        if (responseContentType == null || responseContentType.isBlank()) {
+            responseContentType = "application/json";
+        }
+        if (outputSchema == null) {
+            outputSchema = "";
         }
         if (version < 1) {
             version = 1;

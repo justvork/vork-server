@@ -1,0 +1,65 @@
+/* Surfaces management page styles */
+
+#surface-table th,
+#surface-table td {
+    vertical-align: middle;
+}
+
+/* VorkModal backdrop (same as other pages) */
+.modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 1050;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+
+.modal.show {
+    display: flex;
+}
+
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background-color: rgba(0, 0, 0, 0.6);
+}
+
+.modal-dialog {
+    width: 100%;
+    max-width: 32rem;
+}
+
+.modal-content {
+    border-radius: 0.75rem;
+    border: 1px solid #3f3f46;
+    background-color: #18181b;
+    color: #f4f4f5;
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #3f3f46;
+    padding: 1rem;
+}
+
+.modal-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+}
+
+.modal-body {
+    padding: 1rem;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    border-top: 1px solid #3f3f46;
+    padding: 1rem;
+}

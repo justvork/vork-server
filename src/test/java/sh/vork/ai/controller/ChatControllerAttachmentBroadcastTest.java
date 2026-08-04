@@ -113,6 +113,8 @@ class ChatControllerAttachmentBroadcastTest {
                                 Map.of(),
                                 "",
                                 "application/json",
+                                "application/json",
+                                "",
                                 1L,
                                 System.currentTimeMillis(),
                                 System.currentTimeMillis()));

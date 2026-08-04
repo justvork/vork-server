@@ -107,6 +107,34 @@ public class SessionFileController {
         }
     }
 
+    @PostMapping(value = "/create-folder")
+    public ResponseEntity<?> createFolder(@RequestParam FileArea area,
+                                          @RequestParam(required = false) String sessionUuid,
+                                          @RequestParam String dir,
+                                          Principal principal) {
+        log.debug("ENTER createFolder: area={}, sessionUuid={}, dir={}, user={}",
+                area, sessionUuid, dir, principal == null ? null : principal.getName());
+        if (!isAuthorized(area, sessionUuid, principal)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("status", "error", "message", "Access denied"));
+        }
+        if (dir == null || dir.isBlank()) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("status", "error", "message", "Directory path is required"));
+        }
+        try {
+            sessionFileSystem.createDirectory(area, sessionUuid, dir);
+            return ResponseEntity.ok(Map.of("status", "ok", "area", area.name(),
+                    "sessionUuid", area == FileArea.SESSION ? sessionUuid : null,
+                    "dir", dir));
+        } catch (Exception ex) {
+            log.warn("Failed to create folder [area={}, session={}, dir={}]: {}",
+                    area, sessionUuid, dir, ex.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("status", "error", "message", ex.getMessage()));
+        }
+    }
+
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<?> upload(@RequestParam FileArea area,
                                     @RequestParam(required = false) String sessionUuid,

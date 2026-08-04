@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Surfaces — Vork</title>
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="/css/surfaces-page.css" th:href="@{/css/surfaces-page.css}">
+</head>
+<body class="bg-zinc-950 text-zinc-100">
+<div th:replace="~{fragments/header :: header}"></div>
+
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
+        <div>
+            <h2 class="flex items-center gap-2 text-2xl font-bold text-zinc-100"><i class="fa-solid fa-layer-group text-[#fdaa02]"></i>Surfaces</h2>
+            <p class="vork-page-subtitle">Custom AI-built web pages and their artifacts</p>
+        </div>
+        <div class="vork-page-header-actions">
+            <button id="new-surface-btn" class="rounded-lg border border-cyan-500/40 px-3 py-2 text-sm font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15">
+                <i class="fa-solid fa-plus mr-2"></i>New Surface
+            </button>
+        </div>
+    </div>
+
+    <div class="vork-content-stack">
+        <div id="alert-area"></div>
+
+        <div class="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
+            <div class="p-0">
+                <div id="no-surfaces" class="vork-empty-state-card hidden">
+                    <i class="fa-solid fa-layer-group vork-empty-icon"></i>
+                    <p class="vork-empty-title">No surfaces defined yet</p>
+                    <p class="vork-empty-hint">Create a surface to start building a custom web page.</p>
+                </div>
+                <table id="surface-table" class="hidden min-w-full text-left text-sm text-zinc-200">
+                    <thead class="bg-zinc-800/80 text-xs uppercase tracking-wide text-zinc-300">
+                        <tr>
+                            <th class="px-3 py-2 font-semibold">Name</th>
+                            <th class="px-3 py-2 font-semibold">Description</th>
+                            <th class="px-3 py-2 font-semibold">Updated</th>
+                            <th class="px-3 py-2 text-right font-semibold">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="surface-table-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Create / Edit Modal -->
+<div class="modal" id="surface-modal" tabindex="-1" aria-labelledby="surface-modal-label" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="surface-modal-label">New Surface</h5>
+                <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-700 text-zinc-300 transition-colors hover:bg-zinc-800" data-bs-dismiss="modal" aria-label="Close">×</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="surface-uuid">
+                <div id="surface-modal-alert" class="mb-3"></div>
+                <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-name">Name <span class="text-rose-400">*</span></label>
+                    <input type="text" id="surface-name" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. Project Dashboard">
+                </div>
+                <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-description">Description</label>
+                    <input type="text" id="surface-description" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="Brief description of what this surface does">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="rounded-lg border border-zinc-600 px-3 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" id="surface-save-btn" class="rounded-lg border border-cyan-500/40 px-3 py-2 text-sm font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
+<script src="/js/surfaces-page.js" th:src="@{/js/surfaces-page.js}"></script>
+</body>
+</html>

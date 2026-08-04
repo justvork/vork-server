@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Surface Editor — Vork</title>
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <link rel="stylesheet" href="/css/surface-editor.css" th:href="@{/css/surface-editor.css}">
+</head>
+<body class="bg-zinc-950 text-zinc-100">
+<div th:replace="~{fragments/header :: header}"></div>
+
+<div id="surface-editor-root" class="surface-editor-root" th:data-uuid="${surfaceUuid}">
+
+    <!-- Left: chat -->
+    <div class="chat-panel">
+        <div class="panel-header">
+            <span class="font-semibold"><i class="fa-solid fa-comments mr-2 text-[#fdaa02]"></i>Surface Assitant</span>
+            <span id="chat-status" class="text-xs text-zinc-500">Connecting…</span>
+        </div>
+        <div id="messages-area" class="chat-messages"></div>
+        <div class="chat-input-area">
+            <form id="chat-form" class="flex items-end gap-2">
+                <textarea id="message-input" rows="1"
+                    class="min-h-[2.5rem] flex-1 resize-none rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"
+                    placeholder="Ask the Surface Developer to create files…"></textarea>
+                <button type="submit" id="send-btn" class="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-[#fdaa02] text-black transition-colors hover:bg-[#e89a02]">
+                    <i class="fa-solid fa-paper-plane"></i>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Center: configuration + file tree -->
+    <div class="center-panel">
+        <div class="config-sidebar">
+            <div class="panel-header">
+                <span class="font-semibold"><i class="fa-solid fa-sliders mr-2 text-[#fdaa02]"></i>Configuration</span>
+            </div>
+            <div class="config-sections">
+                <div class="config-section">
+                    <div class="config-section-title" data-target="skills-list">
+                        <i class="fa-solid fa-chevron-down mr-1 text-xs"></i>Skills
+                    </div>
+                    <div id="skills-list" class="config-list"></div>
+                    <div class="config-add">
+                        <input id="skill-lookup-input"
+                               type="text"
+                               class="config-lookup-input"
+                               placeholder="Search skills..."
+                               autocomplete="off">
+                        <div id="skill-lookup-results" class="config-lookup-results"></div>
+                    </div>
+                </div>
+                <div class="config-section">
+                    <div class="config-section-title" data-target="reflections-list">
+                        <i class="fa-solid fa-chevron-down mr-1 text-xs"></i>Reflection Bindings
+                    </div>
+                    <div id="reflections-list" class="config-list"></div>
+                    <div class="config-add">
+                        <input id="reflection-lookup-input"
+                               type="text"
+                               class="config-lookup-input"
+                               placeholder="Search reflection bindings..."
+                               autocomplete="off">
+                        <div id="reflection-lookup-results" class="config-lookup-results"></div>
+                    </div>
+                </div>
+                <div class="config-section">
+                    <div class="config-section-title" data-target="jobs-list">
+                        <i class="fa-solid fa-chevron-down mr-1 text-xs"></i>Jobs
+                    </div>
+                    <div id="jobs-list" class="config-list"></div>
+                    <div class="config-add">
+                        <input id="job-lookup-input"
+                               type="text"
+                               class="config-lookup-input"
+                               placeholder="Search jobs..."
+                               autocomplete="off">
+                        <div id="job-lookup-results" class="config-lookup-results"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="file-tree-panel">
+            <div class="panel-header justify-between">
+                <span class="font-semibold"><i class="fa-solid fa-folder-tree mr-2 text-[#fdaa02]"></i>Files</span>
+                <div class="flex gap-1">
+                    <button id="refresh-files-btn" type="button" class="icon-btn" title="Refresh"><i class="fa-solid fa-rotate"></i></button>
+                    <button id="new-folder-btn" type="button" class="icon-btn" title="New folder"><i class="fa-solid fa-folder-plus"></i></button>
+                </div>
+            </div>
+            <div id="file-tree" class="file-tree">
+                <div class="text-xs text-zinc-500 p-2">Loading…</div>
+            </div>
+        </div>
+        <div class="center-preview-footer">
+            <a id="surface-preview-link"
+               href="#"
+               th:href="@{'/surface/' + ${surfaceUuid} + '/preview/index.html'}"
+               target="_blank"
+               rel="noopener noreferrer"
+               class="config-preview-link">
+                <i class="fa-solid fa-up-right-from-square"></i>
+                <span>Preview</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Right: code viewer -->
+    <div class="viewer-panel">
+        <div class="panel-header justify-between">
+            <span id="viewer-filename" class="font-semibold text-zinc-300"><i class="fa-solid fa-code mr-2 text-[#fdaa02]"></i>No file selected</span>
+            <span id="viewer-meta" class="text-xs text-zinc-500"></span>
+        </div>
+        <div class="viewer-content">
+            <pre id="viewer-pre" class="hidden"><code id="viewer-code" class="language-text"></code></pre>
+            <div id="viewer-empty" class="viewer-empty">
+                <i class="fa-solid fa-file-code text-4xl text-zinc-700"></i>
+                <p class="mt-2 text-sm text-zinc-500">Select a file from the tree to view its contents.</p>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script src="/packages/npm/sockjs-client/current/dist/sockjs.min.js" th:src="@{/packages/npm/sockjs-client/current/dist/sockjs.min.js}"></script>
+<script src="/packages/npm.stomp/stompjs/current/bundles/stomp.umd.min.js" th:src="@{/packages/npm.stomp/stompjs/current/bundles/stomp.umd.min.js}"></script>
+<script src="/packages/npm/marked/current/marked.min.js" th:src="@{/packages/npm/marked/current/marked.min.js}"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+<script src="/js/surface-editor.js" th:src="@{/js/surface-editor.js}"></script>
+</body>
+</html>

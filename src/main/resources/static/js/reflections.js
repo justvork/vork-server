@@ -63,6 +63,9 @@ function bindEvents() {
     document.getElementById('reflection-method').addEventListener('change', function () {
         updateRequestTemplateVisibility();
     });
+    document.getElementById('reflection-response-content-type').addEventListener('change', function () {
+        updateOutputSchemaVisibility();
+    });
     document.getElementById('add-header-btn').addEventListener('click', function () {
         modalHeaders.push({ name: '', value: '' });
         renderKeyValueRows('headers-list', modalHeaders, 'header');
@@ -1033,12 +1036,15 @@ function openCreateReflectionModal(defaultGroupUuid) {
     document.getElementById('reflection-method').value = 'GET';
     document.getElementById('reflection-url').value = '';
     document.getElementById('reflection-content-type').value = 'application/json';
+    document.getElementById('reflection-response-content-type').value = 'application/json';
+    document.getElementById('reflection-output-schema').value = '';
     document.getElementById('reflection-body').value = '';
     modalParameters = [];
     modalHeaders = [];
     modalQueryParameters = [];
     populateGroupSelect(defaultGroupUuid || '');
     updateRequestTemplateVisibility();
+    updateOutputSchemaVisibility();
     renderKeyValueRows('headers-list', modalHeaders, 'header');
     renderKeyValueRows('query-params-list', modalQueryParameters, 'query');
     renderParameters();
@@ -1078,6 +1084,8 @@ function populateReflectionModalFromReflection(reflection, asCopy) {
     document.getElementById('reflection-method').value = reflection.method || 'GET';
     document.getElementById('reflection-url').value = reflection.url || '';
     document.getElementById('reflection-content-type').value = reflection.requestContentType || 'application/json';
+    document.getElementById('reflection-response-content-type').value = reflection.responseContentType || 'application/json';
+    document.getElementById('reflection-output-schema').value = reflection.outputSchema || '';
     document.getElementById('reflection-body').value = reflection.bodyTemplate || '';
     modalHeaders = mapToKeyValueEntries(reflection.headers || {});
     modalQueryParameters = mapToKeyValueEntries(reflection.queryParameters || {});
@@ -1091,6 +1099,7 @@ function populateReflectionModalFromReflection(reflection, asCopy) {
     });
     populateGroupSelect(reflection.groupUuid || '');
     updateRequestTemplateVisibility();
+    updateOutputSchemaVisibility();
     renderKeyValueRows('headers-list', modalHeaders, 'header');
     renderKeyValueRows('query-params-list', modalQueryParameters, 'query');
     renderParameters();
@@ -1108,6 +1117,8 @@ async function saveReflection() {
         method: document.getElementById('reflection-method').value,
         url: document.getElementById('reflection-url').value.trim(),
         requestContentType: document.getElementById('reflection-content-type').value,
+        responseContentType: document.getElementById('reflection-response-content-type').value,
+        outputSchema: document.getElementById('reflection-output-schema').value,
         headers: keyValueEntriesToMap(modalHeaders),
         queryParameters: keyValueEntriesToMap(modalQueryParameters),
         bodyTemplate: document.getElementById('reflection-body').value
@@ -1420,6 +1431,19 @@ function updateRequestTemplateVisibility() {
             contentTypeSection.classList.remove('hidden');
         }
     }
+}
+
+function updateOutputSchemaVisibility() {
+    const responseType = (document.getElementById('reflection-response-content-type').value || '').toLowerCase();
+    const schemaSection = document.getElementById('output-schema-section');
+    const schemaInput = document.getElementById('reflection-output-schema');
+    if (!schemaSection || !schemaInput) {
+        return;
+    }
+
+    const isJson = responseType === 'application/json';
+    schemaSection.classList.toggle('hidden', !isJson);
+    schemaInput.disabled = !isJson;
 }
 
 function closeGroupModal() {

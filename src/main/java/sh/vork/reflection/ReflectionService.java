@@ -26,6 +26,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import sh.vork.ai.security.SkillSecretSubstitutor;
@@ -771,6 +772,7 @@ public class ReflectionService {
             });
 
             String responseBody = response.body() == null ? "" : response.body();
+            warnIfJsonResponseSchemaMismatch(reflection, responseBody);
             if (responseBody.length() > 20_000) {
                 responseBody = responseBody.substring(0, 20_000) + "\n...<truncated>";
             }
@@ -837,6 +839,8 @@ public class ReflectionService {
         Map<String, String> headers = normalizeStringMap(request.headers());
         Map<String, String> queryParameters = normalizeStringMap(request.queryParameters());
         String requestContentType = normalizeRequestContentType(request.requestContentType());
+        String responseContentType = normalizeResponseContentType(request.responseContentType());
+        String outputSchema = normalizeOutputSchema(request.outputSchema(), responseContentType);
 
         long now = System.currentTimeMillis();
         if (existing == null) {
@@ -853,6 +857,8 @@ public class ReflectionService {
                     queryParameters,
                     request.bodyTemplate() == null ? "" : request.bodyTemplate(),
                     requestContentType,
+                    responseContentType,
+                    outputSchema,
                     1L,
                     now,
                     now);
@@ -871,6 +877,8 @@ public class ReflectionService {
                 queryParameters,
                 request.bodyTemplate() == null ? "" : request.bodyTemplate(),
                 requestContentType,
+                responseContentType,
+                outputSchema,
                 existing.version() + 1,
                 existing.createdAt(),
                 now);
@@ -989,6 +997,33 @@ public class ReflectionService {
         String normalized = rawContentType.trim().toLowerCase(Locale.ROOT);
         if (!SUPPORTED_CONTENT_TYPES.contains(normalized)) {
             throw new IllegalArgumentException("Unsupported request content type: " + rawContentType);
+        }
+        return normalized;
+    }
+
+    private static String normalizeResponseContentType(String rawContentType) {
+        if (rawContentType == null || rawContentType.isBlank()) {
+            return CONTENT_TYPE_JSON;
+        }
+        String normalized = rawContentType.trim().toLowerCase(Locale.ROOT);
+        if (!SUPPORTED_CONTENT_TYPES.contains(normalized)) {
+            throw new IllegalArgumentException("Unsupported response content type: " + rawContentType);
+        }
+        return normalized;
+    }
+
+    private String normalizeOutputSchema(String rawSchema, String responseContentType) {
+        if (rawSchema == null || rawSchema.isBlank()) {
+            return "";
+        }
+        String normalized = rawSchema.trim();
+        if (!CONTENT_TYPE_JSON.equals(responseContentType)) {
+            return normalized;
+        }
+        try {
+            objectMapper.readTree(normalized);
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("outputSchema must be valid JSON when responseContentType is application/json.");
         }
         return normalized;
     }
@@ -1663,6 +1698,9 @@ public class ReflectionService {
             ? Math.max(existingTarget.version() + 1, 1)
             : (reflection.version() < 1 ? 1 : reflection.version());
 
+        String responseContentType = normalizeResponseContentType(reflection.responseContentType());
+        String outputSchema = normalizeOutputSchema(reflection.outputSchema(), responseContentType);
+
         return new Reflection(
             targetUuid,
                 reflection.id(),
@@ -1676,9 +1714,132 @@ public class ReflectionService {
                 normalizeStringMap(reflection.queryParameters()),
                 reflection.bodyTemplate() == null ? "" : reflection.bodyTemplate(),
                 normalizeRequestContentType(reflection.requestContentType()),
+                responseContentType,
+                outputSchema,
                 version,
                 createdAt,
                 updatedAt);
+    }
+
+    private void warnIfJsonResponseSchemaMismatch(Reflection reflection, String responseBody) {
+        if (reflection == null || responseBody == null) {
+            return;
+        }
+        if (!CONTENT_TYPE_JSON.equals(normalizeResponseContentType(reflection.responseContentType()))) {
+            return;
+        }
+        if (reflection.outputSchema() == null || reflection.outputSchema().isBlank()) {
+            return;
+        }
+
+        try {
+            JsonNode schema = objectMapper.readTree(reflection.outputSchema());
+            JsonNode payload = objectMapper.readTree(responseBody);
+            List<String> issues = new ArrayList<>();
+            validateJsonAgainstSchema(payload, schema, "$", issues);
+            if (!issues.isEmpty()) {
+                log.warn("Reflection response schema mismatch [id={}]: {}",
+                        reflection.id(),
+                        issues.size() == 1
+                                ? issues.get(0)
+                                : issues.get(0) + " (and " + (issues.size() - 1) + " more issue(s))");
+            }
+        } catch (Exception ex) {
+            log.warn("Reflection response schema validation failed [id={}]: {}",
+                    reflection.id(), ex.getMessage());
+        }
+    }
+
+    private static void validateJsonAgainstSchema(JsonNode value, JsonNode schema, String path, List<String> issues) {
+        if (schema == null || issues == null) {
+            return;
+        }
+        if (schema.isBoolean()) {
+            if (!schema.booleanValue()) {
+                issues.add(path + " is disallowed by boolean schema false.");
+            }
+            return;
+        }
+        if (!schema.isObject()) {
+            return;
+        }
+
+        JsonNode typeNode = schema.get("type");
+        if (typeNode != null && !matchesDeclaredType(value, typeNode)) {
+            issues.add(path + " does not match schema type " + typeNode.toString() + ".");
+            return;
+        }
+
+        if (value != null && value.isObject()) {
+            JsonNode required = schema.get("required");
+            if (required != null && required.isArray()) {
+                for (JsonNode field : required) {
+                    if (field.isTextual() && !value.has(field.textValue())) {
+                        issues.add(path + "." + field.textValue() + " is required.");
+                    }
+                }
+            }
+
+            JsonNode properties = schema.get("properties");
+            if (properties != null && properties.isObject()) {
+                properties.fields().forEachRemaining(entry -> {
+                    JsonNode child = value.get(entry.getKey());
+                    if (child != null) {
+                        validateJsonAgainstSchema(child, entry.getValue(), path + "." + entry.getKey(), issues);
+                    }
+                });
+            }
+
+            JsonNode additionalProperties = schema.get("additionalProperties");
+            if (additionalProperties != null && additionalProperties.isBoolean() && !additionalProperties.booleanValue()) {
+                JsonNode propertiesNode = schema.get("properties");
+                value.fieldNames().forEachRemaining(name -> {
+                    if (propertiesNode == null || !propertiesNode.has(name)) {
+                        issues.add(path + "." + name + " is not allowed by additionalProperties=false.");
+                    }
+                });
+            }
+        }
+
+        if (value != null && value.isArray()) {
+            JsonNode items = schema.get("items");
+            if (items != null) {
+                for (int i = 0; i < value.size(); i++) {
+                    validateJsonAgainstSchema(value.get(i), items, path + "[" + i + "]", issues);
+                }
+            }
+        }
+    }
+
+    private static boolean matchesDeclaredType(JsonNode value, JsonNode typeNode) {
+        if (typeNode.isTextual()) {
+            return matchesSingleType(value, typeNode.textValue());
+        }
+        if (typeNode.isArray()) {
+            for (JsonNode candidate : typeNode) {
+                if (candidate.isTextual() && matchesSingleType(value, candidate.textValue())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return true;
+    }
+
+    private static boolean matchesSingleType(JsonNode value, String schemaType) {
+        if (schemaType == null) {
+            return true;
+        }
+        return switch (schemaType) {
+            case "object" -> value != null && value.isObject();
+            case "array" -> value != null && value.isArray();
+            case "string" -> value != null && value.isTextual();
+            case "integer" -> value != null && value.isIntegralNumber();
+            case "number" -> value != null && value.isNumber();
+            case "boolean" -> value != null && value.isBoolean();
+            case "null" -> value == null || value.isNull();
+            default -> true;
+        };
     }
 
     private static Map<String, String> toStringMap(Map<String, Object> rawInputs) {
@@ -1855,7 +2016,9 @@ public class ReflectionService {
             Map<String, String> headers,
             Map<String, String> queryParameters,
             String bodyTemplate,
-            String requestContentType
+            String requestContentType,
+            String responseContentType,
+            String outputSchema
     ) {}
 
     public record GroupDeleteResult(boolean ok, String message) {}

@@ -198,7 +198,9 @@ class ReflectionServiceTest {
                 Map.of("Authorization", "Bearer static-token"),
                 Map.of(),
                 "",
-                "application/json"));
+                "application/json",
+                "application/json",
+                ""));
 
         HttpResponse<String> response = mock(HttpResponse.class);
         when(response.statusCode()).thenReturn(200);
@@ -274,7 +276,9 @@ class ReflectionServiceTest {
                 Map.of(),
                 Map.of(),
                 "",
-                "application/json");
+                "application/json",
+                "application/json",
+                "");
 
         Reflection created = reflectionService.createReflection(request);
         assertNotNull(created);
@@ -300,12 +304,49 @@ class ReflectionServiceTest {
                 Map.of(),
                 Map.of(),
                 "",
-                "application/json"));
+                "application/json",
+                "application/json",
+                ""));
 
         String result = reflectionService.executeRestReflection("WeatherLookup", Map.of(), null, "alice");
 
         assertTrue(result.contains("missing_parameters"));
         assertTrue(result.contains("city"));
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void executeRestReflectionSchemaMismatchLogsWarningButReturnsSuccess() throws Exception {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group", "desc", "REST", "", List.of(), List.of()));
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+        reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                "weatherSchemaCheck",
+                "Weather Schema Check",
+                "desc",
+                group.uuid(),
+                List.of(),
+                "GET",
+                "https://example.com/weather",
+                Map.of(),
+                Map.of(),
+                "",
+                "application/json",
+                "application/json",
+                "{\"type\":\"object\",\"required\":[\"id\"],\"properties\":{\"id\":{\"type\":\"string\"}}}"));
+
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("{\"ok\":true}");
+        when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (a, b) -> true));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn((HttpResponse) response);
+
+        String result = reflectionService.executeRestReflection("weatherSchemaCheck", Map.of(), null, "alice");
+
+        assertTrue(result.contains("\"status\":\"ok\""));
+        assertTrue(result.contains("\"statusCode\":200"));
     }
 
     @Test
@@ -328,7 +369,9 @@ class ReflectionServiceTest {
                 Map.of(),
                 Map.of(),
                 "",
-                "application/json"));
+                "application/json",
+                "application/json",
+                ""));
 
         HttpResponse<String> response = mock(HttpResponse.class);
         when(response.statusCode()).thenReturn(200);
@@ -364,7 +407,9 @@ class ReflectionServiceTest {
                 Map.of(),
                 Map.of(),
                 "",
-                "application/json"));
+                "application/json",
+                "application/json",
+                ""));
 
         String result = reflectionService.executeRestReflection("DirectionsLookup2", Map.of(), null, "alice");
 
@@ -462,7 +507,9 @@ class ReflectionServiceTest {
                                 Map.of(),
                                 Map.of(),
                                 "",
-                                "application/json"));
+                                "application/json",
+                "application/json",
+                ""));
 
                 String result = reflectionService.executeRestReflection("WeatherLookup", Map.of(), null, "alice");
 
@@ -489,7 +536,9 @@ class ReflectionServiceTest {
                 Map.of("Accept", "application/json"),
                 Map.of("units", "metric"),
                 "",
-                "application/json"));
+                "application/json",
+                "application/json",
+                ""));
 
         HttpResponse<String> response = mock(HttpResponse.class);
         when(response.statusCode()).thenReturn(200);
@@ -529,7 +578,9 @@ class ReflectionServiceTest {
                 Map.of(),
                 Map.of(),
                 "",
-                "application/json"));
+                "application/json",
+                "application/json",
+                ""));
 
         HttpResponse<String> response = mock(HttpResponse.class);
         when(response.statusCode()).thenReturn(200);
@@ -569,7 +620,9 @@ class ReflectionServiceTest {
                 Map.of(),
                 Map.of(),
                 "",
-                "application/x-www-form-urlencoded"));
+                "application/x-www-form-urlencoded",
+                "application/json",
+                ""));
 
         HttpResponse<String> response = mock(HttpResponse.class);
         when(response.statusCode()).thenReturn(200);
@@ -613,7 +666,9 @@ class ReflectionServiceTest {
                                 Map.of(),
                                 Map.of(),
                                 "city={{city}}",
-                                "application/x-www-form-urlencoded"));
+                                "application/x-www-form-urlencoded",
+                "application/json",
+                ""));
 
                 HttpResponse<String> response = mock(HttpResponse.class);
                 when(response.statusCode()).thenReturn(200);
@@ -651,7 +706,9 @@ class ReflectionServiceTest {
                                 Map.of(),
                                 Map.of(),
                                 "{\"note\":\"{{note}}\"}",
-                                "application/json"));
+                                "application/json",
+                "application/json",
+                ""));
 
                 HttpResponse<String> response = mock(HttpResponse.class);
                 when(response.statusCode()).thenReturn(200);

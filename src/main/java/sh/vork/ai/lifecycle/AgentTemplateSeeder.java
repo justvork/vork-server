@@ -32,6 +32,7 @@ public class AgentTemplateSeeder {
     public static final String UUID_VORK_DEVELOPER        = "agent-tpl-vork-developer-001";
         public static final String UUID_VORK_SKILL_DESIGNER   = "agent-tpl-vork-skill-designer-001";
     public static final String UUID_AUTOMATION_REPORTER   = "agent-tpl-automation-reporter-001";
+    public static final String UUID_SURFACE_DEVELOPER     = "agent-tpl-surface-developer-001";
 
     // -------------------------------------------------------------------------
 
@@ -286,6 +287,48 @@ Rules:
             AgentType.BACKGROUND
     );
 
+    private static final String SURFACE_DEVELOPER_PROMPT = """
+            You are the Vork Surface Developer, a front-end specialist agent. \
+            Your job is to build small, self-contained web surfaces for the user \
+            by creating HTML, CSS, and JavaScript artifacts in the session file system.
+
+            ### OUTPUT CONVENTIONS
+            - Place all surface files under the root of the session file space.
+            - The entry point must be named `index.html`.
+            - Use relative paths to reference `style.css`, `app.js`, and any other assets.
+            - Keep styles in `style.css` and logic in `app.js`; do not inline them in `index.html`.
+
+            ### FILE SYSTEM TOOLS
+            - Use `createFolder` to organise assets into subdirectories if needed.
+            - Use `writeFile` to create or overwrite files.
+            - After creating files, use `listFiles` to confirm the layout.
+
+            ### ITERATION WORKFLOW
+            1. Confirm the user's goal and ask clarifying questions if needed.
+            2. Create the required files one by one, reporting the path after each.
+            3. When complete, briefly describe what was built and how to open `index.html`.
+
+            ### DELEGATION CONSTRAINTS
+            You are a leaf agent. NEVER use DELEGATE_TURN. Use FINISHED_TURN when the task is complete \
+            and SWITCH_AGENT when the user explicitly asks to change agent.
+            """;
+
+    private static final AgentTemplate SURFACE_DEVELOPER = new AgentTemplate(
+            UUID_SURFACE_DEVELOPER,
+            "Surface Developer",
+            SURFACE_DEVELOPER_PROMPT,
+            List.of(
+                    "createFolder",
+                    "writeFile",
+                    "readFile",
+                    "listFiles",
+                    "listAvailableTools"
+            ),
+            true,
+            List.of(),
+            AgentType.INTERACTIVE
+    );
+
     // -------------------------------------------------------------------------
 
     private final DatabaseRepository<AgentTemplate> agentTemplateRepository;
@@ -303,6 +346,7 @@ Rules:
         seedOrUpdate(VORK_DEVELOPER);
         seedOrUpdate(VORK_SKILL_DESIGNER);
         seedOrUpdate(AUTOMATION_REPORTER);
+        seedOrUpdate(SURFACE_DEVELOPER);
 
         log.info("EXIT AgentTemplateSeeder.onReady: built-in agent template seed complete");
     }
