@@ -1,0 +1,236 @@
+:host {
+  all: initial;
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #d4d4d8;
+}
+
+.vpc-root {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2147483200;
+  display: flex;
+  flex-direction: column;
+  background: #0b0d10;
+  border-top: 1px solid #23272e;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
+  color: #d4d4d8;
+}
+
+.vpc-root * {
+  box-sizing: border-box;
+}
+
+.vpc-resizer {
+  height: 6px;
+  cursor: ns-resize;
+  border-top: 1px solid #2e3440;
+  border-bottom: 1px solid #171a20;
+  background: linear-gradient(180deg, #141922 0%, #0e1117 100%);
+}
+
+.vpc-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #23272e;
+  background: #10131a;
+}
+
+.vpc-title {
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: #f4f4f5;
+}
+
+.vpc-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vpc-btn {
+  appearance: none;
+  border: 1px solid #2b3140;
+  background: #171b24;
+  color: #d4d4d8;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.vpc-btn:hover {
+  background: #1d2430;
+}
+
+.vpc-btn[data-active="true"] {
+  border-color: #4f8cff;
+  color: #b9d4ff;
+}
+
+.vpc-list {
+  overflow: auto;
+  flex: 1;
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #0b0d10;
+}
+
+.vpc-entry {
+  border: 1px solid #23272e;
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: #12161f;
+}
+
+.vpc-entry.vpc-type-reflection\:start { border-left-color: #4f8cff; }
+.vpc-entry.vpc-type-reflection\:success,
+.vpc-entry.vpc-type-success { border-left-color: #22c55e; }
+.vpc-entry.vpc-type-reflection\:error,
+.vpc-entry.vpc-type-error { border-left-color: #ef4444; }
+.vpc-entry.vpc-type-warning { border-left-color: #f59e0b; }
+.vpc-entry.vpc-type-info { border-left-color: #71717a; }
+
+.vpc-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.vpc-summary::-webkit-details-marker {
+  display: none;
+}
+
+.vpc-summary-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.vpc-chevron {
+  color: #7b8397;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  width: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vpc-icon {
+  width: 16px;
+  height: 16px;
+  border: 1px solid #2b3140;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #c7cfde;
+  background: #151a22;
+}
+
+.vpc-title-text {
+  font-size: 12px;
+  color: #f4f4f5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vpc-meta {
+  font-size: 11px;
+  color: #a1a1aa;
+  white-space: nowrap;
+}
+
+.vpc-content {
+  border-top: 1px solid #23272e;
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vpc-section {
+  border: 1px solid #2a3040;
+  border-radius: 6px;
+  background: #0f141d;
+}
+
+.vpc-section > summary {
+  list-style: none;
+  padding: 7px 8px;
+  font-size: 11px;
+  color: #c4c8d4;
+  cursor: pointer;
+  border-bottom: 1px solid #242b39;
+}
+
+.vpc-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.vpc-section-body {
+  padding: 8px;
+}
+
+.vpc-json {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #d4d4d8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.vpc-row {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 8px;
+  font-size: 11px;
+  padding: 3px 0;
+}
+
+.vpc-key {
+  color: #9ca3af;
+}
+
+.vpc-value {
+  color: #e4e4e7;
+  word-break: break-word;
+}
+
+.vpc-empty {
+  color: #7f8491;
+  font-size: 12px;
+  padding: 10px;
+  text-align: center;
+}
+
+.vpc-more {
+  margin-top: 6px;
+  font-size: 11px;
+  border: 1px solid #2b3140;
+  background: #171b24;
+  color: #c7d2fe;
+  border-radius: 5px;
+  padding: 4px 6px;
+  cursor: pointer;
+}

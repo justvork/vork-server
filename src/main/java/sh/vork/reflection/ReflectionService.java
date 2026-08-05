@@ -38,6 +38,7 @@ import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.RepositoryFactory;
 import sh.vork.security.SecureCredentialStore;
 import sh.vork.skill.SkillSecret;
+import sh.vork.util.ToolIdGenerator;
 import sh.vork.web.RequestOriginContext;
 
 @Service
@@ -153,6 +154,19 @@ public class ReflectionService {
         return reflectionGroupRepository.get(uuid);
     }
 
+    public ReflectionGroup getGroupByToolId(String toolId) {
+        if (toolId == null || toolId.isBlank()) {
+            return null;
+        }
+        String normalized = ToolIdGenerator.normalizeBase(toolId, "group");
+        try (var stream = reflectionGroupRepository.list(0, Integer.MAX_VALUE)) {
+            return stream
+                    .filter(group -> normalized.equals(ToolIdGenerator.normalizeBase(group.toolId(), "group")))
+                    .findFirst()
+                    .orElse(null);
+        }
+    }
+
     public ReflectionGroup createGroup(ReflectionGroupRequest request) {
         log.debug("ENTER createGroup: [name={}]", request == null ? "null" : request.name());
         if (request == null) {
@@ -164,9 +178,11 @@ public class ReflectionService {
         ReflectionType type = parseGroupType(request.type());
         ReflectionAuthenticationMode authenticationMode = parseAuthenticationMode(request.authenticationMode());
         String oauthTemplateId = normalizeAndValidateOAuthSettings(type, authenticationMode, request.oauthTemplateId());
+        String toolId = uniqueGroupToolId(request.name(), null);
         long now = System.currentTimeMillis();
         ReflectionGroup group = new ReflectionGroup(
                 UUID.randomUUID().toString(),
+            toolId,
                 request.name().trim(),
                 request.description() == null ? "" : request.description().trim(),
                 type,
@@ -196,8 +212,10 @@ public class ReflectionService {
         ReflectionType type = parseGroupType(request.type());
         ReflectionAuthenticationMode authenticationMode = parseAuthenticationMode(request.authenticationMode());
         String oauthTemplateId = normalizeAndValidateOAuthSettings(type, authenticationMode, request.oauthTemplateId());
+        String toolId = uniqueGroupToolId(request.name(), existing.uuid());
         ReflectionGroup updated = new ReflectionGroup(
                 existing.uuid(),
+            toolId,
                 request.name().trim(),
                 request.description() == null ? "" : request.description().trim(),
                 type,
@@ -558,6 +576,7 @@ public class ReflectionService {
 
         ReflectionGroup normalizedGroup = new ReflectionGroup(
                 group.uuid(),
+            group.toolId(),
                 group.name(),
                 group.description(),
                 group.type(),
@@ -625,8 +644,14 @@ public class ReflectionService {
             normalizedType,
             normalizedAuthMode,
             incomingGroup.oauthTemplateId());
+        String toolId = uniqueGroupToolId(
+            incomingGroup.toolId() == null || incomingGroup.toolId().isBlank()
+                ? incomingGroup.name()
+                : incomingGroup.toolId(),
+            incomingGroup.uuid());
         ReflectionGroup normalizedGroup = new ReflectionGroup(
                 incomingGroup.uuid(),
+            toolId,
                 incomingGroup.name(),
                 incomingGroup.description(),
             normalizedType,
@@ -771,17 +796,17 @@ public class ReflectionService {
                 }
             });
 
-            String responseBody = response.body() == null ? "" : response.body();
-            warnIfJsonResponseSchemaMismatch(reflection, responseBody);
-            if (responseBody.length() > 20_000) {
-                responseBody = responseBody.substring(0, 20_000) + "\n...<truncated>";
-            }
+                String responseBody = response.body() == null ? "" : response.body();
+                warnIfJsonResponseSchemaMismatch(reflection, responseBody);
+                String responseBodyPreview = responseBody.length() > 1000
+                    ? responseBody.substring(0, 1000) + "...<truncated>"
+                    : responseBody;
 
             log.debug("EXIT executeRestReflection: [reflectionId={}, statusCode={}, responseHeaders={}, responseBodyPreview={}]",
                     reflection.id(),
                     response.statusCode(),
                     response.headers().map(),
-                    responseBody.length() > 1000 ? responseBody.substring(0, 1000) + "...<truncated>" : responseBody);
+                    responseBodyPreview);
 
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("status", "ok");
@@ -1144,7 +1169,7 @@ public class ReflectionService {
                     .append('=')
                     .append(URLEncoder.encode(value, StandardCharsets.UTF_8));
         }
-        return URI.create(url.toString());
+        return toUriWithSpaceEncoding(url.toString());
     }
 
     private String resolveBody(Reflection reflection,
@@ -1624,6 +1649,11 @@ public class ReflectionService {
             return url;
         }
 
+        String normalizedHostUrl = normalizeHostOnlyUrl(url);
+        if (normalizedHostUrl != null) {
+            return normalizedHostUrl;
+        }
+
         String baseUrl = "";
         if (binding != null && binding.baseUrl() != null && !binding.baseUrl().isBlank()) {
             baseUrl = binding.baseUrl().trim();
@@ -1644,12 +1674,58 @@ public class ReflectionService {
     }
 
     private static boolean isAbsoluteUrl(String url) {
-        try {
-            URI uri = URI.create(url);
-            return uri.getScheme() != null;
-        } catch (Exception ex) {
+        if (url == null) {
             return false;
         }
+        String candidate = url.trim();
+        if (candidate.isBlank()) {
+            return false;
+        }
+        // Scheme check must be tolerant of unresolved/unsafe query chars before final URI encoding.
+        return candidate.matches("^[a-zA-Z][a-zA-Z0-9+.-]*:.*");
+    }
+
+    private static URI toUriWithSpaceEncoding(String rawUrl) {
+        try {
+            return URI.create(rawUrl);
+        } catch (IllegalArgumentException ex) {
+            if (rawUrl != null && rawUrl.contains(" ")) {
+                return URI.create(rawUrl.replace(" ", "%20"));
+            }
+            throw ex;
+        }
+    }
+
+    /**
+     * Accept host-style values (e.g. api.example.com/path) by defaulting to HTTPS.
+     * This supports binding-driven host parameters used directly in URL templates.
+     */
+    private static String normalizeHostOnlyUrl(String url) {
+        if (url == null) {
+            return null;
+        }
+        String candidate = url.trim();
+        if (candidate.isBlank()) {
+            return null;
+        }
+        if (candidate.startsWith("//")) {
+            return "https:" + candidate;
+        }
+
+        int slash = candidate.indexOf('/');
+        String hostPart = slash >= 0 ? candidate.substring(0, slash) : candidate;
+        if (hostPart.isBlank() || hostPart.contains(" ")) {
+            return null;
+        }
+
+        boolean looksLikeHost = hostPart.contains(".")
+                || hostPart.startsWith("localhost")
+                || hostPart.matches("\\d{1,3}(\\.\\d{1,3}){3}(:\\d+)?");
+        if (!looksLikeHost) {
+            return null;
+        }
+
+        return "https://" + candidate;
     }
 
     private static String applyTemplate(String template, Map<String, String> params) {
@@ -1933,6 +2009,26 @@ public class ReflectionService {
                 || normalized.contains("token")
                 || normalized.contains("api_key")
                 || normalized.contains("apikey");
+    }
+
+    private String uniqueGroupToolId(String preferredSource, String excludeGroupUuid) {
+        return ToolIdGenerator.unique(
+                preferredSource,
+                "group",
+                candidate -> isGroupToolIdAvailable(candidate, excludeGroupUuid));
+    }
+
+    private boolean isGroupToolIdAvailable(String candidate, String excludeGroupUuid) {
+        String normalizedCandidate = ToolIdGenerator.normalizeBase(candidate, "group");
+        try (var stream = reflectionGroupRepository.list(0, Integer.MAX_VALUE)) {
+            return stream.noneMatch(group -> {
+                if (excludeGroupUuid != null && excludeGroupUuid.equals(group.uuid())) {
+                    return false;
+                }
+                String existing = ToolIdGenerator.normalizeBase(group.toolId(), "group");
+                return normalizedCandidate.equals(existing);
+            });
+        }
     }
 
     private String jsonMissing(List<String> missing) {

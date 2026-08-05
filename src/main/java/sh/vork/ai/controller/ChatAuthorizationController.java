@@ -370,8 +370,7 @@ public class ChatAuthorizationController {
                             updated.add(new AiChatMessage(UUID.randomUUID().toString(), "AGENT_TRANSITION",
                                     "Changed to " + structured.targetAgent(),
                                     System.currentTimeMillis(), null, null, null, null));
-                            String handoffText = structured.textResponse() != null && !structured.textResponse().isBlank()
-                                    ? structured.textResponse() : rawResponse;
+                                String handoffText = resolveUserVisibleText(structured, rawResponse);
                             history.add(new AssistantMessage(handoffText));
                             continuationPrompt = structured.delegationInstructions() != null
                                     ? structured.delegationInstructions() : "Proceed with the assigned task.";
@@ -381,8 +380,7 @@ public class ChatAuthorizationController {
                         }
                         log.warn("Resume DELEGATE_TURN: agent not found, treating as FINISHED_TURN [target={}, session={}]",
                                 structured.targetAgent(), sessionUuid);
-                        finalText = structured.textResponse() != null && !structured.textResponse().isBlank()
-                                ? structured.textResponse() : rawResponse;
+                        finalText = resolveUserVisibleText(structured, rawResponse);
                         break;
                     } else if ("SWITCH_AGENT".equals(structured.status()) && chatService != null) {
                         String targetId = chatService.switchActiveAgentByName(sessionUuid, structured.targetAgent());
@@ -402,12 +400,10 @@ public class ChatAuthorizationController {
                             log.warn("Resume SWITCH_AGENT: agent not found [target={}, session={}]",
                                     structured.targetAgent(), sessionUuid);
                         }
-                        finalText = structured.textResponse() != null && !structured.textResponse().isBlank()
-                                ? structured.textResponse() : rawResponse;
+                        finalText = resolveUserVisibleText(structured, rawResponse);
                         break;
                     } else {
-                        String candidateText = structured.textResponse() != null && !structured.textResponse().isBlank()
-                                ? structured.textResponse() : rawResponse;
+                        String candidateText = resolveUserVisibleText(structured, rawResponse);
                         if (isOAuthPlaceholderOnly(candidateText)
                                 && popCompletedSkillFrameForOAuthPlaceholder(sessionUuid, candidateText, history)) {
                             continuationPrompt = "A nested OAuth connect step has completed and produced a bearer placeholder token in history. "
@@ -775,6 +771,17 @@ public class ChatAuthorizationController {
             // Not a structured response — return raw text as-is
         }
         return raw;
+    }
+
+    private String resolveUserVisibleText(StructuredAgentResponse structured, String rawResponse) {
+        if (structured != null && structured.textResponse() != null && !structured.textResponse().isBlank()) {
+            return structured.textResponse();
+        }
+        String extracted = extractTextResponse(rawResponse);
+        if (extracted != null && !extracted.isBlank()) {
+            return extracted;
+        }
+        return rawResponse == null ? "" : rawResponse;
     }
 
     @GetMapping("/authorize/{sessionUuid}")

@@ -790,8 +790,7 @@ public class ChatService {
             log.debug("Agent loop response [session={}, status={}, iteration={}]",                    sessionUuid, structured.status(), i);
 
             if ("CONTINUE_TURN".equals(structured.status())) {
-                String progressText = structured.textResponse() != null && !structured.textResponse().isBlank()
-                        ? structured.textResponse() : rawResponse;
+                String progressText = resolveUserVisibleText(structured, rawResponse);
                 UiEventFrame progressEvent = new UiEventFrame(UUID.randomUUID().toString(),
                         "TEXT_RESPONSE", "CHAT_OUTPUT", progressText, null);
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, progressEvent);
@@ -824,8 +823,7 @@ public class ChatService {
                             new UiEventFrame(UUID.randomUUID().toString(),
                                     "AGENT_SWITCH", "AGENT_SWITCH", targetId, null));
 
-                    history.add(new AssistantMessage(
-                            structured.textResponse() != null ? structured.textResponse() : rawResponse));
+                        history.add(new AssistantMessage(resolveUserVisibleText(structured, rawResponse)));
                     currentPrompt = structured.delegationInstructions() != null
                             ? structured.delegationInstructions()
                             : "Proceed with the assigned task.";
@@ -867,9 +865,7 @@ public class ChatService {
                 latest = currentSession;
             }
 
-                String finalText = structured.textResponse() != null && !structured.textResponse().isBlank()
-                    ? structured.textResponse()
-                    : rawResponse;
+                String finalText = resolveUserVisibleText(structured, rawResponse);
                 if (latest.originMode() == SessionOriginMode.BACKGROUND
                     && latest.status() == AiSessionStatus.COMPLETED
                     && latest.environmentVariables() != null) {
@@ -1337,6 +1333,44 @@ public class ChatService {
         return saved;
     }
 
+    /** Replaces the full session-level reflection binding UUID list. */
+    public AiSession setSessionReflectionBindings(String sessionUuid, List<String> bindingUuids) {
+        AiSession session = getSessionForCurrentUser(sessionUuid);
+
+        List<String> normalized = new ArrayList<>();
+        if (bindingUuids != null) {
+            for (String bindingUuid : bindingUuids) {
+                if (bindingUuid == null) {
+                    continue;
+                }
+                String trimmed = bindingUuid.trim();
+                if (!trimmed.isBlank() && !normalized.contains(trimmed)) {
+                    normalized.add(trimmed);
+                }
+            }
+        }
+
+        Map<String, String> env = new HashMap<>(session.environmentVariables() == null
+                ? Map.of()
+                : session.environmentVariables());
+        if (normalized.isEmpty()) {
+            env.remove(SESSION_REFLECTION_BINDING_UUIDS_ENV);
+        } else {
+            env.put(SESSION_REFLECTION_BINDING_UUIDS_ENV, String.join(",", normalized));
+        }
+
+        AiSession saved = new AiSession(
+                session.uuid(), session.provider(), session.originMode(),
+                session.username(), session.name(), session.createdAt(),
+                session.currentRoundCount(), session.messages(),
+                Collections.unmodifiableMap(env), session.status(),
+                session.activeAgentTemplateId(), session.modelId(),
+                session.skillStack(), session.sessionSkillUuids(), session.sessionToolIds());
+        sessionRepo.save(saved);
+        log.info("Session reflection bindings replaced [session={}, count={}]", sessionUuid, normalized.size());
+        return saved;
+    }
+
 
      /*
      * <p>The skill's context (tools + system prompt) is stored in the top
@@ -1459,9 +1493,7 @@ public class ChatService {
 
             StructuredAgentResponse structured = parseStructuredResponse(rawResponse);
                 if ("CONTINUE_TURN".equals(structured.status())) {
-                String progressText = structured.textResponse() != null && !structured.textResponse().isBlank()
-                    ? structured.textResponse()
-                    : rawResponse;
+                String progressText = resolveUserVisibleText(structured, rawResponse);
                 skillHistory.add(new AssistantMessage(progressText));
                 currentPrompt = "Continue executing this skill using available tools until complete.";
                 log.debug("Skill sub-loop CONTINUE_TURN [session={}, skill={}, iteration={}]",
@@ -1471,7 +1503,7 @@ public class ChatService {
 
             if ("FINISHED_TURN".equals(structured.status())) {
                 // Primary exit path: the skill returned FINISHED_TURN with its output in textResponse.
-                String output = structured.textResponse() != null ? structured.textResponse() : rawResponse;
+                String output = resolveUserVisibleText(structured, rawResponse);
 
                 // Pop the skill frame from the stack so the parent agent loop can continue.
                 AiSession current = sessionRepo.get(sessionUuid);
@@ -1495,8 +1527,7 @@ public class ChatService {
             }
 
             // Anything else: treat as finished
-            String result = structured.textResponse() != null && !structured.textResponse().isBlank()
-                    ? structured.textResponse() : rawResponse;
+                String result = resolveUserVisibleText(structured, rawResponse);
             popSkillFrameIfPresent(sessionUuid, ex.getSkillUuid());
             log.info("Skill sub-loop finished (unrecognised status={}) [session={}, skill={}, iterations={}]",
                     structured.status(), sessionUuid, ex.getSkillName(), i + 1);
@@ -1642,42 +1673,99 @@ public class ChatService {
                 : raw;
     }
 
+    private String resolveUserVisibleText(StructuredAgentResponse structured, String rawResponse) {
+        if (structured != null && structured.textResponse() != null && !structured.textResponse().isBlank()) {
+            return structured.textResponse();
+        }
+        String extracted = extractTextResponse(rawResponse);
+        if (extracted != null && !extracted.isBlank()) {
+            return extracted;
+        }
+        return rawResponse == null ? "" : rawResponse;
+    }
+
     private StructuredAgentResponse parseStructuredResponse(String rawResponse) {
         if (rawResponse == null || rawResponse.isBlank()) {
             return new StructuredAgentResponse("FINISHED_TURN", "", null, null);
         }
-        try {
-            String json = rawResponse.strip();
-            if (json.startsWith("```")) {
-                json = json.replaceAll("(?s)^```[a-zA-Z]*\\n?", "").replaceAll("(?s)```\\s*$", "").strip();
-            }
-            // If a thinking model leaks a reasoning prefix, skip to the first '{'.
-            if (!json.startsWith("{")) {
-                int brace = json.indexOf('{');
-                if (brace > 0) {
-                    json = json.substring(brace).strip();
-                }
-            }
-            StructuredAgentResponse parsed = objectMapper.readValue(json, StructuredAgentResponse.class);
-
-            // If textResponse is missing, try common alternate field names the model might use
-            // (e.g. "result", "response", "message"). This avoids leaking raw JSON to the UI.
-            if (parsed.textResponse() == null || parsed.textResponse().isBlank()) {
-                com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(json);
-                String alt = extractAlternateTextField(node);
-                if (alt != null && !alt.isBlank()) {
-                    log.debug("parseStructuredResponse: textResponse absent, recovered from alternate field [status={}]",
-                            parsed.status());
-                    parsed = new StructuredAgentResponse(
-                            parsed.status(), alt, parsed.targetAgent(), parsed.delegationInstructions());
-                }
-            }
-            return parsed;
-        } catch (Exception e) {
-            log.warn("Failed to parse StructuredAgentResponse, treating as FINISHED_TURN [rawResponse={}]",
-                    rawResponse);
-            return new StructuredAgentResponse("FINISHED_TURN", rawResponse, null, null);
+        String candidate = rawResponse.strip();
+        if (candidate.startsWith("```")) {
+            candidate = candidate.replaceAll("(?s)^```[a-zA-Z]*\\n?", "").replaceAll("(?s)```\\s*$", "").strip();
         }
+
+        List<String> attempts = new ArrayList<>();
+        attempts.add(candidate);
+
+        // If a thinking model leaks prefix/suffix prose, try extracting a plausible JSON object.
+        String extracted = extractLikelyJsonObject(candidate);
+        if (extracted != null && !extracted.isBlank() && !extracted.equals(candidate)) {
+            attempts.add(extracted);
+        }
+
+        for (String json : attempts) {
+            try {
+                StructuredAgentResponse parsed = objectMapper.readValue(json, StructuredAgentResponse.class);
+
+                // If textResponse is missing, try common alternate field names the model might use
+                // (e.g. "result", "response", "message"). This avoids leaking raw JSON to the UI.
+                if (parsed.textResponse() == null || parsed.textResponse().isBlank()) {
+                    com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(json);
+                    String alt = extractAlternateTextField(node);
+                    if (alt != null && !alt.isBlank()) {
+                        log.debug("parseStructuredResponse: textResponse absent, recovered from alternate field [status={}]",
+                                parsed.status());
+                        parsed = new StructuredAgentResponse(
+                                parsed.status(), alt, parsed.targetAgent(), parsed.delegationInstructions());
+                    }
+                }
+                return parsed;
+            } catch (Exception ignored) {
+                // Try next candidate.
+            }
+        }
+
+        log.warn("Failed to parse StructuredAgentResponse, treating as FINISHED_TURN [rawResponse={}]",
+                rawResponse);
+        return new StructuredAgentResponse("FINISHED_TURN", rawResponse, null, null);
+    }
+
+    private static String extractLikelyJsonObject(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        int start = text.indexOf('{');
+        if (start < 0) {
+            return null;
+        }
+        int depth = 0;
+        boolean inString = false;
+        boolean escaping = false;
+        for (int i = start; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (inString) {
+                if (escaping) {
+                    escaping = false;
+                } else if (c == '\\') {
+                    escaping = true;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (c == '"') {
+                inString = true;
+                continue;
+            }
+            if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return text.substring(start, i + 1).trim();
+                }
+            }
+        }
+        return null;
     }
 
     /**

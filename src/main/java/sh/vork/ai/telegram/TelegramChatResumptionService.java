@@ -255,12 +255,10 @@ public class TelegramChatResumptionService {
                         if (structured.targetAgent() != null) {
                             chatService.switchActiveAgentByName(sessionUuid, structured.targetAgent());
                         }
-                        finalText = structured.textResponse() != null && !structured.textResponse().isBlank()
-                                ? structured.textResponse() : rawResponse;
+                        finalText = resolveUserVisibleText(structured, rawResponse);
                         break;
                     } else {
-                        finalText = structured.textResponse() != null && !structured.textResponse().isBlank()
-                                ? structured.textResponse() : rawResponse;
+                        finalText = resolveUserVisibleText(structured, rawResponse);
                         break;
                     }
                 }
@@ -562,6 +560,28 @@ public class TelegramChatResumptionService {
         } catch (Exception ignored) {
             return new StructuredAgentResponse("FINISHED_TURN", raw, null, null);
         }
+    }
+
+    private String resolveUserVisibleText(StructuredAgentResponse structured, String rawResponse) {
+        if (structured != null && structured.textResponse() != null && !structured.textResponse().isBlank()) {
+            return structured.textResponse();
+        }
+        if (rawResponse == null || rawResponse.isBlank()) {
+            return "";
+        }
+        try {
+            String json = rawResponse.strip();
+            if (json.startsWith("```")) {
+                json = json.replaceAll("(?s)^```[a-zA-Z]*\\n?", "").replaceAll("(?s)```\\s*$", "").strip();
+            }
+            StructuredAgentResponse parsed = objectMapper.readValue(json, StructuredAgentResponse.class);
+            if (parsed.textResponse() != null && !parsed.textResponse().isBlank()) {
+                return parsed.textResponse();
+            }
+        } catch (Exception ignored) {
+            // Not structured JSON; return as-is.
+        }
+        return rawResponse;
     }
 
     private UiEventFrame readEventFrame(String content) {

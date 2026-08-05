@@ -16,6 +16,7 @@ import java.util.List;
  */
 public record Surface(
         String uuid,
+    String toolId,
         String name,
         String description,
         String sessionUuid,
@@ -29,6 +30,11 @@ public record Surface(
     public Surface {
         if (name == null || name.isBlank()) {
             name = "Untitled Surface";
+        }
+        if (toolId == null || toolId.isBlank()) {
+            toolId = normalizeToolId(name);
+        } else {
+            toolId = normalizeToolId(toolId);
         }
         if (description == null) {
             description = "";
@@ -45,5 +51,24 @@ public record Surface(
         if (jobUuids == null) {
             jobUuids = List.of();
         }
+    }
+
+    private static String normalizeToolId(String source) {
+        StringBuilder sb = new StringBuilder();
+        String raw = source == null ? "" : source.trim().toLowerCase();
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+                sb.append(c);
+            }
+        }
+        String normalized = sb.toString();
+        if (normalized.isBlank()) {
+            return "surface";
+        }
+        if (Character.isDigit(normalized.charAt(0))) {
+            return "s" + normalized;
+        }
+        return normalized;
     }
 }

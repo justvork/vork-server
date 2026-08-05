@@ -83,6 +83,7 @@ import sh.vork.ai.function.GeneratePrivateKeyRequest;
 import sh.vork.ai.function.GetDateTimeRequest;
 import sh.vork.ai.function.GetMongoDbCollectionSchemaRequest;
 import sh.vork.ai.function.GetPublicKeyRequest;
+import sh.vork.ai.function.GetSurfaceReflectionContractsRequest;
 import sh.vork.ai.function.GetTypeInstanceRequest;
 import sh.vork.ai.function.GetTypeSchemaRequest;
 import sh.vork.ai.function.HttpRequestToolRequest;
@@ -191,6 +192,8 @@ import sh.vork.typegen.TypeDatabaseService;
 import sh.vork.typegen.TypeExportService;
 import sh.vork.typegen.TypeGenerationException;
 import sh.vork.typegen.TypeGeneratorService;
+import sh.vork.surface.Surface;
+import sh.vork.surface.service.SurfaceReflectionContractService;
 
 /**
  * Wires all AI-related Spring beans.
@@ -471,6 +474,62 @@ the protocol and will break the system. Do not converse. Execute.
                     allowedTools list."""
                         .stripIndent())
                 .inputType(ListAvailableToolsRequest.class)
+                .build();
+    }
+
+    @Bean
+    @ToolCategory("Surface")
+    public ToolCallback getSurfaceReflectionContracts(SurfaceReflectionContractService contractService) {
+        return FunctionToolCallback
+                .builder("getSurfaceReflectionContracts", (GetSurfaceReflectionContractsRequest req) -> {
+                    try {
+                        String sessionUuid = resolveSessionUuid();
+                        String requestedSurfaceUuid = req == null ? null : req.surfaceUuid();
+                        String requestedBindingGroupToolId = req == null ? null : req.bindingGroupToolId();
+                        String requestedBindingProfileName = req == null ? null : req.bindingProfileName();
+
+                        Surface resolvedSurface = null;
+                        boolean resolvedFromSession = false;
+                        if (sessionUuid != null && !sessionUuid.isBlank() && !"system".equals(sessionUuid)) {
+                            resolvedSurface = contractService.findSurfaceBySessionUuid(sessionUuid);
+                            resolvedFromSession = resolvedSurface != null;
+                        }
+
+                        if (resolvedSurface == null) {
+                            if (requestedSurfaceUuid == null || requestedSurfaceUuid.isBlank()) {
+                                return "{\"status\":\"error\",\"message\":\"No surface is linked to this session. Provide surfaceUuid or surfaceToolId.\"}";
+                            }
+                            resolvedSurface = contractService.resolveSurfaceByUuidOrToolId(requestedSurfaceUuid.trim());
+                        }
+
+                        if (resolvedSurface == null) {
+                            return "{\"status\":\"error\",\"message\":\"Surface not found.\"}";
+                        }
+
+                        if (resolvedFromSession
+                                && requestedSurfaceUuid != null
+                                && !requestedSurfaceUuid.isBlank()
+                                && !resolvedSurface.uuid().equals(requestedSurfaceUuid.trim())
+                                && !resolvedSurface.toolId().equalsIgnoreCase(requestedSurfaceUuid.trim())) {
+                            log.debug("Ignoring mismatched requested surface identifier because active session surface is authoritative [requested={}, activeUuid={}, activeToolId={}]",
+                                    requestedSurfaceUuid, resolvedSurface.uuid(), resolvedSurface.toolId());
+                        }
+
+                        var response = contractService.contractsForSurface(
+                                resolvedSurface.uuid(),
+                            requestedBindingGroupToolId == null ? null : requestedBindingGroupToolId.trim(),
+                            requestedBindingProfileName == null ? null : requestedBindingProfileName.trim());
+                        return objectMapper.writeValueAsString(response);
+                    } catch (IllegalArgumentException ex) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + ex.getMessage().replace("\"", "'") + "\"}";
+                    } catch (Exception ex) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + ex.getMessage().replace("\"", "'") + "\"}";
+                    }
+                })
+                .description("Return input/output contracts for reflections attached to the current surface session. Call this before generating UI code that invokes reflections.")
+                .inputType(GetSurfaceReflectionContractsRequest.class)
                 .build();
     }
 

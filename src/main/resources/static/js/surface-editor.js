@@ -340,7 +340,9 @@ function renderMessage(msg) {
 
     const isUser = msg.role === 'USER';
     const isError = msg.role === 'ERROR';
-    const content = msg.content;
+    const content = (!isUser && !isError)
+        ? normalizeAssistantContent(msg.content)
+        : msg.content;
 
     // Skip empty assistant/transition messages, but keep empty user messages
     // (the user sent them) and error messages.
@@ -375,6 +377,25 @@ function renderMessage(msg) {
     row.appendChild(bubble);
     messagesArea.appendChild(row);
     messagesArea.scrollTop = messagesArea.scrollHeight;
+}
+
+function normalizeAssistantContent(content) {
+    if (typeof content !== 'string' || !content.trim()) {
+        return content || '';
+    }
+    const parsed = tryParseJson(content);
+    if (!parsed || typeof parsed !== 'object') {
+        return content;
+    }
+    if (typeof parsed.textResponse === 'string' && parsed.textResponse.trim()) {
+        return parsed.textResponse;
+    }
+    for (const key of ['response', 'message', 'content', 'output', 'text', 'reply', 'result']) {
+        if (typeof parsed[key] === 'string' && parsed[key].trim()) {
+            return parsed[key];
+        }
+    }
+    return content;
 }
 
 function showWorkingIndicator() {

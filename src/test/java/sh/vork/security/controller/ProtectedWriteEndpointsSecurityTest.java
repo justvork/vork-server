@@ -251,6 +251,7 @@ class ProtectedWriteEndpointsSecurityTest {
         ReflectionBinding binding = new ReflectionBinding("b1", "g1", "Binding One", "", Map.of(), 1L, 1L, 1L);
         ReflectionGroup group = new ReflectionGroup(
                 "g1",
+                "groupone",
                 "Group One",
                 "",
                 ReflectionType.REST,

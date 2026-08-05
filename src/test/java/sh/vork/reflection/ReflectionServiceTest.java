@@ -601,6 +601,92 @@ class ReflectionServiceTest {
 
     @Test
     @SuppressWarnings({"unchecked", "rawtypes"})
+    void executeRestReflectionTreatsHostOnlyTemplateUrlAsHttpsAbsolute() throws Exception {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group", "desc", "REST", "", List.of(), List.of()));
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+        reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                "locatePostcode",
+                "Locate Postcode",
+                "desc",
+                group.uuid(),
+                List.of(new ReflectionInputParameter("service_host", "string", "Service Host", true)),
+                "GET",
+                "{{service_host}}/geocode/search",
+                Map.of(),
+                Map.of(),
+                "",
+                "application/json",
+                "application/json",
+                ""));
+
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("{\"ok\":true}");
+        when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (a, b) -> true));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn((HttpResponse) response);
+
+        String result = reflectionService.executeRestReflection(
+                "locatePostcode",
+                Map.of("service_host", "api.openrouteservice.org"),
+                null,
+                "alice");
+
+        assertTrue(result.contains("\"status\":\"ok\""));
+
+        var requestCaptor = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
+        org.mockito.Mockito.verify(httpClient).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        String calledUrl = requestCaptor.getValue().uri().toString();
+        assertTrue(calledUrl.startsWith("https://api.openrouteservice.org/geocode/search"));
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void executeRestReflectionSupportsAbsoluteUrlTemplateWithSpaceInQueryAndNoBaseUrl() throws Exception {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group", "desc", "REST", "", List.of(), List.of()));
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+        reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                "locatePostcodeAbsolute",
+                "Locate Postcode Absolute",
+                "desc",
+                group.uuid(),
+                List.of(new ReflectionInputParameter("postcode", "string", "Postcode", true)),
+                "GET",
+                "https://api.openrouteservice.org/geocode/search?text={{postcode}}",
+                Map.of(),
+                Map.of(),
+                "",
+                "application/json",
+                "application/json",
+                ""));
+
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("{\"ok\":true}");
+        when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (a, b) -> true));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn((HttpResponse) response);
+
+        String result = reflectionService.executeRestReflection(
+                "locatePostcodeAbsolute",
+                Map.of("postcode", "NG13 9HH"),
+                null,
+                "alice");
+
+        assertTrue(result.contains("\"status\":\"ok\""));
+
+        var requestCaptor = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
+        org.mockito.Mockito.verify(httpClient).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        String calledUrl = requestCaptor.getValue().uri().toString();
+        assertTrue(calledUrl.startsWith("https://api.openrouteservice.org/geocode/search?text=NG13%209HH"));
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
     void executeRestReflectionGeneratesFormEncodedBodyWhenTemplateMissing() throws Exception {
         ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
                 "REST Group", "desc", "REST", "", List.of(), List.of()));

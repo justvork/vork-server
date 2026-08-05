@@ -9,6 +9,7 @@ import sh.vork.ai.lifecycle.AgentTemplateSeeder;
 import sh.vork.ai.service.ChatService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.surface.Surface;
+import sh.vork.util.ToolIdGenerator;
 
 import java.util.List;
 import java.util.UUID;
@@ -43,12 +44,34 @@ public class SurfaceService {
         return surfaceRepository.get(uuid);
     }
 
+    public Surface getByToolId(String toolId) {
+        if (toolId == null || toolId.isBlank()) {
+            return null;
+        }
+        String normalized = ToolIdGenerator.normalizeBase(toolId, "surface");
+        try (var stream = surfaceRepository.list(0, Integer.MAX_VALUE)) {
+            return stream
+                    .filter(surface -> normalized.equals(ToolIdGenerator.normalizeBase(surface.toolId(), "surface")))
+                    .findFirst()
+                    .orElse(null);
+        }
+    }
+
+    public Surface resolveByUuidOrToolId(String identifier) {
+        if (identifier == null || identifier.isBlank()) {
+            return null;
+        }
+        Surface direct = surfaceRepository.get(identifier);
+        return direct != null ? direct : getByToolId(identifier);
+    }
+
     /**
      * Creates a new surface, an associated AI session, and activates the
      * Surface Developer agent.
      */
     public Surface create(String name, String description, String username) {
         String uuid = UUID.randomUUID().toString();
+        String toolId = uniqueSurfaceToolId(name, null);
         long now = System.currentTimeMillis();
 
         AiSession session = chatService.createNewSession(AiProvider.GEMINI);
@@ -60,6 +83,7 @@ public class SurfaceService {
 
         Surface surface = new Surface(
                 uuid,
+            toolId,
                 name == null || name.isBlank() ? "Untitled Surface" : name,
                 description == null ? "" : description,
                 session.uuid(),
@@ -93,6 +117,7 @@ public class SurfaceService {
 
         Surface updated = new Surface(
                 existing.uuid(),
+            uniqueSurfaceToolId(name == null || name.isBlank() ? existing.name() : name, existing.uuid()),
                 name == null || name.isBlank() ? existing.name() : name,
                 description == null ? existing.description() : description,
                 existing.sessionUuid(),
@@ -102,6 +127,8 @@ public class SurfaceService {
                 existing.createdAt(),
                 System.currentTimeMillis());
         surfaceRepository.save(updated);
+
+        syncSessionReflectionBindings(updated.sessionUuid(), updated.reflectionBindingUuids());
 
         log.info("Updated surface [uuid={}, name={}]", uuid, updated.name());
         return updated;
@@ -130,7 +157,7 @@ public class SurfaceService {
      * @throws IllegalArgumentException if the surface does not exist
      */
     public AiSession ensureSession(String surfaceUuid, String username) {
-        Surface surface = surfaceRepository.get(surfaceUuid);
+        Surface surface = resolveByUuidOrToolId(surfaceUuid);
         if (surface == null) {
             throw new IllegalArgumentException("Surface not found: " + surfaceUuid);
         }
@@ -150,6 +177,7 @@ public class SurfaceService {
             chatService.switchActiveAgentById(session.uuid(), AgentTemplateSeeder.UUID_SURFACE_DEVELOPER);
             Surface updated = new Surface(
                     surface.uuid(),
+                    surface.toolId(),
                     surface.name(),
                     surface.description(),
                     session.uuid(),
@@ -163,6 +191,40 @@ public class SurfaceService {
                     surfaceUuid, session.uuid(), username);
         }
 
+        syncSessionReflectionBindings(session.uuid(), surface.reflectionBindingUuids());
+
         return session;
+    }
+
+    private void syncSessionReflectionBindings(String sessionUuid, List<String> reflectionBindingUuids) {
+        if (sessionUuid == null || sessionUuid.isBlank()) {
+            return;
+        }
+        try {
+            chatService.setSessionReflectionBindings(sessionUuid, reflectionBindingUuids);
+        } catch (Exception ex) {
+            log.warn("Failed to sync surface reflection bindings to session [sessionUuid={}, reason={}]",
+                    sessionUuid, ex.getMessage());
+        }
+    }
+
+    private String uniqueSurfaceToolId(String preferredSource, String excludeSurfaceUuid) {
+        return ToolIdGenerator.unique(
+                preferredSource,
+                "surface",
+                candidate -> isSurfaceToolIdAvailable(candidate, excludeSurfaceUuid));
+    }
+
+    private boolean isSurfaceToolIdAvailable(String candidate, String excludeSurfaceUuid) {
+        String normalizedCandidate = ToolIdGenerator.normalizeBase(candidate, "surface");
+        try (var stream = surfaceRepository.list(0, Integer.MAX_VALUE)) {
+            return stream.noneMatch(surface -> {
+                if (excludeSurfaceUuid != null && excludeSurfaceUuid.equals(surface.uuid())) {
+                    return false;
+                }
+                String existing = ToolIdGenerator.normalizeBase(surface.toolId(), "surface");
+                return normalizedCandidate.equals(existing);
+            });
+        }
     }
 }

@@ -355,9 +355,12 @@ function renderAttachmentsHtml(attachments) {
 
 function renderMessage(msg) {
     const isUser    = msg.role === 'USER';
+    const content   = isUser
+        ? (msg.content || '')
+        : normalizeAssistantContent(msg.content);
     const textHtml  = isUser
-        ? escapeHtml(msg.content || '').replace(/\n/g, '<br>')
-        : marked.parse(msg.content || '');
+        ? escapeHtml(content).replace(/\n/g, '<br>')
+        : marked.parse(content || '');
 
     const bubbleCls  = isUser ? 'user' : (msg.role === 'ERROR' ? 'error' : 'assistant');
     const avatarCls  = isUser ? 'user' : 'assistant';
@@ -380,6 +383,25 @@ function renderMessage(msg) {
 
     messagesArea.insertBefore(row, typingEl);
     scrollBottom();
+}
+
+function normalizeAssistantContent(content) {
+    if (typeof content !== 'string' || !content.trim()) {
+        return content || '';
+    }
+    const parsed = tryParseJson(content);
+    if (!parsed || typeof parsed !== 'object') {
+        return content;
+    }
+    if (typeof parsed.textResponse === 'string' && parsed.textResponse.trim()) {
+        return parsed.textResponse;
+    }
+    for (const key of ['response', 'message', 'content', 'output', 'text', 'reply', 'result']) {
+        if (typeof parsed[key] === 'string' && parsed[key].trim()) {
+            return parsed[key];
+        }
+    }
+    return content;
 }
 
 function renderAgentTransition(text) {

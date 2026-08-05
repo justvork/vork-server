@@ -15,9 +15,10 @@ class SurfaceTest {
 
     @Test
     void constructorNormalizesNullValues() {
-        Surface surface = new Surface("uuid-1", null, null, null, null, null, null, 1L, 2L);
+        Surface surface = new Surface("uuid-1", null, null, null, null, null, null, null, 1L, 2L);
 
         assertEquals("uuid-1", surface.uuid());
+        assertEquals("untitledsurface", surface.toolId());
         assertEquals("Untitled Surface", surface.name());
         assertEquals("", surface.description());
         assertEquals("", surface.sessionUuid());
@@ -33,6 +34,7 @@ class SurfaceTest {
     void constructorPreservesAssignments() {
         Surface surface = new Surface(
                 "uuid-2",
+            "dashboard1",
                 "Dashboard",
                 "A project dashboard",
                 "session-1",
@@ -42,6 +44,7 @@ class SurfaceTest {
                 100L,
                 200L);
 
+            assertEquals("dashboard1", surface.toolId());
         assertEquals("Dashboard", surface.name());
         assertEquals("A project dashboard", surface.description());
         assertEquals("session-1", surface.sessionUuid());

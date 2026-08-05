@@ -292,6 +292,27 @@ Rules:
             Your job is to build small, self-contained web surfaces for the user \
             by creating HTML, CSS, and JavaScript artifacts in the session file system.
 
+                                                ### REFLECTION CONTRACT FIRST RULE
+                                                - Before generating or editing any API-driven UI, call `getSurfaceReflectionContracts`.
+                                                - Do not call `listAvailableTools` for routine surface work; the contract tool is already available.
+                                                - In an active surface session, call `getSurfaceReflectionContracts` with no `surfaceUuid`; do not guess UUIDs.
+                                                - The active surface is resolved from the current chat session by the platform; treat that as authoritative.
+                                                - Use the returned reflection input and output contracts as the source of truth.
+                                                - Do not invent reflection IDs, parameter names, or response fields.
+
+                                                ### RUNTIME REFLECTION HELPER RULE
+                                                - Include this script in `index.html` before app logic: `/surface/runtime/v1/reflections.js`.
+                                                - Use `toolId` from `getSurfaceReflectionContracts` as the `reflectionId` when invoking.
+                                                - Use binding `bindingGroupToolId` from `getSurfaceReflectionContracts` as `bindingGroupToolId` in invoke calls.
+                                                - Use binding `bindingName` from `getSurfaceReflectionContracts` as `bindingProfileName` in invoke calls.
+                                                - NEVER use `surfaceToolId` as `bindingGroupToolId`; choose only from `bindings[].bindingGroupToolId`.
+                                                - Do not include `bindingName` or `bindingProfileName` inside `args`; pass only reflection input parameters in `args`.
+                                                - NEVER use a reflection `id` or `toolId` value as `bindingGroupToolId`.
+                                                - `bindingGroupToolId` comes from binding/group contract fields only (`bindingGroupToolId` / `groupToolId`).
+                                                - Use the helper API for all runtime reflection calls:
+                                                        `window.vork.reflections.invoke({ reflectionId, args, bindingGroupToolId, bindingProfileName, reflectionName? })`.
+                                                - When rendering model output, map fields from the contract schema and response content type.
+
             ### OUTPUT CONVENTIONS
             - Place all surface files under the root of the session file space.
             - The entry point must be named `index.html`.
@@ -322,7 +343,7 @@ Rules:
                     "writeFile",
                     "readFile",
                     "listFiles",
-                    "listAvailableTools"
+                    "getSurfaceReflectionContracts"
             ),
             true,
             List.of(),
@@ -363,6 +384,9 @@ Rules:
             if (existing.allowedTools() != null) {
                 mergedTools.addAll(existing.allowedTools());
             }
+                        if (UUID_SURFACE_DEVELOPER.equals(template.uuid())) {
+                                mergedTools.remove("listAvailableTools");
+                        }
             // Preserve operator-assigned skillUuids — never overwrite them on reseed.
             List<String> preservedSkills = existing.skillUuids() != null
                     ? existing.skillUuids() : List.of();

@@ -892,7 +892,15 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 }
 
                 // Inject reflection tools dynamically only when binding assignments are present.
-                if (reflectionService != null && reflectionToolCallbackFactory != null && sessionForSkillCheck != null) {
+                // Surface Developer should rely on getSurfaceReflectionContracts + /surface/runtime/v1/reflections.js,
+                // not direct reflection tool callbacks.
+                boolean isSurfaceDeveloperSession = sessionForSkillCheck != null
+                        && sh.vork.ai.lifecycle.AgentTemplateSeeder.UUID_SURFACE_DEVELOPER
+                        .equals(sessionForSkillCheck.getActiveAgentTemplateId());
+                if (reflectionService != null
+                        && reflectionToolCallbackFactory != null
+                        && sessionForSkillCheck != null
+                        && !isSurfaceDeveloperSession) {
                         List<ResolvedReflectionBindings> effectiveReflectionBindings =
                                 resolveEffectiveReflectionBindings(sessionForSkillCheck, inSkillFrame);
                         int reflectionInjected = 0;
@@ -915,6 +923,8 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 }
                         }
                         log.debug("Reflection tools injected [session={}, count={}]", sessionUuid, reflectionInjected);
+                } else if (isSurfaceDeveloperSession) {
+                        log.debug("Reflection tool injection skipped for Surface Developer session [session={}]", sessionUuid);
                 }
                 if (!sessionTools.isEmpty()) {
                         int beforeMerge = merged.size();
