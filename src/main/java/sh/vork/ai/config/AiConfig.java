@@ -497,7 +497,7 @@ the protocol and will break the system. Do not converse. Execute.
 
                         if (resolvedSurface == null) {
                             if (requestedSurfaceUuid == null || requestedSurfaceUuid.isBlank()) {
-                                return "{\"status\":\"error\",\"message\":\"No surface is linked to this session. Provide surfaceUuid or surfaceToolId.\"}";
+                                return "{\"status\":\"error\",\"message\":\"No surface is linked to this session. Provide surfaceUuid or surfaceId.\"}";
                             }
                             resolvedSurface = contractService.resolveSurfaceByUuidOrToolId(requestedSurfaceUuid.trim());
                         }

@@ -269,9 +269,8 @@ class SurfaceControllerTest {
                 "surfaceone",
                 "Surface",
                 List.of(new SurfaceReflectionContractService.BindingContract(
+                    "ordersgroup",
                     "default",
-                    "ordersgroup",
-                    "ordersgroup",
                     "Orders Group",
                     List.of())));
         when(contractService.contractsForSurface("surface-1", null, null)).thenReturn(contracts);

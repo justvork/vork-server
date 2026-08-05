@@ -23,6 +23,7 @@ import sh.vork.relay.RelayEncryptionService;
 import sh.vork.relay.RelayHttpClient;
 import sh.vork.scheduling.service.SystemNotificationService;
 import sh.vork.setup.SystemSettingsService;
+import sh.vork.surface.Surface;
 
 class ChatServiceSessionBindingTest {
 
@@ -97,5 +98,84 @@ class ChatServiceSessionBindingTest {
 
         assertThrows(IllegalStateException.class,
                 () -> chatService.getOrCreateSession("http-session-shared", AiProvider.GEMINI));
+    }
+
+    @Test
+    void listSessionsForCurrentUser_excludesSurfaceLinkedSessions() throws Exception {
+        SecurityContextHolder.getContext().setAuthentication(
+                new TestingAuthenticationToken("alice", "pw"));
+
+        MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+        MapDatabaseRepository<Surface> surfaceRepo = new MapDatabaseRepository<>(Surface.class);
+
+        AiSession normal = new AiSession(
+                "session-normal",
+                AiProvider.GEMINI.name(),
+                SessionOriginMode.WEB,
+                "alice",
+                "General Chat",
+                System.currentTimeMillis(),
+                0,
+                List.of(),
+                AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.RUNNING,
+                null,
+                null,
+                null,
+                null,
+                List.of("toggleInputRelay"));
+        AiSession surfaceLinked = new AiSession(
+                "session-surface",
+                AiProvider.GEMINI.name(),
+                SessionOriginMode.WEB,
+                "alice",
+                "Surface Session",
+                System.currentTimeMillis(),
+                0,
+                List.of(),
+                AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.RUNNING,
+                null,
+                null,
+                null,
+                null,
+                List.of("toggleInputRelay"));
+        sessionRepo.save(normal);
+        sessionRepo.save(surfaceLinked);
+
+        surfaceRepo.save(new Surface(
+                "surface-1",
+                "surfaceone",
+                "Surface One",
+                "",
+                "session-surface",
+                List.of(),
+                List.of(),
+                List.of(),
+                System.currentTimeMillis(),
+                System.currentTimeMillis()));
+
+        ChatService chatService = new ChatService(
+                sessionRepo,
+                null,
+                mock(AiOrchestrationService.class),
+                mock(SimpMessagingTemplate.class),
+                new ObjectMapper().findAndRegisterModules(),
+                List.of(),
+                mock(SystemNotificationService.class),
+                Runnable::run,
+                mock(RelayEncryptionService.class),
+                mock(RelayHttpClient.class),
+                mock(SystemSettingsService.class),
+                null);
+
+        var field = ChatService.class.getDeclaredField("surfaceRepository");
+        field.setAccessible(true);
+        field.set(chatService, surfaceRepo);
+
+        List<AiSession> listed = chatService.listSessionsForCurrentUser();
+
+        assertEquals(1, listed.size());
+        assertEquals("session-normal", listed.getFirst().uuid());
     }
 }

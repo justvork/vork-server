@@ -818,7 +818,7 @@ function getActiveLookupItem(input, results) {
 
 function friendlyName(field) {
     if (field === 'skillUuids') return 'skill';
-    if (field === 'reflectionBindingUuids') return 'reflection binding';
+    if (field === 'reflectionBindingUuids') return 'binding';
     if (field === 'jobUuids') return 'job';
     return 'item';
 }

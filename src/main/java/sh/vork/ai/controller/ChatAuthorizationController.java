@@ -739,15 +739,37 @@ public class ChatAuthorizationController {
         if (raw == null || raw.isBlank()) {
             return new StructuredAgentResponse("FINISHED_TURN", "", null, null);
         }
-        try {
-            String json = raw.strip();
-            if (json.startsWith("```")) {
-                json = json.replaceAll("(?s)^```[a-zA-Z]*\\n?", "").replaceAll("(?s)```\\s*$", "").strip();
-            }
-            return objectMapper.readValue(json, StructuredAgentResponse.class);
-        } catch (Exception ignored) {
-            return new StructuredAgentResponse("FINISHED_TURN", raw, null, null);
+        String candidate = raw.strip();
+        if (candidate.startsWith("```")) {
+            candidate = candidate.replaceAll("(?s)^```[a-zA-Z]*\\n?", "")
+                    .replaceAll("(?s)```\\s*$", "")
+                    .strip();
         }
+        List<String> attempts = new java.util.ArrayList<>();
+        attempts.add(candidate);
+
+        String extracted = extractLikelyJsonObject(candidate);
+        if (extracted != null && !extracted.isBlank() && !extracted.equals(candidate)) {
+            attempts.add(extracted);
+        }
+
+        for (String json : attempts) {
+            try {
+                StructuredAgentResponse parsed = objectMapper.readValue(json, StructuredAgentResponse.class);
+                if (parsed.textResponse() == null || parsed.textResponse().isBlank()) {
+                    com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(json);
+                    String alt = extractAlternateTextField(node);
+                    if (alt != null && !alt.isBlank()) {
+                        parsed = new StructuredAgentResponse(
+                                parsed.status(), alt, parsed.targetAgent(), parsed.delegationInstructions());
+                    }
+                }
+                return parsed;
+            } catch (Exception ignored) {
+                // Try next candidate.
+            }
+        }
+        return new StructuredAgentResponse("FINISHED_TURN", raw, null, null);
     }
 
     /**
@@ -758,19 +780,60 @@ public class ChatAuthorizationController {
     @SuppressWarnings("unused")
     private String extractTextResponse(String raw) {
         if (raw == null || raw.isBlank()) return "";
-        try {
-            String json = raw.strip();
-            if (json.startsWith("```")) {
-                json = json.replaceAll("(?s)^```[a-zA-Z]*\\n?", "").replaceAll("(?s)```\\s*$", "").strip();
-            }
-            StructuredAgentResponse structured = objectMapper.readValue(json, StructuredAgentResponse.class);
-            if (structured.textResponse() != null && !structured.textResponse().isBlank()) {
-                return structured.textResponse();
-            }
-        } catch (Exception ignored) {
-            // Not a structured response — return raw text as-is
+        StructuredAgentResponse structured = extractStructured(raw);
+        if (structured.textResponse() != null && !structured.textResponse().isBlank()) {
+            return structured.textResponse();
         }
         return raw;
+    }
+
+    private static String extractLikelyJsonObject(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        int start = text.indexOf('{');
+        if (start < 0) {
+            return null;
+        }
+        int depth = 0;
+        boolean inString = false;
+        boolean escaping = false;
+        for (int i = start; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (inString) {
+                if (escaping) {
+                    escaping = false;
+                } else if (c == '\\') {
+                    escaping = true;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (c == '"') {
+                inString = true;
+                continue;
+            }
+            if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return text.substring(start, i + 1).trim();
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String extractAlternateTextField(com.fasterxml.jackson.databind.JsonNode node) {
+        for (String field : List.of("result", "response", "message", "content", "output", "text", "reply")) {
+            com.fasterxml.jackson.databind.JsonNode n = node.get(field);
+            if (n != null && n.isTextual() && !n.asText().isBlank()) {
+                return n.asText();
+            }
+        }
+        return null;
     }
 
     private String resolveUserVisibleText(StructuredAgentResponse structured, String rawResponse) {

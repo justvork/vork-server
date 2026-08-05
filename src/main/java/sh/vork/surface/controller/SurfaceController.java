@@ -287,7 +287,7 @@ public class SurfaceController {
                             }
                                 return ResponseEntity.badRequest().body(Map.of(
                                                 "status", "error",
-                                    "message", "Unknown binding group toolId. Use getSurfaceReflectionContracts bindings[].bindingGroupToolId (not surfaceToolId).",
+                                                "message", "Unknown binding group toolId. Use getSurfaceReflectionContracts bindings[].bindingId (not surfaceId).",
                                     "providedBindingGroupToolId", req.bindingGroupToolId(),
                                     "allowedBindingGroupToolIds", allowedGroupToolIds));
                         }

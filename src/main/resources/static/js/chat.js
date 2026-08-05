@@ -1890,7 +1890,7 @@ function applySessionExtrasEditability(canManage) {
         } else {
             if (id === 'skill-search-input') input.placeholder = 'Add skill...';
             if (id === 'tool-search-input') input.placeholder = 'Add tool...';
-            if (id === 'reflection-binding-search-input') input.placeholder = 'Add reflection binding...';
+            if (id === 'reflection-binding-search-input') input.placeholder = 'Add binding...';
         }
     });
 }

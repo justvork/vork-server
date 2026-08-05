@@ -107,9 +107,8 @@ public class SurfaceReflectionContractService {
             }
 
             bindingContracts.add(new BindingContract(
+                    group.toolId(),
                     binding.name(),
-                    group.toolId(),
-                    group.toolId(),
                     group.name(),
                     reflectionContracts));
         }
@@ -138,7 +137,6 @@ public class SurfaceReflectionContractService {
 
         return new ReflectionContract(
                 reflection.id(),
-                reflection.id(),
                 group == null ? "" : group.toolId(),
                 binding == null ? "default" : binding.name(),
                 reflection.name(),
@@ -153,24 +151,22 @@ public class SurfaceReflectionContractService {
     }
 
     public record SurfaceReflectionContractsResponse(
-            String surfaceToolId,
+            String surfaceId,
             String surfaceName,
             List<BindingContract> bindings
     ) {}
 
     public record BindingContract(
-            String bindingName,
-            String groupToolId,
-            String bindingGroupToolId,
+            String bindingId,
+            String bindingProfile,
             String groupName,
             List<ReflectionContract> reflections
     ) {}
 
     public record ReflectionContract(
-            String id,
-            String toolId,
-            String bindingGroupToolId,
-            String bindingProfileName,
+            String reflectionId,
+            String bindingId,
+            String bindingProfile,
             String name,
             String description,
             List<ReflectionInputParameter> inputParameters,

@@ -749,7 +749,7 @@ function renderReflectionBindingPills() {
     if (!container) return;
     container.innerHTML = '';
     if (!modalBindingUuids || modalBindingUuids.length === 0) {
-        container.innerHTML = '<span class="text-xs text-zinc-500">No reflection bindings assigned.</span>';
+        container.innerHTML = '<span class="text-xs text-zinc-500">No bindings assigned.</span>';
         return;
     }
 
@@ -761,7 +761,7 @@ function renderReflectionBindingPills() {
         pill.innerHTML = ''
             + '<i class="fa-solid fa-link"></i>'
             + '<span>' + escapeHtml(label) + '</span>'
-            + '<span class="remove-tool" title="Remove reflection binding">✕</span>';
+            + '<span class="remove-tool" title="Remove binding">✕</span>';
         pill.querySelector('.remove-tool').addEventListener('click', function () {
             removeReflectionBinding(uuid);
         });

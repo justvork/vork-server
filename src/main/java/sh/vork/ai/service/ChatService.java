@@ -5,6 +5,7 @@ import java.net.URLDecoder;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -76,6 +77,7 @@ import sh.vork.setup.SystemSettings;
 import sh.vork.setup.SystemSettingsService;
 import sh.vork.skill.Skill;
 import sh.vork.skill.SkillFrame;
+import sh.vork.surface.Surface;
 
 /**
  * Manages AI chat sessions and conversation history.
@@ -116,6 +118,9 @@ public class ChatService {
     @Lazy
     @Autowired
     private AgentAssignmentService agentAssignmentService;
+
+    @Autowired(required = false)
+    private DatabaseRepository<Surface> surfaceRepository;
 
     @Value("${vork.app.base-url:}")
     private String configuredRelayHost;
@@ -356,10 +361,21 @@ public class ChatService {
 
     public List<AiSession> listSessionsForCurrentUser() {
         String username = resolveUsername();
+        Set<String> surfaceSessionUuids = new HashSet<>();
+        if (surfaceRepository != null) {
+            try (var surfaces = surfaceRepository.list(0, Integer.MAX_VALUE)) {
+                surfaces
+                        .map(Surface::sessionUuid)
+                        .filter(id -> id != null && !id.isBlank())
+                        .forEach(surfaceSessionUuids::add);
+            }
+        }
         try (var stream = sessionRepo.search(0, 200, "createdAt", SortOrder.DESC,
                 SearchQuery.eq("username", username),
                 SearchQuery.eq("originMode", SessionOriginMode.WEB.name()))) {
-            return stream.collect(Collectors.toList());
+            return stream
+                    .filter(session -> !surfaceSessionUuids.contains(session.uuid()))
+                    .collect(Collectors.toList());
         }
     }
 
@@ -1724,6 +1740,20 @@ public class ChatService {
             }
         }
 
+        // Last resort for malformed envelopes (commonly unescaped multi-line textResponse strings).
+        for (String rawAttempt : attempts) {
+            String recoveredText = extractMalformedTextResponse(rawAttempt);
+            if (recoveredText != null && !recoveredText.isBlank()) {
+                log.warn("Recovered textResponse from malformed StructuredAgentResponse envelope");
+                return new StructuredAgentResponse("FINISHED_TURN", recoveredText, null, null);
+            }
+        }
+        String recoveredFromOriginal = extractMalformedTextResponse(rawResponse);
+        if (recoveredFromOriginal != null && !recoveredFromOriginal.isBlank()) {
+            log.warn("Recovered textResponse from malformed StructuredAgentResponse envelope");
+            return new StructuredAgentResponse("FINISHED_TURN", recoveredFromOriginal, null, null);
+        }
+
         log.warn("Failed to parse StructuredAgentResponse, treating as FINISHED_TURN [rawResponse={}]",
                 rawResponse);
         return new StructuredAgentResponse("FINISHED_TURN", rawResponse, null, null);
@@ -1779,6 +1809,55 @@ public class ChatService {
             if (n != null && n.isTextual() && !n.asText().isBlank()) {
                 return n.asText();
             }
+        }
+        return null;
+    }
+
+    /**
+     * Best-effort extractor for malformed JSON-like envelopes where textResponse
+     * contains unescaped newlines that break strict JSON parsing.
+     */
+    private static String extractMalformedTextResponse(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        int keyIdx = raw.indexOf("\"textResponse\"");
+        if (keyIdx < 0) {
+            return null;
+        }
+        int colonIdx = raw.indexOf(':', keyIdx + "\"textResponse\"".length());
+        if (colonIdx < 0) {
+            return null;
+        }
+        int quoteStart = raw.indexOf('"', colonIdx + 1);
+        if (quoteStart < 0) {
+            return null;
+        }
+
+        StringBuilder out = new StringBuilder();
+        boolean escaping = false;
+        for (int i = quoteStart + 1; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (escaping) {
+                switch (c) {
+                    case 'n' -> out.append('\n');
+                    case 'r' -> out.append('\r');
+                    case 't' -> out.append('\t');
+                    case '"' -> out.append('"');
+                    case '\\' -> out.append('\\');
+                    default -> out.append(c);
+                }
+                escaping = false;
+                continue;
+            }
+            if (c == '\\') {
+                escaping = true;
+                continue;
+            }
+            if (c == '"') {
+                return out.toString();
+            }
+            out.append(c);
         }
         return null;
     }

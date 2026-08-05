@@ -302,13 +302,13 @@ Rules:
 
                                                 ### RUNTIME REFLECTION HELPER RULE
                                                 - Include this script in `index.html` before app logic: `/surface/runtime/v1/reflections.js`.
-                                                - Use `toolId` from `getSurfaceReflectionContracts` as the `reflectionId` when invoking.
-                                                - Use binding `bindingGroupToolId` from `getSurfaceReflectionContracts` as `bindingGroupToolId` in invoke calls.
-                                                - Use binding `bindingName` from `getSurfaceReflectionContracts` as `bindingProfileName` in invoke calls.
-                                                - NEVER use `surfaceToolId` as `bindingGroupToolId`; choose only from `bindings[].bindingGroupToolId`.
-                                                - Do not include `bindingName` or `bindingProfileName` inside `args`; pass only reflection input parameters in `args`.
+                                                - Use `reflectionId` from `getSurfaceReflectionContracts` as the invoke `reflectionId`.
+                                                - Use binding `bindingId` from `getSurfaceReflectionContracts` as invoke `bindingGroupToolId`.
+                                                - Use binding `bindingProfile` from `getSurfaceReflectionContracts` as invoke `bindingProfileName`.
+                                                - NEVER use `surfaceId` as `bindingGroupToolId`; choose only from `bindings[].bindingId`.
+                                                - Do not include `bindingProfile` or `bindingProfileName` inside `args`; pass only reflection input parameters in `args`.
                                                 - NEVER use a reflection `id` or `toolId` value as `bindingGroupToolId`.
-                                                - `bindingGroupToolId` comes from binding/group contract fields only (`bindingGroupToolId` / `groupToolId`).
+                                                - `bindingGroupToolId` comes only from `bindings[].bindingId`.
                                                 - Use the helper API for all runtime reflection calls:
                                                         `window.vork.reflections.invoke({ reflectionId, args, bindingGroupToolId, bindingProfileName, reflectionName? })`.
                                                 - When rendering model output, map fields from the contract schema and response content type.
