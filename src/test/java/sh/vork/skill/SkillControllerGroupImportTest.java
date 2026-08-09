@@ -37,7 +37,7 @@ class SkillControllerGroupImportTest {
                 List.of("skill-send -> skill-connect"),
                 "Import blocked"));
 
-        SkillController controller = new SkillController(skillService, categoryService);
+        SkillController controller = new SkillController(skillService, categoryService, objectMapper);
         MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         SkillGroup group = new SkillGroup("grp-mail", "Mail Skills", "ops", "Productivity", List.of(), 1, 1, 1);
@@ -62,7 +62,7 @@ class SkillControllerGroupImportTest {
                 List.of(),
                 null));
 
-        SkillController controller = new SkillController(skillService, categoryService);
+        SkillController controller = new SkillController(skillService, categoryService, objectMapper);
         MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         SkillGroup group = new SkillGroup("grp-mail", "Mail Skills", "ops", "Productivity", List.of(), 1, 1, 1);
@@ -100,7 +100,7 @@ class SkillControllerGroupImportTest {
         when(skillService.listGroups()).thenReturn(List.of(group));
         when(skillService.skillsForGroup(eq("grp-mail"))).thenReturn(List.of(skill));
 
-        SkillController controller = new SkillController(skillService, categoryService);
+        SkillController controller = new SkillController(skillService, categoryService, objectMapper);
         MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         mvc.perform(get("/api/skill-groups"))
@@ -121,7 +121,7 @@ class SkillControllerGroupImportTest {
                 new SkillGroup("grp-mail", "Mail Skills", "ops", "Productivity", List.of(), 1, 1, 1)
         ));
 
-        SkillController controller = new SkillController(skillService, categoryService);
+        SkillController controller = new SkillController(skillService, categoryService, objectMapper);
         Model model = new ExtendedModelMap();
         String viewName = controller.skillsPage(model);
 

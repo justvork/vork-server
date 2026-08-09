@@ -1988,7 +1988,7 @@ public class ChatService {
     }
 
     private DefaultModelSelection resolveDefaultModelSelection(AiSession session, AiProvider fallbackProvider) {
-        SystemSettings settings = systemSettingsService.getGlobal();
+        SystemSettings settings = systemSettingsService != null ? systemSettingsService.getGlobal() : null;
         String providerName = settings != null ? settings.defaultProvider() : null;
         String modelId = settings != null ? settings.defaultModelId() : null;
 

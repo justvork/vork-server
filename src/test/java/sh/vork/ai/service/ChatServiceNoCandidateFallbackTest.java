@@ -355,6 +355,14 @@ class ChatServiceNoCandidateFallbackTest {
         }
 
         @Override
+        public String generateWithHistory(List<org.springframework.ai.chat.messages.Message> conversationHistory,
+                                          String newUserMessage,
+                                          AiProvider provider,
+                                          String modelOverride) {
+            return generateWithHistory(conversationHistory, newUserMessage, provider);
+        }
+
+        @Override
         public String generate(String userPrompt, AiProvider provider) {
             simpleCalls++;
             return "fallback-generated";
@@ -375,6 +383,14 @@ class ChatServiceNoCandidateFallbackTest {
                                           AiProvider provider) {
             historyCalls++;
             throw new NoSuchElementException("No value present");
+        }
+
+        @Override
+        public String generateWithHistory(List<org.springframework.ai.chat.messages.Message> conversationHistory,
+                                          String newUserMessage,
+                                          AiProvider provider,
+                                          String modelOverride) {
+            return generateWithHistory(conversationHistory, newUserMessage, provider);
         }
 
         @Override
@@ -412,6 +428,14 @@ class ChatServiceNoCandidateFallbackTest {
                     AiSessionStatus.COMPLETED, null, null, null, null, null));
             return "I have completed the task autonomously and invoked completeBackgroundTask.";
         }
+
+        @Override
+        public String generateWithHistory(List<org.springframework.ai.chat.messages.Message> conversationHistory,
+                                          String newUserMessage,
+                                          AiProvider provider,
+                                          String modelOverride) {
+            return generateWithHistory(conversationHistory, newUserMessage, provider);
+        }
     }
 
     private static final class RecordingHistoryAiService extends AiOrchestrationService {
@@ -428,6 +452,14 @@ class ChatServiceNoCandidateFallbackTest {
             this.lastConversationHistory = List.copyOf(conversationHistory);
             return "history-recorded";
         }
+
+        @Override
+        public String generateWithHistory(List<org.springframework.ai.chat.messages.Message> conversationHistory,
+                                          String newUserMessage,
+                                          AiProvider provider,
+                                          String modelOverride) {
+            return generateWithHistory(conversationHistory, newUserMessage, provider);
+        }
     }
 
     private static final class BackgroundFinishedTurnAiService extends AiOrchestrationService {
@@ -440,6 +472,14 @@ class ChatServiceNoCandidateFallbackTest {
                                           String newUserMessage,
                                           AiProvider provider) {
             return "{\"status\":\"FINISHED_TURN\",\"textResponse\":\"Background job finished.\"}";
+        }
+
+        @Override
+        public String generateWithHistory(List<org.springframework.ai.chat.messages.Message> conversationHistory,
+                                          String newUserMessage,
+                                          AiProvider provider,
+                                          String modelOverride) {
+            return generateWithHistory(conversationHistory, newUserMessage, provider);
         }
     }
 }

@@ -69,11 +69,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
 async function loadSurface() {
     try {
-        const [surfaceRes, skillsRes, skillGroupsRes, reflectionGroupsRes, jobsRes] = await Promise.all([
+        const [surfaceRes, skillsRes, skillGroupsRes, bindingsRes, jobsRes] = await Promise.all([
             fetch('/api/surfaces/' + encodeURIComponent(surfaceUuid)),
             fetch('/api/skills?includePrivate=true'),
             fetch('/api/skill-groups'),
-            fetch('/api/reflection-groups'),
+            fetch('/api/chat/bindings'),
             fetch('/api/jobs')
         ]);
 
@@ -85,7 +85,7 @@ async function loadSurface() {
 
         allSkills = skillsRes.ok ? await skillsRes.json() : [];
         skillGroupNameByUuid = skillGroupsRes.ok ? buildSkillGroupMap(await skillGroupsRes.json()) : new Map();
-        allReflectionBindings = reflectionGroupsRes.ok ? buildBindingList(await reflectionGroupsRes.json()) : [];
+        allReflectionBindings = bindingsRes.ok ? buildBindingList(await bindingsRes.json()) : [];
         allJobs = jobsRes.ok ? await jobsRes.json() : [];
 
         renderConfigSidebar();
@@ -96,6 +96,17 @@ async function loadSurface() {
 }
 
 function buildBindingList(groups) {
+    if (Array.isArray(groups) && (groups.length === 0 || Object.prototype.hasOwnProperty.call(groups[0], 'bindingId'))) {
+        return groups.map(function (binding) {
+            return {
+                uuid: binding.bindingId,
+                name: binding.displayName || binding.bindingId,
+                groupName: binding.providerId || 'binding',
+                providerId: binding.providerId || 'unknown'
+            };
+        });
+    }
+
     const list = [];
     (groups || []).forEach(function (g) {
         const group = g.group || g;
@@ -104,7 +115,8 @@ function buildBindingList(groups) {
             list.push({
                 uuid: b.uuid,
                 name: b.name,
-                groupName: group.name || '—'
+                groupName: group.name || '—',
+                providerId: 'reflection'
             });
         });
     });
@@ -636,10 +648,14 @@ function renderChipList(containerId, field, allItems) {
     assigned.forEach(function (uuid) {
         const item = allItems.find(function (i) { return i.uuid === uuid; });
         const name = item ? formatLookupLabel(field, item) : uuid;
+        const skillStatus = field === 'skillUuids' ? evaluateSurfaceSkillEligibility(item) : null;
         const chip = document.createElement('div');
         chip.className = 'config-chip';
         chip.title = name;
         chip.innerHTML = '<span>' + escapeHtml(name) + '</span>'
+            + (skillStatus && !skillStatus.allowed
+                ? '<span class="ml-1 text-[0.65rem] text-rose-300">(Output schema required)</span>'
+                : '')
             + '<button type="button" aria-label="Remove"><i class="fa-solid fa-xmark"></i></button>';
         chip.querySelector('button').addEventListener('click', function () {
             removeAssignment(field, uuid);
@@ -677,16 +693,33 @@ function renderLookupResults(field, inputId, resultsId, allItems) {
     }
 
     filtered.slice(0, 30).forEach(function (item, index) {
+        const skillStatus = field === 'skillUuids' ? evaluateSurfaceSkillEligibility(item) : { allowed: true, reason: '' };
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'config-lookup-item';
+        if (!skillStatus.allowed) {
+            button.classList.add('config-lookup-item-disabled');
+            button.disabled = true;
+        }
         button.dataset.lookupIndex = String(index);
-        button.textContent = formatLookupLabel(field, item);
-        button.addEventListener('click', function () {
-            addAssignment(field, item.uuid);
-            input.value = '';
-            results.classList.remove('open');
-        });
+        if (field === 'skillUuids') {
+            const label = formatLookupLabel(field, item);
+            if (skillStatus.allowed) {
+                button.innerHTML = '<span class="config-lookup-item-main">' + escapeHtml(label) + '</span>';
+            } else {
+                button.innerHTML = '<span class="config-lookup-item-main">' + escapeHtml(label) + '</span>'
+                    + '<span class="config-lookup-item-warning">Output schema required</span>';
+            }
+        } else {
+            button.textContent = formatLookupLabel(field, item);
+        }
+        if (skillStatus.allowed) {
+            button.addEventListener('click', function () {
+                addAssignment(field, item.uuid);
+                input.value = '';
+                results.classList.remove('open');
+            });
+        }
         button.addEventListener('mouseenter', function () {
             setLookupActiveIndex(input, results, index);
         });
@@ -707,8 +740,7 @@ function formatLookupLabel(field, item) {
 
     if (field === 'reflectionBindingUuids') {
         const bindingName = item.name || item.uuid || '';
-        const groupName = item.groupName || '';
-        return groupName ? (groupName + ' - ' + bindingName) : bindingName;
+        return bindingName;
     }
 
     return item.name || item.uuid || '';
@@ -778,7 +810,27 @@ function setupLookup(field, inputId, resultsId, getAllItems) {
 }
 
 function getLookupItems(results) {
-    return Array.from(results.querySelectorAll('.config-lookup-item'));
+    return Array.from(results.querySelectorAll('.config-lookup-item:not([disabled])'));
+}
+
+function evaluateSurfaceSkillEligibility(skill) {
+    if (!skill) {
+        return { allowed: false, reason: 'Output schema required' };
+    }
+    const contentType = String(skill.outputContentType || 'none').trim().toLowerCase();
+    const schema = String(skill.outputSchema || '').trim();
+    if (contentType !== 'application/json') {
+        return { allowed: false, reason: 'Output schema required' };
+    }
+    if (!schema) {
+        return { allowed: false, reason: 'Output schema required' };
+    }
+    try {
+        JSON.parse(schema);
+    } catch (_e) {
+        return { allowed: false, reason: 'Output schema required' };
+    }
+    return { allowed: true, reason: '' };
 }
 
 function setLookupActiveIndex(input, results, index) {
@@ -854,7 +906,8 @@ async function saveAssignments(field, list) {
             body: JSON.stringify(payload)
         });
         if (!res.ok) {
-            alert('Failed to save assignment.');
+            const data = await res.json().catch(function () { return {}; });
+            alert(data.error || 'Failed to save assignment.');
             return;
         }
         surface = await res.json();

@@ -26,9 +26,8 @@ import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.agent.AgentType;
 import sh.vork.ai.service.AgentAssignmentService;
 import sh.vork.ai.lifecycle.AgentTemplateSeeder;
+import sh.vork.binding.BindingCatalogService;
 import sh.vork.reflection.Reflection;
-import sh.vork.reflection.ReflectionBinding;
-import sh.vork.reflection.ReflectionBindingAssignment;
 import sh.vork.reflection.ReflectionService;
 import sh.vork.skill.Skill;
 import sh.vork.skill.SkillVisibility;
@@ -47,15 +46,18 @@ public class AgentController {
     private final DatabaseRepository<AgentTemplate> agentRepository;
     private final DatabaseRepository<Skill> skillRepository;
     private final ReflectionService reflectionService;
+    private final BindingCatalogService bindingCatalogService;
     private final AgentAssignmentService agentAssignmentService;
 
     public AgentController(DatabaseRepository<AgentTemplate> agentRepository,
                            DatabaseRepository<Skill> skillRepository,
                            ReflectionService reflectionService,
+                           BindingCatalogService bindingCatalogService,
                            AgentAssignmentService agentAssignmentService) {
         this.agentRepository = agentRepository;
         this.skillRepository = skillRepository;
         this.reflectionService = reflectionService;
+        this.bindingCatalogService = bindingCatalogService;
         this.agentAssignmentService = agentAssignmentService;
     }
 
@@ -112,9 +114,9 @@ public class AgentController {
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
         }
-        List<ReflectionBindingAssignment> reflectionBindings;
+        List<String> bindingUuids;
         try {
-            reflectionBindings = normalizeAndValidateReflectionBindings(req.reflectionBindings());
+            bindingUuids = normalizeAndValidateBindingUuids(req.bindingUuids());
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
         }
@@ -133,7 +135,7 @@ public class AgentController {
                 false,
                 req.skillUuids() != null ? List.copyOf(req.skillUuids()) : List.of(),
                 req.agentType() != null ? req.agentType() : AgentType.INTERACTIVE,
-                reflectionBindings,
+                bindingUuids,
                 assignedUsernames,
                 recommendedModel);
         agentRepository.save(agent);
@@ -166,9 +168,9 @@ public class AgentController {
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
         }
-        List<ReflectionBindingAssignment> reflectionBindings;
+        List<String> bindingUuids;
         try {
-            reflectionBindings = normalizeAndValidateReflectionBindings(req.reflectionBindings());
+            bindingUuids = normalizeAndValidateBindingUuids(req.bindingUuids());
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
         }
@@ -188,9 +190,9 @@ public class AgentController {
                     existing.systemPrompt());
             boolean toolsChanged = req.allowedTools() != null
                     && !req.allowedTools().equals(existing.allowedTools());
-            boolean reflectionBindingsChanged = req.reflectionBindings() != null
-                    && !reflectionBindings.equals(existing.reflectionBindings());
-            if (instructionsChanged || toolsChanged || reflectionBindingsChanged) {
+                boolean bindingUuidsChanged = req.bindingUuids() != null
+                    && !bindingUuids.equals(existing.bindingUuids());
+                if (instructionsChanged || toolsChanged || bindingUuidsChanged) {
                 log.warn("Refused to update instructions/tools of system agent [id={}]", id);
                 return ResponseEntity.status(403).body(Map.of(
                         "error", "System agent instructions and tools are managed by the seeder "
@@ -206,9 +208,9 @@ public class AgentController {
                 existing.systemAgent(), // preserve system flag
                 req.skillUuids() != null ? List.copyOf(req.skillUuids()) : existing.skillUuids(),
                 req.agentType() != null ? req.agentType() : existing.agentType(),
-            reflectionBindings,
-            assignedUsernames,
-            recommendedModel);
+                bindingUuids,
+                assignedUsernames,
+                recommendedModel);
         agentRepository.save(updated);
         log.info("Agent updated [id={}, name={}]", id, req.name());
         return ResponseEntity.ok(updated);
@@ -315,41 +317,28 @@ public class AgentController {
         return null;
     }
 
-    private List<ReflectionBindingAssignment> normalizeAndValidateReflectionBindings(
-            List<ReflectionBindingAssignment> reflectionBindings) {
-        if (reflectionBindings == null || reflectionBindings.isEmpty()) {
+    private List<String> normalizeAndValidateBindingUuids(List<String> bindingUuids) {
+        if (bindingUuids == null || bindingUuids.isEmpty()) {
             return List.of();
         }
 
-        java.util.LinkedHashMap<String, java.util.LinkedHashSet<String>> merged = new java.util.LinkedHashMap<>();
-        for (ReflectionBindingAssignment assignment : reflectionBindings) {
-            if (assignment == null || assignment.reflectionId() == null || assignment.reflectionId().isBlank()) {
+        java.util.LinkedHashSet<String> normalized = new java.util.LinkedHashSet<>();
+        java.util.Set<String> knownBindingIds = bindingCatalogService.listBindings().stream()
+                .map(binding -> binding.bindingId())
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+
+        for (String bindingUuid : bindingUuids) {
+            if (bindingUuid == null || bindingUuid.isBlank()) {
                 continue;
             }
-            String reflectionId = assignment.reflectionId().trim();
-            Reflection reflection = reflectionService.getReflectionById(reflectionId);
-            if (reflection == null) {
-                throw new IllegalArgumentException("Unknown reflection ID in reflectionBindings: " + reflectionId);
+            String trimmed = bindingUuid.trim();
+            if (!knownBindingIds.contains(trimmed)) {
+                throw new IllegalArgumentException("Unknown binding UUID in bindingUuids: " + trimmed);
             }
-
-            java.util.LinkedHashSet<String> bucket = merged.computeIfAbsent(reflectionId,
-                    ignored -> new java.util.LinkedHashSet<>());
-            for (String bindingUuid : assignment.bindingUuids()) {
-                ReflectionBinding binding = reflectionService.getBindingByUuid(bindingUuid);
-                if (binding == null) {
-                    throw new IllegalArgumentException("Unknown reflection binding UUID in reflectionBindings: " + bindingUuid);
-                }
-                if (!reflection.groupUuid().equals(binding.groupUuid())) {
-                    throw new IllegalArgumentException(
-                            "Binding UUID " + bindingUuid + " does not belong to reflection '" + reflectionId + "' group.");
-                }
-                bucket.add(binding.uuid());
-            }
+            normalized.add(trimmed);
         }
-
-        return merged.entrySet().stream()
-                .map(entry -> new ReflectionBindingAssignment(entry.getKey(), List.copyOf(entry.getValue())))
-                .toList();
+        return List.copyOf(normalized);
     }
 
     // ── DTO ───────────────────────────────────────────────────────────────────
@@ -360,7 +349,7 @@ public class AgentController {
             List<String> allowedTools,
             List<String> skillUuids,
             AgentType    agentType,
-            List<ReflectionBindingAssignment> reflectionBindings,
+            List<String> bindingUuids,
             List<String> assignedUsernames,
             String       recommendedModel
     ) {}

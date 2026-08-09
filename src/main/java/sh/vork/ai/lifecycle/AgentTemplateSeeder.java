@@ -180,6 +180,8 @@ and a retry with different instructions would help.
 - Record fields must use Jackson-serialisable types: primitives, String, BigDecimal, \
  List<T>, Map<String, V>, or nested records.
 - Every record must declare a `String uuid` field (used as the MongoDB _id).
+- For records that implement `DatabaseEntity`, import `sh.vork.binding.GenerateBinding` and add `@GenerateBinding` by default so they are exposed in binding catalogs.
+- If the user explicitly asks to keep a type hidden from bindings, do not add `@GenerateBinding` (or set `@GenerateBinding(false)`).
 - Nested value objects do NOT need to implement DatabaseEntity.
 - Keep records flat unless nesting genuinely models the domain better.
 
@@ -292,26 +294,26 @@ Rules:
             Your job is to build small, self-contained web surfaces for the user \
             by creating HTML, CSS, and JavaScript artifacts in the session file system.
 
-                                                ### REFLECTION CONTRACT FIRST RULE
-                                                - Before generating or editing any API-driven UI, call `getSurfaceReflectionContracts`.
-                                                - Do not call `listAvailableTools` for routine surface work; the contract tool is already available.
-                                                - In an active surface session, call `getSurfaceReflectionContracts` with no `surfaceUuid`; do not guess UUIDs.
-                                                - The active surface is resolved from the current chat session by the platform; treat that as authoritative.
-                                                - Use the returned reflection input and output contracts as the source of truth.
-                                                - Do not invent reflection IDs, parameter names, or response fields.
+                ### REFLECTION CONTRACT FIRST RULE
+                - Before generating or editing any API-driven UI, call `getSurfaceReflectionContracts`.
+                - Do not call `listAvailableTools` for routine surface work; the contract tool is already available.
+                - In an active surface session, call `getSurfaceReflectionContracts` with no `surfaceUuid`; do not guess UUIDs.
+                - The active surface is resolved from the current chat session by the platform; treat that as authoritative.
+                - Use the returned reflection input and output contracts as the source of truth.
+                - Do not invent reflection IDs, parameter names, or response fields.
 
-                                                ### RUNTIME REFLECTION HELPER RULE
-                                                - Include this script in `index.html` before app logic: `/surface/runtime/v1/reflections.js`.
-                                                - Use `reflectionId` from `getSurfaceReflectionContracts` as the invoke `reflectionId`.
-                                                - Use binding `bindingId` from `getSurfaceReflectionContracts` as invoke `bindingGroupToolId`.
-                                                - Use binding `bindingProfile` from `getSurfaceReflectionContracts` as invoke `bindingProfileName`.
-                                                - NEVER use `surfaceId` as `bindingGroupToolId`; choose only from `bindings[].bindingId`.
-                                                - Do not include `bindingProfile` or `bindingProfileName` inside `args`; pass only reflection input parameters in `args`.
-                                                - NEVER use a reflection `id` or `toolId` value as `bindingGroupToolId`.
-                                                - `bindingGroupToolId` comes only from `bindings[].bindingId`.
-                                                - Use the helper API for all runtime reflection calls:
-                                                        `window.vork.reflections.invoke({ reflectionId, args, bindingGroupToolId, bindingProfileName, reflectionName? })`.
-                                                - When rendering model output, map fields from the contract schema and response content type.
+                ### RUNTIME REFLECTION HELPER RULE
+                - Include this script in `index.html` before app logic: `/surface/runtime/v1/reflections.js`.
+                - Use `reflectionId` from `getSurfaceReflectionContracts` as the invoke `reflectionId`.
+                - Use binding `bindingId` from `getSurfaceReflectionContracts` as invoke `bindingGroupToolId`.
+                - Use binding `bindingProfile` from `getSurfaceReflectionContracts` as invoke `bindingProfileName`.
+                - NEVER use `surfaceId` as `bindingGroupToolId`; choose only from `bindings[].bindingId`.
+                - Do not include `bindingProfile` or `bindingProfileName` inside `args`; pass only reflection input parameters in `args`.
+                - NEVER use a reflection `id` or `toolId` value as `bindingGroupToolId`.
+                - `bindingGroupToolId` comes only from `bindings[].bindingId`.
+                - Use the helper API for all runtime reflection calls:
+                        `window.vork.reflections.invoke({ reflectionId, args, bindingGroupToolId, bindingProfileName, reflectionName? })`.
+                - When rendering model output, map fields from the contract schema and response content type.
 
             ### OUTPUT CONVENTIONS
             - Place all surface files under the root of the session file space.
@@ -390,8 +392,8 @@ Rules:
             // Preserve operator-assigned skillUuids — never overwrite them on reseed.
             List<String> preservedSkills = existing.skillUuids() != null
                     ? existing.skillUuids() : List.of();
-            List<sh.vork.reflection.ReflectionBindingAssignment> preservedReflectionBindings =
-                    existing.reflectionBindings() != null ? existing.reflectionBindings() : List.of();
+            List<String> preservedBindingUuids =
+                    existing.bindingUuids() != null ? existing.bindingUuids() : List.of();
             List<String> preservedAssignedUsernames = existing.assignedUsernames() != null
                     ? existing.assignedUsernames() : List.of();
             String effectiveRecommendedModel = template.recommendedModel() != null
@@ -405,7 +407,7 @@ Rules:
                     template.systemAgent(),
                     preservedSkills,
                     template.agentType(),
-                    preservedReflectionBindings,
+                    preservedBindingUuids,
                     preservedAssignedUsernames,
                     effectiveRecommendedModel);
             agentTemplateRepository.save(updated);

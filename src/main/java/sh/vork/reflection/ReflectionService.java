@@ -1858,7 +1858,7 @@ public class ReflectionService {
 
             JsonNode properties = schema.get("properties");
             if (properties != null && properties.isObject()) {
-                properties.fields().forEachRemaining(entry -> {
+                properties.properties().iterator().forEachRemaining(entry -> {
                     JsonNode child = value.get(entry.getKey());
                     if (child != null) {
                         validateJsonAgainstSchema(child, entry.getValue(), path + "." + entry.getKey(), issues);

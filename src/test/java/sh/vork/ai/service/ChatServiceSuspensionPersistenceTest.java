@@ -62,7 +62,7 @@ class ChatServiceSuspensionPersistenceTest {
         sessionRepo.save(initial);
 
         when(aiService.generateWithHistory(org.mockito.ArgumentMatchers.<org.springframework.ai.chat.messages.Message>anyList(),
-            anyString(), any(AiProvider.class)))
+            anyString(), any(AiProvider.class), anyString()))
                 .thenThrow(new ToolSuspensionException("compileJavaType", "{\"source\":\"class Demo {}\"}"));
 
         // Ensure media path is not accidentally used in this scenario.
@@ -70,7 +70,8 @@ class ChatServiceSuspensionPersistenceTest {
             org.mockito.ArgumentMatchers.<org.springframework.ai.chat.messages.Message>anyList(),
             anyString(),
             org.mockito.ArgumentMatchers.<org.springframework.ai.content.Media>anyList(),
-            any(AiProvider.class)))
+            any(AiProvider.class),
+            anyString()))
                 .thenReturn("unused");
 
         ToolCallback compileDelegate = mock(ToolCallback.class);

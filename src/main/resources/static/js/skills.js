@@ -68,7 +68,7 @@ async function loadData() {
             fetch('/api/types/java-types'),
             fetch('/api/skills/categories'),
             fetch('/api/reflections'),
-            fetch('/api/reflection-groups'),
+            fetch('/api/chat/bindings'),
             fetch('/api/ai/providers')
         ]);
         allSkills     = skillsRes.ok ? await skillsRes.json() : [];
@@ -328,28 +328,27 @@ function renderGroupBindingSummaryHtml(skills) {
 
 function bindingLabelsForSkill(skill) {
     const labels = [];
-    const assignments = skill && skill.reflectionBindings ? skill.reflectionBindings : [];
-    assignments.forEach(function (assignment) {
-        (assignment.bindingUuids || []).forEach(function (bindingUuid) {
-            const label = resolveBindingLabel(bindingUuid);
-            if (label && !labels.includes(label)) labels.push(label);
-        });
+    const bindingUuids = skill && skill.bindingUuids ? skill.bindingUuids : [];
+    bindingUuids.forEach(function (bindingUuid) {
+        const label = resolveBindingLabel(bindingUuid);
+        if (label && !labels.includes(label)) labels.push(label);
     });
     return labels;
 }
 
 function resolveBindingLabel(bindingUuid) {
     if (!bindingUuid) return null;
+    const option = allReflectionBindingOptions.find(function (item) { return item.uuid === bindingUuid; });
+    if (option && option.label) return option.label;
+
     for (let i = 0; i < allReflectionGroups.length; i++) {
         const entry = allReflectionGroups[i] || {};
         const group = entry.group || entry;
-        const groupName = (group && group.name) ? group.name : (group && group.uuid ? group.uuid : 'Group');
         const bindings = entry.bindings || [];
         for (let j = 0; j < bindings.length; j++) {
             const binding = bindings[j];
             if (binding && binding.uuid === bindingUuid) {
-                const bindingName = binding.name || binding.uuid;
-                return groupName + ' (' + bindingName + ')';
+                return binding.name || binding.uuid;
             }
         }
     }
@@ -393,8 +392,11 @@ function openCreate(groupUuid) {
     document.getElementById('skill-id').value                   = '';
     document.getElementById('skill-name').value                 = '';
     document.getElementById('skill-description').value          = '';
+    document.getElementById('skill-output-content-type').value  = 'none';
+    document.getElementById('skill-output-schema').value        = '';
     document.getElementById('skill-recommended-model').value    = '';
     buildRecommendedModelLookupOptions('skill-recommended-model-lookup', '');
+    toggleSkillOutputSchemaRequirement();
     document.getElementById('skill-instructions').value         = '';
     document.getElementById('skill-visibility').value           = 'PUBLIC';
     document.getElementById('btn-delete-skill').classList.add('hidden');
@@ -423,8 +425,11 @@ function openCopy(id) {
     document.getElementById('skill-id').value                   = '';
     document.getElementById('skill-name').value                 = skill.name || '';
     document.getElementById('skill-description').value          = skill.description || '';
+    document.getElementById('skill-output-content-type').value  = (skill.outputContentType || 'none').toLowerCase();
+    document.getElementById('skill-output-schema').value        = skill.outputSchema || '';
     document.getElementById('skill-recommended-model').value    = skill.recommendedModel || '';
     buildRecommendedModelLookupOptions('skill-recommended-model-lookup', skill.recommendedModel || '');
+    toggleSkillOutputSchemaRequirement();
     document.getElementById('skill-instructions').value         = skill.instructions || '';
     populateGroupSelect(skill.groupUuid || '');
     document.getElementById('skill-visibility').value           = skill.visibility || 'PUBLIC';
@@ -450,7 +455,7 @@ function openCopy(id) {
             description: s.description || ''
         };
     }) : [];
-    modalBindingUuids = extractBindingUuidsFromAssignments(skill.reflectionBindings);
+    modalBindingUuids = skill.bindingUuids ? skill.bindingUuids.slice() : [];
     clearAlert('skill-modal-alert');
     renderToolPills();
     renderReflectionBindingPills();
@@ -469,8 +474,11 @@ function openEdit(id) {
     document.getElementById('skill-id').value                   = skill.uuid;
     document.getElementById('skill-name').value                 = skill.name;
     document.getElementById('skill-description').value          = skill.description || '';
+    document.getElementById('skill-output-content-type').value  = (skill.outputContentType || 'none').toLowerCase();
+    document.getElementById('skill-output-schema').value        = skill.outputSchema || '';
     document.getElementById('skill-recommended-model').value    = skill.recommendedModel || '';
     buildRecommendedModelLookupOptions('skill-recommended-model-lookup', skill.recommendedModel || '');
+    toggleSkillOutputSchemaRequirement();
     document.getElementById('skill-instructions').value         = skill.instructions || '';
     populateGroupSelect(skill.groupUuid || '');
     document.getElementById('skill-visibility').value           = skill.visibility || 'PUBLIC';
@@ -496,7 +504,7 @@ function openEdit(id) {
             description: s.description || ''
         };
     }) : [];
-    modalBindingUuids = extractBindingUuidsFromAssignments(skill.reflectionBindings);
+    modalBindingUuids = skill.bindingUuids ? skill.bindingUuids.slice() : [];
     clearAlert('skill-modal-alert');
     renderToolPills();
     renderReflectionBindingPills();
@@ -715,6 +723,23 @@ function addTool(toolId) {
 
 // ── Reflection bindings ─────────────────────────────────────────────────────
 function buildReflectionBindingOptions() {
+    if (Array.isArray(allReflectionGroups)
+            && allReflectionGroups.length > 0
+            && Object.prototype.hasOwnProperty.call(allReflectionGroups[0], 'bindingId')) {
+        return allReflectionGroups.map(function (binding) {
+            const providerId = binding.providerId || 'binding';
+            const displayName = binding.displayName || binding.bindingId || '';
+            return {
+                uuid: binding.bindingId,
+                groupUuid: null,
+                bindingName: displayName,
+                groupName: providerId,
+                providerId: providerId,
+                label: displayName
+            };
+        });
+    }
+
     const options = [];
     (allReflectionGroups || []).forEach(function (entry) {
         const group = entry.group || entry;
@@ -727,21 +752,12 @@ function buildReflectionBindingOptions() {
                 groupUuid: group.uuid,
                 bindingName: binding.name || binding.uuid,
                 groupName: groupName,
-                label: groupName + ' (' + (binding.name || binding.uuid) + ')'
+                providerId: 'reflection',
+                label: binding.name || binding.uuid
             });
         });
     });
     return options;
-}
-
-function extractBindingUuidsFromAssignments(assignments) {
-    const unique = [];
-    (assignments || []).forEach(function (assignment) {
-        (assignment.bindingUuids || []).forEach(function (uuid) {
-            if (uuid && !unique.includes(uuid)) unique.push(uuid);
-        });
-    });
-    return unique;
 }
 
 function renderReflectionBindingPills() {
@@ -818,37 +834,6 @@ function addReflectionBinding(uuid) {
         modalBindingUuids.push(uuid);
         renderReflectionBindingPills();
     }
-}
-
-function reflectionBindingsPayloadFromSelection() {
-    const selected = (modalBindingUuids || []).slice();
-    if (selected.length === 0) return [];
-
-    const groupedByReflection = {};
-    selected.forEach(function (bindingUuid) {
-        const option = allReflectionBindingOptions.find(function (item) { return item.uuid === bindingUuid; });
-        if (!option) return;
-
-        const reflectionsInGroup = (allReflections || []).filter(function (reflection) {
-            return reflection && reflection.groupUuid === option.groupUuid;
-        });
-
-        reflectionsInGroup.forEach(function (reflection) {
-            const reflectionId = reflection.id;
-            if (!reflectionId) return;
-            if (!groupedByReflection[reflectionId]) groupedByReflection[reflectionId] = [];
-            if (!groupedByReflection[reflectionId].includes(bindingUuid)) {
-                groupedByReflection[reflectionId].push(bindingUuid);
-            }
-        });
-    });
-
-    return Object.keys(groupedByReflection).map(function (reflectionId) {
-        return {
-            reflectionId: reflectionId,
-            bindingUuids: groupedByReflection[reflectionId]
-        };
-    });
 }
 
 // ── Type pills ────────────────────────────────────────────────────────────────
@@ -988,11 +973,29 @@ async function saveSkill() {
     const groupUuid      = document.getElementById('skill-group').value;
     const visibility     = document.getElementById('skill-visibility').value || 'PUBLIC';
     const description    = document.getElementById('skill-description').value;
+    const outputContentType = (document.getElementById('skill-output-content-type').value || 'none').trim().toLowerCase();
+    const outputSchema = (document.getElementById('skill-output-schema').value || '').trim();
     const recommendedModel = document.getElementById('skill-recommended-model').value.trim();
     const instructions   = document.getElementById('skill-instructions').value;
 
     if (!name) { showAlertIn('skill-modal-alert', 'Name is required.', 'warning'); return; }
     if (!groupUuid) { showAlertIn('skill-modal-alert', 'Skill group is required.', 'warning'); return; }
+    if (outputContentType !== 'none' && outputContentType !== 'application/json') {
+        showAlertIn('skill-modal-alert', 'Unsupported output content type.', 'warning');
+        return;
+    }
+    if (outputContentType === 'application/json') {
+        if (!outputSchema) {
+            showAlertIn('skill-modal-alert', 'Output schema is required for application/json.', 'warning');
+            return;
+        }
+        try {
+            JSON.parse(outputSchema);
+        } catch (_e) {
+            showAlertIn('skill-modal-alert', 'Output schema must be valid JSON.', 'warning');
+            return;
+        }
+    }
 
     // Validate parameters: names must be non-empty
     for (let i = 0; i < modalParams.length; i++) {
@@ -1035,6 +1038,8 @@ async function saveSkill() {
             };
         }),
         instructions:   instructions,
+        outputContentType: outputContentType,
+        outputSchema: outputSchema,
         recommendedModel: recommendedModel,
         allowedTools:   modalTools.slice(),
         allowedTypes:   modalTypes.slice(),
@@ -1045,7 +1050,7 @@ async function saveSkill() {
                 description: s.description || ''
             };
         }),
-        reflectionBindings: reflectionBindingsPayloadFromSelection()
+        bindingUuids: modalBindingUuids.slice()
     };
 
     const btn = document.getElementById('btn-save-skill');
@@ -1071,6 +1076,19 @@ async function saveSkill() {
         btn.disabled = false;
         btn.innerHTML = '<i class="fa-solid fa-save mr-1"></i>Save Skill';
     }
+}
+
+function toggleSkillOutputSchemaRequirement() {
+    const outputType = document.getElementById('skill-output-content-type');
+    const schemaInput = document.getElementById('skill-output-schema');
+    const help = document.getElementById('skill-output-schema-help');
+    if (!outputType || !schemaInput || !help) return;
+
+    const isJson = (outputType.value || 'none').toLowerCase() === 'application/json';
+    schemaInput.required = isJson;
+    help.textContent = isJson
+        ? 'Required: provide valid JSON schema output contract.'
+        : 'Optional unless output content type is application/json.';
 }
 
 // ── Export ────────────────────────────────────────────────────────────────────

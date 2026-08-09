@@ -1,4 +1,4 @@
-/* settings-ai-models.js — Vork AI Models settings page */
+/* settings-ai-models.js — Vork Models settings page */
 
 function saveGlobalDefault() {
     const sel = document.getElementById('global-default-select');

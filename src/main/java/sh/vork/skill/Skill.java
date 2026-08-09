@@ -2,7 +2,6 @@ package sh.vork.skill;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import sh.vork.orm.DatabaseEntity;
-import sh.vork.reflection.ReflectionBindingAssignment;
 import sh.vork.typegen.ExportableType;
 
 import java.util.List;
@@ -47,11 +46,13 @@ public record Skill(
         List<String>          allowedTypes,
         List<String>          subSkillUuids,
         String                recommendedModel,
+        String                outputContentType,
+        String                outputSchema,
         long                  version,
         long                  createdAt,
         long                  updatedAt,
         List<SkillSecret>     secrets,
-        List<ReflectionBindingAssignment> reflectionBindings
+        List<String>          bindingUuids
 ) implements DatabaseEntity {
 
     public Skill {
@@ -79,9 +80,30 @@ public record Skill(
                 }
             }
         }
+        if (outputContentType == null || outputContentType.isBlank()) {
+            outputContentType = "none";
+        } else {
+            outputContentType = outputContentType.trim().toLowerCase();
+        }
+        if (outputSchema == null) {
+            outputSchema = "";
+        } else {
+            outputSchema = outputSchema.trim();
+        }
         if (version < 1)                     version = 1;
         if (secrets == null)                 secrets = List.of();
-        if (reflectionBindings == null)      reflectionBindings = List.of();
+        if (bindingUuids == null || bindingUuids.isEmpty()) {
+            bindingUuids = List.of();
+        } else {
+            java.util.LinkedHashSet<String> normalized = new java.util.LinkedHashSet<>();
+            for (String bindingUuid : bindingUuids) {
+                if (bindingUuid == null || bindingUuid.isBlank()) {
+                    continue;
+                }
+                normalized.add(bindingUuid.trim());
+            }
+            bindingUuids = List.copyOf(normalized);
+        }
         }
 
         public Skill(String uuid,
@@ -99,7 +121,7 @@ public record Skill(
              long updatedAt,
              List<SkillSecret> secrets) {
         this(uuid, name, description, groupUuid, visibility, parameters, instructions,
-                allowedTools, allowedTypes, subSkillUuids, null, version, createdAt, updatedAt,
+                allowedTools, allowedTypes, subSkillUuids, null, null, null, version, createdAt, updatedAt,
             secrets, List.of());
     }
 
@@ -117,10 +139,10 @@ public record Skill(
                  long createdAt,
                  long updatedAt,
                  List<SkillSecret> secrets,
-                 List<ReflectionBindingAssignment> reflectionBindings) {
+                 List<String> bindingUuids) {
             this(uuid, name, description, groupUuid, visibility, parameters, instructions,
-                allowedTools, allowedTypes, subSkillUuids, null,
-                version, createdAt, updatedAt, secrets, reflectionBindings);
+                allowedTools, allowedTypes, subSkillUuids, null, null, null,
+                version, createdAt, updatedAt, secrets, bindingUuids);
             }
 
     /**

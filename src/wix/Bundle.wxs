@@ -29,7 +29,7 @@
      xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
-  <Bundle Name="Vork AI Server"
+  <Bundle Name="Vork Server"
           Version="$(var.Version)"
           Manufacturer="Vork"
           UpgradeCode="B9D3F6A2-7C4E-4B81-8E2F-3A5C1D9E7F04">
@@ -112,7 +112,7 @@
       </MsiPackage>
 
       <!--
-        Vork AI Server MSI
+        Vork Server MSI
         ──────────────────
         Always installed.  MajorUpgrade in the MSI handles upgrades.
       -->
@@ -120,7 +120,7 @@
                   SourceFile="$(var.MsiPath)"
                   Vital="yes"
                   PerMachine="yes"
-                  DisplayName="Vork AI Server" />
+                  DisplayName="Vork Server" />
 
     </Chain>
 

@@ -21,6 +21,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import sh.vork.ai.AiProvider;
 
 /**
@@ -33,11 +35,14 @@ public class SkillController {
 
     private final SkillService skillService;
     private final SkillCategoryService categoryService;
+    private final ObjectMapper objectMapper;
 
     public SkillController(SkillService skillService,
-                           SkillCategoryService categoryService) {
+                           SkillCategoryService categoryService,
+                           ObjectMapper objectMapper) {
         this.skillService = skillService;
         this.categoryService = categoryService;
+        this.objectMapper = objectMapper;
     }
 
     // -- Page ----------------------------------------------------------------
@@ -84,6 +89,10 @@ public class SkillController {
         if (modelError != null) {
             return ResponseEntity.badRequest().body(Map.of("error", modelError));
         }
+        String outputError = validateOutputContract(req.outputContentType(), req.outputSchema());
+        if (outputError != null) {
+            return ResponseEntity.badRequest().body(Map.of("error", outputError));
+        }
         try {
             Skill created = skillService.create(req);
             return ResponseEntity.ok(created);
@@ -106,6 +115,10 @@ public class SkillController {
         String modelError = validateRecommendedModel(req.recommendedModel());
         if (modelError != null) {
             return ResponseEntity.badRequest().body(Map.of("error", modelError));
+        }
+        String outputError = validateOutputContract(req.outputContentType(), req.outputSchema());
+        if (outputError != null) {
+            return ResponseEntity.badRequest().body(Map.of("error", outputError));
         }
         try {
             Skill updated = skillService.update(uuid, req);
@@ -233,6 +246,27 @@ public class SkillController {
             AiProvider.valueOf(providerKey);
         } catch (IllegalArgumentException ex) {
             return "Unknown provider in recommendedModel: " + providerKey;
+        }
+        return null;
+    }
+
+    private String validateOutputContract(String outputContentType, String outputSchema) {
+        String normalized = outputContentType == null || outputContentType.isBlank()
+                ? "none"
+                : outputContentType.trim().toLowerCase();
+        if (!"none".equals(normalized) && !"application/json".equals(normalized)) {
+            return "outputContentType must be one of: NONE, application/json";
+        }
+
+        if ("application/json".equals(normalized)) {
+            if (outputSchema == null || outputSchema.isBlank()) {
+                return "outputSchema is required when outputContentType is application/json";
+            }
+            try {
+                objectMapper.readTree(outputSchema);
+            } catch (Exception ex) {
+                return "outputSchema must be valid JSON when outputContentType is application/json";
+            }
         }
         return null;
     }

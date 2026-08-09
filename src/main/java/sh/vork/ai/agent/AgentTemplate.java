@@ -1,7 +1,6 @@
 package sh.vork.ai.agent;
 
 import sh.vork.orm.DatabaseEntity;
-import sh.vork.reflection.ReflectionBindingAssignment;
 
 import java.util.List;
 
@@ -35,7 +34,7 @@ public record AgentTemplate(
         boolean      systemAgent,
         List<String> skillUuids,
     AgentType    agentType,
-    List<ReflectionBindingAssignment> reflectionBindings,
+    List<String> bindingUuids,
     List<String> assignedUsernames,
     String       recommendedModel
 ) implements DatabaseEntity {
@@ -56,8 +55,17 @@ public record AgentTemplate(
         if (agentType == null) {
             agentType = AgentType.INTERACTIVE;
         }
-        if (reflectionBindings == null) {
-            reflectionBindings = List.of();
+        if (bindingUuids == null || bindingUuids.isEmpty()) {
+            bindingUuids = List.of();
+        } else {
+            java.util.LinkedHashSet<String> normalized = new java.util.LinkedHashSet<>();
+            for (String bindingUuid : bindingUuids) {
+                if (bindingUuid == null || bindingUuid.isBlank()) {
+                    continue;
+                }
+                normalized.add(bindingUuid.trim());
+            }
+            bindingUuids = List.copyOf(normalized);
         }
         if (assignedUsernames == null || assignedUsernames.isEmpty()) {
             assignedUsernames = List.of();
@@ -105,8 +113,8 @@ public record AgentTemplate(
                          boolean systemAgent,
                          List<String> skillUuids,
                          AgentType agentType,
-                         List<ReflectionBindingAssignment> reflectionBindings) {
-        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType, reflectionBindings, List.of(), null);
+                         List<String> bindingUuids) {
+        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType, bindingUuids, List.of(), null);
     }
 
     public AgentTemplate(String uuid,
@@ -116,9 +124,9 @@ public record AgentTemplate(
                          boolean systemAgent,
                          List<String> skillUuids,
                          AgentType agentType,
-                         List<ReflectionBindingAssignment> reflectionBindings,
+                         List<String> bindingUuids,
                          List<String> assignedUsernames) {
         this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
-                reflectionBindings, assignedUsernames, null);
+                bindingUuids, assignedUsernames, null);
     }
 }

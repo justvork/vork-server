@@ -777,7 +777,6 @@ public class ChatAuthorizationController {
      * only the {@code textResponse} field of a {@link StructuredAgentResponse}.
      * Falls back to the raw text when the response is not structured JSON.
      */
-    @SuppressWarnings("unused")
     private String extractTextResponse(String raw) {
         if (raw == null || raw.isBlank()) return "";
         StructuredAgentResponse structured = extractStructured(raw);

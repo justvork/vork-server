@@ -21,14 +21,14 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
-  <Package Name="Vork AI Server"
+  <Package Name="Vork Server"
            Manufacturer="Vork"
            Version="$(var.Version)"
            UpgradeCode="A7C2E4F1-3B8D-4A92-9F5E-1D6C2A7B3E8F"
            Language="1033"
            InstallerVersion="500">
 
-    <SummaryInformation Description="Vork AI Server — multi-provider AI chat with agent automation." />
+    <SummaryInformation Description="Vork Server — multi-provider AI chat with agent automation." />
 
     <!-- Prevent downgrades; remove the old version silently on upgrade -->
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."
@@ -116,7 +116,7 @@
         <!-- Register as a Windows auto-start service -->
         <ServiceInstall Id="VorkSvcInstall"
                         Name="VorkService"
-                        DisplayName="Vork AI Server"
+                        DisplayName="Vork Server"
                         Description="Vork — Multi-provider AI chat with agent automation and session management."
                         Type="ownProcess"
                         Start="auto"
@@ -174,7 +174,7 @@
     </ComponentGroup>
 
     <!-- ── Single feature: complete install ─────────────────────────────────── -->
-    <Feature Id="Complete" Title="Vork AI Server" Level="1">
+    <Feature Id="Complete" Title="Vork Server" Level="1">
       <ComponentGroupRef Id="EnvComponents" />
       <ComponentGroupRef Id="AppComponents" />
       <ComponentGroupRef Id="ServiceComponents" />

@@ -179,7 +179,9 @@ public class SkillAuthoringService {
                 allowedTools,
                 List.of(),
                 subSkillUuids,
-            null,
+                null,
+                null,
+                null,
                 List.of(),
                 List.of());
 

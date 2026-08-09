@@ -34,6 +34,8 @@ import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
 import sh.vork.ai.terminal.TerminalStreamRouter;
 import sh.vork.ai.memory.SessionEnvironmentService;
+import sh.vork.binding.BindingCatalogService;
+import sh.vork.binding.BindingSummary;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.reflection.Reflection;
 import sh.vork.reflection.ReflectionBinding;
@@ -66,6 +68,7 @@ public class ChatController {
     private final DatabaseRepository<Skill> skillRepo;
     private final SessionEnvironmentService sessionEnvironmentService;
     private final ReflectionService reflectionService;
+    private final BindingCatalogService bindingCatalogService;
 
 
 
@@ -75,7 +78,8 @@ public class ChatController {
                           ToolRegistry toolRegistry,
                           DatabaseRepository<Skill> skillRepository,
                           SessionEnvironmentService sessionEnvironmentService,
-                          ReflectionService reflectionService) {
+                          ReflectionService reflectionService,
+                          BindingCatalogService bindingCatalogService) {
         this.chatService = chatService;
         this.messaging   = messaging;
         this.aiOrchestrationService = aiOrchestrationService;
@@ -84,6 +88,7 @@ public class ChatController {
         this.skillRepo = skillRepository;
         this.sessionEnvironmentService = sessionEnvironmentService;
         this.reflectionService = reflectionService;
+        this.bindingCatalogService = bindingCatalogService;
     }
 
     // ── HTTP ──────────────────────────────────────────────────────────────────
@@ -332,6 +337,12 @@ public class ChatController {
                 .toList();
     }
 
+    @GetMapping("/bindings")
+    public List<BindingSummary> listBindings() {
+        log.debug("ENTER listBindings");
+        return bindingCatalogService.listBindings();
+    }
+
     /** Returns all non-hidden tools from the registry, optionally filtered by category. */
     @GetMapping("/tools")
     public List<ToolSummary> listTools(
@@ -382,9 +393,8 @@ public class ChatController {
                             .toList()
                     : List.of();
                 List<ReflectionBindingSummary> agentReflectionBindings = tpl != null
-                    && tpl.reflectionBindings() != null
-                    ? tpl.reflectionBindings().stream()
-                    .flatMap(assignment -> assignment.bindingUuids().stream())
+                    && tpl.bindingUuids() != null
+                    ? tpl.bindingUuids().stream()
                     .distinct()
                     .map(reflectionService::getBindingByUuid)
                     .filter(java.util.Objects::nonNull)

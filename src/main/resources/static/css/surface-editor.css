@@ -432,11 +432,33 @@
     cursor: pointer;
 }
 
+.config-lookup-item-main {
+    display: block;
+}
+
+.config-lookup-item-warning {
+    display: block;
+    margin-top: 0.1rem;
+    color: #fda4af;
+    font-size: 0.65rem;
+}
+
+.config-lookup-item-disabled {
+    opacity: 0.75;
+    cursor: not-allowed;
+}
+
 .config-lookup-item:hover,
 .config-lookup-item.active,
 .config-lookup-item:focus {
     background-color: #27272a;
     outline: none;
+}
+
+.config-lookup-item-disabled:hover,
+.config-lookup-item-disabled.active,
+.config-lookup-item-disabled:focus {
+    background-color: transparent;
 }
 
 .config-lookup-empty {

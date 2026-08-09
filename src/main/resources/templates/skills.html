@@ -104,6 +104,21 @@
                 </div>
 
                 <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="skill-output-content-type">Output Content Type</label>
+                    <select id="skill-output-content-type" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" onchange="toggleSkillOutputSchemaRequirement()">
+                        <option value="none">None</option>
+                        <option value="application/json">application/json</option>
+                    </select>
+                    <div class="mt-1 text-xs text-zinc-500">For surface execution, use application/json with a schema.</div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="skill-output-schema">Output Schema (JSON)</label>
+                    <textarea id="skill-output-schema" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" rows="6" placeholder='{"type":"object","properties":{}}'></textarea>
+                    <div id="skill-output-schema-help" class="mt-1 text-xs text-zinc-500">Optional unless output content type is application/json.</div>
+                </div>
+
+                <div class="mb-3">
                     <label class="mb-1 block text-sm font-medium text-zinc-300" for="skill-recommended-model">Recommended Model</label>
                     <input type="text" id="skill-recommended-model" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"
                            placeholder="PROVIDER:model-id (optional, e.g. OPENAI:gpt-4o)" oninput="syncRecommendedModelLookup('skill-recommended-model', 'skill-recommended-model-lookup')">

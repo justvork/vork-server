@@ -16,14 +16,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
+import sh.vork.binding.BindingCatalogService;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.orm.DatabaseRepository;
-import sh.vork.reflection.Reflection;
-import sh.vork.reflection.ReflectionBinding;
-import sh.vork.reflection.ReflectionBindingAssignment;
-import sh.vork.reflection.ReflectionService;
 import sh.vork.typegen.JavaType;
 import sh.vork.typegen.TypeGeneratorService;
 
@@ -56,7 +53,7 @@ public class SkillService {
 
     @Lazy
     @Autowired
-    private ReflectionService reflectionService;
+    private BindingCatalogService bindingCatalogService;
 
     public SkillService(DatabaseRepository<Skill> skillRepo,
                         DatabaseRepository<SkillGroup> skillGroupRepo,
@@ -185,8 +182,8 @@ public class SkillService {
         }
 
         List<SkillParameter> normalizedParameters = normalizeParameters(req.parameters());
-        List<ReflectionBindingAssignment> normalizedReflectionBindings =
-            normalizeAndValidateReflectionBindings(req.reflectionBindings());
+        List<String> normalizedBindingUuids =
+            normalizeAndValidateBindingUuids(req.bindingUuids());
 
         long now = System.currentTimeMillis();
         Skill skill = new Skill(
@@ -200,12 +197,14 @@ public class SkillService {
                 req.allowedTools() != null ? List.copyOf(req.allowedTools()) : List.of(),
                 req.allowedTypes() != null ? List.copyOf(req.allowedTypes()) : List.of(),
                 req.subSkillUuids() != null ? List.copyOf(req.subSkillUuids()) : List.of(),
-            req.recommendedModel(),
+                req.recommendedModel(),
+                req.outputContentType(),
+                req.outputSchema(),
                 1L,
                 now,
                 now,
                 req.secrets() != null ? List.copyOf(req.secrets()) : List.of(),
-                normalizedReflectionBindings);
+                normalizedBindingUuids);
         skillRepo.save(skill);
             syncGroupSkills(group.uuid());
         log.info("Skill created [uuid={}, name={}, group={}]", skill.uuid(), skill.name(), skill.groupUuid());
@@ -226,8 +225,8 @@ public class SkillService {
         }
 
         List<SkillParameter> normalizedParameters = normalizeParameters(req.parameters());
-        List<ReflectionBindingAssignment> normalizedReflectionBindings =
-            normalizeAndValidateReflectionBindings(req.reflectionBindings());
+        List<String> normalizedBindingUuids =
+            normalizeAndValidateBindingUuids(req.bindingUuids());
 
         Skill updated = new Skill(
                 uuid,
@@ -241,11 +240,13 @@ public class SkillService {
                 req.allowedTypes() != null ? List.copyOf(req.allowedTypes()) : List.of(),
                 req.subSkillUuids() != null ? List.copyOf(req.subSkillUuids()) : List.of(),
                 req.recommendedModel(),
+                req.outputContentType(),
+                req.outputSchema(),
                 existing.version() + 1,
                 existing.createdAt(),
                 System.currentTimeMillis(),
                 req.secrets() != null ? List.copyOf(req.secrets()) : List.of(),
-                normalizedReflectionBindings);
+                normalizedBindingUuids);
         skillRepo.save(updated);
 
         if (!existing.groupUuid().equals(targetGroup.uuid())) {
@@ -671,48 +672,38 @@ public class SkillService {
                 skill.allowedTools() != null ? List.copyOf(skill.allowedTools()) : List.of(),
                 skill.allowedTypes() != null ? List.copyOf(skill.allowedTypes()) : List.of(),
                 skill.subSkillUuids() != null ? List.copyOf(skill.subSkillUuids()) : List.of(),
-            skill.recommendedModel(),
+                skill.recommendedModel(),
+                skill.outputContentType(),
+                skill.outputSchema(),
                 skill.version() < 1 ? 1 : skill.version(),
                 skill.createdAt() > 0 ? skill.createdAt() : now,
                 skill.updatedAt() > 0 ? skill.updatedAt() : now,
                 skill.secrets() != null ? List.copyOf(skill.secrets()) : List.of(),
-                skill.reflectionBindings() != null ? List.copyOf(skill.reflectionBindings()) : List.of());
+                skill.bindingUuids() != null ? List.copyOf(skill.bindingUuids()) : List.of());
     }
 
-    private List<ReflectionBindingAssignment> normalizeAndValidateReflectionBindings(
-            List<ReflectionBindingAssignment> reflectionBindings) {
-        if (reflectionBindings == null || reflectionBindings.isEmpty()) {
+    private List<String> normalizeAndValidateBindingUuids(List<String> bindingUuids) {
+        if (bindingUuids == null || bindingUuids.isEmpty()) {
             return List.of();
         }
 
-        LinkedHashMap<String, LinkedHashSet<String>> merged = new LinkedHashMap<>();
-        for (ReflectionBindingAssignment assignment : reflectionBindings) {
-            if (assignment == null || assignment.reflectionId() == null || assignment.reflectionId().isBlank()) {
+        Set<String> knownBindingIds = bindingCatalogService.listBindings().stream()
+                .map(binding -> binding.bindingId())
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (String bindingUuid : bindingUuids) {
+            if (bindingUuid == null || bindingUuid.isBlank()) {
                 continue;
             }
-            String reflectionId = assignment.reflectionId().trim();
-            Reflection reflection = reflectionService.getReflectionById(reflectionId);
-            if (reflection == null) {
-                throw new IllegalArgumentException("Unknown reflection ID in reflectionBindings: " + reflectionId);
+            String trimmed = bindingUuid.trim();
+            if (!knownBindingIds.contains(trimmed)) {
+                throw new IllegalArgumentException("Unknown binding UUID in bindingUuids: " + trimmed);
             }
-
-            LinkedHashSet<String> bucket = merged.computeIfAbsent(reflectionId, ignored -> new LinkedHashSet<>());
-            for (String bindingUuid : assignment.bindingUuids()) {
-                ReflectionBinding binding = reflectionService.getBindingByUuid(bindingUuid);
-                if (binding == null) {
-                    throw new IllegalArgumentException("Unknown reflection binding UUID in reflectionBindings: " + bindingUuid);
-                }
-                if (!reflection.groupUuid().equals(binding.groupUuid())) {
-                    throw new IllegalArgumentException(
-                            "Binding UUID " + bindingUuid + " does not belong to reflection '" + reflectionId + "' group.");
-                }
-                bucket.add(binding.uuid());
-            }
+            normalized.add(trimmed);
         }
-
-        return merged.entrySet().stream()
-                .map(entry -> new ReflectionBindingAssignment(entry.getKey(), List.copyOf(entry.getValue())))
-                .toList();
+        return List.copyOf(normalized);
     }
 
     private static String substituteNonSecretParams(String template,
@@ -915,6 +906,8 @@ public class SkillService {
             List<String> allowedTypes,
             List<String> subSkillUuids,
             String recommendedModel,
+            String outputContentType,
+            String outputSchema,
             List<SkillSecret> secrets,
-            List<ReflectionBindingAssignment> reflectionBindings) {}
+            List<String> bindingUuids) {}
 }

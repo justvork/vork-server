@@ -51,7 +51,7 @@ async function loadData() {
             fetch('/api/management/tools'),
             fetch('/api/skills'),
             fetch('/api/reflections'),
-            fetch('/api/reflection-groups'),
+            fetch('/api/chat/bindings'),
             fetch('/api/users'),
             fetch('/api/ai/providers')
         ]);
@@ -59,14 +59,14 @@ async function loadData() {
         const toolsRes = results[1];
         const skillsRes = results[2];
         const reflectionsRes = results[3];
-        const reflectionGroupsRes = results[4];
+        const bindingsRes = results[4];
         const usersRes = results[5];
         const providerRes = results[6];
         allAgents = agentsRes.ok ? await agentsRes.json() : [];
         allTools = toolsRes.ok ? await toolsRes.json() : [];
         allSkills = skillsRes.ok ? await skillsRes.json() : [];
         allReflections = reflectionsRes.ok ? await reflectionsRes.json() : [];
-        allReflectionGroups = reflectionGroupsRes.ok ? await reflectionGroupsRes.json() : [];
+        allReflectionGroups = bindingsRes.ok ? await bindingsRes.json() : [];
         allUsers = usersRes.ok ? await usersRes.json() : [];
         providerGroups = providerRes.ok ? await providerRes.json() : [];
         providerGroupByKey = (providerGroups || []).reduce(function (acc, group) {
@@ -107,13 +107,11 @@ function renderAgentBindingColumn() {
 
 function bindingLabelsForAgent(agent) {
     const labels = [];
-    const assignments = agent && agent.reflectionBindings ? agent.reflectionBindings : [];
-    assignments.forEach(function (assignment) {
-        (assignment.bindingUuids || []).forEach(function (bindingUuid) {
-            const option = allReflectionBindingOptions.find(function (item) { return item.uuid === bindingUuid; });
-            const label = option ? option.label : bindingUuid;
-            if (label && !labels.includes(label)) labels.push(label);
-        });
+    const bindingUuids = agent && agent.bindingUuids ? agent.bindingUuids : [];
+    bindingUuids.forEach(function (bindingUuid) {
+        const option = allReflectionBindingOptions.find(function (item) { return item.uuid === bindingUuid; });
+        const label = option ? option.label : bindingUuid;
+        if (label && !labels.includes(label)) labels.push(label);
     });
     return labels;
 }
@@ -307,7 +305,7 @@ function openEdit(id) {
     buildRecommendedModelLookupOptions('agent-recommended-model-lookup', agent.recommendedModel || '');
     modalTools = agent.allowedTools ? agent.allowedTools.slice() : [];
     modalSkills = agent.skillUuids ? agent.skillUuids.slice() : [];
-    modalBindingUuids = extractBindingUuidsFromAssignments(agent.reflectionBindings);
+    modalBindingUuids = agent.bindingUuids ? agent.bindingUuids.slice() : [];
     modalAssignedUsers = agent.assignedUsernames ? agent.assignedUsernames.slice() : [];
     renderToolPills();
     renderSkillPills();
@@ -463,6 +461,23 @@ function addSkill(uuid) {
 }
 
 function buildReflectionBindingOptions() {
+    if (Array.isArray(allReflectionGroups)
+            && allReflectionGroups.length > 0
+            && Object.prototype.hasOwnProperty.call(allReflectionGroups[0], 'bindingId')) {
+        return allReflectionGroups.map(function (binding) {
+            const providerId = binding.providerId || 'binding';
+            const displayName = binding.displayName || binding.bindingId || '';
+            return {
+                uuid: binding.bindingId,
+                groupUuid: null,
+                bindingName: displayName,
+                groupName: providerId,
+                providerId: providerId,
+                label: displayName
+            };
+        });
+    }
+
     const options = [];
     (allReflectionGroups || []).forEach(function (entry) {
         const group = entry.group || entry;
@@ -475,21 +490,12 @@ function buildReflectionBindingOptions() {
                 groupUuid: group.uuid,
                 bindingName: binding.name || binding.uuid,
                 groupName: groupName,
-                label: groupName + ' (' + (binding.name || binding.uuid) + ')'
+                providerId: 'reflection',
+                label: binding.name || binding.uuid
             });
         });
     });
     return options;
-}
-
-function extractBindingUuidsFromAssignments(assignments) {
-    const unique = [];
-    (assignments || []).forEach(function (assignment) {
-        (assignment.bindingUuids || []).forEach(function (uuid) {
-            if (uuid && !unique.includes(uuid)) unique.push(uuid);
-        });
-    });
-    return unique;
 }
 
 function renderReflectionBindingPills() {
@@ -566,37 +572,6 @@ function addReflectionBinding(uuid) {
         modalBindingUuids.push(uuid);
         renderReflectionBindingPills();
     }
-}
-
-function reflectionBindingsPayloadFromSelection() {
-    const selected = (modalBindingUuids || []).slice();
-    if (selected.length === 0) return [];
-
-    const groupedByReflection = {};
-    selected.forEach(function (bindingUuid) {
-        const option = allReflectionBindingOptions.find(function (item) { return item.uuid === bindingUuid; });
-        if (!option) return;
-
-        const reflectionsInGroup = (allReflections || []).filter(function (reflection) {
-            return reflection && reflection.groupUuid === option.groupUuid;
-        });
-
-        reflectionsInGroup.forEach(function (reflection) {
-            const reflectionId = reflection.id;
-            if (!reflectionId) return;
-            if (!groupedByReflection[reflectionId]) groupedByReflection[reflectionId] = [];
-            if (!groupedByReflection[reflectionId].includes(bindingUuid)) {
-                groupedByReflection[reflectionId].push(bindingUuid);
-            }
-        });
-    });
-
-    return Object.keys(groupedByReflection).map(function (reflectionId) {
-        return {
-            reflectionId: reflectionId,
-            bindingUuids: groupedByReflection[reflectionId]
-        };
-    });
 }
 
 function renderAssignedUserPills() {
@@ -691,7 +666,7 @@ async function saveAgent() {
         recommendedModel: document.getElementById('agent-recommended-model').value.trim(),
         allowedTools: modalTools.slice(),
         skillUuids: modalSkills.slice(),
-        reflectionBindings: reflectionBindingsPayloadFromSelection(),
+        bindingUuids: modalBindingUuids.slice(),
         assignedUsernames: modalAssignedUsers.slice()
     };
 

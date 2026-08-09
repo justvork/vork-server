@@ -303,7 +303,7 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <argLine>-Dnet.bytebuddy.experimental=true -Djdk.attach.allowAttachSelf=true -XX:+EnableDynamicAgentLoading</argLine>
+                    <argLine>-Dnet.bytebuddy.experimental=true -Djdk.attach.allowAttachSelf=true -XX:+EnableDynamicAgentLoading -da:org.mockito...</argLine>
                     <forkCount>1</forkCount>
                     <reuseForks>true</reuseForks>
                     <runOrder>alphabetical</runOrder>

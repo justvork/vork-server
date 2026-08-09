@@ -149,6 +149,7 @@ class ChatServiceSessionBindingTest {
                 "Surface One",
                 "",
                 "session-surface",
+                "",
                 List.of(),
                 List.of(),
                 List.of(),

@@ -13,6 +13,7 @@ import sh.vork.ai.service.ChatService;
 import sh.vork.ai.terminal.TerminalStreamRouter;
 import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.ai.registry.ToolRegistry;
+import sh.vork.binding.BindingCatalogService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.reflection.Reflection;
 import sh.vork.reflection.ReflectionService;
@@ -47,7 +48,8 @@ class ChatControllerAttachmentBroadcastTest {
                 mock(ToolRegistry.class),
                 (DatabaseRepository<Skill>) mock(DatabaseRepository.class),
                 mock(SessionEnvironmentService.class),
-                mock(ReflectionService.class)
+                mock(ReflectionService.class),
+                mock(BindingCatalogService.class)
         );
 
         String sessionUuid = "session-zip-broadcast";
@@ -127,7 +129,8 @@ class ChatControllerAttachmentBroadcastTest {
                                 mock(ToolRegistry.class),
                                 (DatabaseRepository<Skill>) mock(DatabaseRepository.class),
                                 mock(SessionEnvironmentService.class),
-                                reflectionService
+                                reflectionService,
+                                mock(BindingCatalogService.class)
                 );
 
                 ResponseEntity<?> response = controller.addSessionTool("session-1", "reflection-tool-id");
@@ -172,7 +175,8 @@ class ChatControllerAttachmentBroadcastTest {
                                 mock(ToolRegistry.class),
                                 (DatabaseRepository<Skill>) mock(DatabaseRepository.class),
                                 mock(SessionEnvironmentService.class),
-                                reflectionService
+                                reflectionService,
+                                mock(BindingCatalogService.class)
                 );
 
                 ResponseEntity<?> response = controller.addSessionTool("session-1", "listFiles");

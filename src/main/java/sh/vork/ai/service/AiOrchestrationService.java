@@ -1294,25 +1294,12 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 }
 
                 LinkedHashMap<String, LinkedHashSet<String>> assignmentMap = new LinkedHashMap<>();
+                List<Reflection> allReflections = reflectionService.listReflections();
 
                 // Session-level binding attachments apply to all reflections in the binding's group.
                 List<String> sessionBindingUuids = parseSessionReflectionBindingUuids(session);
                 if (!sessionBindingUuids.isEmpty()) {
-                        List<Reflection> allReflections = reflectionService.listReflections();
-                        for (String bindingUuid : sessionBindingUuids) {
-                                sh.vork.reflection.ReflectionBinding binding = reflectionService.getBindingByUuid(bindingUuid);
-                                if (binding == null) {
-                                        log.warn("Skipping session reflection binding UUID: unknown binding [bindingUuid={}]", bindingUuid);
-                                        continue;
-                                }
-                                for (Reflection reflection : allReflections) {
-                                        if (reflection != null && reflection.groupUuid().equals(binding.groupUuid())) {
-                                                assignmentMap
-                                                        .computeIfAbsent(reflection.id(), ignored -> new LinkedHashSet<>())
-                                                        .add(binding.uuid());
-                                        }
-                                }
-                        }
+                        mergeBindingUuids(assignmentMap, allReflections, sessionBindingUuids);
                 }
 
                 AgentTemplate template = null;
@@ -1320,14 +1307,14 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         template = agentTemplateRepo.get(session.getActiveAgentTemplateId());
                 }
                 if (template != null) {
-                        mergeReflectionAssignments(assignmentMap, template.reflectionBindings());
+                        mergeBindingUuids(assignmentMap, allReflections, template.bindingUuids());
                 }
 
                 if (inSkillFrame && session.skillStack() != null && !session.skillStack().isEmpty()) {
                         sh.vork.skill.SkillFrame top = session.skillStack().getLast();
                         sh.vork.skill.Skill activeSkill = skillRepo.get(top.skillUuid());
                         if (activeSkill != null) {
-                                mergeReflectionAssignments(assignmentMap, activeSkill.reflectionBindings());
+                                mergeBindingUuids(assignmentMap, allReflections, activeSkill.bindingUuids());
                         }
                 } else {
                         LinkedHashSet<String> rootSkillUuids = new LinkedHashSet<>();
@@ -1338,7 +1325,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 rootSkillUuids.addAll(session.sessionSkillUuids());
                         }
                         for (sh.vork.skill.Skill skill : expandRootSkillsWithEffectiveSubs(List.copyOf(rootSkillUuids))) {
-                                mergeReflectionAssignments(assignmentMap, skill.reflectionBindings());
+                                mergeBindingUuids(assignmentMap, allReflections, skill.bindingUuids());
                         }
                 }
 
@@ -1399,24 +1386,26 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 return List.copyOf(parsed);
         }
 
-        private void mergeReflectionAssignments(LinkedHashMap<String, LinkedHashSet<String>> target,
-                                                List<sh.vork.reflection.ReflectionBindingAssignment> assignments) {
-                if (assignments == null || assignments.isEmpty()) {
+        private void mergeBindingUuids(LinkedHashMap<String, LinkedHashSet<String>> target,
+                                       List<Reflection> allReflections,
+                                       List<String> bindingUuids) {
+                if (bindingUuids == null || bindingUuids.isEmpty()) {
                         return;
                 }
-                for (sh.vork.reflection.ReflectionBindingAssignment assignment : assignments) {
-                        if (assignment == null || assignment.reflectionId() == null || assignment.reflectionId().isBlank()) {
+                for (String bindingUuid : bindingUuids) {
+                        if (bindingUuid == null || bindingUuid.isBlank()) {
                                 continue;
                         }
-                        LinkedHashSet<String> bucket = target.computeIfAbsent(
-                                assignment.reflectionId().trim(),
-                                ignored -> new LinkedHashSet<>());
-                        if (assignment.bindingUuids() != null) {
-                                for (String bindingUuid : assignment.bindingUuids()) {
-                                        if (bindingUuid == null || bindingUuid.isBlank()) {
-                                                continue;
-                                        }
-                                        bucket.add(bindingUuid.trim());
+                        String normalized = bindingUuid.trim();
+                        sh.vork.reflection.ReflectionBinding binding = reflectionService.getBindingByUuid(normalized);
+                        if (binding == null) {
+                                continue;
+                        }
+                        for (Reflection reflection : allReflections) {
+                                if (reflection != null && reflection.groupUuid().equals(binding.groupUuid())) {
+                                        target
+                                                .computeIfAbsent(reflection.id(), ignored -> new LinkedHashSet<>())
+                                                .add(binding.uuid());
                                 }
                         }
                 }

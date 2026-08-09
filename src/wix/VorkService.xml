@@ -1,5 +1,5 @@
 <!--
-  WinSW v2 service wrapper configuration for Vork AI Server.
+  WinSW v2 service wrapper configuration for Vork Server.
   https://github.com/winsw/winsw/blob/v2/doc/xmlConfigFile.md
 
   This file must be named exactly VorkService.xml and placed alongside
@@ -18,7 +18,7 @@
 
   <!-- Service identity (must match ServiceInstall/@Name in Product.wxs) -->
   <id>VorkService</id>
-  <name>Vork AI Server</name>
+  <name>Vork Server</name>
   <description>Vork — Multi-provider AI chat with agent automation and session management.</description>
 
   <!--

@@ -16,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.agent.AgentType;
 import sh.vork.ai.service.AgentAssignmentService;
+import sh.vork.binding.BindingCatalogService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.reflection.Reflection;
 import sh.vork.reflection.ReflectionService;
@@ -30,13 +31,14 @@ class AgentControllerTest {
         @SuppressWarnings("unchecked")
         DatabaseRepository<Skill> skillRepo = mock(DatabaseRepository.class);
         ReflectionService reflectionService = mock(ReflectionService.class);
+        BindingCatalogService bindingCatalogService = mock(BindingCatalogService.class);
         AgentAssignmentService agentAssignmentService = mock(AgentAssignmentService.class);
 
         when(agentRepo.list(0, Integer.MAX_VALUE)).thenReturn(List.of(
                 new AgentTemplate("a1", "Triage Agent", "", List.of(), false, List.of(), AgentType.BACKGROUND))
                 .stream());
 
-        AgentController controller = new AgentController(agentRepo, skillRepo, reflectionService, agentAssignmentService);
+        AgentController controller = new AgentController(agentRepo, skillRepo, reflectionService, bindingCatalogService, agentAssignmentService);
         AgentController.AgentRequest req = new AgentController.AgentRequest(
                 "triage agent", "", List.of(), List.of(), AgentType.BACKGROUND, List.of(), List.of(), null);
 
@@ -55,6 +57,7 @@ class AgentControllerTest {
         @SuppressWarnings("unchecked")
         DatabaseRepository<Skill> skillRepo = mock(DatabaseRepository.class);
         ReflectionService reflectionService = mock(ReflectionService.class);
+        BindingCatalogService bindingCatalogService = mock(BindingCatalogService.class);
         AgentAssignmentService agentAssignmentService = mock(AgentAssignmentService.class);
 
         AgentTemplate existing = new AgentTemplate("a2", "Support Agent", "", List.of(), false, List.of(), AgentType.INTERACTIVE);
@@ -64,7 +67,7 @@ class AgentControllerTest {
                 new AgentTemplate("a1", "Triage Agent", "", List.of(), false, List.of(), AgentType.BACKGROUND))
                 .stream());
 
-        AgentController controller = new AgentController(agentRepo, skillRepo, reflectionService, agentAssignmentService);
+        AgentController controller = new AgentController(agentRepo, skillRepo, reflectionService, bindingCatalogService, agentAssignmentService);
         AgentController.AgentRequest req = new AgentController.AgentRequest(
                 "Triage Agent", "", List.of(), List.of(), AgentType.INTERACTIVE, List.of(), List.of(), null);
 
@@ -83,6 +86,7 @@ class AgentControllerTest {
                 @SuppressWarnings("unchecked")
                 DatabaseRepository<Skill> skillRepo = mock(DatabaseRepository.class);
                 ReflectionService reflectionService = mock(ReflectionService.class);
+                BindingCatalogService bindingCatalogService = mock(BindingCatalogService.class);
                 AgentAssignmentService agentAssignmentService = mock(AgentAssignmentService.class);
 
                 when(agentRepo.list(0, Integer.MAX_VALUE)).thenReturn(List.<AgentTemplate>of().stream());
@@ -105,7 +109,7 @@ class AgentControllerTest {
                                 System.currentTimeMillis(),
                                 System.currentTimeMillis()));
 
-                AgentController controller = new AgentController(agentRepo, skillRepo, reflectionService, agentAssignmentService);
+                AgentController controller = new AgentController(agentRepo, skillRepo, reflectionService, bindingCatalogService, agentAssignmentService);
                 AgentController.AgentRequest req = new AgentController.AgentRequest(
                                 "triage agent", "", List.of("reflection-tool-id"), List.of(), AgentType.BACKGROUND, List.of(), List.of(), null);
 

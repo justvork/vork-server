@@ -35,10 +35,10 @@ import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.AgentAssignmentService;
 import sh.vork.ai.service.ChatService;
 import sh.vork.ai.terminal.TerminalStreamRouter;
+import sh.vork.binding.BindingCatalogService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.reflection.ReflectionAuthenticationMode;
 import sh.vork.reflection.ReflectionBinding;
-import sh.vork.reflection.ReflectionBindingAssignment;
 import sh.vork.reflection.ReflectionGroup;
 import sh.vork.reflection.ReflectionService;
 import sh.vork.reflection.ReflectionType;
@@ -121,6 +121,9 @@ class ProtectedWriteEndpointsSecurityTest {
 
     @MockitoBean
     private SetupService setupService;
+
+        @MockitoBean
+        private BindingCatalogService bindingCatalogService;
 
     @Test
     void postAgents_forbiddenWithoutAgentsWrite() throws Exception {
@@ -246,7 +249,7 @@ class ProtectedWriteEndpointsSecurityTest {
                 false,
                 List.of(),
                 sh.vork.ai.agent.AgentType.INTERACTIVE,
-                List.of(new ReflectionBindingAssignment("reflection-1", List.of("b1"))),
+                List.of("b1"),
                 List.of());
         ReflectionBinding binding = new ReflectionBinding("b1", "g1", "Binding One", "", Map.of(), 1L, 1L, 1L);
         ReflectionGroup group = new ReflectionGroup(

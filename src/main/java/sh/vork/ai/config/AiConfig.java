@@ -220,7 +220,7 @@ public class AiConfig {
 
     private static final Logger log = LoggerFactory.getLogger(AiConfig.class);
     public static final String BASE_SYSTEM_PROMPT = """
-You are an autonomous Vork AI agent operating strictly within a turn-based AI 
+You are an autonomous Vork agent operating strictly within a turn-based AI 
 orchestration framework. You execute background workflows using function-calling 
 tools. You do not text-chat with a user.
 
@@ -590,7 +590,9 @@ the protocol and will break the system. Do not converse. Execute.
                                 req.allowedTools() == null ? List.of() : req.allowedTools(),
                                 req.allowedTypes() == null ? List.of() : req.allowedTypes(),
                                 req.subSkillUuids() == null ? List.of() : req.subSkillUuids(),
-                            null,
+                                null,
+                                null,
+                                null,
                                 req.secrets() == null ? List.of() : req.secrets(),
                                 List.of());
 

@@ -20,6 +20,7 @@ public record Surface(
         String name,
         String description,
         String sessionUuid,
+        String executionSessionUuid,
         List<String> skillUuids,
         List<String> reflectionBindingUuids,
         List<String> jobUuids,
@@ -41,6 +42,9 @@ public record Surface(
         }
         if (sessionUuid == null) {
             sessionUuid = "";
+        }
+        if (executionSessionUuid == null) {
+            executionSessionUuid = "";
         }
         if (skillUuids == null) {
             skillUuids = List.of();

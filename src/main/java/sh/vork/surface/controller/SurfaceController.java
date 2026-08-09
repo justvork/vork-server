@@ -16,16 +16,20 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import sh.vork.ai.entity.AiSession;
+import sh.vork.ai.service.ChatService;
 import sh.vork.reflection.Reflection;
 import sh.vork.reflection.ReflectionBinding;
 import sh.vork.reflection.ReflectionGroup;
 import sh.vork.reflection.ReflectionService;
 import sh.vork.filesystem.FileArea;
 import sh.vork.filesystem.SessionFileSystem;
+import sh.vork.skill.Skill;
 import sh.vork.surface.Surface;
 import sh.vork.surface.service.SurfaceReflectionContractService;
 import sh.vork.surface.service.SurfaceService;
+import sh.vork.surface.service.SurfaceSkillExecutionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.InputStream;
@@ -49,17 +53,23 @@ public class SurfaceController {
     private final SessionFileSystem sessionFileSystem;
     private final SurfaceReflectionContractService surfaceReflectionContractService;
     private final ReflectionService reflectionService;
+    private final ChatService chatService;
+    private final SurfaceSkillExecutionService surfaceSkillExecutionService;
     private final ObjectMapper objectMapper;
 
     public SurfaceController(SurfaceService surfaceService,
                              SessionFileSystem sessionFileSystem,
                              SurfaceReflectionContractService surfaceReflectionContractService,
                              ReflectionService reflectionService,
+                             ChatService chatService,
+                             SurfaceSkillExecutionService surfaceSkillExecutionService,
                              ObjectMapper objectMapper) {
         this.surfaceService = surfaceService;
         this.sessionFileSystem = sessionFileSystem;
         this.surfaceReflectionContractService = surfaceReflectionContractService;
         this.reflectionService = reflectionService;
+        this.chatService = chatService;
+        this.surfaceSkillExecutionService = surfaceSkillExecutionService;
         this.objectMapper = objectMapper;
     }
 
@@ -169,17 +179,21 @@ public class SurfaceController {
     public ResponseEntity<?> updateSurface(@PathVariable String uuid,
                                            @RequestBody UpdateSurfaceRequest req) {
         log.debug("ENTER updateSurface: [uuid={}]", uuid);
-        Surface updated = surfaceService.update(
-                uuid,
-                req == null ? null : req.name(),
-                req == null ? null : req.description(),
-                req == null ? null : req.skillUuids(),
-                req == null ? null : req.reflectionBindingUuids(),
-                req == null ? null : req.jobUuids());
-        if (updated == null) {
-            return ResponseEntity.notFound().build();
+        try {
+            Surface updated = surfaceService.update(
+                    uuid,
+                    req == null ? null : req.name(),
+                    req == null ? null : req.description(),
+                    req == null ? null : req.skillUuids(),
+                    req == null ? null : req.reflectionBindingUuids(),
+                    req == null ? null : req.jobUuids());
+            if (updated == null) {
+                return ResponseEntity.notFound().build();
+            }
+            return ResponseEntity.ok(updated);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
         }
-        return ResponseEntity.ok(updated);
     }
 
     @DeleteMapping("/api/surfaces/{uuid}")
@@ -383,6 +397,142 @@ public class SurfaceController {
                 }
         }
 
+    @GetMapping("/api/surfaces/{uuid}/skill-contracts")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> getSurfaceSkillContracts(@PathVariable String uuid,
+                                                      Principal principal) {
+        log.debug("ENTER getSurfaceSkillContracts: [surfaceUuid={}, user={}]",
+                uuid, principal == null ? null : principal.getName());
+        if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("status", "error", "message", "Access denied"));
+        }
+
+        List<Map<String, Object>> skills = new java.util.ArrayList<>();
+        List<Skill> attachedSkills;
+        try {
+            attachedSkills = surfaceService.listAttachedSkills(uuid);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("status", "error", "message", ex.getMessage()));
+        }
+
+        for (Skill skill : attachedSkills) {
+            SurfaceService.PublicSkillId ids = surfaceService.publicIdsFor(skill);
+            Object outputSchema = Map.of();
+            try {
+                outputSchema = objectMapper.readValue(skill.outputSchema(), Object.class);
+            } catch (Exception ignored) {
+                // Return empty schema when stored value is malformed.
+            }
+            skills.add(Map.of(
+                    "groupId", ids.groupId(),
+                    "skillId", ids.skillId(),
+                    "toolName", skill.toolName(),
+                    "name", skill.name(),
+                    "outputContentType", skill.outputContentType(),
+                    "outputSchema", outputSchema));
+        }
+
+        return ResponseEntity.ok(Map.of(
+            "surfaceUuid", uuid,
+                "skills", skills));
+    }
+
+    @PostMapping("/api/surfaces/{uuid}/skills/invoke")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> startSurfaceSkillExecution(@PathVariable String uuid,
+                                                        @RequestBody SurfaceSkillInvokeRequest req,
+                                                        Principal principal) {
+        log.debug("ENTER startSurfaceSkillExecution: [surfaceUuid={}, groupId={}, skillId={}, user={}]",
+                uuid,
+                req == null ? null : req.groupId(),
+                req == null ? null : req.skillId(),
+                principal == null ? null : principal.getName());
+        if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("status", "error", "message", "Access denied"));
+        }
+        if (req == null || req.groupId() == null || req.groupId().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "message", "groupId is required."));
+        }
+        if (req == null || req.skillId() == null || req.skillId().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "message", "skillId is required."));
+        }
+
+        try {
+            Skill skill = surfaceService.resolveAttachedSkillByPublicIds(uuid, req.groupId(), req.skillId());
+            if (!"application/json".equalsIgnoreCase(skill.outputContentType())
+                    || skill.outputSchema() == null
+                    || skill.outputSchema().isBlank()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "status", "error",
+                        "message", "Skill output contract is incomplete. outputContentType=application/json and outputSchema are required."));
+            }
+
+            AiSession executionSession = surfaceService.ensureExecutionSession(uuid, principal.getName());
+            chatService.addSessionSkill(executionSession.uuid(), skill.uuid());
+
+            sh.vork.ai.AiProvider provider;
+            try {
+                provider = sh.vork.ai.AiProvider.valueOf(executionSession.provider());
+            } catch (Exception ex) {
+                provider = sh.vork.ai.AiProvider.GEMINI;
+            }
+
+            var started = surfaceSkillExecutionService.start(
+                    uuid,
+                    executionSession.uuid(),
+                    skill,
+                    req.args() == null ? Map.of() : req.args(),
+                    provider);
+
+            return ResponseEntity.ok(Map.of(
+                    "status", "accepted",
+                    "executionId", started.executionId(),
+                    "state", started.state().name(),
+                    "executionSessionUuid", started.executionSessionUuid(),
+                    "groupId", req.groupId(),
+                    "skillId", req.skillId()));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "message", ex.getMessage()));
+        }
+    }
+
+    @GetMapping("/api/surfaces/{uuid}/skills/executions/{executionId}")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> pollSurfaceSkillExecution(@PathVariable String uuid,
+                                                       @PathVariable String executionId,
+                                                       @RequestParam(name = "waitMs", defaultValue = "15000") long waitMs,
+                                                       Principal principal) {
+        log.debug("ENTER pollSurfaceSkillExecution: [surfaceUuid={}, executionId={}, waitMs={}, user={}]",
+                uuid, executionId, waitMs, principal == null ? null : principal.getName());
+        if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("status", "error", "message", "Access denied"));
+        }
+
+        try {
+            var snapshot = surfaceSkillExecutionService.poll(uuid, executionId, waitMs);
+            return ResponseEntity.ok(Map.of(
+                    "status", "ok",
+                    "executionId", snapshot.executionId(),
+                    "state", snapshot.state().name(),
+                    "outputContentType", snapshot.outputContentType() == null ? "" : snapshot.outputContentType(),
+                    "result", snapshot.result(),
+                    "error", snapshot.error() == null ? "" : snapshot.error(),
+                    "startedAt", snapshot.startedAt(),
+                    "updatedAt", snapshot.updatedAt(),
+                    "completedAt", snapshot.completedAt() == null ? 0L : snapshot.completedAt()));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("status", "error", "message", ex.getMessage()));
+        }
+    }
+
         @GetMapping("/surface/runtime/v1/reflections.js")
         @ResponseBody
         @PreAuthorize("hasAuthority('USERS_MANAGE')")
@@ -529,6 +679,94 @@ public class SurfaceController {
                                 .body(script);
         }
 
+        @GetMapping("/surface/runtime/v1/skills.js")
+        @ResponseBody
+        @PreAuthorize("hasAuthority('USERS_MANAGE')")
+        public ResponseEntity<String> surfaceSkillRuntimeHelper() {
+                String script = """
+(function () {
+    'use strict';
+
+    function detectSurfaceUuid() {
+        if (window.__VORK_SURFACE_UUID__ && typeof window.__VORK_SURFACE_UUID__ === 'string') {
+            return window.__VORK_SURFACE_UUID__;
+        }
+        var match = window.location.pathname.match(/^\\/surface\\/([^\\/]+)\\/preview(?:\\/|$)/);
+        return match ? decodeURIComponent(match[1]) : null;
+    }
+
+    async function invoke(options) {
+        options = options || {};
+        var surfaceUuid = options.surfaceUuid || detectSurfaceUuid();
+        if (!surfaceUuid) throw new Error('Cannot resolve surfaceUuid for skill invocation.');
+        if (!options.groupId) throw new Error('groupId is required.');
+        if (!options.skillId) throw new Error('skillId is required.');
+
+        var startRes = await fetch('/api/surfaces/' + encodeURIComponent(surfaceUuid) + '/skills/invoke', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                groupId: options.groupId,
+                skillId: options.skillId,
+                args: options.args || {}
+            })
+        });
+        var startPayload = await startRes.json();
+        if (!startRes.ok) {
+            throw new Error(startPayload.message || startPayload.error || ('Skill invoke failed with HTTP ' + startRes.status));
+        }
+
+        var executionId = startPayload.executionId;
+        if (!executionId) throw new Error('Skill execution did not return an executionId.');
+
+        var waitMs = typeof options.waitMs === 'number' ? options.waitMs : 15000;
+        while (true) {
+            var pollRes = await fetch('/api/surfaces/' + encodeURIComponent(surfaceUuid)
+                + '/skills/executions/' + encodeURIComponent(executionId)
+                + '?waitMs=' + encodeURIComponent(waitMs));
+            var pollPayload = await pollRes.json();
+            if (!pollRes.ok) {
+                throw new Error(pollPayload.message || pollPayload.error || ('Skill poll failed with HTTP ' + pollRes.status));
+            }
+
+            var state = String(pollPayload.state || '').toUpperCase();
+            if (state === 'COMPLETED') {
+                return {
+                    executionId: executionId,
+                    outputContentType: pollPayload.outputContentType || 'application/json',
+                    result: pollPayload.result
+                };
+            }
+            if (state === 'FAILED') {
+                throw new Error(pollPayload.error || 'Skill execution failed.');
+            }
+        }
+    }
+
+    async function getContracts(options) {
+        options = options || {};
+        var surfaceUuid = options.surfaceUuid || detectSurfaceUuid();
+        if (!surfaceUuid) throw new Error('Cannot resolve surfaceUuid for skill contract lookup.');
+        var response = await fetch('/api/surfaces/' + encodeURIComponent(surfaceUuid) + '/skill-contracts');
+        var payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.message || payload.error || ('Skill contract lookup failed with HTTP ' + response.status));
+        }
+        return payload;
+    }
+
+    window.vork = window.vork || {};
+    window.vork.skills = {
+        invoke: invoke,
+        getContracts: getContracts
+    };
+})();
+""";
+                return ResponseEntity.ok()
+                                .contentType(MediaType.parseMediaType("application/javascript"))
+                                .body(script);
+        }
+
     // ── Request DTOs ──────────────────────────────────────────────────────────
 
     public record CreateSurfaceRequest(String name, String description) {
@@ -545,6 +783,11 @@ public class SurfaceController {
                                                  String bindingGroupToolId,
                                                  String bindingProfileName,
                                                  Map<String, Object> args) {
+    }
+
+    public record SurfaceSkillInvokeRequest(String groupId,
+                                            String skillId,
+                                            Map<String, Object> args) {
     }
 
     private static String fileName(String relativePath) {
@@ -590,6 +833,7 @@ public class SurfaceController {
 
         String injection = """
 <script src="/surface/runtime/v1/reflections.js"></script>
+<script src="/surface/runtime/v1/skills.js"></script>
 <script src="/js/surface-preview-console.js"></script>
 """;
 
