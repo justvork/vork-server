@@ -20,6 +20,10 @@
             <p class="vork-page-subtitle">Manage AI agent personas and their tool permissions</p>
         </div>
         <div class="vork-page-header-actions">
+            <button class="btn btn-outline-success" id="import-agents-btn" title="Import an agent from a JSON export file">
+                <i class="fa-solid fa-file-import me-2"></i>Import
+            </button>
+            <input type="file" id="import-agents-input" accept=".json,application/json" class="d-none">
             <button class="btn btn-primary" onclick="openCreate()">
             <i class="fa-solid fa-plus me-2"></i>New Agent
             </button>
@@ -94,6 +98,12 @@
                         </td>
                         <td class="text-end">
                             <div class="d-flex gap-1 justify-content-end">
+                                <button class="btn btn-sm btn-outline-secondary"
+                                        th:attr="data-id=${agent.uuid()}"
+                                        onclick="exportAgentPackage(this.dataset.id)"
+                                        title="Export">
+                                    <i class="fa-solid fa-file-export"></i>
+                                </button>
                                 <button class="btn btn-sm btn-outline-secondary"
                                         th:attr="data-id=${agent.uuid()}"
                                         onclick="openEdit(this.dataset.id)"

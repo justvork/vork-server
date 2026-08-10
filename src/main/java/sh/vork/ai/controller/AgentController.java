@@ -9,8 +9,10 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -236,6 +238,114 @@ public class AgentController {
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
+    // ── Export / Import ──────────────────────────────────────────────────────
+
+    @GetMapping("/api/agents/{id}/export")
+    @ResponseBody
+    public ResponseEntity<?> exportAgent(@PathVariable String id) {
+        AgentTemplate agent = agentRepository.get(id);
+        if (agent == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        AgentExportPackage pkg = new AgentExportPackage("1.0", agent);
+        String safeName = agent.name() == null
+                ? "agent"
+                : agent.name().replaceAll("[^a-zA-Z0-9._-]", "_");
+        String filename = "agent-" + safeName + ".json";
+        return ResponseEntity.ok()
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
+                .body(pkg);
+    }
+
+    @PostMapping("/api/agents/import")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('AGENTS_WRITE')")
+    public ResponseEntity<?> importAgent(@RequestBody AgentExportPackage pkg) {
+
+        if (pkg == null || pkg.agent() == null || pkg.vorkAgentExport() == null || pkg.vorkAgentExport().isBlank()) {
+            return ResponseEntity.badRequest().body(new AgentImportResult("error", null, "Invalid agent export package."));
+        }
+
+        AgentTemplate incoming = pkg.agent();
+        String incomingUuid = incoming.uuid() == null || incoming.uuid().isBlank()
+                ? UUID.randomUUID().toString()
+                : incoming.uuid().trim();
+        AgentTemplate existing = agentRepository.get(incomingUuid);
+
+        if (existing != null && existing.systemAgent()) {
+            return ResponseEntity.badRequest().body(new AgentImportResult(
+                    "error", incomingUuid, "Cannot overwrite system agents via import."));
+        }
+
+        if (isAgentNameInUse(incoming.name(), incomingUuid)) {
+            return ResponseEntity.badRequest().body(new AgentImportResult(
+                    "error", incomingUuid, "Agent name already exists."));
+        }
+
+        String skillErr = validateAssignableSkillUuids(incoming.skillUuids());
+        if (skillErr != null) {
+            return ResponseEntity.badRequest().body(new AgentImportResult("error", incomingUuid, skillErr));
+        }
+        String reflectionToolErr = validateNoReflectionToolIds(incoming.allowedTools());
+        if (reflectionToolErr != null) {
+            return ResponseEntity.badRequest().body(new AgentImportResult("error", incomingUuid, reflectionToolErr));
+        }
+
+        String recommendedModel;
+        try {
+            recommendedModel = normalizeRecommendedModel(incoming.recommendedModel());
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(new AgentImportResult("error", incomingUuid, ex.getMessage()));
+        }
+
+        List<String> bindingUuids;
+        try {
+            bindingUuids = normalizeAndValidateBindingUuids(incoming.bindingUuids());
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(new AgentImportResult("error", incomingUuid, ex.getMessage()));
+        }
+
+        List<String> assignedUsernames;
+        try {
+            assignedUsernames = agentAssignmentService.normalizeAndValidateAssignedUsernames(incoming.assignedUsernames());
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(new AgentImportResult("error", incomingUuid, ex.getMessage()));
+        }
+
+        AgentTemplate imported = new AgentTemplate(
+                incomingUuid,
+                incoming.name(),
+                incoming.systemPrompt(),
+                incoming.allowedTools() == null ? List.of() : List.copyOf(incoming.allowedTools()),
+                false,
+                incoming.skillUuids() == null ? List.of() : List.copyOf(incoming.skillUuids()),
+                incoming.agentType(),
+                bindingUuids,
+                assignedUsernames,
+                recommendedModel);
+        agentRepository.save(imported);
+
+        String status = existing == null ? "imported" : "updated";
+        return ResponseEntity.ok(new AgentImportResult(status, imported.uuid(), null));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    @ResponseBody
+    public ResponseEntity<?> handleMalformedImportJson(HttpMessageNotReadableException ex) {
+        Throwable root = ex.getMostSpecificCause();
+        String detail = root != null && root.getMessage() != null ? root.getMessage() : ex.getMessage();
+
+        log.warn("Agent import JSON parse failure: {}", detail, ex);
+
+        return ResponseEntity.badRequest().body(Map.of(
+                "status", "error",
+                "message", "Invalid JSON payload for agent import.",
+                "detail", detail
+        ));
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static String validate(AgentRequest req) {
@@ -353,4 +463,15 @@ public class AgentController {
             List<String> assignedUsernames,
             String       recommendedModel
     ) {}
+
+        record AgentExportPackage(
+            String vorkAgentExport,
+            AgentTemplate agent
+        ) {}
+
+        record AgentImportResult(
+            String status,
+            String agentUuid,
+            String message
+        ) {}
 }

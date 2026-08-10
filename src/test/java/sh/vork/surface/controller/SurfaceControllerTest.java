@@ -25,6 +25,7 @@ import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.filesystem.FileArea;
 import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.ai.service.ChatService;
+import sh.vork.orm.DatabaseRepository;
 import sh.vork.reflection.ReflectionBinding;
 import sh.vork.reflection.ReflectionService;
 import sh.vork.skill.Skill;
@@ -39,6 +40,27 @@ import sh.vork.surface.service.SurfaceSkillExecutionService;
  */
 class SurfaceControllerTest {
 
+    @SuppressWarnings("unchecked")
+    private static SurfaceController createController(SurfaceService surfaceService,
+                                                      SessionFileSystem sessionFileSystem,
+                                                      SurfaceReflectionContractService contractService,
+                                                      ReflectionService reflectionService,
+                                                      ChatService chatService,
+                                                      SurfaceSkillExecutionService executionService) {
+        DatabaseRepository<Surface> surfaceRepository = mock(DatabaseRepository.class);
+        DatabaseRepository<AiSession> sessionRepository = mock(DatabaseRepository.class);
+        return new SurfaceController(
+                surfaceService,
+                surfaceRepository,
+                sessionRepository,
+                sessionFileSystem,
+                contractService,
+                reflectionService,
+                chatService,
+                executionService,
+                new ObjectMapper());
+    }
+
     @Test
     void updateSurface_returnsBadRequest_whenServiceRejectsSkillAssignments() {
         SurfaceService surfaceService = mock(SurfaceService.class);
@@ -47,8 +69,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         when(surfaceService.update(
                 ArgumentMatchers.eq("surface-1"),
@@ -81,8 +102,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         List<AiChatMessage> messages = List.of(
                 new AiChatMessage("msg-1", "USER", "Hello", 1L, null),
@@ -113,8 +133,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         AiSession session = sessionWithMessages(List.of());
         Principal principal = () -> "admin";
@@ -144,8 +163,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         AiSession session = sessionWithMessages(List.of());
         Principal principal = () -> "admin";
@@ -171,8 +189,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         AiSession session = sessionWithMessages(List.of());
         Principal principal = () -> "admin";
@@ -208,8 +225,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         AiSession session = sessionWithMessages(List.of());
         Principal principal = () -> "admin";
@@ -232,8 +248,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         Principal principal = () -> "admin";
         AiSession session = sessionWithMessages(List.of());
@@ -258,8 +273,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         Principal principal = () -> "admin";
         AiSession session = sessionWithMessages(List.of());
@@ -295,8 +309,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         ResponseEntity<String> response = controller.surfaceReflectionRuntimeHelper();
 
@@ -317,8 +330,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         ResponseEntity<String> response = controller.surfaceSkillRuntimeHelper();
 
@@ -339,8 +351,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         Principal principal = () -> "admin";
         ResponseEntity<?> response = controller.startSurfaceSkillExecution(
@@ -361,8 +372,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         Skill skill = skillWithJsonOutput("skill-1", "Summarize Orders");
         when(surfaceService.listAttachedSkills("surface-1")).thenReturn(List.of(skill));
@@ -390,8 +400,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         ResponseEntity<?> response = controller.getSurfaceSkillContracts("surface-1", null);
 
@@ -408,8 +417,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         when(surfaceService.listAttachedSkills("surface-404"))
                 .thenThrow(new IllegalArgumentException("Surface not found: surface-404"));
@@ -430,8 +438,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         Skill malformedSchemaSkill = new Skill(
                 "skill-2",
@@ -478,8 +485,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         Skill skill = skillWithJsonOutput("skill-1", "Summarize Orders");
         when(surfaceService.resolveAttachedSkillByPublicIds("surface-1", "ops", "summarize-orders")).thenReturn(skill);
@@ -540,8 +546,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         Skill skill = skillWithJsonOutput("skill-1", "Summarize Orders");
         when(surfaceService.resolveAttachedSkillByPublicIds("surface-1", "ops", "summarize-orders")).thenReturn(skill);
@@ -598,8 +603,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         Skill incomplete = new Skill(
                 "skill-3",
@@ -643,8 +647,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         when(surfaceService.resolveAttachedSkillByPublicIds("surface-1", "ops", "missing"))
                 .thenThrow(new IllegalArgumentException("No attached skill matches groupId='ops' and skillId='missing'."));
@@ -668,8 +671,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         SurfaceSkillExecutionService.ExecutionSnapshot completed = new SurfaceSkillExecutionService.ExecutionSnapshot(
                 "exec-1",
@@ -706,8 +708,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         ResponseEntity<?> response = controller.startSurfaceSkillExecution(
                 "surface-1",
@@ -727,8 +728,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         ResponseEntity<?> response = controller.pollSurfaceSkillExecution("surface-1", "exec-1", 1000L, null);
 
@@ -745,8 +745,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService, new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
         when(executionService.poll("surface-1", "exec-404", 1000L))
                 .thenThrow(new IllegalArgumentException("Execution not found: exec-404"));
@@ -765,8 +764,7 @@ class SurfaceControllerTest {
         SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
         SurfaceReflectionContractService contractService = mock(SurfaceReflectionContractService.class);
         ReflectionService reflectionService = mock(ReflectionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, mock(ChatService.class), mock(SurfaceSkillExecutionService.class), new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, mock(ChatService.class), mock(SurfaceSkillExecutionService.class));
 
         Principal principal = () -> "admin";
         AiSession session = sessionWithMessages(List.of());
@@ -815,8 +813,7 @@ class SurfaceControllerTest {
         SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
         SurfaceReflectionContractService contractService = mock(SurfaceReflectionContractService.class);
         ReflectionService reflectionService = mock(ReflectionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, mock(ChatService.class), mock(SurfaceSkillExecutionService.class), new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, mock(ChatService.class), mock(SurfaceSkillExecutionService.class));
 
         ResponseEntity<?> response = controller.getSurfaceReflectionContracts("surface-1", null, null, null);
 
@@ -831,8 +828,7 @@ class SurfaceControllerTest {
         SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
         SurfaceReflectionContractService contractService = mock(SurfaceReflectionContractService.class);
         ReflectionService reflectionService = mock(ReflectionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, mock(ChatService.class), mock(SurfaceSkillExecutionService.class), new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, mock(ChatService.class), mock(SurfaceSkillExecutionService.class));
 
         Principal principal = () -> "admin";
         AiSession session = sessionWithMessages(List.of());
@@ -868,8 +864,7 @@ class SurfaceControllerTest {
         SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
         SurfaceReflectionContractService contractService = mock(SurfaceReflectionContractService.class);
         ReflectionService reflectionService = mock(ReflectionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, mock(ChatService.class), mock(SurfaceSkillExecutionService.class), new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, mock(ChatService.class), mock(SurfaceSkillExecutionService.class));
 
         Principal principal = () -> "admin";
         ResponseEntity<?> response = controller.invokeSurfaceReflection(
@@ -888,8 +883,7 @@ class SurfaceControllerTest {
         SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
         SurfaceReflectionContractService contractService = mock(SurfaceReflectionContractService.class);
         ReflectionService reflectionService = mock(ReflectionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, mock(ChatService.class), mock(SurfaceSkillExecutionService.class), new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, mock(ChatService.class), mock(SurfaceSkillExecutionService.class));
 
         Principal principal = () -> "admin";
         AiSession session = sessionWithMessages(List.of());
@@ -919,8 +913,7 @@ class SurfaceControllerTest {
         SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
         SurfaceReflectionContractService contractService = mock(SurfaceReflectionContractService.class);
         ReflectionService reflectionService = mock(ReflectionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, mock(ChatService.class), mock(SurfaceSkillExecutionService.class), new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, mock(ChatService.class), mock(SurfaceSkillExecutionService.class));
 
         Principal principal = () -> "admin";
         AiSession session = sessionWithMessages(List.of());
@@ -952,8 +945,7 @@ class SurfaceControllerTest {
         SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
         SurfaceReflectionContractService contractService = mock(SurfaceReflectionContractService.class);
         ReflectionService reflectionService = mock(ReflectionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, mock(ChatService.class), mock(SurfaceSkillExecutionService.class), new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, mock(ChatService.class), mock(SurfaceSkillExecutionService.class));
 
         Principal principal = () -> "admin";
         AiSession session = sessionWithMessages(List.of());
@@ -985,8 +977,7 @@ class SurfaceControllerTest {
         SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
         SurfaceReflectionContractService contractService = mock(SurfaceReflectionContractService.class);
         ReflectionService reflectionService = mock(ReflectionService.class);
-        SurfaceController controller = new SurfaceController(
-            surfaceService, sessionFileSystem, contractService, reflectionService, mock(ChatService.class), mock(SurfaceSkillExecutionService.class), new ObjectMapper());
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, mock(ChatService.class), mock(SurfaceSkillExecutionService.class));
 
         Principal principal = () -> "admin";
         AiSession session = sessionWithMessages(List.of());

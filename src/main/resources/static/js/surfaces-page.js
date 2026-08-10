@@ -15,6 +15,17 @@ document.addEventListener('DOMContentLoaded', function () {
     document.getElementById('new-surface-btn').addEventListener('click', openCreate);
     document.getElementById('surface-save-btn').addEventListener('click', saveSurface);
 
+    const importBtn = document.getElementById('import-surfaces-btn');
+    const importInput = document.getElementById('import-surfaces-input');
+    if (importBtn && importInput) {
+        importBtn.addEventListener('click', function () {
+            importInput.click();
+        });
+        importInput.addEventListener('change', function () {
+            importSurfaces(importInput);
+        });
+    }
+
     document.getElementById('surface-modal').addEventListener('hidden.bs.modal', function () {
         clearAlert('surface-modal-alert');
         document.getElementById('surface-uuid').value = '';
@@ -71,6 +82,7 @@ function renderTable() {
             + '  <div class="inline-flex gap-1 justify-end">'
             + '    <a href="/surface/' + encodeURIComponent(surface.uuid) + '/preview" target="_blank" rel="noopener noreferrer" class="rounded-md border border-emerald-500/40 px-2 py-1 text-xs text-emerald-300 transition-colors hover:bg-emerald-500/15" title="Preview surface"><i class="fa-solid fa-eye"></i></a>'
             + '    <a href="/surfaces/' + encodeURIComponent(surface.uuid) + '/editor" class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/15" title="Open editor"><i class="fa-solid fa-pen-to-square"></i></a>'
+            + '    <button class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/15" onclick="exportSurfacePackage(\'' + escapeJs(surface.uuid) + '\')" title="Export"><i class="fa-solid fa-file-export"></i></button>'
             + '    <button class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800" onclick="openEdit(\'' + escapeJs(surface.uuid) + '\')" title="Edit"><i class="fa-solid fa-pen"></i></button>'
             + '    <button class="rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15" onclick="deleteSurface(\'' + escapeJs(surface.uuid) + '\')" title="Delete"><i class="fa-solid fa-trash"></i></button>'
             + '  </div>'
@@ -148,6 +160,39 @@ async function deleteSurface(uuid) {
         await loadSurfaces();
     } catch (e) {
         showAlert('Delete failed: ' + e.message, 'warning');
+    }
+}
+
+function exportSurfacePackage(uuid) {
+    if (!uuid) {
+        showAlert('Surface id is missing for export.', 'warning');
+        return;
+    }
+    window.location.href = '/api/surfaces/' + encodeURIComponent(uuid) + '/export';
+}
+
+async function importSurfaces(input) {
+    const file = input && input.files && input.files[0];
+    if (!file) return;
+
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch('/api/surfaces/import', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok || data.status === 'error') {
+            showAlert(data.message || 'Surface import failed.', 'danger');
+            return;
+        }
+        showAlert('Surface imported successfully.', 'success');
+        await loadSurfaces();
+    } catch (e) {
+        showAlert('Network error during surface import: ' + (e.message || 'Unknown error'), 'danger');
+    } finally {
+        if (input) input.value = '';
     }
 }
 

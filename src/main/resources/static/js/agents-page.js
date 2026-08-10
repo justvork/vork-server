@@ -19,6 +19,17 @@ document.addEventListener('DOMContentLoaded', function () {
     agentModal = new VorkModal(document.getElementById('agentModal'));
     loadData();
 
+    const importBtn = document.getElementById('import-agents-btn');
+    const importInput = document.getElementById('import-agents-input');
+    if (importBtn && importInput) {
+        importBtn.addEventListener('click', function () {
+            importInput.click();
+        });
+        importInput.addEventListener('change', function () {
+            importAgents(importInput);
+        });
+    }
+
     document.getElementById('agentModal').addEventListener('hidden.bs.modal', function () {
         document.getElementById('tool-search').value = '';
         document.getElementById('skill-search').value = '';
@@ -713,6 +724,40 @@ async function deleteAgent(id) {
         allAgents = allAgents.filter(function (a) { return a.uuid !== id; });
     } catch (_e) {
         showAlert('Network error deleting agent.', 'danger');
+    }
+}
+
+function exportAgentPackage(id) {
+    if (!id) {
+        showAlert('Agent id is missing for export.', 'warning');
+        return;
+    }
+    window.location.href = '/api/agents/' + encodeURIComponent(id) + '/export';
+}
+
+async function importAgents(input) {
+    const file = input && input.files && input.files[0];
+    if (!file) return;
+
+    try {
+        const raw = await file.text();
+        const payload = JSON.parse(raw);
+        const res = await fetch('/api/agents/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok || data.status === 'error') {
+            showAlert(data.message || 'Agent import failed.', 'danger');
+            return;
+        }
+        showAlert(data.status === 'updated' ? 'Agent updated from import.' : 'Agent imported successfully.', 'success');
+        setTimeout(function () { location.reload(); }, 700);
+    } catch (_e) {
+        showAlert('Invalid JSON file or network error during agent import.', 'danger');
+    } finally {
+        if (input) input.value = '';
     }
 }
 

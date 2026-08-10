@@ -7,6 +7,17 @@ document.addEventListener('DOMContentLoaded', function () {
     jobModal = new VorkModal(document.getElementById('jobModal'));
     loadAgents();
     loadJobsJson();
+
+    const importBtn = document.getElementById('import-jobs-btn');
+    const importInput = document.getElementById('import-jobs-input');
+    if (importBtn && importInput) {
+        importBtn.addEventListener('click', function () {
+            importInput.click();
+        });
+        importInput.addEventListener('change', function () {
+            importJobs(importInput);
+        });
+    }
 });
 
 function loadAgents() {
@@ -200,6 +211,40 @@ async function resumeJob(id) {
         setTimeout(function () { location.reload(); }, 600);
     } catch (_e) {
         showAlert('Network error resuming job.', 'danger');
+    }
+}
+
+function exportJobPackage(id) {
+    if (!id) {
+        showAlert('Job id is missing for export.', 'warning');
+        return;
+    }
+    window.location.href = '/api/jobs/' + encodeURIComponent(id) + '/export';
+}
+
+async function importJobs(input) {
+    const file = input && input.files && input.files[0];
+    if (!file) return;
+
+    try {
+        const raw = await file.text();
+        const payload = JSON.parse(raw);
+        const res = await fetch('/api/jobs/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok || data.status === 'error') {
+            showAlert(data.message || 'Job import failed.', 'danger');
+            return;
+        }
+        showAlert(data.status === 'updated' ? 'Job updated from import.' : 'Job imported successfully.', 'success');
+        setTimeout(function () { location.reload(); }, 700);
+    } catch (_e) {
+        showAlert('Invalid JSON file or network error during job import.', 'danger');
+    } finally {
+        if (input) input.value = '';
     }
 }
 

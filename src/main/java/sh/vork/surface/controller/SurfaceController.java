@@ -17,8 +17,12 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.multipart.MultipartFile;
 import sh.vork.ai.entity.AiSession;
+import sh.vork.ai.entity.AiSessionStatus;
+import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.service.ChatService;
+import sh.vork.orm.DatabaseRepository;
 import sh.vork.reflection.Reflection;
 import sh.vork.reflection.ReflectionBinding;
 import sh.vork.reflection.ReflectionGroup;
@@ -30,13 +34,18 @@ import sh.vork.surface.Surface;
 import sh.vork.surface.service.SurfaceReflectionContractService;
 import sh.vork.surface.service.SurfaceService;
 import sh.vork.surface.service.SurfaceSkillExecutionService;
+import sh.vork.util.ZipArchiveUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.Principal;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -50,6 +59,8 @@ public class SurfaceController {
     private static final Logger log = LoggerFactory.getLogger(SurfaceController.class);
 
     private final SurfaceService surfaceService;
+    private final DatabaseRepository<Surface> surfaceRepository;
+    private final DatabaseRepository<AiSession> sessionRepository;
     private final SessionFileSystem sessionFileSystem;
     private final SurfaceReflectionContractService surfaceReflectionContractService;
     private final ReflectionService reflectionService;
@@ -58,6 +69,8 @@ public class SurfaceController {
     private final ObjectMapper objectMapper;
 
     public SurfaceController(SurfaceService surfaceService,
+                             DatabaseRepository<Surface> surfaceRepository,
+                             DatabaseRepository<AiSession> sessionRepository,
                              SessionFileSystem sessionFileSystem,
                              SurfaceReflectionContractService surfaceReflectionContractService,
                              ReflectionService reflectionService,
@@ -65,6 +78,8 @@ public class SurfaceController {
                              SurfaceSkillExecutionService surfaceSkillExecutionService,
                              ObjectMapper objectMapper) {
         this.surfaceService = surfaceService;
+        this.surfaceRepository = surfaceRepository;
+        this.sessionRepository = sessionRepository;
         this.sessionFileSystem = sessionFileSystem;
         this.surfaceReflectionContractService = surfaceReflectionContractService;
         this.reflectionService = reflectionService;
@@ -205,6 +220,116 @@ public class SurfaceController {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok(Map.of("status", "ok"));
+    }
+
+    @GetMapping("/api/surfaces/{uuid}/export")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> exportSurface(@PathVariable String uuid) {
+        Surface surface = surfaceService.resolveByUuidOrToolId(uuid);
+        if (surface == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        AiSession editorSession = null;
+        if (surface.sessionUuid() != null && !surface.sessionUuid().isBlank()) {
+            editorSession = sessionRepository.get(surface.sessionUuid());
+        }
+
+        AiSession executionSession = null;
+        if (surface.executionSessionUuid() != null && !surface.executionSessionUuid().isBlank()) {
+            executionSession = sessionRepository.get(surface.executionSessionUuid());
+        }
+
+        SurfaceExportPackage pkg = new SurfaceExportPackage("1.0", surface, editorSession, executionSession);
+        byte[] archive;
+        try {
+            Map<String, byte[]> entries = new LinkedHashMap<>();
+            entries.put("definition.json", objectMapper.writeValueAsBytes(pkg));
+            if (surface.sessionUuid() != null && !surface.sessionUuid().isBlank()) {
+                collectSessionEntries(entries, surface.sessionUuid(), "sessions/editor");
+            }
+            if (surface.executionSessionUuid() != null && !surface.executionSessionUuid().isBlank()) {
+                collectSessionEntries(entries, surface.executionSessionUuid(), "sessions/execution");
+            }
+            archive = ZipArchiveUtil.write(entries);
+        } catch (Exception ex) {
+            log.warn("Surface export failed [uuid={}]: {}", uuid, ex.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("status", "error", "message", "Failed to build surface export archive."));
+        }
+
+        String safeName = surface.name() == null
+                ? "surface"
+                : surface.name().replaceAll("[^a-zA-Z0-9._-]", "_");
+        String filename = "surface-" + safeName + ".zip";
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/zip"))
+                .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
+                .body(archive);
+    }
+
+    @PostMapping("/api/surfaces/import")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> importSurface(@RequestParam("file") MultipartFile file,
+                                           Principal principal) {
+        SurfaceExportPackage pkg;
+        Map<String, byte[]> zipEntries;
+        try {
+            if (file == null || file.isEmpty()) {
+                return ResponseEntity.badRequest().body(new SurfaceImportResult("error", null, "Import file is required."));
+            }
+            zipEntries = ZipArchiveUtil.read(file.getInputStream());
+            byte[] definition = zipEntries.get("definition.json");
+            if (definition == null) {
+                return ResponseEntity.badRequest().body(new SurfaceImportResult("error", null, "Archive is missing definition.json."));
+            }
+            pkg = objectMapper.readValue(definition, SurfaceExportPackage.class);
+        } catch (Exception ex) {
+            return ResponseEntity.badRequest().body(new SurfaceImportResult("error", null, "Invalid surface zip import file."));
+        }
+
+        if (pkg == null || pkg.vorkSurfaceExport() == null || pkg.vorkSurfaceExport().isBlank() || pkg.surface() == null) {
+            return ResponseEntity.badRequest().body(new SurfaceImportResult("error", null, "Invalid surface export package."));
+        }
+
+        Surface incoming = pkg.surface();
+        if (incoming.name() == null || incoming.name().isBlank()) {
+            return ResponseEntity.badRequest().body(new SurfaceImportResult("error", null, "Surface name is required."));
+        }
+
+        String username = principal == null || principal.getName() == null || principal.getName().isBlank()
+                ? "anonymous"
+                : principal.getName();
+
+        Surface created = surfaceService.create(incoming.name(), incoming.description(), username);
+        Surface updated = surfaceService.update(
+                created.uuid(),
+                incoming.name(),
+                incoming.description(),
+                incoming.skillUuids(),
+                incoming.reflectionBindingUuids(),
+                incoming.jobUuids());
+        Surface target = updated == null ? surfaceRepository.get(created.uuid()) : updated;
+        if (target == null) {
+            return ResponseEntity.internalServerError().body(new SurfaceImportResult("error", null, "Failed to create imported surface."));
+        }
+
+        try {
+            restoreSession(target.sessionUuid(), pkg.editorSession(), username, zipEntries, "sessions/editor/");
+
+            boolean hasExecutionFiles = zipEntries.keySet().stream()
+                    .anyMatch(path -> path != null && path.startsWith("sessions/execution/"));
+            if (pkg.executionSession() != null || hasExecutionFiles) {
+                AiSession execution = surfaceService.ensureExecutionSession(target.uuid(), username);
+                restoreSession(execution.uuid(), pkg.executionSession(), username, zipEntries, "sessions/execution/");
+            }
+        } catch (Exception ex) {
+            log.warn("Surface import session restore failed [surfaceUuid={}]: {}", target.uuid(), ex.getMessage());
+            return ResponseEntity.badRequest().body(new SurfaceImportResult("error", null, "Failed to import surface session files."));
+        }
+
+        return ResponseEntity.ok(new SurfaceImportResult("imported", target.uuid(), null));
     }
 
     // ── REST: surface session ─────────────────────────────────────────────────
@@ -788,6 +913,117 @@ public class SurfaceController {
     public record SurfaceSkillInvokeRequest(String groupId,
                                             String skillId,
                                             Map<String, Object> args) {
+    }
+
+    public record SurfaceExportPackage(
+            String vorkSurfaceExport,
+            Surface surface,
+            AiSession editorSession,
+            AiSession executionSession
+    ) {
+    }
+
+    public record SurfaceImportResult(
+            String status,
+            String surfaceUuid,
+            String message
+    ) {
+    }
+
+    private void collectSessionEntries(Map<String, byte[]> target,
+                                       String sessionUuid,
+                                       String zipPrefix) throws IOException {
+        collectDirectoryEntries(target, sessionUuid, "", zipPrefix);
+    }
+
+    private void collectDirectoryEntries(Map<String, byte[]> target,
+                                         String sessionUuid,
+                                         String relativeDir,
+                                         String zipPrefix) throws IOException {
+        List<sh.vork.filesystem.FileNode> nodes = sessionFileSystem.list(FileArea.SESSION, sessionUuid, relativeDir);
+        for (sh.vork.filesystem.FileNode node : nodes) {
+            if (node == null) {
+                continue;
+            }
+            if (node.directory()) {
+                collectDirectoryEntries(target, sessionUuid, node.path(), zipPrefix);
+                continue;
+            }
+            try (InputStream in = sessionFileSystem.read(FileArea.SESSION, sessionUuid, node.path())) {
+                String entryPath = zipPrefix + "/" + node.path();
+                target.put(entryPath, in.readAllBytes());
+            }
+        }
+    }
+
+    private void restoreSession(String targetSessionUuid,
+                                AiSession exportedSession,
+                                String username,
+                                Map<String, byte[]> zipEntries,
+                                String zipPrefix) throws IOException {
+        if (targetSessionUuid == null || targetSessionUuid.isBlank()) {
+            return;
+        }
+
+        List<Map.Entry<String, byte[]>> sessionFiles = new ArrayList<>();
+        for (Map.Entry<String, byte[]> entry : zipEntries.entrySet()) {
+            if (entry.getKey() != null && entry.getKey().startsWith(zipPrefix)) {
+                sessionFiles.add(entry);
+            }
+        }
+
+        AiSession current = sessionRepository.get(targetSessionUuid);
+        AiSession base = exportedSession != null ? exportedSession : current;
+        if (base == null) {
+            base = new AiSession(
+                    targetSessionUuid,
+                    "GEMINI",
+                    SessionOriginMode.WEB,
+                    username,
+                    "Imported Surface Session",
+                    System.currentTimeMillis(),
+                    0,
+                    List.of(),
+                    AiSession.defaultEnvironmentVariables(),
+                    AiSessionStatus.RUNNING,
+                    null,
+                    null,
+                    List.of(),
+                    List.of(),
+                    List.of());
+        }
+
+        AiSession updated = new AiSession(
+                targetSessionUuid,
+                base.provider(),
+                base.originMode(),
+                username,
+                base.name(),
+                System.currentTimeMillis(),
+                0,
+                base.messages() == null ? List.of() : List.copyOf(base.messages()),
+                base.environmentVariables(),
+                AiSessionStatus.RUNNING,
+                base.activeAgentTemplateId(),
+                base.modelId(),
+                base.skillStack() == null ? List.of() : List.copyOf(base.skillStack()),
+                base.sessionSkillUuids() == null ? List.of() : List.copyOf(base.sessionSkillUuids()),
+                base.sessionToolIds() == null ? List.of() : List.copyOf(base.sessionToolIds()));
+        sessionRepository.save(updated);
+
+        for (Map.Entry<String, byte[]> entry : sessionFiles) {
+            String relativePath = entry.getKey().substring(zipPrefix.length());
+            if (relativePath.isBlank()) {
+                continue;
+            }
+            byte[] content = entry.getValue() == null ? new byte[0] : entry.getValue();
+            sessionFileSystem.write(
+                    FileArea.SESSION,
+                    targetSessionUuid,
+                    relativePath,
+                    new ByteArrayInputStream(content),
+                    content.length);
+        }
     }
 
     private static String fileName(String relativePath) {

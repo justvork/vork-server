@@ -3,16 +3,19 @@ package sh.vork.scheduling.controller;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,8 +23,10 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.ResponseBody;
 
+import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
+import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.scheduling.domain.DurationType;
 import sh.vork.scheduling.domain.InvocationType;
@@ -246,6 +251,114 @@ public class JobsController {
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
+    // ── Export / Import ──────────────────────────────────────────────────────
+
+    @GetMapping("/api/jobs/{id}/export")
+    @ResponseBody
+    public ResponseEntity<?> exportJob(@PathVariable String id,
+                                       @AuthenticationPrincipal UserDetails user) {
+        ScheduledJob job = jobRepository.get(id);
+        if (job == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!user.getUsername().equals(job.userId())) {
+            return ResponseEntity.status(403).body(Map.of("error", "Forbidden"));
+        }
+
+        AiSession session = null;
+        if (job.sessionUuid() != null && !job.sessionUuid().isBlank()) {
+            session = sessionRepository.get(job.sessionUuid());
+        }
+
+        JobExportPackage pkg = new JobExportPackage("1.0", job, session);
+        String safeName = job.name() == null
+                ? "job"
+                : job.name().replaceAll("[^a-zA-Z0-9._-]", "_");
+        String filename = "job-" + safeName + ".json";
+        return ResponseEntity.ok()
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
+                .body(pkg);
+    }
+
+    @PostMapping("/api/jobs/import")
+    @ResponseBody
+    public ResponseEntity<?> importJob(@RequestBody JobExportPackage pkg,
+                                       @AuthenticationPrincipal UserDetails user) {
+        if (pkg == null || pkg.job() == null || pkg.vorkJobExport() == null || pkg.vorkJobExport().isBlank()) {
+            return ResponseEntity.badRequest().body(new JobImportResult("error", null, "Invalid job export package."));
+        }
+
+        ScheduledJob incoming = pkg.job();
+        if (incoming.name() == null || incoming.name().isBlank()) {
+            return ResponseEntity.badRequest().body(new JobImportResult("error", null, "Name is required."));
+        }
+        if (incoming.aiPrompt() == null || incoming.aiPrompt().isBlank()) {
+            return ResponseEntity.badRequest().body(new JobImportResult("error", null, "AI prompt is required."));
+        }
+        if (incoming.invocationType() == null) {
+            return ResponseEntity.badRequest().body(new JobImportResult("error", null, "Invocation type is required."));
+        }
+        if (incoming.invocationType() == InvocationType.REPEAT && incoming.repeatDuration() <= 0) {
+            return ResponseEntity.badRequest().body(new JobImportResult("error", null, "Repeat duration must be greater than zero."));
+        }
+
+        String skillErr = validateAssignableSkillUuids(incoming.skillUuids());
+        if (skillErr != null) {
+            return ResponseEntity.badRequest().body(new JobImportResult("error", null, skillErr));
+        }
+
+        String incomingId = incoming.id() == null || incoming.id().isBlank() ? UUID.randomUUID().toString() : incoming.id().trim();
+        ScheduledJob existing = jobRepository.get(incomingId);
+        boolean canUpdateInPlace = existing != null && user.getUsername().equals(existing.userId());
+        String targetId = canUpdateInPlace ? incomingId : UUID.randomUUID().toString();
+
+        String importedSessionUuid = null;
+        if (pkg.session() != null) {
+            importedSessionUuid = importTrackingSession(pkg.session(), user.getUsername());
+        }
+
+        ScheduledJob normalized = new ScheduledJob(
+                targetId,
+                incoming.name(),
+                incoming.aiPrompt(),
+                importedSessionUuid,
+                user.getUsername(),
+                incoming.invocationType(),
+                incoming.startTime() == null ? Instant.now() : incoming.startTime(),
+                incoming.repeatDuration() > 0 ? incoming.repeatDuration() : 0,
+                incoming.durationType() == null ? DurationType.MINUTES : incoming.durationType(),
+                0L,
+                0L,
+                incoming.agentTemplateId(),
+                incoming.provider(),
+                incoming.modelId(),
+                incoming.oobTimeoutMinutes() > 0 ? incoming.oobTimeoutMinutes() : 240,
+                incoming.expectedOutput(),
+                ScheduledJobStatus.WAITING,
+                incoming.skillUuids() == null ? List.of() : List.copyOf(incoming.skillUuids()),
+                incoming.toolIds() == null ? List.of() : List.copyOf(incoming.toolIds()));
+
+        ScheduledJob saved = schedulerService.scheduleJob(normalized);
+        String status = canUpdateInPlace ? "updated" : "imported";
+        return ResponseEntity.ok(new JobImportResult(status, saved.id(), null));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    @ResponseBody
+    public ResponseEntity<?> handleMalformedImportJson(HttpMessageNotReadableException ex) {
+        Throwable root = ex.getMostSpecificCause();
+        String detail = root != null && root.getMessage() != null ? root.getMessage() : ex.getMessage();
+
+        log.warn("Job import JSON parse failure: {}", detail, ex);
+
+        return ResponseEntity.badRequest().body(Map.of(
+                "status", "error",
+                "message", "Invalid JSON payload for job import.",
+                "detail", detail
+        ));
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static String validateRequest(JobRequest req) {
@@ -301,4 +414,39 @@ public class JobsController {
             List<String> skillUuids,   // optional — extra skill UUIDs for this job's session
             List<String> toolIds       // optional — extra tool bean IDs for this job's session
     ) {}
+
+            record JobExportPackage(
+                String vorkJobExport,
+                    ScheduledJob job,
+                    AiSession session
+            ) {}
+
+            record JobImportResult(
+                String status,
+                String jobId,
+                String message
+            ) {}
+
+        private String importTrackingSession(AiSession exportedSession,
+                                             String username) {
+            String newSessionUuid = UUID.randomUUID().toString();
+            AiSession imported = new AiSession(
+                    newSessionUuid,
+                    exportedSession.provider(),
+                    exportedSession.originMode() == null ? SessionOriginMode.WEB : exportedSession.originMode(),
+                    username,
+                    exportedSession.name(),
+                    System.currentTimeMillis(),
+                    0,
+                    exportedSession.messages() == null ? List.<AiChatMessage>of() : List.copyOf(exportedSession.messages()),
+                    exportedSession.environmentVariables(),
+                    AiSessionStatus.RUNNING,
+                    exportedSession.activeAgentTemplateId(),
+                    exportedSession.modelId(),
+                    exportedSession.skillStack() == null ? List.of() : List.copyOf(exportedSession.skillStack()),
+                    exportedSession.sessionSkillUuids() == null ? List.of() : List.copyOf(exportedSession.sessionSkillUuids()),
+                    exportedSession.sessionToolIds() == null ? List.of() : List.copyOf(exportedSession.sessionToolIds()));
+            sessionRepository.save(imported);
+            return newSessionUuid;
+        }
 }

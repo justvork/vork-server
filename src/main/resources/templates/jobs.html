@@ -20,6 +20,10 @@
             <p class="vork-page-subtitle">Scheduled and manual AI background tasks</p>
         </div>
         <div class="vork-page-header-actions">
+            <button class="btn btn-outline-success" id="import-jobs-btn" title="Import a job from a JSON export file">
+                <i class="fa-solid fa-file-import me-2"></i>Import
+            </button>
+            <input type="file" id="import-jobs-input" accept=".json,application/json" class="d-none">
             <button class="btn btn-primary" onclick="openCreate()">
             <i class="fa-solid fa-plus me-2"></i>New Job
             </button>
@@ -130,6 +134,12 @@
                                     <i class="fa-solid fa-lock-open"></i>
                                 </a>
                                 <!-- Edit -->
+                                <button class="btn btn-sm btn-outline-secondary"
+                                        th:attr="data-id=${job.id()}"
+                                        onclick="exportJobPackage(this.dataset.id)"
+                                        title="Export">
+                                    <i class="fa-solid fa-file-export"></i>
+                                </button>
                                 <button class="btn btn-sm btn-outline-secondary"
                                         th:attr="data-id=${job.id()}"
                                         onclick="openEdit(this.dataset.id)"
