@@ -45,10 +45,11 @@
                 <thead class="table-dark">
                     <tr>
                         <th>Name</th>
+                        <th>Version</th>
+                        <th>Artifact Status</th>
                         <th>Type</th>
                         <th>Schedule</th>
-                        <th>Agent</th>
-                        <th>Status</th>
+                        <th>Run Status</th>
                         <th>Last Run</th>
                         <th>Next Run</th>
                         <th class="text-end">Actions</th>
@@ -59,6 +60,12 @@
                         <td>
                             <div class="fw-semibold" th:text="${job.name()}"></div>
                             <div class="text-muted small truncate" th:text="${job.aiPrompt()}"></div>
+                        </td>
+                        <td class="small text-monospace text-muted" th:text="${job.version() != null ? job.version() : 'SNAPSHOT'}"></td>
+                        <td>
+                            <span class="badge artifact-status-pill"
+                                  th:classappend="' artifact-status-' + ${(job.artifactStatus() != null ? job.artifactStatus() : 'SNAPSHOT')}"
+                                  th:text="${job.artifactStatus() != null ? job.artifactStatus() : 'SNAPSHOT'}"></span>
                         </td>
                         <td>
                             <span class="badge"
@@ -73,10 +80,6 @@
                                 Every <span th:text="${job.repeatDuration()}"></span>
                                 <span th:text="${job.durationType().name().toLowerCase()}"></span>
                             </span>
-                        </td>
-                        <td class="small text-muted">
-                            <div th:if="${job.agentTemplateId() != null}" th:text="'Agent: ' + ${job.agentTemplateId()}"></div>
-                            <span th:if="${job.agentTemplateId() == null}">—</span>
                         </td>
                         <td>
                             <span class="badge"
@@ -181,6 +184,15 @@
                         <input type="text" id="job-name" class="form-control" placeholder="e.g. Daily report">
                     </div>
 
+                    <div class="col-md-6">
+                        <label class="form-label" for="job-group-id">Group ID <span class="text-danger">*</span></label>
+                        <input type="text" id="job-group-id" class="form-control" placeholder="e.g. acme" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="job-artifact-id">Artifact ID <span class="text-danger">*</span></label>
+                        <input type="text" id="job-artifact-id" class="form-control" placeholder="e.g. dailyreport" required>
+                    </div>
+
                     <!-- Prompt -->
                     <div class="col-12">
                         <label class="form-label" for="job-prompt">AI Prompt <span class="text-danger">*</span></label>
@@ -253,6 +265,21 @@
                         <input type="number" id="job-oob-timeout" class="form-control" min="1" value="240"
                                placeholder="240">
                         <div class="form-text">How long the relay authorization link remains valid. Default: 240 min (4 hrs).</div>
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label">Notification Recipients</label>
+                        <div id="job-notify-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary jobs-pill-container"></div>
+                        <div class="jobs-search-wrap">
+                            <div class="input-group mb-1">
+                                <span class="input-group-text"><i class="fa-solid fa-user-plus"></i></span>
+                                <input type="text" id="job-notify-search" class="form-control" placeholder="Search users to notify when input is required..." oninput="filterNotificationUsers()">
+                            </div>
+                            <div id="job-notify-dropdown" class="card jobs-search-dropdown hidden">
+                                <ul id="job-notify-options" class="list-group list-group-flush"></ul>
+                            </div>
+                        </div>
+                        <div class="form-text">All selected users receive authorization links when this job pauses for input.</div>
                     </div>
 
                 </div>

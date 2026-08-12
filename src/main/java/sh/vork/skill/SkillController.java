@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import sh.vork.ai.AiProvider;
@@ -281,12 +282,20 @@ public class SkillController {
             return ResponseEntity.notFound().build();
         }
 
+        String prettyJson;
+        try {
+            prettyJson = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(pkg);
+        } catch (JsonProcessingException ex) {
+            log.warn("Skill export JSON serialization failed [groupUuid={}]: {}", uuid, ex.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to serialize export payload."));
+        }
+
         String safeName = pkg.group().name().replaceAll("[^a-zA-Z0-9._-]", "_");
         String filename = "skill-group-" + safeName + ".json";
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
-                .body(pkg);
+                .body(prettyJson);
     }
 
     @PostMapping("/api/skill-groups/import")

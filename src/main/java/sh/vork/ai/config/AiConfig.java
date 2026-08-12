@@ -178,6 +178,7 @@ import sh.vork.orm.SortOrder;
 import sh.vork.scheduling.domain.DurationType;
 import sh.vork.scheduling.domain.InvocationType;
 import sh.vork.scheduling.domain.JobResult;
+import sh.vork.scheduling.domain.ArtifactStatus;
 import sh.vork.scheduling.domain.ScheduledJob;
 import sh.vork.scheduling.domain.ScheduledJobStatus;
 import sh.vork.scheduling.service.AiSchedulerService;
@@ -621,6 +622,7 @@ the protocol and will break the system. Do not converse. Execute.
     @ToolCategory("Scheduling")
     public ToolCallback delegateTask(ObjectProvider<AiSchedulerService> aiSchedulerServiceProvider,
                                      DatabaseRepository<AgentTemplate> agentTemplateRepository,
+                                     DatabaseRepository<ScheduledJob> jobRepository,
                                      DatabaseRepository<AiSession> aiSessionRepository,
                                      AgentAssignmentService agentAssignmentService) {
         return FunctionToolCallback
@@ -632,20 +634,30 @@ the protocol and will break the system. Do not converse. Execute.
                         if (req.prompt() == null || req.prompt().isBlank()) {
                             return "{\"status\":\"error\",\"message\":\"prompt is required\"}";
                         }
+                        if (req.jobUuid() == null || req.jobUuid().isBlank()) {
+                            return "{\"status\":\"error\",\"message\":\"jobUuid is required\"}";
+                        }
 
                         String sessionUuid = resolveSessionUuid();
                         String username = resolveUsername();
+                        AiSession activeSession = null;
                         if ((username == null || username.isBlank())
                                 && sessionUuid != null
                                 && !sessionUuid.isBlank()
                                 && !"system".equals(sessionUuid)) {
-                            AiSession session = aiSessionRepository.get(sessionUuid);
-                            if (session != null && session.username() != null && !session.username().isBlank()) {
-                                username = session.username();
+                            activeSession = aiSessionRepository.get(sessionUuid);
+                            if (activeSession != null && activeSession.username() != null && !activeSession.username().isBlank()) {
+                                username = activeSession.username();
                             }
+                        } else if (sessionUuid != null && !sessionUuid.isBlank() && !"system".equals(sessionUuid)) {
+                            activeSession = aiSessionRepository.get(sessionUuid);
                         }
                         if (username == null || username.isBlank()) {
                             return "{\"status\":\"error\",\"message\":\"Unable to resolve user context for delegateTask\"}";
+                        }
+
+                        if (activeSession == null && sessionUuid != null && !sessionUuid.isBlank() && !"system".equals(sessionUuid)) {
+                            activeSession = aiSessionRepository.get(sessionUuid);
                         }
 
                         List<AgentTemplate> matches;
@@ -686,27 +698,74 @@ the protocol and will break the system. Do not converse. Execute.
                                     "agentType", target.agentType().name()));
                         }
 
+                        ScheduledJob assignedJob = jobRepository.get(req.jobUuid().trim());
+                        if (assignedJob == null) {
+                            return objectMapper.writeValueAsString(Map.of(
+                                    "status", "error",
+                                    "message", "Assigned job not found.",
+                                    "jobUuid", req.jobUuid().trim()));
+                        }
+
+                        if (target.jobUuids() == null || !target.jobUuids().contains(assignedJob.id())) {
+                            return objectMapper.writeValueAsString(Map.of(
+                                    "status", "error",
+                                    "message", "Selected job is not assigned to target agent.",
+                                    "agentName", target.name(),
+                                    "jobUuid", assignedJob.id()));
+                        }
+
+                        if (assignedJob.userId() != null
+                                && !assignedJob.userId().isBlank()
+                                && !assignedJob.userId().equals(username)) {
+                            return objectMapper.writeValueAsString(Map.of(
+                                    "status", "error",
+                                    "message", "Selected job belongs to a different user.",
+                                    "jobUuid", assignedJob.id()));
+                        }
+
+                        if (activeSession != null
+                                && activeSession.activeAgentTemplateId() != null
+                                && !activeSession.activeAgentTemplateId().isBlank()) {
+                            AgentTemplate activeAgent = agentTemplateRepository.get(activeSession.activeAgentTemplateId());
+                            if (activeAgent != null && activeAgent.jobUuids() != null
+                                    && !activeAgent.jobUuids().isEmpty()
+                                    && !activeAgent.jobUuids().contains(assignedJob.id())) {
+                                return objectMapper.writeValueAsString(Map.of(
+                                        "status", "error",
+                                        "message", "Current active agent is not permitted to delegate this job.",
+                                        "jobUuid", assignedJob.id(),
+                                        "activeAgentUuid", activeAgent.uuid()));
+                            }
+                        }
+
                         String jobName = "Dynamic: " + target.name();
+                        String dynamicArtifactId = "delegated" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+                        String dynamicJobId = "system-" + dynamicArtifactId + "-SNAPSHOT";
                         ScheduledJob dynamicJob = new ScheduledJob(
-                                null,
+                            dynamicJobId,
                                 jobName,
                                 req.prompt().trim(),
-                                null,
+                                assignedJob.sessionUuid(),
                                 username,
                                 InvocationType.ONE_TIME,
                                 java.time.Instant.now(),
                                 0L,
-                                DurationType.MINUTES,
+                                assignedJob.durationType() != null ? assignedJob.durationType() : DurationType.MINUTES,
                                 0L,
                                 0L,
                                 target.uuid(),
-                                null,
-                                null,
-                                240,
-                                null,
+                                assignedJob.provider(),
+                                assignedJob.modelId(),
+                                assignedJob.oobTimeoutMinutes() > 0 ? assignedJob.oobTimeoutMinutes() : 240,
+                                assignedJob.expectedOutput(),
                                 ScheduledJobStatus.WAITING,
-                                null,
-                                null);
+                                assignedJob.skillUuids(),
+                                assignedJob.toolIds(),
+                                List.of(username),
+                                "system",
+                                dynamicArtifactId,
+                                "SNAPSHOT",
+                                ArtifactStatus.SNAPSHOT);
 
                             AiSchedulerService aiSchedulerService = aiSchedulerServiceProvider.getIfAvailable();
                             if (aiSchedulerService == null) {
@@ -720,13 +779,14 @@ the protocol and will break the system. Do not converse. Execute.
                                 "jobName", saved.name(),
                                 "agentName", target.name(),
                                 "agentUuid", target.uuid(),
+                            "sourceJobUuid", assignedJob.id(),
                                 "invocationType", saved.invocationType().name()));
                     } catch (Exception e) {
                         return "{\"status\":\"error\",\"message\":\""
                                 + e.getMessage().replace("\"", "'") + "\"}";
                     }
                 })
-                .description("Delegate work to another agent by creating a new one-time background job with agentName and prompt. This is fire-and-forget and returns immediately.")
+                .description("Delegate work to another agent by selecting an assigned job template (jobUuid) and overriding prompt for a one-time background run. Only jobs assigned to the selected agent are allowed.")
                 .inputType(DelegateTaskRequest.class)
                 .build();
     }

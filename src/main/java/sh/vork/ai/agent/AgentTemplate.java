@@ -1,5 +1,7 @@
 package sh.vork.ai.agent;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import sh.vork.orm.DatabaseEntity;
 
 import java.util.List;
@@ -26,6 +28,7 @@ import java.util.List;
  * @param agentType    operational context: {@link AgentType#INTERACTIVE} for chat agents,
  *                     {@link AgentType#BACKGROUND} for scheduled-job automation agents
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public record AgentTemplate(
         String       uuid,
         String       name,
@@ -36,8 +39,15 @@ public record AgentTemplate(
     AgentType    agentType,
     List<String> bindingUuids,
     List<String> assignedUsernames,
-    String       recommendedModel
+    List<String> jobUuids,
+    String       recommendedModel,
+    String       groupId,
+    String       artifactId,
+    String       version,
+    ArtifactStatus artifactStatus
 ) implements DatabaseEntity {
+
+    private static final String DEFAULT_VERSION = "SNAPSHOT";
 
     public AgentTemplate {
         if (name == null || name.isBlank()) {
@@ -79,6 +89,18 @@ public record AgentTemplate(
             }
             assignedUsernames = List.copyOf(normalized);
         }
+        if (jobUuids == null || jobUuids.isEmpty()) {
+            jobUuids = List.of();
+        } else {
+            java.util.LinkedHashSet<String> normalized = new java.util.LinkedHashSet<>();
+            for (String jobUuid : jobUuids) {
+                if (jobUuid == null || jobUuid.isBlank()) {
+                    continue;
+                }
+                normalized.add(jobUuid.trim());
+            }
+            jobUuids = List.copyOf(normalized);
+        }
         if (recommendedModel != null) {
             String normalized = recommendedModel.trim();
             if (normalized.isBlank()) {
@@ -94,6 +116,18 @@ public record AgentTemplate(
                 }
             }
         }
+
+        if (systemAgent) {
+            groupId = null;
+            artifactId = null;
+            version = null;
+            artifactStatus = null;
+        } else {
+            groupId = normalizeIdentifier(groupId);
+            artifactId = normalizeIdentifier(artifactId);
+            version = normalizeVersion(version);
+            artifactStatus = artifactStatus == null ? ArtifactStatus.SNAPSHOT : artifactStatus;
+        }
     }
 
     public AgentTemplate(String uuid,
@@ -103,7 +137,8 @@ public record AgentTemplate(
                          boolean systemAgent,
                          List<String> skillUuids,
                          AgentType agentType) {
-        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType, List.of(), List.of(), null);
+                this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
+                    List.of(), List.of(), List.of(), null, null, null, null, null);
     }
 
     public AgentTemplate(String uuid,
@@ -114,7 +149,8 @@ public record AgentTemplate(
                          List<String> skillUuids,
                          AgentType agentType,
                          List<String> bindingUuids) {
-        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType, bindingUuids, List.of(), null);
+                this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
+                    bindingUuids, List.of(), List.of(), null, null, null, null, null);
     }
 
     public AgentTemplate(String uuid,
@@ -127,6 +163,98 @@ public record AgentTemplate(
                          List<String> bindingUuids,
                          List<String> assignedUsernames) {
         this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
-                bindingUuids, assignedUsernames, null);
+            bindingUuids, assignedUsernames, List.of(), null, null, null, null, null);
+    }
+
+        public AgentTemplate(String uuid,
+                 String name,
+                 String systemPrompt,
+                 List<String> allowedTools,
+                 boolean systemAgent,
+                 List<String> skillUuids,
+                 AgentType agentType,
+                 List<String> bindingUuids,
+                 List<String> assignedUsernames,
+                 List<String> jobUuids,
+                 String recommendedModel) {
+        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
+            bindingUuids, assignedUsernames, jobUuids, recommendedModel, null, null, null,
+            systemAgent ? null : ArtifactStatus.SNAPSHOT);
+        }
+
+        public AgentTemplate(String uuid,
+                 String name,
+                 String systemPrompt,
+                 List<String> allowedTools,
+                 boolean systemAgent,
+                 List<String> skillUuids,
+                 AgentType agentType,
+                 List<String> bindingUuids,
+                 List<String> assignedUsernames,
+                 String recommendedModel) {
+        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
+            bindingUuids, assignedUsernames, List.of(), recommendedModel, null, null, null,
+            systemAgent ? null : ArtifactStatus.SNAPSHOT);
+        }
+
+    public AgentTemplate(String uuid,
+                         String name,
+                         String systemPrompt,
+                         List<String> allowedTools,
+                         boolean systemAgent,
+                         List<String> skillUuids,
+                         AgentType agentType,
+                         List<String> bindingUuids,
+                         List<String> assignedUsernames,
+                         List<String> jobUuids,
+                         String recommendedModel,
+                         String groupId,
+                         String artifactId,
+                         String version) {
+        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
+                    bindingUuids, assignedUsernames, jobUuids, recommendedModel, groupId, artifactId, version,
+                systemAgent ? null : ArtifactStatus.SNAPSHOT);
+    }
+
+    public AgentTemplate(String uuid,
+                         String name,
+                         String systemPrompt,
+                         List<String> allowedTools,
+                         boolean systemAgent,
+                         List<String> skillUuids,
+                         AgentType agentType,
+                         List<String> bindingUuids,
+                         List<String> assignedUsernames,
+                         String recommendedModel,
+                         String groupId,
+                         String artifactId,
+                         String version,
+                         ArtifactStatus artifactStatus) {
+        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
+                bindingUuids, assignedUsernames, List.of(), recommendedModel, groupId, artifactId, version,
+                artifactStatus);
+    }
+
+    private static String normalizeIdentifier(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String normalized = raw.trim();
+        if (normalized.isBlank()) {
+            return null;
+        }
+        return normalized;
+    }
+
+    private static String normalizeVersion(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return DEFAULT_VERSION;
+        }
+        return raw.trim();
+    }
+
+    @JsonIgnore
+    public boolean isSnapshotMutable() {
+        return !systemAgent && (artifactStatus == null || artifactStatus == ArtifactStatus.SNAPSHOT);
     }
 }

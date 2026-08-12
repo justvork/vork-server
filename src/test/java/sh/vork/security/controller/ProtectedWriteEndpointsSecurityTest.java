@@ -42,6 +42,7 @@ import sh.vork.reflection.ReflectionBinding;
 import sh.vork.reflection.ReflectionGroup;
 import sh.vork.reflection.ReflectionService;
 import sh.vork.reflection.ReflectionType;
+import sh.vork.scheduling.domain.ScheduledJob;
 import sh.vork.setup.SetupService;
 import sh.vork.skill.Skill;
 import sh.vork.skill.SkillCategoryService;
@@ -73,6 +74,9 @@ class ProtectedWriteEndpointsSecurityTest {
 
     @MockitoBean
     private DatabaseRepository<Skill> skillRepository;
+
+        @MockitoBean
+        private DatabaseRepository<ScheduledJob> jobRepository;
 
     @MockitoBean
     private SkillService skillService;
@@ -161,7 +165,7 @@ class ProtectedWriteEndpointsSecurityTest {
                 .with(csrf())
                         .with(user("admin").authorities(() -> "ROLE_ADMIN", () -> "AGENTS_WRITE"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"name\":\"Demo\"}"))
+                        .content("{\"name\":\"Demo\",\"groupId\":\"vork\",\"artifactId\":\"demoAgent\"}"))
                 .andExpect(status().isOk());
     }
 

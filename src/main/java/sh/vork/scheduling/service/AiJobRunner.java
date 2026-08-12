@@ -200,7 +200,12 @@ public class AiJobRunner implements Runnable {
             base.expectedOutput(),
             newStatus,
             base.skillUuids(),
-            base.toolIds()));
+                base.toolIds(),
+                base.notificationUserIds(),
+                base.groupId(),
+                base.artifactId(),
+                base.version(),
+                base.artifactStatus()));
     }
 
     private static java.util.concurrent.ConcurrentHashMap<String, String> buildEnvVars(ScheduledJob job) {
@@ -214,6 +219,11 @@ public class AiJobRunner implements Runnable {
         }
         if (job.expectedOutput() != null && !job.expectedOutput().isBlank()) {
             env.put("JOB_EXPECTED_OUTPUT", job.expectedOutput());
+        }
+        if (job.notificationUserIds() != null && !job.notificationUserIds().isEmpty()) {
+            env.put("JOB_NOTIFY_USERS", String.join(",", job.notificationUserIds()));
+        } else if (job.userId() != null && !job.userId().isBlank()) {
+            env.put("JOB_NOTIFY_USERS", job.userId());
         }
         return env;
     }

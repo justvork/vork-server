@@ -1,5 +1,7 @@
 package sh.vork.surface;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import sh.vork.orm.DatabaseEntity;
 
 import java.util.List;
@@ -14,9 +16,10 @@ import java.util.List;
  * references to skills, reflection bindings, and jobs that will be wired into
  * the surface runtime in future milestones.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public record Surface(
         String uuid,
-    String toolId,
+        String toolId,
         String name,
         String description,
         String sessionUuid,
@@ -24,9 +27,15 @@ public record Surface(
         List<String> skillUuids,
         List<String> reflectionBindingUuids,
         List<String> jobUuids,
+        String groupId,
+        String artifactId,
+        String version,
+        ArtifactStatus artifactStatus,
         long createdAt,
         long updatedAt
 ) implements DatabaseEntity {
+
+    private static final String DEFAULT_VERSION = "SNAPSHOT";
 
     public Surface {
         if (name == null || name.isBlank()) {
@@ -55,6 +64,51 @@ public record Surface(
         if (jobUuids == null) {
             jobUuids = List.of();
         }
+
+        groupId = normalizeIdentifier(groupId);
+        artifactId = normalizeIdentifier(artifactId);
+        version = normalizeVersion(version);
+        artifactStatus = artifactStatus == null ? ArtifactStatus.SNAPSHOT : artifactStatus;
+    }
+
+    public Surface(String uuid,
+                   String toolId,
+                   String name,
+                   String description,
+                   String sessionUuid,
+                   String executionSessionUuid,
+                   List<String> skillUuids,
+                   List<String> reflectionBindingUuids,
+                   List<String> jobUuids,
+                   long createdAt,
+                   long updatedAt) {
+        this(uuid, toolId, name, description, sessionUuid, executionSessionUuid,
+                skillUuids, reflectionBindingUuids, jobUuids,
+                null, null, null, ArtifactStatus.SNAPSHOT,
+                createdAt, updatedAt);
+    }
+
+    private static String normalizeIdentifier(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String normalized = raw.trim();
+        if (normalized.isBlank()) {
+            return null;
+        }
+        return normalized;
+    }
+
+    private static String normalizeVersion(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return DEFAULT_VERSION;
+        }
+        return raw.trim();
+    }
+
+    @JsonIgnore
+    public boolean isSnapshotMutable() {
+        return artifactStatus == null || artifactStatus == ArtifactStatus.SNAPSHOT;
     }
 
     private static String normalizeToolId(String source) {

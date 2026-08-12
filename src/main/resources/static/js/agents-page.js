@@ -8,12 +8,22 @@ let allReflections = [];
 let allReflectionGroups = [];
 let allReflectionBindingOptions = [];
 let allUsers = [];
+let allJobs = [];
 let providerGroups = [];
 let providerGroupByKey = {};
 let modalTools = [];
 let modalSkills = [];
 let modalBindingUuids = [];
 let modalAssignedUsers = [];
+let modalAssignedJobs = [];
+let autoArtifactIdEnabled = true;
+const AGENT_IDENTITY_REGEX = /^[A-Za-z0-9]+$/;
+const AGENT_IDENTITY_MIN_LEN = 3;
+const AGENT_IDENTITY_MAX_LEN = 64;
+
+function isLegacySlashId(id) {
+    return typeof id === 'string' && id.indexOf('/') >= 0;
+}
 
 document.addEventListener('DOMContentLoaded', function () {
     agentModal = new VorkModal(document.getElementById('agentModal'));
@@ -34,9 +44,11 @@ document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('tool-search').value = '';
         document.getElementById('skill-search').value = '';
         document.getElementById('assigned-user-search').value = '';
+        document.getElementById('assigned-job-search').value = '';
         document.getElementById('tool-dropdown').classList.add('hidden');
         document.getElementById('skill-dropdown').classList.add('hidden');
         document.getElementById('assigned-user-dropdown').classList.add('hidden');
+        document.getElementById('assigned-job-dropdown').classList.add('hidden');
     });
 
     document.addEventListener('click', function (e) {
@@ -52,7 +64,44 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!e.target.closest('#assigned-user-search') && !e.target.closest('#assigned-user-dropdown')) {
             document.getElementById('assigned-user-dropdown').classList.add('hidden');
         }
+        if (!e.target.closest('#assigned-job-search') && !e.target.closest('#assigned-job-dropdown')) {
+            document.getElementById('assigned-job-dropdown').classList.add('hidden');
+        }
     });
+
+    const nameInput = document.getElementById('agent-name');
+    const groupInput = document.getElementById('agent-group-id');
+    const artifactInput = document.getElementById('agent-artifact-id');
+    if (nameInput && artifactInput) {
+        nameInput.addEventListener('input', function () {
+            const id = document.getElementById('agent-id').value.trim();
+            if (id) return;
+            if (!autoArtifactIdEnabled) return;
+            artifactInput.value = generateArtifactIdFromName(nameInput.value);
+            validateIdentityField(artifactInput, 'agent-artifact-id-error', 'Artifact ID');
+        });
+        artifactInput.addEventListener('input', function () {
+            const id = document.getElementById('agent-id').value.trim();
+            if (id) return;
+            autoArtifactIdEnabled = false;
+            validateIdentityField(artifactInput, 'agent-artifact-id-error', 'Artifact ID');
+        });
+    }
+    if (groupInput) {
+        groupInput.addEventListener('input', function () {
+            validateIdentityField(groupInput, 'agent-group-id-error', 'Group ID');
+        });
+    }
+    if (artifactInput) {
+        artifactInput.addEventListener('blur', function () {
+            validateIdentityField(artifactInput, 'agent-artifact-id-error', 'Artifact ID');
+        });
+    }
+    if (groupInput) {
+        groupInput.addEventListener('blur', function () {
+            validateIdentityField(groupInput, 'agent-group-id-error', 'Group ID');
+        });
+    }
 });
 
 async function loadData() {
@@ -64,6 +113,7 @@ async function loadData() {
             fetch('/api/reflections'),
             fetch('/api/chat/bindings'),
             fetch('/api/users'),
+            fetch('/api/jobs'),
             fetch('/api/ai/providers')
         ]);
         const agentsRes = results[0];
@@ -72,13 +122,15 @@ async function loadData() {
         const reflectionsRes = results[3];
         const bindingsRes = results[4];
         const usersRes = results[5];
-        const providerRes = results[6];
+        const jobsRes = results[6];
+        const providerRes = results[7];
         allAgents = agentsRes.ok ? await agentsRes.json() : [];
         allTools = toolsRes.ok ? await toolsRes.json() : [];
         allSkills = skillsRes.ok ? await skillsRes.json() : [];
         allReflections = reflectionsRes.ok ? await reflectionsRes.json() : [];
         allReflectionGroups = bindingsRes.ok ? await bindingsRes.json() : [];
         allUsers = usersRes.ok ? await usersRes.json() : [];
+        allJobs = jobsRes.ok ? await jobsRes.json() : [];
         providerGroups = providerRes.ok ? await providerRes.json() : [];
         providerGroupByKey = (providerGroups || []).reduce(function (acc, group) {
             if (group && group.providerKey) {
@@ -88,8 +140,6 @@ async function loadData() {
         }, {});
         buildRecommendedModelLookupOptions('agent-recommended-model-lookup', '');
         allReflectionBindingOptions = buildReflectionBindingOptions();
-        renderAgentBindingColumn();
-        renderAgentUsersColumn();
         renderAgentRecommendedModelColumn();
     } catch (_e) {
         showAlert('Failed to load data.', 'warning');
@@ -287,17 +337,33 @@ function openCreate() {
     document.getElementById('agentModalLabel').textContent = 'New Agent';
     document.getElementById('agent-id').value = '';
     document.getElementById('agent-name').value = '';
+    document.getElementById('agent-group-id').value = '';
+    document.getElementById('agent-group-id').disabled = false;
+    document.getElementById('agent-artifact-id').value = '';
+    document.getElementById('agent-artifact-id').disabled = false;
+    clearIdentityValidation('agent-group-id', 'agent-group-id-error');
+    clearIdentityValidation('agent-artifact-id', 'agent-artifact-id-error');
+    autoArtifactIdEnabled = true;
     document.getElementById('agent-prompt').value = '';
     document.getElementById('agent-recommended-model').value = '';
+    document.getElementById('agent-name').disabled = false;
+    document.getElementById('agent-prompt').disabled = false;
+    document.getElementById('agent-recommended-model').disabled = false;
+    document.getElementById('agent-recommended-model-lookup').disabled = false;
+    const saveBtnCreate = document.getElementById('btn-save-agent');
+    saveBtnCreate.disabled = false;
+    saveBtnCreate.innerHTML = '<i class="fa-solid fa-save me-1"></i>Save Agent';
     buildRecommendedModelLookupOptions('agent-recommended-model-lookup', '');
     modalTools = [];
     modalSkills = [];
     modalBindingUuids = [];
     modalAssignedUsers = [];
+    modalAssignedJobs = [];
     renderToolPills();
     renderSkillPills();
     renderReflectionBindingPills();
     renderAssignedUserPills();
+    renderAssignedJobPills();
     agentModal.show();
 }
 
@@ -311,17 +377,36 @@ function openEdit(id) {
     document.getElementById('agentModalLabel').textContent = 'Edit Agent: ' + agent.name;
     document.getElementById('agent-id').value = agent.uuid;
     document.getElementById('agent-name').value = agent.name;
+    document.getElementById('agent-group-id').value = agent.groupId || '';
+    document.getElementById('agent-group-id').disabled = true;
+    document.getElementById('agent-artifact-id').value = agent.artifactId || '';
+    document.getElementById('agent-artifact-id').disabled = true;
+    clearIdentityValidation('agent-group-id', 'agent-group-id-error');
+    clearIdentityValidation('agent-artifact-id', 'agent-artifact-id-error');
+    autoArtifactIdEnabled = false;
     document.getElementById('agent-prompt').value = agent.systemPrompt || '';
     document.getElementById('agent-recommended-model').value = agent.recommendedModel || '';
+    const mutable = (agent.artifactStatus || 'SNAPSHOT') === 'SNAPSHOT';
+    document.getElementById('agent-name').disabled = !mutable;
+    document.getElementById('agent-prompt').disabled = !mutable;
+    document.getElementById('agent-recommended-model').disabled = !mutable;
+    document.getElementById('agent-recommended-model-lookup').disabled = !mutable;
+    const saveBtn = document.getElementById('btn-save-agent');
+    saveBtn.disabled = !mutable;
+    saveBtn.innerHTML = mutable
+        ? '<i class="fa-solid fa-save me-1"></i>Save Agent'
+        : '<i class="fa-solid fa-lock me-1"></i>Immutable';
     buildRecommendedModelLookupOptions('agent-recommended-model-lookup', agent.recommendedModel || '');
     modalTools = agent.allowedTools ? agent.allowedTools.slice() : [];
     modalSkills = agent.skillUuids ? agent.skillUuids.slice() : [];
     modalBindingUuids = agent.bindingUuids ? agent.bindingUuids.slice() : [];
     modalAssignedUsers = agent.assignedUsernames ? agent.assignedUsernames.slice() : [];
+    modalAssignedJobs = agent.jobUuids ? agent.jobUuids.slice() : [];
     renderToolPills();
     renderSkillPills();
     renderReflectionBindingPills();
     renderAssignedUserPills();
+    renderAssignedJobPills();
     agentModal.show();
 }
 
@@ -663,12 +748,177 @@ function filterAssignedUsers() {
     dropdown.classList.remove('hidden');
 }
 
+function renderAssignedJobPills() {
+    const container = document.getElementById('assigned-job-pill-container');
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (!modalAssignedJobs || modalAssignedJobs.length === 0) {
+        container.innerHTML = '<span class="text-muted small">No delegated jobs assigned.</span>';
+        return;
+    }
+
+    modalAssignedJobs.forEach(function (jobId) {
+        const job = findJobById(jobId);
+        const pill = document.createElement('span');
+        pill.className = 'tool-pill';
+        pill.innerHTML = ''
+            + '<i class="fa-solid fa-briefcase"></i>'
+            + '<span>' + escapeHtml(jobLabel(jobId, job)) + '</span>'
+            + '<span class="remove-tool" title="Remove delegated job">✕</span>';
+        pill.querySelector('.remove-tool').addEventListener('click', function () {
+            removeAssignedJob(jobId);
+        });
+        container.appendChild(pill);
+    });
+}
+
+function removeAssignedJob(jobId) {
+    modalAssignedJobs = (modalAssignedJobs || []).filter(function (id) { return id !== jobId; });
+    renderAssignedJobPills();
+    filterAssignedJobs();
+}
+
+function addAssignedJob(jobId) {
+    if (!jobId) return;
+    if (modalAssignedJobs.includes(jobId)) return;
+
+    const candidate = findJobById(jobId);
+    if (!candidate) {
+        showAlert('Selected job is no longer available.', 'warning');
+        return;
+    }
+
+    const candidateKey = jobGroupArtifactKey(candidate);
+    if (candidateKey) {
+        const conflictId = (modalAssignedJobs || []).find(function (selectedId) {
+            const selectedJob = findJobById(selectedId);
+            if (!selectedJob) return false;
+            const selectedKey = jobGroupArtifactKey(selectedJob);
+            return selectedKey === candidateKey;
+        });
+        if (conflictId) {
+            const conflictJob = findJobById(conflictId);
+            showAlert('Only one version can be assigned per job artifact. Already selected: ' + jobLabel(conflictId, conflictJob), 'warning');
+            return;
+        }
+    }
+
+    modalAssignedJobs.push(jobId);
+    renderAssignedJobPills();
+}
+
+function filterAssignedJobs() {
+    const query = document.getElementById('assigned-job-search').value.toLowerCase().trim();
+    const dropdown = document.getElementById('assigned-job-dropdown');
+    const list = document.getElementById('assigned-job-options');
+    if (!dropdown || !list) return;
+
+    const selectedGroupArtifactKeys = new Set(
+        (modalAssignedJobs || []).map(function (jobId) {
+            const job = findJobById(jobId);
+            return jobGroupArtifactKey(job);
+        }).filter(function (key) { return !!key; })
+    );
+
+    const matches = (allJobs || []).filter(function (job) {
+        if (!job || !job.id) return false;
+        if ((modalAssignedJobs || []).includes(job.id)) return false;
+
+        const gaKey = jobGroupArtifactKey(job);
+        if (gaKey && selectedGroupArtifactKeys.has(gaKey)) return false;
+
+        if (!query) return true;
+        return jobSearchText(job).includes(query);
+    });
+
+    list.innerHTML = '';
+    if (matches.length === 0) {
+        dropdown.classList.add('hidden');
+        return;
+    }
+
+    matches.forEach(function (job) {
+        const li = document.createElement('li');
+        li.className = 'list-group-item list-group-item-action tool-list-item py-1 px-2';
+        li.innerHTML = ''
+            + '<div class="d-flex align-items-center gap-2">'
+            + '  <i class="fa-solid fa-briefcase fa-xs text-secondary"></i>'
+            + '  <span class="fw-semibold small">' + escapeHtml(job.name || job.id) + '</span>'
+            + '  <span class="badge bg-dark border border-secondary text-secondary tool-meta-badge">'
+            + escapeHtml(jobArtifactLabel(job))
+            + '</span>'
+            + '</div>'
+            + '<div class="text-muted tool-description">' + escapeHtml(job.id) + '</div>';
+        li.addEventListener('click', function () {
+            addAssignedJob(job.id);
+            document.getElementById('assigned-job-search').value = '';
+            dropdown.classList.add('hidden');
+        });
+        list.appendChild(li);
+    });
+
+    dropdown.classList.remove('hidden');
+}
+
+function findJobById(jobId) {
+    return (allJobs || []).find(function (job) { return job && job.id === jobId; });
+}
+
+function jobGroupArtifactKey(job) {
+    if (!job) return null;
+    const groupId = (job.groupId || '').trim();
+    const artifactId = (job.artifactId || '').trim();
+    if (!groupId || !artifactId) return null;
+    return groupId + ':' + artifactId;
+}
+
+function jobArtifactLabel(job) {
+    if (!job) return 'unknown';
+    const groupId = (job.groupId || '').trim();
+    const artifactId = (job.artifactId || '').trim();
+    const version = (job.version || '').trim();
+    if (groupId && artifactId && version) return groupId + '/' + artifactId + '@' + version;
+    if (groupId && artifactId) return groupId + '/' + artifactId;
+    if (version) return 'version:' + version;
+    return 'legacy';
+}
+
+function jobLabel(jobId, job) {
+    if (!job) return jobId;
+    return (job.name || job.id) + ' (' + jobArtifactLabel(job) + ')';
+}
+
+function jobSearchText(job) {
+    return [job.name || '', job.id || '', job.groupId || '', job.artifactId || '', job.version || '']
+        .join(' ')
+        .toLowerCase();
+}
+
 async function saveAgent() {
     const id = document.getElementById('agent-id').value.trim();
     const name = document.getElementById('agent-name').value.trim();
+    const groupId = document.getElementById('agent-group-id').value.trim();
+    const artifactId = document.getElementById('agent-artifact-id').value.trim();
     if (!name) {
         showAlert('Name is required.', 'warning');
         return;
+    }
+    if (!id) {
+        if (!groupId) {
+            showAlert('Group ID is required.', 'warning');
+            return;
+        }
+        if (!artifactId) {
+            showAlert('Artifact ID is required.', 'warning');
+            return;
+        }
+        const validGroup = validateIdentityField(document.getElementById('agent-group-id'), 'agent-group-id-error', 'Group ID');
+        const validArtifact = validateIdentityField(document.getElementById('agent-artifact-id'), 'agent-artifact-id-error', 'Artifact ID');
+        if (!validGroup || !validArtifact) {
+            showAlert('Please fix Group ID and Artifact ID format errors.', 'warning');
+            return;
+        }
     }
 
     const body = {
@@ -678,7 +928,10 @@ async function saveAgent() {
         allowedTools: modalTools.slice(),
         skillUuids: modalSkills.slice(),
         bindingUuids: modalBindingUuids.slice(),
-        assignedUsernames: modalAssignedUsers.slice()
+        assignedUsernames: modalAssignedUsers.slice(),
+        jobUuids: modalAssignedJobs.slice(),
+        groupId: groupId,
+        artifactId: artifactId
     };
 
     const btn = document.getElementById('btn-save-agent');
@@ -686,7 +939,11 @@ async function saveAgent() {
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
 
     try {
-        const url = id ? '/api/agents/' + id : '/api/agents';
+        const url = id
+            ? (isLegacySlashId(id)
+                ? '/api/agents/update?id=' + encodeURIComponent(id)
+                : '/api/agents/' + encodeURIComponent(id))
+            : '/api/agents';
         const method = id ? 'PUT' : 'POST';
         const res = await fetch(url, {
             method: method,
@@ -712,7 +969,10 @@ async function saveAgent() {
 async function deleteAgent(id) {
     if (!confirm('Delete this agent? This cannot be undone.')) return;
     try {
-        const res = await fetch('/api/agents/' + id, { method: 'DELETE' });
+        const url = isLegacySlashId(id)
+            ? '/api/agents/delete?id=' + encodeURIComponent(id)
+            : '/api/agents/' + encodeURIComponent(id);
+        const res = await fetch(url, { method: 'DELETE' });
         const data = await res.json();
         if (data.error) {
             showAlert(data.error, 'danger');
@@ -732,7 +992,72 @@ function exportAgentPackage(id) {
         showAlert('Agent id is missing for export.', 'warning');
         return;
     }
-    window.location.href = '/api/agents/' + encodeURIComponent(id) + '/export';
+    window.location.href = isLegacySlashId(id)
+        ? '/api/agents/export?id=' + encodeURIComponent(id)
+        : '/api/agents/' + encodeURIComponent(id) + '/export';
+}
+
+function slugifyArtifactId(raw) {
+    if (!raw) return '';
+    const tokens = String(raw).match(/[A-Za-z0-9]+/g) || [];
+    if (tokens.length === 0) return '';
+    const first = tokens[0];
+    const rest = tokens.slice(1).map(function (t) {
+        return t.charAt(0).toUpperCase() + t.slice(1);
+    });
+    return [first].concat(rest).join('');
+}
+
+function generateArtifactIdFromName(name) {
+    return slugifyArtifactId(name);
+}
+
+function validateIdentityField(inputEl, errorId, fieldLabel) {
+    if (!inputEl || inputEl.disabled) return true;
+    const value = (inputEl.value || '').trim();
+    const errorEl = document.getElementById(errorId);
+    if (!value) {
+        inputEl.classList.remove('is-invalid');
+        if (errorEl) {
+            errorEl.textContent = '';
+            errorEl.style.display = 'none';
+        }
+        return true;
+    }
+    if (!AGENT_IDENTITY_REGEX.test(value)) {
+        inputEl.classList.add('is-invalid');
+        if (errorEl) {
+            errorEl.textContent = fieldLabel + ' must be alphanumeric only (letters and numbers), with no spaces.';
+            errorEl.style.display = 'block';
+        }
+        return false;
+    }
+    if (value.length < AGENT_IDENTITY_MIN_LEN || value.length > AGENT_IDENTITY_MAX_LEN) {
+        inputEl.classList.add('is-invalid');
+        if (errorEl) {
+            errorEl.textContent = fieldLabel + ' length must be between 3 and 64 characters.';
+            errorEl.style.display = 'block';
+        }
+        return false;
+    }
+    inputEl.classList.remove('is-invalid');
+    if (errorEl) {
+        errorEl.textContent = '';
+        errorEl.style.display = 'none';
+    }
+    return true;
+}
+
+function clearIdentityValidation(inputId, errorId) {
+    const inputEl = document.getElementById(inputId);
+    const errorEl = document.getElementById(errorId);
+    if (inputEl) {
+        inputEl.classList.remove('is-invalid');
+    }
+    if (errorEl) {
+        errorEl.textContent = '';
+        errorEl.style.display = 'none';
+    }
 }
 
 async function importAgents(input) {

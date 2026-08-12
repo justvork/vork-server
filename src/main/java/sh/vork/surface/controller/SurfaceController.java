@@ -30,11 +30,13 @@ import sh.vork.reflection.ReflectionService;
 import sh.vork.filesystem.FileArea;
 import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.skill.Skill;
+import sh.vork.surface.ArtifactStatus;
 import sh.vork.surface.Surface;
 import sh.vork.surface.service.SurfaceReflectionContractService;
 import sh.vork.surface.service.SurfaceService;
 import sh.vork.surface.service.SurfaceSkillExecutionService;
 import sh.vork.util.ZipArchiveUtil;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.ByteArrayInputStream;
@@ -44,11 +46,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.Principal;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Page and REST API controller for the Surfaces management UI and Surface Editor.
@@ -57,6 +59,19 @@ import java.util.Map;
 public class SurfaceController {
 
     private static final Logger log = LoggerFactory.getLogger(SurfaceController.class);
+    private static final String SURFACE_EXPORT_ENTRY = "surface.json";
+    private static final String LEGACY_SURFACE_EXPORT_ENTRY = "definition.json";
+    private static final String EDITOR_FILES_ZIP_DIR = "assets";
+    private static final String EDITOR_FILES_PREFIX = "assets/";
+    private static final String LEGACY_EDITOR_FILES_PREFIX = "sessions/editor/";
+    private static final String SNAPSHOT_VERSION = "SNAPSHOT";
+    private static final int GROUP_ID_MIN_LEN = 3;
+    private static final int GROUP_ID_MAX_LEN = 64;
+    private static final int ARTIFACT_ID_MIN_LEN = 3;
+    private static final int ARTIFACT_ID_MAX_LEN = 64;
+    private static final int VERSION_MAX_LEN = 16;
+    private static final Pattern GROUP_ID_PATTERN = Pattern.compile("^[A-Za-z0-9]+$");
+    private static final Pattern ARTIFACT_ID_PATTERN = Pattern.compile("^[A-Za-z0-9]+$");
 
     private final SurfaceService surfaceService;
     private final DatabaseRepository<Surface> surfaceRepository;
@@ -184,8 +199,18 @@ public class SurfaceController {
         if (req == null || req.name() == null || req.name().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Name is required."));
         }
-        Surface created = surfaceService.create(req.name(), req.description(), principal.getName());
-        return ResponseEntity.ok(created);
+        String groupId = req.groupId() == null ? "" : req.groupId().trim();
+        String artifactId = req.artifactId() == null ? "" : req.artifactId().trim();
+        String identityError = validateArtifactIdentity(groupId, artifactId, SNAPSHOT_VERSION);
+        if (identityError != null) {
+            return ResponseEntity.badRequest().body(Map.of("error", identityError));
+        }
+        try {
+            Surface created = surfaceService.create(req.name(), req.description(), principal.getName(), groupId, artifactId);
+            return ResponseEntity.ok(created);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
     }
 
     @PutMapping("/api/surfaces/{uuid}")
@@ -194,9 +219,16 @@ public class SurfaceController {
     public ResponseEntity<?> updateSurface(@PathVariable String uuid,
                                            @RequestBody UpdateSurfaceRequest req) {
         log.debug("ENTER updateSurface: [uuid={}]", uuid);
+        Surface existing = surfaceService.resolveByUuidOrToolId(uuid);
+        if (existing == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!existing.isSnapshotMutable()) {
+            return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT surfaces can be edited."));
+        }
         try {
             Surface updated = surfaceService.update(
-                    uuid,
+                    existing.uuid(),
                     req == null ? null : req.name(),
                     req == null ? null : req.description(),
                     req == null ? null : req.skillUuids(),
@@ -216,7 +248,14 @@ public class SurfaceController {
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
     public ResponseEntity<?> deleteSurface(@PathVariable String uuid) {
         log.debug("ENTER deleteSurface: [uuid={}]", uuid);
-        if (!surfaceService.delete(uuid)) {
+        Surface existing = surfaceService.resolveByUuidOrToolId(uuid);
+        if (existing == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!existing.isSnapshotMutable()) {
+            return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT surfaces can be deleted."));
+        }
+        if (!surfaceService.delete(existing.uuid())) {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok(Map.of("status", "ok"));
@@ -226,31 +265,34 @@ public class SurfaceController {
     @ResponseBody
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
     public ResponseEntity<?> exportSurface(@PathVariable String uuid) {
+        return exportSurfaceById(uuid);
+    }
+
+    private ResponseEntity<?> exportSurfaceById(String uuid) {
         Surface surface = surfaceService.resolveByUuidOrToolId(uuid);
         if (surface == null) {
             return ResponseEntity.notFound().build();
         }
 
-        AiSession editorSession = null;
-        if (surface.sessionUuid() != null && !surface.sessionUuid().isBlank()) {
-            editorSession = sessionRepository.get(surface.sessionUuid());
-        }
-
-        AiSession executionSession = null;
-        if (surface.executionSessionUuid() != null && !surface.executionSessionUuid().isBlank()) {
-            executionSession = sessionRepository.get(surface.executionSessionUuid());
-        }
-
-        SurfaceExportPackage pkg = new SurfaceExportPackage("1.0", surface, editorSession, executionSession);
+        SurfaceArtifact artifact = new SurfaceArtifact(
+                surface.uuid(),
+                surface.toolId(),
+                surface.name(),
+                surface.description(),
+                surface.skillUuids(),
+                surface.reflectionBindingUuids(),
+                surface.jobUuids(),
+                surface.groupId(),
+                surface.artifactId(),
+                surface.version(),
+                surface.artifactStatus());
+        SurfaceExportPackage pkg = new SurfaceExportPackage("1.0", artifact);
         byte[] archive;
         try {
             Map<String, byte[]> entries = new LinkedHashMap<>();
-            entries.put("definition.json", objectMapper.writeValueAsBytes(pkg));
+            entries.put(SURFACE_EXPORT_ENTRY, objectMapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(pkg));
             if (surface.sessionUuid() != null && !surface.sessionUuid().isBlank()) {
-                collectSessionEntries(entries, surface.sessionUuid(), "sessions/editor");
-            }
-            if (surface.executionSessionUuid() != null && !surface.executionSessionUuid().isBlank()) {
-                collectSessionEntries(entries, surface.executionSessionUuid(), "sessions/execution");
+                collectSessionEntries(entries, surface.sessionUuid(), EDITOR_FILES_ZIP_DIR);
             }
             archive = ZipArchiveUtil.write(entries);
         } catch (Exception ex) {
@@ -280,9 +322,12 @@ public class SurfaceController {
                 return ResponseEntity.badRequest().body(new SurfaceImportResult("error", null, "Import file is required."));
             }
             zipEntries = ZipArchiveUtil.read(file.getInputStream());
-            byte[] definition = zipEntries.get("definition.json");
+            byte[] definition = zipEntries.get(SURFACE_EXPORT_ENTRY);
             if (definition == null) {
-                return ResponseEntity.badRequest().body(new SurfaceImportResult("error", null, "Archive is missing definition.json."));
+                definition = zipEntries.get(LEGACY_SURFACE_EXPORT_ENTRY);
+            }
+            if (definition == null) {
+                return ResponseEntity.badRequest().body(new SurfaceImportResult("error", null, "Archive is missing surface.json."));
             }
             pkg = objectMapper.readValue(definition, SurfaceExportPackage.class);
         } catch (Exception ex) {
@@ -293,7 +338,7 @@ public class SurfaceController {
             return ResponseEntity.badRequest().body(new SurfaceImportResult("error", null, "Invalid surface export package."));
         }
 
-        Surface incoming = pkg.surface();
+        SurfaceArtifact incoming = pkg.surface();
         if (incoming.name() == null || incoming.name().isBlank()) {
             return ResponseEntity.badRequest().body(new SurfaceImportResult("error", null, "Surface name is required."));
         }
@@ -302,34 +347,65 @@ public class SurfaceController {
                 ? "anonymous"
                 : principal.getName();
 
-        Surface created = surfaceService.create(incoming.name(), incoming.description(), username);
+        String groupId = incoming.groupId() == null ? "" : incoming.groupId().trim();
+        String artifactId = incoming.artifactId() == null ? "" : incoming.artifactId().trim();
+        String version = incoming.version() == null || incoming.version().isBlank()
+                ? SNAPSHOT_VERSION
+                : incoming.version().trim();
+
+        String identityError = validateArtifactIdentity(groupId, artifactId, version);
+        if (identityError != null) {
+            return ResponseEntity.badRequest().body(new SurfaceImportResult("error", null, identityError));
+        }
+        if (incoming.artifactStatus() != null && incoming.artifactStatus() != ArtifactStatus.SNAPSHOT) {
+            return ResponseEntity.badRequest().body(new SurfaceImportResult(
+                    "error", null, "Only SNAPSHOT surfaces are importable in this flow."));
+        }
+        String incomingUuid = toVid(groupId, artifactId, version);
+        if (incoming.uuid() != null && !incoming.uuid().isBlank() && !incomingUuid.equals(incoming.uuid().trim())) {
+            return ResponseEntity.badRequest().body(new SurfaceImportResult(
+                    "error", incomingUuid, "Incoming uuid does not match deterministic VID."));
+        }
+
+        Surface existing = surfaceService.get(incomingUuid);
+        if (existing != null && !existing.isSnapshotMutable()) {
+            return ResponseEntity.badRequest().body(new SurfaceImportResult(
+                    "error", incomingUuid, "Only SNAPSHOT surfaces are mutable/importable in this flow."));
+        }
+
+        Surface targetSurface = existing;
+        if (targetSurface == null) {
+            try {
+                targetSurface = surfaceService.create(incoming.name(), incoming.description(), username, groupId, artifactId);
+            } catch (IllegalArgumentException ex) {
+                return ResponseEntity.badRequest().body(new SurfaceImportResult("error", incomingUuid, ex.getMessage()));
+            }
+        }
+
         Surface updated = surfaceService.update(
-                created.uuid(),
+                targetSurface.uuid(),
                 incoming.name(),
                 incoming.description(),
                 incoming.skillUuids(),
                 incoming.reflectionBindingUuids(),
                 incoming.jobUuids());
-        Surface target = updated == null ? surfaceRepository.get(created.uuid()) : updated;
+        Surface target = updated == null ? surfaceRepository.get(targetSurface.uuid()) : updated;
         if (target == null) {
             return ResponseEntity.internalServerError().body(new SurfaceImportResult("error", null, "Failed to create imported surface."));
         }
 
         try {
-            restoreSession(target.sessionUuid(), pkg.editorSession(), username, zipEntries, "sessions/editor/");
-
-            boolean hasExecutionFiles = zipEntries.keySet().stream()
-                    .anyMatch(path -> path != null && path.startsWith("sessions/execution/"));
-            if (pkg.executionSession() != null || hasExecutionFiles) {
-                AiSession execution = surfaceService.ensureExecutionSession(target.uuid(), username);
-                restoreSession(execution.uuid(), pkg.executionSession(), username, zipEntries, "sessions/execution/");
-            }
+            AiSession editorSession = surfaceService.ensureSession(target.uuid(), username);
+            restoreSessionFiles(editorSession.uuid(), zipEntries, EDITOR_FILES_PREFIX);
+            // Backward compatibility for old archive layout.
+            restoreSessionFiles(editorSession.uuid(), zipEntries, LEGACY_EDITOR_FILES_PREFIX);
         } catch (Exception ex) {
-            log.warn("Surface import session restore failed [surfaceUuid={}]: {}", target.uuid(), ex.getMessage());
-            return ResponseEntity.badRequest().body(new SurfaceImportResult("error", null, "Failed to import surface session files."));
+            log.warn("Surface import file restore failed [surfaceUuid={}]: {}", target.uuid(), ex.getMessage());
+            return ResponseEntity.badRequest().body(new SurfaceImportResult("error", target.uuid(), "Failed to import surface files."));
         }
 
-        return ResponseEntity.ok(new SurfaceImportResult("imported", target.uuid(), null));
+        String status = existing == null ? "imported" : "updated";
+        return ResponseEntity.ok(new SurfaceImportResult(status, target.uuid(), null));
     }
 
     // ── REST: surface session ─────────────────────────────────────────────────
@@ -894,14 +970,17 @@ public class SurfaceController {
 
     // ── Request DTOs ──────────────────────────────────────────────────────────
 
-    public record CreateSurfaceRequest(String name, String description) {
-    }
-
     public record UpdateSurfaceRequest(String name,
                                        String description,
                                        List<String> skillUuids,
                                        List<String> reflectionBindingUuids,
                                        List<String> jobUuids) {
+    }
+
+    public record CreateSurfaceRequest(String name,
+                                       String description,
+                                       String groupId,
+                                       String artifactId) {
     }
 
     public record SurfaceReflectionInvokeRequest(String reflectionId,
@@ -915,19 +994,69 @@ public class SurfaceController {
                                             Map<String, Object> args) {
     }
 
+        @JsonIgnoreProperties(ignoreUnknown = true)
     public record SurfaceExportPackage(
             String vorkSurfaceExport,
-            Surface surface,
-            AiSession editorSession,
-            AiSession executionSession
+                SurfaceArtifact surface
     ) {
     }
+
+            @JsonIgnoreProperties(ignoreUnknown = true)
+            public record SurfaceArtifact(
+                String uuid,
+                String toolId,
+                String name,
+                String description,
+                List<String> skillUuids,
+                List<String> reflectionBindingUuids,
+                List<String> jobUuids,
+                String groupId,
+                String artifactId,
+                String version,
+                ArtifactStatus artifactStatus
+            ) {
+            }
 
     public record SurfaceImportResult(
             String status,
             String surfaceUuid,
             String message
     ) {
+    }
+
+    private static String validateArtifactIdentity(String groupId, String artifactId, String version) {
+        if (groupId == null || groupId.isBlank()) {
+            return "groupId is required.";
+        }
+        if (artifactId == null || artifactId.isBlank()) {
+            return "artifactId is required.";
+        }
+        if (groupId.length() < GROUP_ID_MIN_LEN || groupId.length() > GROUP_ID_MAX_LEN) {
+            return "groupId length must be between 3 and 64 characters.";
+        }
+        if (artifactId.length() < ARTIFACT_ID_MIN_LEN || artifactId.length() > ARTIFACT_ID_MAX_LEN) {
+            return "artifactId length must be between 3 and 64 characters.";
+        }
+        if (!GROUP_ID_PATTERN.matcher(groupId).matches()) {
+            return "groupId must be alphanumeric only (letters and numbers), with no spaces.";
+        }
+        if (!ARTIFACT_ID_PATTERN.matcher(artifactId).matches()) {
+            return "artifactId must be alphanumeric only (letters and numbers), with no spaces.";
+        }
+        if (version == null || version.isBlank()) {
+            return "version is required.";
+        }
+        if (version.length() > VERSION_MAX_LEN) {
+            return "version length must be 16 characters or fewer.";
+        }
+        if (!SNAPSHOT_VERSION.equals(version)) {
+            return "Only version SNAPSHOT is supported in this flow.";
+        }
+        return null;
+    }
+
+    private static String toVid(String groupId, String artifactId, String version) {
+        return groupId + "-" + artifactId + "-" + version;
     }
 
     private void collectSessionEntries(Map<String, byte[]> target,
@@ -956,62 +1085,20 @@ public class SurfaceController {
         }
     }
 
-    private void restoreSession(String targetSessionUuid,
-                                AiSession exportedSession,
-                                String username,
-                                Map<String, byte[]> zipEntries,
-                                String zipPrefix) throws IOException {
+    private void restoreSessionFiles(String targetSessionUuid,
+                                     Map<String, byte[]> zipEntries,
+                                     String zipPrefix) throws IOException {
         if (targetSessionUuid == null || targetSessionUuid.isBlank()) {
             return;
         }
+        if (zipEntries == null || zipEntries.isEmpty()) {
+            return;
+        }
 
-        List<Map.Entry<String, byte[]>> sessionFiles = new ArrayList<>();
         for (Map.Entry<String, byte[]> entry : zipEntries.entrySet()) {
-            if (entry.getKey() != null && entry.getKey().startsWith(zipPrefix)) {
-                sessionFiles.add(entry);
+            if (entry.getKey() == null || !entry.getKey().startsWith(zipPrefix)) {
+                continue;
             }
-        }
-
-        AiSession current = sessionRepository.get(targetSessionUuid);
-        AiSession base = exportedSession != null ? exportedSession : current;
-        if (base == null) {
-            base = new AiSession(
-                    targetSessionUuid,
-                    "GEMINI",
-                    SessionOriginMode.WEB,
-                    username,
-                    "Imported Surface Session",
-                    System.currentTimeMillis(),
-                    0,
-                    List.of(),
-                    AiSession.defaultEnvironmentVariables(),
-                    AiSessionStatus.RUNNING,
-                    null,
-                    null,
-                    List.of(),
-                    List.of(),
-                    List.of());
-        }
-
-        AiSession updated = new AiSession(
-                targetSessionUuid,
-                base.provider(),
-                base.originMode(),
-                username,
-                base.name(),
-                System.currentTimeMillis(),
-                0,
-                base.messages() == null ? List.of() : List.copyOf(base.messages()),
-                base.environmentVariables(),
-                AiSessionStatus.RUNNING,
-                base.activeAgentTemplateId(),
-                base.modelId(),
-                base.skillStack() == null ? List.of() : List.copyOf(base.skillStack()),
-                base.sessionSkillUuids() == null ? List.of() : List.copyOf(base.sessionSkillUuids()),
-                base.sessionToolIds() == null ? List.of() : List.copyOf(base.sessionToolIds()));
-        sessionRepository.save(updated);
-
-        for (Map.Entry<String, byte[]> entry : sessionFiles) {
             String relativePath = entry.getKey().substring(zipPrefix.length());
             if (relativePath.isBlank()) {
                 continue;

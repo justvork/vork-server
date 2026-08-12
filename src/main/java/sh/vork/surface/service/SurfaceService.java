@@ -27,6 +27,7 @@ public class SurfaceService {
 
     private static final Logger log = LoggerFactory.getLogger(SurfaceService.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final String SNAPSHOT_VERSION = "SNAPSHOT";
 
     private final DatabaseRepository<Surface> surfaceRepository;
     private final DatabaseRepository<Skill> skillRepository;
@@ -79,8 +80,16 @@ public class SurfaceService {
      * Surface Developer agent.
      */
     public Surface create(String name, String description, String username) {
-        String uuid = UUID.randomUUID().toString();
-        String toolId = uniqueSurfaceToolId(name, null);
+        String fallbackArtifactId = ToolIdGenerator.normalizeBase(name, "surface");
+        return create(name, description, username, "vork", fallbackArtifactId);
+    }
+
+    public Surface create(String name, String description, String username, String groupId, String artifactId) {
+        String uuid = toVid(groupId, artifactId, SNAPSHOT_VERSION);
+        if (surfaceRepository.get(uuid) != null) {
+            throw new IllegalArgumentException("Surface artifact already exists: " + uuid);
+        }
+        String toolId = uniqueSurfaceToolId(artifactId, null);
         long now = System.currentTimeMillis();
 
         AiSession session = chatService.createNewSession(AiProvider.GEMINI);
@@ -100,6 +109,10 @@ public class SurfaceService {
                 List.of(),
                 List.of(),
                 List.of(),
+            groupId,
+            artifactId,
+            SNAPSHOT_VERSION,
+            sh.vork.surface.ArtifactStatus.SNAPSHOT,
                 now,
                 now);
         surfaceRepository.save(surface);
@@ -120,9 +133,12 @@ public class SurfaceService {
                           List<String> skillUuids,
                           List<String> reflectionBindingUuids,
                           List<String> jobUuids) {
-        Surface existing = surfaceRepository.get(uuid);
+        Surface existing = resolveByUuidOrToolId(uuid);
         if (existing == null) {
             return null;
+        }
+        if (!existing.isSnapshotMutable()) {
+            throw new IllegalArgumentException("Only SNAPSHOT surfaces can be edited.");
         }
 
         List<String> validatedSkillUuids = skillUuids == null
@@ -139,6 +155,10 @@ public class SurfaceService {
                 validatedSkillUuids,
                 reflectionBindingUuids == null ? existing.reflectionBindingUuids() : reflectionBindingUuids,
                 jobUuids == null ? existing.jobUuids() : jobUuids,
+            existing.groupId(),
+            existing.artifactId(),
+            existing.version(),
+            existing.artifactStatus(),
                 existing.createdAt(),
                 System.currentTimeMillis());
         surfaceRepository.save(updated);
@@ -155,12 +175,15 @@ public class SurfaceService {
      * @return {@code true} if the surface existed and was deleted
      */
     public boolean delete(String uuid) {
-        Surface existing = surfaceRepository.get(uuid);
+        Surface existing = resolveByUuidOrToolId(uuid);
         if (existing == null) {
             return false;
         }
-        surfaceRepository.delete(uuid);
-        log.info("Deleted surface [uuid={}, name={}]", uuid, existing.name());
+        if (!existing.isSnapshotMutable()) {
+            throw new IllegalArgumentException("Only SNAPSHOT surfaces can be deleted.");
+        }
+        surfaceRepository.delete(existing.uuid());
+        log.info("Deleted surface [uuid={}, name={}]", existing.uuid(), existing.name());
         return true;
     }
 
@@ -200,6 +223,10 @@ public class SurfaceService {
                     surface.skillUuids(),
                     surface.reflectionBindingUuids(),
                     surface.jobUuids(),
+                    surface.groupId(),
+                    surface.artifactId(),
+                    surface.version(),
+                    surface.artifactStatus(),
                     surface.createdAt(),
                     System.currentTimeMillis());
             surfaceRepository.save(updated);
@@ -244,6 +271,10 @@ public class SurfaceService {
                     surface.skillUuids(),
                     surface.reflectionBindingUuids(),
                     surface.jobUuids(),
+                    surface.groupId(),
+                    surface.artifactId(),
+                    surface.version(),
+                    surface.artifactStatus(),
                     surface.createdAt(),
                     System.currentTimeMillis());
             surfaceRepository.save(updated);
@@ -384,4 +415,8 @@ public class SurfaceService {
     }
 
     public record PublicSkillId(String groupId, String skillId) {}
+
+    private static String toVid(String groupId, String artifactId, String version) {
+        return groupId + "-" + artifactId + "-" + version;
+    }
 }

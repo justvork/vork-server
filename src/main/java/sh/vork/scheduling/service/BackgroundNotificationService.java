@@ -37,6 +37,7 @@ import sh.vork.orm.SortOrder;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.LinkedHashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -186,7 +187,7 @@ public class BackgroundNotificationService implements SystemNotificationService 
                 arguments == null ? "{}" : arguments);
 
         // ── Dispatch out-of-band notification to user's addresses ───────────
-        dispatchOobNotifications(username, toolName, authUrl);
+        dispatchOobNotifications(resolveNotificationUsers(sessionUuid, username), toolName, authUrl);
 
         // ── Long-poll on a virtual thread; resume session on response ────────
         final javax.crypto.SecretKey sessionKey = enc.key();
@@ -230,14 +231,23 @@ public class BackgroundNotificationService implements SystemNotificationService 
      * Falls back to ALL addresses if none are flagged as OOB.
      * Delivery is best-effort: failures are logged but do not interrupt the relay poll.
      */
-    private void dispatchOobNotifications(String username, String toolName, String authUrl) {
-        List<UserNotificationMedia> allAddresses;
-        try (var stream = mediaRepo.search(0, Integer.MAX_VALUE, "createdAt", SortOrder.ASC,
-                SearchQuery.eq("userId", username))) {
-            allAddresses = stream.collect(Collectors.toList());
+    private void dispatchOobNotifications(List<String> usernames, String toolName, String authUrl) {
+        if (usernames == null || usernames.isEmpty()) {
+            log.debug("No notification users provided — skipping OOB dispatch");
+            return;
         }
+
+        List<UserNotificationMedia> allAddresses = usernames.stream()
+                .flatMap(username -> {
+                    try (var stream = mediaRepo.search(0, Integer.MAX_VALUE, "createdAt", SortOrder.ASC,
+                            SearchQuery.eq("userId", username))) {
+                        return stream.toList().stream();
+                    }
+                })
+                .toList();
+
         if (allAddresses.isEmpty()) {
-            log.debug("No notification addresses for user '{}' — skipping OOB dispatch", username);
+            log.debug("No notification addresses for users {} — skipping OOB dispatch", usernames);
             return;
         }
 
@@ -246,7 +256,7 @@ public class BackgroundNotificationService implements SystemNotificationService 
                 .collect(Collectors.toList());
 
         if (targets.isEmpty()) {
-            log.debug("No OOB-flagged addresses for '{}', falling back to all addresses", username);
+            log.debug("No OOB-flagged addresses for users {}, falling back to all addresses", usernames);
             targets = allAddresses;
         }
 
@@ -285,13 +295,39 @@ public class BackgroundNotificationService implements SystemNotificationService 
 
             try {
                 provider.send(notification, cfg.settings());
-                log.info("OOB notification sent via '{}' to {} recipient(s) [user={}]",
-                        cfg.providerKey(), recipients.size(), username);
+                log.info("OOB notification sent via '{}' to {} recipient(s) [users={}]",
+                        cfg.providerKey(), recipients.size(), usernames);
             } catch (Exception e) {
-                log.warn("OOB notification delivery failed via '{}' [user={}, error={}]",
-                        cfg.providerKey(), username, e.getMessage());
+                log.warn("OOB notification delivery failed via '{}' [users={}, error={}]",
+                        cfg.providerKey(), usernames, e.getMessage());
             }
         }
+    }
+
+    private List<String> resolveNotificationUsers(String sessionUuid, String fallbackUsername) {
+        AiSession session = sessionRepo.get(sessionUuid);
+        if (session == null || session.environmentVariables() == null) {
+            return fallbackUsername == null || fallbackUsername.isBlank() ? List.of() : List.of(fallbackUsername);
+        }
+
+        String raw = session.environmentVariables().get("JOB_NOTIFY_USERS");
+        if (raw == null || raw.isBlank()) {
+            return fallbackUsername == null || fallbackUsername.isBlank() ? List.of() : List.of(fallbackUsername);
+        }
+
+        LinkedHashSet<String> users = new LinkedHashSet<>();
+        for (String part : raw.split(",")) {
+            if (part != null) {
+                String trimmed = part.trim();
+                if (!trimmed.isBlank()) {
+                    users.add(trimmed);
+                }
+            }
+        }
+        if (users.isEmpty() && fallbackUsername != null && !fallbackUsername.isBlank()) {
+            users.add(fallbackUsername);
+        }
+        return List.copyOf(users);
     }
 
     // ── Private: relay poll + background resumption ───────────────────────────

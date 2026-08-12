@@ -29,6 +29,9 @@ class SurfaceTest {
         assertTrue(surface.reflectionBindingUuids().isEmpty());
         assertNotNull(surface.jobUuids());
         assertTrue(surface.jobUuids().isEmpty());
+        assertEquals("SNAPSHOT", surface.version());
+        assertEquals(ArtifactStatus.SNAPSHOT, surface.artifactStatus());
+        assertTrue(surface.isSnapshotMutable());
     }
 
     @Test
@@ -54,5 +57,29 @@ class SurfaceTest {
         assertEquals(List.of("skill-1"), surface.skillUuids());
         assertEquals(List.of("binding-1"), surface.reflectionBindingUuids());
         assertEquals(List.of("job-1"), surface.jobUuids());
+        assertEquals("SNAPSHOT", surface.version());
+        assertEquals(ArtifactStatus.SNAPSHOT, surface.artifactStatus());
+    }
+
+    @Test
+    void nonSnapshotSurfaceIsImmutable() {
+        Surface surface = new Surface(
+                "vork/dashboard/PUBLISHED",
+                "dashboard",
+                "Dashboard",
+                "desc",
+                "session-1",
+                "",
+                List.of(),
+                List.of(),
+                List.of(),
+                "vork",
+                "dashboard",
+                "SNAPSHOT",
+                ArtifactStatus.PUBLISHED,
+                1L,
+                2L);
+
+        assertTrue(!surface.isSnapshotMutable());
     }
 }

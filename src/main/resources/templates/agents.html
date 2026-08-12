@@ -45,55 +45,25 @@
                 <thead class="table-dark">
                     <tr>
                         <th>Name</th>
-                        <th>Type</th>
-                        <th>System Prompt</th>
-                        <th>Tools</th>
-                        <th>Skills</th>
+                        <th>Group ID</th>
+                        <th>Artifact ID</th>
+                        <th>Version</th>
+                        <th>Status</th>
                         <th>Recommended Model</th>
-                        <th>Bindings</th>
-                        <th>Assigned Users</th>
                         <th class="text-end">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr th:each="agent : ${agents}" th:id="'row-' + ${agent.uuid()}">
                         <td class="fw-semibold" th:text="${agent.name()}"></td>
+                        <td th:text="${agent.groupId()}"></td>
+                        <td th:text="${agent.artifactId()}"></td>
+                        <td th:text="${agent.version()}"></td>
                         <td>
-                            <span th:if="${agent.systemAgent()}"
-                                  class="badge bg-secondary"
-                                  title="Built-in system agent">System</span>
-                            <span th:unless="${agent.systemAgent()}"
-                                  class="badge bg-dark border border-secondary text-secondary">User</span>
-                        </td>
-                        <td>
-                            <div class="truncate-prompt" th:text="${agent.systemPrompt()}"></div>
-                        </td>
-                        <td>
-                            <div th:if="${#lists.isEmpty(agent.allowedTools())}" class="text-muted small">— no tools —</div>
-                            <div th:unless="${#lists.isEmpty(agent.allowedTools())}" class="d-flex flex-wrap gap-1">
-                                <span th:each="t : ${agent.allowedTools()}" class="tool-pill">
-                                    <i class="fa-solid fa-screwdriver-wrench"></i>
-                                    <span th:text="${t}"></span>
-                                </span>
-                            </div>
-                        </td>
-                        <td>
-                            <span th:if="${#lists.isEmpty(agent.skillUuids())}"
-                                  class="text-muted small">—</span>
-                            <div th:unless="${#lists.isEmpty(agent.skillUuids())}" class="d-flex flex-wrap gap-1">
-                                <span th:each="sid : ${agent.skillUuids()}" class="tool-pill">
-                                    <i class="fa-solid fa-bolt"></i>
-                                    <span th:text="${skillNames.getOrDefault(sid, sid)}"></span>
-                                </span>
-                            </div>
+                            <span class="badge bg-dark border border-secondary text-secondary"
+                                  th:text="${agent.artifactStatus()}"></span>
                         </td>
                         <td th:attr="id='agent-model-' + ${agent.uuid()}">
-                            <span class="text-muted small">—</span>
-                        </td>
-                        <td th:attr="id='agent-bindings-' + ${agent.uuid()}">
-                            <span class="text-muted small">—</span>
-                        </td>
-                        <td th:attr="id='agent-users-' + ${agent.uuid()}">
                             <span class="text-muted small">—</span>
                         </td>
                         <td class="text-end">
@@ -141,6 +111,21 @@
                 <div class="mb-3">
                     <label class="form-label" for="agent-name">Name <span class="text-danger">*</span></label>
                     <input type="text" id="agent-name" class="form-control" placeholder="e.g. Data Analyst">
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label" for="agent-group-id">Group ID <span class="text-danger">*</span></label>
+                        <input type="text" id="agent-group-id" class="form-control" placeholder="e.g. vork" minlength="3" maxlength="64">
+                        <div id="agent-group-id-error" class="invalid-feedback"></div>
+                        <div class="form-text">Must be alphanumeric only (letters and numbers), no spaces, length 3-64.</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="agent-artifact-id">Artifact ID <span class="text-danger">*</span></label>
+                        <input type="text" id="agent-artifact-id" class="form-control" placeholder="e.g. vorkDeveloper" minlength="3" maxlength="64">
+                        <div id="agent-artifact-id-error" class="invalid-feedback"></div>
+                        <div class="form-text">Must be alphanumeric only (letters and numbers), no spaces, length 3-64.</div>
+                    </div>
                 </div>
 
                 <div class="mb-3">
@@ -207,6 +192,21 @@
                     </div>
                     <div id="assigned-user-dropdown" class="card agent-dropdown hidden">
                         <ul id="assigned-user-options" class="list-group list-group-flush"></ul>
+                    </div>
+                </div>
+
+                <!-- Assigned Jobs ─────────────────────────────────────── -->
+                <div class="mb-3">
+                    <label class="form-label">Assigned Delegated Jobs
+                        <span class="text-muted small">(only these jobs can be delegated; one version per group/artifact)</span>
+                    </label>
+                    <div id="assigned-job-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary agent-pill-container"></div>
+                    <div class="input-group mb-1">
+                        <span class="input-group-text"><i class="fa-solid fa-briefcase"></i></span>
+                        <input type="text" id="assigned-job-search" class="form-control" placeholder="Search jobs to allow for delegation..." oninput="filterAssignedJobs()">
+                    </div>
+                    <div id="assigned-job-dropdown" class="card agent-dropdown hidden">
+                        <ul id="assigned-job-options" class="list-group list-group-flush"></ul>
                     </div>
                 </div>
 

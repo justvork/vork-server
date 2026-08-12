@@ -5,6 +5,7 @@
 
 let surfaceModal;
 let allSurfaces = [];
+let autoSurfaceArtifactIdEnabled = true;
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 
@@ -14,6 +15,25 @@ document.addEventListener('DOMContentLoaded', function () {
 
     document.getElementById('new-surface-btn').addEventListener('click', openCreate);
     document.getElementById('surface-save-btn').addEventListener('click', saveSurface);
+    const nameInput = document.getElementById('surface-name');
+    const artifactInput = document.getElementById('surface-artifact-id');
+    const groupInput = document.getElementById('surface-group-id');
+    if (nameInput && artifactInput) {
+        nameInput.addEventListener('input', function () {
+            if (!autoSurfaceArtifactIdEnabled) return;
+            artifactInput.value = generateSurfaceArtifactId(nameInput.value);
+            validateIdentityField(artifactInput, 'surface-artifact-id-error', 'Artifact ID');
+        });
+        artifactInput.addEventListener('input', function () {
+            autoSurfaceArtifactIdEnabled = false;
+            validateIdentityField(artifactInput, 'surface-artifact-id-error', 'Artifact ID');
+        });
+    }
+    if (groupInput) {
+        groupInput.addEventListener('input', function () {
+            validateIdentityField(groupInput, 'surface-group-id-error', 'Group ID');
+        });
+    }
 
     const importBtn = document.getElementById('import-surfaces-btn');
     const importInput = document.getElementById('import-surfaces-input');
@@ -31,7 +51,12 @@ document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('surface-uuid').value = '';
         document.getElementById('surface-name').value = '';
         document.getElementById('surface-description').value = '';
+        document.getElementById('surface-group-id').value = '';
+        document.getElementById('surface-artifact-id').value = '';
+        clearIdentityValidation('surface-group-id', 'surface-group-id-error');
+        clearIdentityValidation('surface-artifact-id', 'surface-artifact-id-error');
         document.getElementById('surface-modal-label').textContent = 'New Surface';
+        autoSurfaceArtifactIdEnabled = true;
     });
 });
 
@@ -74,17 +99,25 @@ function renderTable() {
         tr.id = 'surface-row-' + surface.uuid;
         tr.className = 'border-b border-zinc-800/80 last:border-0';
 
+        const surfaceIdentifier = surface.toolId || surface.uuid;
+        const version = surface.version || 'SNAPSHOT';
+        const artifactStatus = surface.artifactStatus || 'SNAPSHOT';
+
         tr.innerHTML = ''
             + '<td class="px-3 py-2 font-semibold text-zinc-100">' + escapeHtml(surface.name || '') + '</td>'
             + '<td class="px-3 py-2 text-zinc-300">' + escapeHtml(surface.description || '') + '</td>'
+            + '<td class="px-3 py-2 text-xs font-mono text-zinc-400">' + escapeHtml(version) + '</td>'
+            + '<td class="px-3 py-2">'
+            + '  <span class="artifact-status-pill artifact-status-' + escapeHtml(artifactStatus) + '">' + escapeHtml(artifactStatus) + '</span>'
+            + '</td>'
             + '<td class="px-3 py-2 text-xs text-zinc-400">' + formatDate(surface.updatedAt) + '</td>'
             + '<td class="px-3 py-2 text-right">'
             + '  <div class="inline-flex gap-1 justify-end">'
-            + '    <a href="/surface/' + encodeURIComponent(surface.uuid) + '/preview" target="_blank" rel="noopener noreferrer" class="rounded-md border border-emerald-500/40 px-2 py-1 text-xs text-emerald-300 transition-colors hover:bg-emerald-500/15" title="Preview surface"><i class="fa-solid fa-eye"></i></a>'
-            + '    <a href="/surfaces/' + encodeURIComponent(surface.uuid) + '/editor" class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/15" title="Open editor"><i class="fa-solid fa-pen-to-square"></i></a>'
-            + '    <button class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/15" onclick="exportSurfacePackage(\'' + escapeJs(surface.uuid) + '\')" title="Export"><i class="fa-solid fa-file-export"></i></button>'
-            + '    <button class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800" onclick="openEdit(\'' + escapeJs(surface.uuid) + '\')" title="Edit"><i class="fa-solid fa-pen"></i></button>'
-            + '    <button class="rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15" onclick="deleteSurface(\'' + escapeJs(surface.uuid) + '\')" title="Delete"><i class="fa-solid fa-trash"></i></button>'
+            + '    <a href="/surface/' + encodeURIComponent(surfaceIdentifier) + '/preview" target="_blank" rel="noopener noreferrer" class="rounded-md border border-emerald-500/40 px-2 py-1 text-xs text-emerald-300 transition-colors hover:bg-emerald-500/15" title="Preview surface"><i class="fa-solid fa-eye"></i></a>'
+            + '    <a href="/surfaces/' + encodeURIComponent(surfaceIdentifier) + '/editor" class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/15" title="Open editor"><i class="fa-solid fa-pen-to-square"></i></a>'
+            + '    <button class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/15" onclick="exportSurfacePackage(\'' + escapeJs(surfaceIdentifier) + '\')" title="Export"><i class="fa-solid fa-file-export"></i></button>'
+            + '    <button class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800" onclick="openEdit(\'' + escapeJs(surfaceIdentifier) + '\')" title="Edit"><i class="fa-solid fa-pen"></i></button>'
+            + '    <button class="rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15" onclick="deleteSurface(\'' + escapeJs(surfaceIdentifier) + '\')" title="Delete"><i class="fa-solid fa-trash"></i></button>'
             + '  </div>'
             + '</td>';
 
@@ -98,18 +131,32 @@ function openCreate() {
     document.getElementById('surface-uuid').value = '';
     document.getElementById('surface-name').value = '';
     document.getElementById('surface-description').value = '';
+    document.getElementById('surface-group-id').value = '';
+    document.getElementById('surface-artifact-id').value = '';
+    clearIdentityValidation('surface-group-id', 'surface-group-id-error');
+    clearIdentityValidation('surface-artifact-id', 'surface-artifact-id-error');
     document.getElementById('surface-modal-label').textContent = 'New Surface';
+    autoSurfaceArtifactIdEnabled = true;
     surfaceModal.show();
 }
 
-function openEdit(uuid) {
-    const surface = allSurfaces.find(function (s) { return s.uuid === uuid; });
+function openEdit(identifier) {
+    const surface = allSurfaces.find(function (s) {
+        return s.uuid === identifier || s.toolId === identifier;
+    });
     if (!surface) return;
 
-    document.getElementById('surface-uuid').value = surface.uuid;
+    document.getElementById('surface-uuid').value = surface.toolId || surface.uuid;
     document.getElementById('surface-name').value = surface.name || '';
     document.getElementById('surface-description').value = surface.description || '';
+    document.getElementById('surface-group-id').value = surface.groupId || '';
+    document.getElementById('surface-artifact-id').value = surface.artifactId || '';
+    clearIdentityValidation('surface-group-id', 'surface-group-id-error');
+    clearIdentityValidation('surface-artifact-id', 'surface-artifact-id-error');
+    document.getElementById('surface-group-id').setAttribute('disabled', 'disabled');
+    document.getElementById('surface-artifact-id').setAttribute('disabled', 'disabled');
     document.getElementById('surface-modal-label').textContent = 'Edit Surface';
+    autoSurfaceArtifactIdEnabled = false;
     surfaceModal.show();
 }
 
@@ -117,14 +164,27 @@ async function saveSurface() {
     const uuid = document.getElementById('surface-uuid').value;
     const name = document.getElementById('surface-name').value.trim();
     const description = document.getElementById('surface-description').value.trim();
+    const groupId = document.getElementById('surface-group-id').value.trim();
+    const artifactId = document.getElementById('surface-artifact-id').value.trim();
 
     if (!name) {
         showAlert('Name is required.', 'danger', 'surface-modal-alert');
         return;
     }
 
-    const body = JSON.stringify({ name: name, description: description });
     const isCreate = !uuid;
+    if (isCreate) {
+        const validGroup = validateIdentityField(document.getElementById('surface-group-id'), 'surface-group-id-error', 'Group ID');
+        const validArtifact = validateIdentityField(document.getElementById('surface-artifact-id'), 'surface-artifact-id-error', 'Artifact ID');
+        if (!groupId || !artifactId || !validGroup || !validArtifact) {
+            showAlert('Group ID and Artifact ID are required and must be alphanumeric (3-64 chars).', 'danger', 'surface-modal-alert');
+            return;
+        }
+    }
+
+    const body = isCreate
+        ? JSON.stringify({ name: name, description: description, groupId: groupId, artifactId: artifactId })
+        : JSON.stringify({ name: name, description: description });
     const url = isCreate ? '/api/surfaces' : '/api/surfaces/' + encodeURIComponent(uuid);
 
     try {
@@ -145,14 +205,14 @@ async function saveSurface() {
     }
 }
 
-async function deleteSurface(uuid) {
-    const surface = allSurfaces.find(function (s) { return s.uuid === uuid; });
+async function deleteSurface(identifier) {
+    const surface = allSurfaces.find(function (s) { return s.uuid === identifier || s.toolId === identifier; });
     const name = surface ? surface.name : 'this surface';
     if (!confirm('Delete "' + name + '"?')) {
         return;
     }
     try {
-        const res = await fetch('/api/surfaces/' + encodeURIComponent(uuid), { method: 'DELETE' });
+        const res = await fetch('/api/surfaces/' + encodeURIComponent(identifier), { method: 'DELETE' });
         if (!res.ok) {
             showAlert('Delete failed.', 'warning');
             return;
@@ -169,6 +229,47 @@ function exportSurfacePackage(uuid) {
         return;
     }
     window.location.href = '/api/surfaces/' + encodeURIComponent(uuid) + '/export';
+}
+
+function slugifySurfaceArtifactId(raw) {
+    const normalized = (raw || '').toString().replace(/[^A-Za-z0-9]/g, '');
+    if (!normalized) return 'surface';
+    if (normalized.length >= 3) return normalized;
+    return (normalized + 'surface').slice(0, 7);
+}
+
+function generateSurfaceArtifactId(name) {
+    return slugifySurfaceArtifactId(name);
+}
+
+function validateIdentityField(inputEl, errorId, fieldLabel) {
+    const value = (inputEl.value || '').trim();
+    const errorEl = document.getElementById(errorId);
+    const isValid = /^[A-Za-z0-9]{3,64}$/.test(value);
+    if (!isValid) {
+        inputEl.classList.add('border-rose-500');
+        if (errorEl) {
+            errorEl.textContent = fieldLabel + ' must be alphanumeric and 3-64 characters.';
+        }
+    } else {
+        inputEl.classList.remove('border-rose-500');
+        if (errorEl) {
+            errorEl.textContent = '';
+        }
+    }
+    return isValid;
+}
+
+function clearIdentityValidation(inputId, errorId) {
+    const inputEl = document.getElementById(inputId);
+    const errorEl = document.getElementById(errorId);
+    if (inputEl) {
+        inputEl.classList.remove('border-rose-500');
+        inputEl.removeAttribute('disabled');
+    }
+    if (errorEl) {
+        errorEl.textContent = '';
+    }
 }
 
 async function importSurfaces(input) {

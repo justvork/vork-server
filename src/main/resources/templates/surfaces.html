@@ -45,6 +45,8 @@
                         <tr>
                             <th class="px-3 py-2 font-semibold">Name</th>
                             <th class="px-3 py-2 font-semibold">Description</th>
+                            <th class="px-3 py-2 font-semibold">Version</th>
+                            <th class="px-3 py-2 font-semibold">Artifact Status</th>
                             <th class="px-3 py-2 font-semibold">Updated</th>
                             <th class="px-3 py-2 text-right font-semibold">Actions</th>
                         </tr>
@@ -70,6 +72,16 @@
                 <div class="mb-3">
                     <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-name">Name <span class="text-rose-400">*</span></label>
                     <input type="text" id="surface-name" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. Project Dashboard">
+                </div>
+                <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-group-id">Group ID <span class="text-rose-400">*</span></label>
+                    <input type="text" id="surface-group-id" minlength="3" maxlength="64" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. vork">
+                    <div id="surface-group-id-error" class="mt-1 text-xs text-rose-300"></div>
+                </div>
+                <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-artifact-id">Artifact ID <span class="text-rose-400">*</span></label>
+                    <input type="text" id="surface-artifact-id" minlength="3" maxlength="64" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. projectDashboard">
+                    <div id="surface-artifact-id-error" class="mt-1 text-xs text-rose-300"></div>
                 </div>
                 <div class="mb-3">
                     <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-description">Description</label>

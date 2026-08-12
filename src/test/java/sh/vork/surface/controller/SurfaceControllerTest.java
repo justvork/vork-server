@@ -6,9 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import java.security.Principal;
 import java.util.List;
 import java.util.Map;
@@ -17,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.ResponseEntity;
 import org.mockito.ArgumentMatchers;
+import org.springframework.mock.web.MockMultipartFile;
 
 import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
@@ -34,6 +37,7 @@ import sh.vork.surface.Surface;
 import sh.vork.surface.service.SurfaceReflectionContractService;
 import sh.vork.surface.service.SurfaceService;
 import sh.vork.surface.service.SurfaceSkillExecutionService;
+import sh.vork.util.ZipArchiveUtil;
 
 /**
  * Unit tests for {@link SurfaceController}.
@@ -71,8 +75,25 @@ class SurfaceControllerTest {
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
         SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
+        when(surfaceService.resolveByUuidOrToolId("surface-1")).thenReturn(new Surface(
+            "vork-surface1-SNAPSHOT",
+            "surface1",
+            "My Surface",
+            "desc",
+            "session-1",
+            "",
+            List.of(),
+            List.of(),
+            List.of(),
+            "vork",
+            "surface1",
+            "SNAPSHOT",
+            sh.vork.surface.ArtifactStatus.SNAPSHOT,
+            1L,
+            1L));
+
         when(surfaceService.update(
-                ArgumentMatchers.eq("surface-1"),
+            ArgumentMatchers.eq("vork-surface1-SNAPSHOT"),
                 ArgumentMatchers.any(),
                 ArgumentMatchers.any(),
                 ArgumentMatchers.any(),
@@ -239,6 +260,147 @@ class SurfaceControllerTest {
         assertEquals(404, response.getStatusCode().value());
         assertEquals("Preview file not found", response.getBody());
     }
+
+        @Test
+        void exportSurface_writesOnlySurfaceJson() throws Exception {
+        SurfaceService surfaceService = mock(SurfaceService.class);
+        SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+        SurfaceReflectionContractService contractService = mock(SurfaceReflectionContractService.class);
+        ReflectionService reflectionService = mock(ReflectionService.class);
+        ChatService chatService = mock(ChatService.class);
+        SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
+            SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
+
+        Surface surface = new Surface(
+            "surface-1",
+            "surfaceone",
+            "Surface One",
+            "desc",
+            "editor-session-1",
+            "",
+            List.of(),
+            List.of(),
+            List.of(),
+            1L,
+            1L);
+
+        when(surfaceService.resolveByUuidOrToolId("surface-1")).thenReturn(surface);
+        when(sessionFileSystem.list(FileArea.SESSION, "editor-session-1", ""))
+            .thenReturn(List.of(new sh.vork.filesystem.FileNode("index.html", "index.html", false, 12L, 1L)));
+        when(sessionFileSystem.read(FileArea.SESSION, "editor-session-1", "index.html"))
+            .thenReturn(new ByteArrayInputStream("<html></html>".getBytes()));
+
+        ResponseEntity<?> response = controller.exportSurface("surface-1");
+
+        assertEquals(200, response.getStatusCode().value());
+        byte[] zipBytes = assertInstanceOf(byte[].class, response.getBody());
+        Map<String, byte[]> entries = ZipArchiveUtil.read(zipBytes);
+        assertTrue(entries.containsKey("surface.json"));
+        assertTrue(entries.containsKey("assets/index.html"));
+        assertTrue(!entries.containsKey("definition.json"));
+        String surfaceJson = new String(entries.get("surface.json"));
+        assertTrue(!surfaceJson.contains("\"sessionUuid\""));
+        assertTrue(!surfaceJson.contains("\"executionSessionUuid\""));
+        verify(sessionFileSystem).list(FileArea.SESSION, "editor-session-1", "");
+        verify(sessionFileSystem).read(FileArea.SESSION, "editor-session-1", "index.html");
+    }
+
+        @Test
+    void importSurface_ignoresArchivedSessionFiles() throws Exception {
+        SurfaceService surfaceService = mock(SurfaceService.class);
+        SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+        SurfaceReflectionContractService contractService = mock(SurfaceReflectionContractService.class);
+        ReflectionService reflectionService = mock(ReflectionService.class);
+        ChatService chatService = mock(ChatService.class);
+        SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
+        DatabaseRepository<Surface> surfaceRepository = mock(DatabaseRepository.class);
+        DatabaseRepository<AiSession> sessionRepository = mock(DatabaseRepository.class);
+        ObjectMapper objectMapper = new ObjectMapper();
+
+        SurfaceController controller = new SurfaceController(
+            surfaceService,
+            surfaceRepository,
+            sessionRepository,
+            sessionFileSystem,
+            contractService,
+            reflectionService,
+            chatService,
+            executionService,
+            objectMapper);
+
+        SurfaceController.SurfaceArtifact incoming = new SurfaceController.SurfaceArtifact(
+            "vork-importedsurface-SNAPSHOT",
+            "incoming-surface",
+            "Imported Surface",
+            "desc",
+            List.of(),
+            List.of(),
+            List.of(),
+            "vork",
+            "importedsurface",
+            "SNAPSHOT",
+            sh.vork.surface.ArtifactStatus.SNAPSHOT);
+        SurfaceController.SurfaceExportPackage pkg = new SurfaceController.SurfaceExportPackage("1.0", incoming);
+
+        Map<String, byte[]> zipEntries = Map.of(
+            "surface.json", objectMapper.writeValueAsBytes(pkg),
+            "assets/index.html", "<html>imported</html>".getBytes());
+        byte[] archive = ZipArchiveUtil.write(zipEntries);
+        MockMultipartFile file = new MockMultipartFile("file", "surface.zip", "application/zip", archive);
+
+        Surface created = new Surface(
+            "created-surface-1",
+            "imported-surface",
+            "Imported Surface",
+            "desc",
+            "target-editor-session",
+            "",
+            List.of(),
+            List.of(),
+            List.of(),
+            "vork",
+            "importedsurface",
+            "SNAPSHOT",
+            sh.vork.surface.ArtifactStatus.SNAPSHOT,
+            2L,
+            2L);
+        when(surfaceService.create("Imported Surface", "desc", "admin", "vork", "importedsurface")).thenReturn(created);
+        when(surfaceService.update(
+            ArgumentMatchers.eq("created-surface-1"),
+            ArgumentMatchers.eq("Imported Surface"),
+            ArgumentMatchers.eq("desc"),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.any()))
+            .thenReturn(created);
+        when(surfaceService.ensureSession("created-surface-1", "admin")).thenReturn(new AiSession(
+            "editor-session-local",
+            "GEMINI",
+            SessionOriginMode.WEB,
+            "admin",
+            "Imported Session",
+            1L,
+            0,
+            List.of(),
+            null,
+            AiSessionStatus.RUNNING,
+            null,
+            null,
+            List.of(),
+            List.of(),
+            List.of()));
+
+        Principal principal = () -> "admin";
+        ResponseEntity<?> response = controller.importSurface(file, principal);
+
+        assertEquals(200, response.getStatusCode().value());
+        verify(sessionFileSystem).write(
+            ArgumentMatchers.eq(FileArea.SESSION),
+            ArgumentMatchers.eq("editor-session-local"),
+            ArgumentMatchers.eq("index.html"),
+            ArgumentMatchers.any(InputStream.class),
+            ArgumentMatchers.anyLong());
+        }
 
         @Test
         void getSurfaceReflectionContracts_returnsContractsForSurface() {

@@ -24,6 +24,7 @@ import sh.vork.ai.service.AgentAssignmentService;
 import sh.vork.binding.BindingCatalogService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.reflection.ReflectionService;
+import sh.vork.scheduling.domain.ScheduledJob;
 import sh.vork.setup.SetupService;
 import sh.vork.skill.Skill;
 import sh.vork.skill.SkillCategoryService;
@@ -50,6 +51,9 @@ class ReadAccessEndpointsSecurityTest {
 
     @MockitoBean
     private DatabaseRepository<Skill> skillRepository;
+
+        @MockitoBean
+        private DatabaseRepository<ScheduledJob> jobRepository;
 
     @MockitoBean
     private SkillService skillService;

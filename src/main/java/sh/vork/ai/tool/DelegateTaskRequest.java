@@ -11,7 +11,11 @@ public record DelegateTaskRequest(
         @JsonPropertyDescription("Exact display name of the background agent template to run.")
         String agentName,
 
+        @JsonProperty(required = true, value = "jobUuid")
+        @JsonPropertyDescription("UUID of the preconfigured scheduled job artifact to delegate. This job must be assigned to the selected agent.")
+        String jobUuid,
+
         @JsonProperty(required = true, value = "prompt")
-        @JsonPropertyDescription("Complete task prompt including all data required for the delegated background task.")
+        @JsonPropertyDescription("Complete task prompt including all data required for the delegated background task. This overrides the assigned job prompt for this delegated run.")
         String prompt
 ) {}

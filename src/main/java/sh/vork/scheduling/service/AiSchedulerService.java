@@ -81,7 +81,12 @@ public class AiSchedulerService {
                 job.expectedOutput(),
                 job.status() == null ? ScheduledJobStatus.WAITING : job.status(),
                 job.skillUuids(),
-                job.toolIds());
+                job.toolIds(),
+                job.notificationUserIds(),
+                job.groupId(),
+                job.artifactId(),
+                job.version(),
+                job.artifactStatus());
 
         // Cancel any existing future for this id
         cancelFuture(id);
@@ -100,7 +105,8 @@ public class AiSchedulerService {
                 base.durationType(), base.lastExecutionTime(), nextExec,
                 base.agentTemplateId(), base.provider(), base.modelId(),
                 base.oobTimeoutMinutes(), base.expectedOutput(), base.status(),
-                base.skillUuids(), base.toolIds());
+                base.skillUuids(), base.toolIds(), base.notificationUserIds(),
+                base.groupId(), base.artifactId(), base.version(), base.artifactStatus());
         jobRepository.save(normalized);
 
         AiJobRunner runner = new AiJobRunner(normalized, backgroundOrchestrationEngine,
@@ -188,7 +194,8 @@ public class AiSchedulerService {
                 job.invocationType(), job.startTime(), job.repeatDuration(), job.durationType(),
                 job.lastExecutionTime(), job.nextExecutionTime(), job.agentTemplateId(),
                 job.provider(), job.modelId(), job.oobTimeoutMinutes(), job.expectedOutput(),
-                job.status(), job.skillUuids(), job.toolIds()));
+                job.status(), job.skillUuids(), job.toolIds(), job.notificationUserIds(),
+                job.groupId(), job.artifactId(), job.version(), job.artifactStatus()));
         AiJobRunner runner = new AiJobRunner(job, backgroundOrchestrationEngine,
             jobRepository, sessionRepository, trackingUuid);
         taskScheduler.execute(runner);
@@ -242,7 +249,8 @@ public class AiSchedulerService {
                     job.durationType(), job.lastExecutionTime(), 0L,
                     job.agentTemplateId(), job.provider(), job.modelId(),
                     job.oobTimeoutMinutes(), job.expectedOutput(), ScheduledJobStatus.WAITING,
-                    job.skillUuids(), job.toolIds()));
+                    job.skillUuids(), job.toolIds(), job.notificationUserIds(),
+                    job.groupId(), job.artifactId(), job.version(), job.artifactStatus()));
             log.info("Job marked waiting after authorization resume [id={}, tracking={}]",
                     job.id(), trackingSessionUuid);
         } else {
@@ -265,7 +273,8 @@ public class AiSchedulerService {
                 job.durationType(), job.lastExecutionTime(), job.nextExecutionTime(),
                 job.agentTemplateId(), job.provider(), job.modelId(),
                 job.oobTimeoutMinutes(), job.expectedOutput(), status,
-                job.skillUuids(), job.toolIds());
+                job.skillUuids(), job.toolIds(), job.notificationUserIds(),
+                job.groupId(), job.artifactId(), job.version(), job.artifactStatus());
     }
 
     public static Duration toDuration(long amount, DurationType type) {

@@ -56,6 +56,8 @@ class AiConfigDelegateTaskToolTest {
         @SuppressWarnings("unchecked")
         DatabaseRepository<AgentTemplate> agentRepo = mock(DatabaseRepository.class);
         @SuppressWarnings("unchecked")
+        DatabaseRepository<ScheduledJob> jobRepo = mock(DatabaseRepository.class);
+        @SuppressWarnings("unchecked")
         DatabaseRepository<AiSession> sessionRepo = mock(DatabaseRepository.class);
         AgentAssignmentService assignmentService = mock(AgentAssignmentService.class);
 
@@ -66,9 +68,40 @@ class AiConfigDelegateTaskToolTest {
                 List.of(),
                 false,
                 List.of(),
-                AgentType.BACKGROUND);
+                AgentType.BACKGROUND,
+                List.of(),
+                List.of(),
+                List.of("job-template-1"),
+                null);
+
+            ScheduledJob assignedJob = new ScheduledJob(
+                "job-template-1",
+                "Assigned Template",
+                "Original prompt",
+                null,
+                "alice",
+                InvocationType.MANUAL,
+                java.time.Instant.now(),
+                0L,
+                sh.vork.scheduling.domain.DurationType.MINUTES,
+                0L,
+                0L,
+                null,
+                null,
+                null,
+                240,
+                null,
+                sh.vork.scheduling.domain.ScheduledJobStatus.WAITING,
+                List.of(),
+                List.of(),
+                List.of(),
+                "vork",
+                "assignedTemplate",
+                "SNAPSHOT",
+                sh.vork.scheduling.domain.ArtifactStatus.SNAPSHOT);
 
         when(agentRepo.list(0, Integer.MAX_VALUE)).thenReturn(List.of(triage).stream());
+            when(jobRepo.get("job-template-1")).thenReturn(assignedJob);
         when(assignmentService.isAssignedToUser(eq(triage), eq("alice"))).thenReturn(true);
         when(schedulerService.scheduleJob(any(ScheduledJob.class))).thenAnswer(invocation -> {
             ScheduledJob in = invocation.getArgument(0);
@@ -98,9 +131,9 @@ class AiConfigDelegateTaskToolTest {
                 new UsernamePasswordAuthenticationToken("alice", "n/a"));
 
         AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
-        ToolCallback tool = config.delegateTask(schedulerProvider, agentRepo, sessionRepo, assignmentService);
+        ToolCallback tool = config.delegateTask(schedulerProvider, agentRepo, jobRepo, sessionRepo, assignmentService);
 
-        String output = tool.call("{\"agentName\":\"Triage Agent\",\"prompt\":\"Classify this content\"}");
+        String output = tool.call("{\"agentName\":\"Triage Agent\",\"jobUuid\":\"job-template-1\",\"prompt\":\"Classify this content\"}");
         Map<String, Object> result = objectMapper.readValue(output, new TypeReference<>() {});
 
         assertEquals("scheduled", result.get("status"));
@@ -129,6 +162,8 @@ class AiConfigDelegateTaskToolTest {
         @SuppressWarnings("unchecked")
         DatabaseRepository<AgentTemplate> agentRepo = mock(DatabaseRepository.class);
         @SuppressWarnings("unchecked")
+        DatabaseRepository<ScheduledJob> jobRepo = mock(DatabaseRepository.class);
+        @SuppressWarnings("unchecked")
         DatabaseRepository<AiSession> sessionRepo = mock(DatabaseRepository.class);
         AgentAssignmentService assignmentService = mock(AgentAssignmentService.class);
 
@@ -140,9 +175,9 @@ class AiConfigDelegateTaskToolTest {
                 new UsernamePasswordAuthenticationToken("alice", "n/a"));
 
         AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
-        ToolCallback tool = config.delegateTask(schedulerProvider, agentRepo, sessionRepo, assignmentService);
+        ToolCallback tool = config.delegateTask(schedulerProvider, agentRepo, jobRepo, sessionRepo, assignmentService);
 
-        String output = tool.call("{\"agentName\":\"Triage Agent\",\"prompt\":\"Classify this content\"}");
+        String output = tool.call("{\"agentName\":\"Triage Agent\",\"jobUuid\":\"job-template-1\",\"prompt\":\"Classify this content\"}");
         Map<String, Object> result = objectMapper.readValue(output, new TypeReference<>() {});
 
         assertEquals("error", result.get("status"));
@@ -162,6 +197,8 @@ class AiConfigDelegateTaskToolTest {
         @SuppressWarnings("unchecked")
         DatabaseRepository<AgentTemplate> agentRepo = mock(DatabaseRepository.class);
         @SuppressWarnings("unchecked")
+        DatabaseRepository<ScheduledJob> jobRepo = mock(DatabaseRepository.class);
+        @SuppressWarnings("unchecked")
         DatabaseRepository<AiSession> sessionRepo = mock(DatabaseRepository.class);
         AgentAssignmentService assignmentService = mock(AgentAssignmentService.class);
 
@@ -180,9 +217,9 @@ class AiConfigDelegateTaskToolTest {
                 new UsernamePasswordAuthenticationToken("alice", "n/a"));
 
         AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
-        ToolCallback tool = config.delegateTask(schedulerProvider, agentRepo, sessionRepo, assignmentService);
+        ToolCallback tool = config.delegateTask(schedulerProvider, agentRepo, jobRepo, sessionRepo, assignmentService);
 
-        String output = tool.call("{\"agentName\":\"Support Agent\",\"prompt\":\"Classify this content\"}");
+        String output = tool.call("{\"agentName\":\"Support Agent\",\"jobUuid\":\"job-template-1\",\"prompt\":\"Classify this content\"}");
         Map<String, Object> result = objectMapper.readValue(output, new TypeReference<>() {});
 
         assertEquals("error", result.get("status"));

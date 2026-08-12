@@ -165,16 +165,17 @@ public class LocalSessionFileSystemService implements SessionFileSystem {
 
     private Path areaRoot(FileArea area, String sessionUuid) {
         Objects.requireNonNull(area, "area is required");
-        return switch (area) {
-            case SHARED -> baseDir.resolve("shared").normalize();
-            case SESSION -> {
-                String sid = sanitizeSessionUuid(sessionUuid);
-                if (sid.isBlank()) {
-                    throw new IllegalArgumentException("sessionUuid is required for SESSION area");
-                }
-                yield baseDir.resolve("sessions").resolve(sid).normalize();
+        if (area == FileArea.SHARED) {
+            return baseDir.resolve("shared").normalize();
+        }
+        if (area == FileArea.SESSION) {
+            String sid = sanitizeSessionUuid(sessionUuid);
+            if (sid.isBlank()) {
+                throw new IllegalArgumentException("sessionUuid is required for SESSION area");
             }
-        };
+            return baseDir.resolve("sessions").resolve(sid).normalize();
+        }
+        throw new IllegalArgumentException("Unsupported file area: " + area);
     }
 
     private static void ensureInsideRoot(Path root, Path resolved) {

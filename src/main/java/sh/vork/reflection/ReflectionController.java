@@ -3,6 +3,9 @@ package sh.vork.reflection;
 import java.util.List;
 import java.util.Map;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -30,6 +33,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class ReflectionController {
 
     private static final Logger log = LoggerFactory.getLogger(ReflectionController.class);
+    private static final ObjectMapper EXPORT_OBJECT_MAPPER = new ObjectMapper();
 
     private final ReflectionService reflectionService;
 
@@ -185,12 +189,20 @@ public class ReflectionController {
             return ResponseEntity.notFound().build();
         }
 
+        String prettyJson;
+        try {
+            prettyJson = EXPORT_OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(pkg);
+        } catch (JsonProcessingException ex) {
+            log.warn("Reflection export JSON serialization failed [groupUuid={}]: {}", uuid, ex.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to serialize export payload."));
+        }
+
         String safeName = pkg.group().name().replaceAll("[^a-zA-Z0-9._-]", "_");
         String filename = "reflection-group-" + safeName + ".json";
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
-                .body(pkg);
+                .body(prettyJson);
     }
 
     @PostMapping("/reflection-groups/import")
