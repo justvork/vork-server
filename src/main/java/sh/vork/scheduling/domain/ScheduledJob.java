@@ -91,6 +91,14 @@ public record ScheduledJob(
         return artifactStatus == null || artifactStatus == ArtifactStatus.SNAPSHOT;
     }
 
+    @JsonIgnore
+    public boolean isDeletable() {
+        return artifactStatus == null
+                || artifactStatus == ArtifactStatus.SNAPSHOT
+                || artifactStatus == ArtifactStatus.SUBMITTED
+                || artifactStatus == ArtifactStatus.REJECTED;
+    }
+
     private static String normalizeIdentifier(String raw) {
         if (raw == null) {
             return null;

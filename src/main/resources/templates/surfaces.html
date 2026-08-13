@@ -3,12 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <title>Surfaces — Vork</title>
     <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
     <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
     <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
     <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
-    <link rel="stylesheet" href="/css/surfaces-page.css" th:href="@{/css/surfaces-page.css}">
+    <link rel="stylesheet" href="/css/surfaces-page.css?v=20260813.3" th:href="@{/css/surfaces-page.css(v='20260813.3')}">
 </head>
 <body class="bg-zinc-950 text-zinc-100">
 <div th:replace="~{fragments/header :: header}"></div>
@@ -20,11 +22,15 @@
             <p class="vork-page-subtitle">Custom AI-built web pages and their artifacts</p>
         </div>
         <div class="vork-page-header-actions">
-            <button id="import-surfaces-btn" class="rounded-lg border border-emerald-500/40 px-3 py-2 text-sm font-medium text-emerald-300 transition-colors hover:bg-emerald-500/15">
+            <span id="github-connection-status" class="text-sm text-zinc-400">Checking GitHub connection…</span>
+            <button type="button" id="github-connect-btn" class="rounded-lg border border-cyan-500/40 px-3 py-2 text-sm font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15" title="Connect GitHub">
+                <i class="fa-brands fa-github mr-2"></i>Connect GitHub
+            </button>
+            <button type="button" id="import-surfaces-btn" class="rounded-lg border border-emerald-500/40 px-3 py-2 text-sm font-medium text-emerald-300 transition-colors hover:bg-emerald-500/15">
                 <i class="fa-solid fa-file-import mr-2"></i>Import
             </button>
             <input id="import-surfaces-input" type="file" accept=".zip,application/zip" class="hidden">
-            <button id="new-surface-btn" class="rounded-lg border border-cyan-500/40 px-3 py-2 text-sm font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15">
+            <button type="button" id="new-surface-btn" class="rounded-lg border border-cyan-500/40 px-3 py-2 text-sm font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15">
                 <i class="fa-solid fa-plus mr-2"></i>New Surface
             </button>
         </div>
@@ -32,6 +38,9 @@
 
     <div class="vork-content-stack">
         <div id="alert-area"></div>
+        <div id="github-connection-hint" class="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-200">
+            Connect GitHub before publishing artifacts.
+        </div>
 
         <div class="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
             <div class="p-0">
@@ -96,7 +105,73 @@
     </div>
 </div>
 
+<!-- Publish Draft Modal -->
+<div class="modal" id="surface-publish-modal" tabindex="-1" aria-labelledby="surface-publish-modal-label" aria-hidden="true">
+    <div class="modal-dialog surface-publish-modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="surface-publish-modal-label">Publish Surface Draft</h5>
+                <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-700 text-zinc-300 transition-colors hover:bg-zinc-800" data-bs-dismiss="modal" aria-label="Close">×</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="surface-publish-id">
+                <div id="surface-publish-modal-alert" class="mb-3"></div>
+                <p class="mb-3 text-xs text-zinc-400">AI generated this draft using the default model. Review and edit any field before submitting.</p>
+
+                <div class="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-publish-version">Version <span class="text-rose-400">*</span></label>
+                        <input type="text" id="surface-publish-version" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. 1.0">
+                    </div>
+                    <div class="flex items-end">
+                        <label class="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-200">
+                            <input type="checkbox" id="surface-publish-breaking-change" class="h-4 w-4 rounded border-zinc-600 bg-zinc-950 text-cyan-400 focus:ring-cyan-500/40">
+                            Breaking change
+                        </label>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-publish-pr-title">PR title <span class="text-rose-400">*</span></label>
+                    <input type="text" id="surface-publish-pr-title" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25">
+                </div>
+
+                <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-publish-change-summary">Change summary <span class="text-rose-400">*</span></label>
+                    <textarea id="surface-publish-change-summary" rows="2" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"></textarea>
+                </div>
+
+                <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-publish-commit-message">Commit message</label>
+                    <input type="text" id="surface-publish-commit-message" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25">
+                </div>
+
+                <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-publish-pr-body">PR body</label>
+                    <textarea id="surface-publish-pr-body" rows="4" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"></textarea>
+                </div>
+
+                <div class="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-publish-release-notes">Release notes</label>
+                        <textarea id="surface-publish-release-notes" rows="3" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"></textarea>
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-publish-reviewer-hints">Reviewer hints</label>
+                        <textarea id="surface-publish-reviewer-hints" rows="3" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="rounded-lg border border-zinc-600 px-3 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" id="surface-publish-submit-btn" class="rounded-lg border border-cyan-500/40 px-3 py-2 text-sm font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15">Submit PR</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
-<script src="/js/surfaces-page.js" th:src="@{/js/surfaces-page.js}"></script>
+<script src="/js/github-device-flow-ui.js?v=20260813.2" th:src="@{/js/github-device-flow-ui.js(v='20260813.2')}"></script>
+<script src="/js/surfaces-page.js?v=20260813.10" th:src="@{/js/surfaces-page.js(v='20260813.10')}"></script>
 </body>
 </html>

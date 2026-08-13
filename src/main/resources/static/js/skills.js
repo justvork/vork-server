@@ -5,6 +5,7 @@ const PARAM_TYPES = ['string', 'text', 'int', 'double', 'boolean'];
 
 let skillModal;
 let groupModal;
+let skillPublishModal;
 let allSkills     = [];
 let allGroups     = [];
 let allGroupViews = [];
@@ -16,6 +17,7 @@ let allReflectionGroups = [];
 let allReflectionBindingOptions = [];
 let providerGroups = [];
 let providerGroupByKey = {};
+let githubConnection;
 let categoriesLoadFailed = false;
 let modalTools      = [];
 let modalTypes      = [];
@@ -23,11 +25,27 @@ let modalSubSkills  = [];
 let modalParams     = []; // [{name, type, description, inputMode}]
 let modalSecrets    = []; // [{name, description}]
 let modalBindingUuids = []; // selected reflection binding UUIDs
+const csrfToken = document.querySelector('meta[name="_csrf"]')?.getAttribute('content') || '';
+const csrfHeader = document.querySelector('meta[name="_csrf_header"]')?.getAttribute('content') || 'X-CSRF-TOKEN';
+
+function contributionPostHeaders() {
+    const headers = { 'Content-Type': 'application/json' };
+    if (csrfToken) {
+        headers[csrfHeader] = csrfToken;
+    }
+    return headers;
+}
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function () {
     skillModal = new VorkModal(document.getElementById('skillModal'));
     groupModal = new VorkModal(document.getElementById('groupModal'));
+    skillPublishModal = new VorkModal(document.getElementById('skill-publish-modal'));
+    githubConnection = window.VorkGitHubConnection
+        ? window.VorkGitHubConnection.init({
+            alertFn: showAlert
+        })
+        : null;
     loadData();
 
     document.getElementById('skillModal').addEventListener('hidden.bs.modal', function () {
@@ -43,6 +61,22 @@ document.addEventListener('DOMContentLoaded', function () {
     document.getElementById('groupModal').addEventListener('hidden.bs.modal', function () {
         clearAlert('group-modal-alert');
     });
+    const publishModalEl = document.getElementById('skill-publish-modal');
+    if (publishModalEl) {
+        publishModalEl.addEventListener('hidden.bs.modal', function () {
+            clearAlert('skill-publish-modal-alert');
+            document.getElementById('skill-publish-id').value = '';
+            document.getElementById('skill-publish-version').value = '';
+            document.getElementById('skill-publish-pr-title').value = '';
+            document.getElementById('skill-publish-change-summary').value = '';
+            document.getElementById('skill-publish-commit-message').value = '';
+            document.getElementById('skill-publish-pr-body').value = '';
+            document.getElementById('skill-publish-release-notes').value = '';
+            document.getElementById('skill-publish-reviewer-hints').value = '';
+            document.getElementById('skill-publish-breaking-change').checked = false;
+            setSkillPublishLoading(false);
+        });
+    }
     document.addEventListener('click', function (e) {
         if (!e.target.closest('#tool-search') && !e.target.closest('#tool-dropdown')) {
             document.getElementById('tool-dropdown').classList.add('hidden');
@@ -138,7 +172,12 @@ function renderGroupTable() {
     allGroupViews.forEach(function (entry) {
         const group = entry.group || entry;
         const skills = entry.skills || allSkills.filter(function (s) { return s.groupUuid === group.uuid; });
-        const groupBindingSummary = renderGroupBindingSummaryHtml(skills);
+        const version = resolveGroupArtifactVersion(group);
+        const artifactStatus = group.artifactStatus || 'SNAPSHOT';
+        const isSnapshot = artifactStatus === 'SNAPSHOT';
+        const canDelete = artifactStatus === 'SNAPSHOT'
+            || artifactStatus === 'SUBMITTED'
+            || artifactStatus === 'REJECTED';
 
         const tr = document.createElement('tr');
         tr.id = 'group-row-' + group.uuid;
@@ -164,22 +203,41 @@ function renderGroupTable() {
                     }).join('')
                     + '<button class="mb-1 inline-flex items-center rounded-full border border-dashed border-zinc-600 px-2.5 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" onclick="openCreate(\'' + escapeHtml(group.uuid) + '\')" title="Add skill to group"><i class="fa-solid fa-plus mr-1"></i>Add</button>';
 
+        const contributionActions = [];
+        if (isSnapshot) {
+            contributionActions.push('<button type="button" class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/15 contrib-action" data-default-title="Publish to staging via PR" onclick="publishSkillGroupContribution(\'' + escapeJs(group.uuid) + '\')" title="Publish to staging via PR" disabled><i class="fa-solid fa-cloud-arrow-up"></i></button>');
+        } else {
+            if (artifactStatus === 'SUBMITTED') {
+                contributionActions.push('<button type="button" class="rounded-md border border-blue-500/40 px-2 py-1 text-xs text-blue-300 transition-colors hover:bg-blue-500/15 contrib-action" data-default-title="Refresh status from GitHub" onclick="refreshSkillGroupContributionStatus(\'' + escapeJs(group.uuid) + '\')" title="Refresh status from GitHub" disabled><i class="fa-solid fa-rotate-right"></i></button>');
+            }
+            contributionActions.push('<button type="button" class="rounded-md border border-amber-500/40 px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-amber-500/15 contrib-action" data-default-title="Create SNAPSHOT clone from immutable version" onclick="createSkillGroupSnapshotContribution(\'' + escapeJs(group.uuid) + '\')" title="Create SNAPSHOT clone from immutable version" disabled><i class="fa-solid fa-code-branch"></i></button>');
+        }
+
+        const deleteAction = canDelete
+            ? '<button class="rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15" onclick="deleteGroup(\'' + escapeHtml(group.uuid) + '\')" title="Delete group"><i class="fa-solid fa-trash"></i></button>'
+            : '<button type="button" class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-500 cursor-not-allowed" title="Only SNAPSHOT, SUBMITTED, or REJECTED groups can be deleted" disabled><i class="fa-solid fa-trash"></i></button>';
+
         tr.innerHTML = ''
             + '<td class="px-3 py-2 font-semibold text-zinc-100">' + escapeHtml(group.name || '') + '</td>'
             + '<td class="px-3 py-2"><span class="inline-flex rounded-md border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-400">' + escapeHtml(group.category || '—') + '</span></td>'
             + '<td class="px-3 py-2">' + pills + '</td>'
-            + '<td class="px-3 py-2">' + groupBindingSummary + '</td>'
-            + '<td class="px-3 py-2 text-xs text-zinc-400">' + escapeHtml(group.author || '—') + '</td>'
+            + '<td class="px-3 py-2 text-xs font-mono text-zinc-400">' + escapeHtml(version) + '</td>'
+            + '<td class="px-3 py-2"><span class="artifact-status-pill artifact-status-' + escapeHtml(artifactStatus) + '">' + escapeHtml(artifactStatus) + '</span></td>'
             + '<td class="px-3 py-2 text-right">'
             + '  <div class="inline-flex gap-1 justify-end">'
             + '    <button class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800" onclick="openEditGroup(\'' + escapeHtml(group.uuid) + '\')" title="Edit group"><i class="fa-solid fa-pen"></i></button>'
             + '    <button class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/15" onclick="exportGroup(\'' + escapeHtml(group.uuid) + '\')" title="Export group"><i class="fa-solid fa-file-export"></i></button>'
-            + '    <button class="rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15" onclick="deleteGroup(\'' + escapeHtml(group.uuid) + '\')" title="Delete group"><i class="fa-solid fa-trash"></i></button>'
+            + contributionActions.join('')
+            + deleteAction
             + '  </div>'
             + '</td>';
 
         body.appendChild(tr);
     });
+
+    if (githubConnection && typeof githubConnection.refreshStatus === 'function') {
+        githubConnection.refreshStatus();
+    }
 }
 
 function parseRecommendedModel(raw) {
@@ -1193,6 +1251,10 @@ function openCreateGroup() {
     document.getElementById('groupModalLabel').textContent = 'New Group';
     document.getElementById('group-id').value = '';
     document.getElementById('group-name').value = '';
+    document.getElementById('group-group-id').value = '';
+    document.getElementById('group-artifact-id').value = '';
+    document.getElementById('group-group-id').disabled = false;
+    document.getElementById('group-artifact-id').disabled = false;
     document.getElementById('group-author').value = '';
     populateCategorySelect('');
     clearAlert('group-modal-alert');
@@ -1208,6 +1270,10 @@ function openEditGroup(groupUuid) {
     document.getElementById('groupModalLabel').textContent = 'Edit Group: ' + group.name;
     document.getElementById('group-id').value = group.uuid;
     document.getElementById('group-name').value = group.name || '';
+    document.getElementById('group-group-id').value = group.groupId || '';
+    document.getElementById('group-artifact-id').value = group.artifactId || '';
+    document.getElementById('group-group-id').disabled = true;
+    document.getElementById('group-artifact-id').disabled = true;
     document.getElementById('group-author').value = group.author || '';
     populateCategorySelect(group.category || '');
     clearAlert('group-modal-alert');
@@ -1217,11 +1283,23 @@ function openEditGroup(groupUuid) {
 async function saveGroup() {
     const id = document.getElementById('group-id').value.trim();
     const name = document.getElementById('group-name').value.trim();
+    const groupId = document.getElementById('group-group-id').value.trim();
+    const artifactId = document.getElementById('group-artifact-id').value.trim();
     const author = document.getElementById('group-author').value.trim();
     const category = document.getElementById('group-category').value.trim();
 
     if (!name) {
         showAlertIn('group-modal-alert', 'Group name is required.', 'warning');
+        return;
+    }
+
+    if (!groupId || !/^[A-Za-z0-9]{3,64}$/.test(groupId)) {
+        showAlertIn('group-modal-alert', 'Group ID must be alphanumeric and 3-64 characters.', 'warning');
+        return;
+    }
+
+    if (!artifactId || !/^[A-Za-z0-9]{3,64}$/.test(artifactId)) {
+        showAlertIn('group-modal-alert', 'Artifact ID must be alphanumeric and 3-64 characters.', 'warning');
         return;
     }
 
@@ -1244,7 +1322,13 @@ async function saveGroup() {
         const res = await fetch(url, {
             method: method,
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: name, author: author, category: category })
+            body: JSON.stringify({
+                name: name,
+                author: author,
+                category: category,
+                groupId: groupId,
+                artifactId: artifactId
+            })
         });
         const data = await res.json();
         if (data.error) {
@@ -1262,6 +1346,12 @@ async function saveGroup() {
 }
 
 async function deleteGroup(groupUuid) {
+    const group = allGroups.find(function (g) { return g.uuid === groupUuid; });
+    const status = (group && group.artifactStatus) ? group.artifactStatus : 'SNAPSHOT';
+    if (status !== 'SNAPSHOT' && status !== 'SUBMITTED' && status !== 'REJECTED') {
+        showAlert('Only SNAPSHOT, SUBMITTED, or REJECTED groups can be deleted. This group is ' + status + '.', 'warning');
+        return;
+    }
     if (!confirm('Delete this group? Only empty groups can be deleted.')) return;
     try {
         const res = await fetch('/api/skill-groups/' + groupUuid, { method: 'DELETE' });
@@ -1277,14 +1367,205 @@ async function deleteGroup(groupUuid) {
     }
 }
 
+async function publishSkillGroupContribution(id) {
+    if (!id) {
+        showAlert('Group id is required for publish.', 'warning');
+        return;
+    }
+
+    document.getElementById('skill-publish-id').value = id;
+    clearAlert('skill-publish-modal-alert');
+    setSkillPublishLoading(true);
+    skillPublishModal.show();
+
+    try {
+        const draftRes = await fetch('/api/contributions/skills/' + encodeURIComponent(id) + '/publish-draft', {
+            method: 'POST',
+            headers: contributionPostHeaders(),
+            body: JSON.stringify({})
+        });
+        const draftData = await draftRes.json().catch(function () { return {}; });
+        if (!draftRes.ok || draftData.error) {
+            showAlert(draftData.error || draftData.message || 'Failed to generate publish draft.', 'danger', 'skill-publish-modal-alert');
+            setSkillPublishLoading(false);
+            return;
+        }
+
+        const draft = draftData.draft || {};
+        document.getElementById('skill-publish-version').value = (draft.version || '').trim();
+        document.getElementById('skill-publish-pr-title').value = (draft.prTitle || '').trim();
+        document.getElementById('skill-publish-change-summary').value = (draft.changeSummary || '').trim();
+        document.getElementById('skill-publish-commit-message').value = (draft.commitMessage || '').trim();
+        document.getElementById('skill-publish-pr-body').value = (draft.prBody || '').trim();
+        document.getElementById('skill-publish-release-notes').value = (draft.releaseNotes || '').trim();
+        document.getElementById('skill-publish-reviewer-hints').value = (draft.reviewerHints || '').trim();
+        document.getElementById('skill-publish-breaking-change').checked = !!draft.breakingChange;
+
+        if (draft.latestVersion) {
+            showAlert('Latest in staging: ' + draft.latestVersion + '. Draft generated and ready to edit.', 'success', 'skill-publish-modal-alert');
+        }
+
+        setSkillPublishLoading(false);
+    } catch (_e) {
+        showAlert('Network error during draft generation.', 'danger', 'skill-publish-modal-alert');
+        setSkillPublishLoading(false);
+    }
+}
+
+async function submitSkillPublishFromModal() {
+    const id = document.getElementById('skill-publish-id').value;
+    const version = document.getElementById('skill-publish-version').value.trim();
+    const prTitle = document.getElementById('skill-publish-pr-title').value.trim();
+    const changeSummary = document.getElementById('skill-publish-change-summary').value.trim();
+    const commitMessage = document.getElementById('skill-publish-commit-message').value.trim();
+    const prBody = document.getElementById('skill-publish-pr-body').value.trim();
+    const releaseNotes = document.getElementById('skill-publish-release-notes').value.trim();
+    const reviewerHints = document.getElementById('skill-publish-reviewer-hints').value.trim();
+    const breakingChange = !!document.getElementById('skill-publish-breaking-change').checked;
+
+    if (!id) {
+        showAlert('Group id is missing for publish.', 'danger', 'skill-publish-modal-alert');
+        return;
+    }
+    if (!/^[0-9]+\.[0-9]+$/.test(version) || version.toUpperCase() === 'SNAPSHOT') {
+        showAlert('Version must follow major.minor and cannot be SNAPSHOT.', 'danger', 'skill-publish-modal-alert');
+        return;
+    }
+    if (!prTitle) {
+        showAlert('PR title is required.', 'danger', 'skill-publish-modal-alert');
+        return;
+    }
+    if (!changeSummary) {
+        showAlert('Change summary is required.', 'danger', 'skill-publish-modal-alert');
+        return;
+    }
+
+    setSkillPublishLoading(true, 'Creating PR...');
+    clearAlert('skill-publish-modal-alert');
+
+    try {
+        const publishRes = await fetch('/api/contributions/skills/' + encodeURIComponent(id) + '/publish', {
+            method: 'POST',
+            headers: contributionPostHeaders(),
+            body: JSON.stringify({
+                version: version,
+                commitMessage: commitMessage,
+                prTitle: prTitle,
+                prBody: prBody,
+                changeSummary: changeSummary,
+                breakingChange: breakingChange,
+                releaseNotes: releaseNotes,
+                reviewerHints: reviewerHints
+            })
+        });
+        const publishData = await publishRes.json().catch(function () { return {}; });
+        if (!publishRes.ok || publishData.error) {
+            showAlert(publishData.error || publishData.message || 'Publish failed.', 'danger', 'skill-publish-modal-alert');
+            setSkillPublishLoading(false);
+            return;
+        }
+
+        const pullRequest = publishData.pullRequest || {};
+        showAlert('Published. PR: ' + (pullRequest.url || 'created'), 'success');
+        skillPublishModal.hide();
+        setTimeout(function () { location.reload(); }, 900);
+    } catch (_e) {
+        showAlert('Network error during publish.', 'danger', 'skill-publish-modal-alert');
+        setSkillPublishLoading(false);
+    }
+}
+
+function setSkillPublishLoading(isLoading, loadingLabel) {
+    const fields = [
+        'skill-publish-version',
+        'skill-publish-pr-title',
+        'skill-publish-change-summary',
+        'skill-publish-commit-message',
+        'skill-publish-pr-body',
+        'skill-publish-release-notes',
+        'skill-publish-reviewer-hints',
+        'skill-publish-breaking-change'
+    ];
+    fields.forEach(function (id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (isLoading) {
+            el.setAttribute('disabled', 'disabled');
+        } else {
+            el.removeAttribute('disabled');
+        }
+    });
+
+    const submitBtn = document.getElementById('skill-publish-submit-btn');
+    if (!submitBtn) return;
+    if (isLoading) {
+        submitBtn.setAttribute('disabled', 'disabled');
+        submitBtn.dataset.label = submitBtn.textContent;
+        submitBtn.textContent = loadingLabel || 'Preparing draft...';
+    } else {
+        submitBtn.removeAttribute('disabled');
+        submitBtn.textContent = submitBtn.dataset.label || 'Submit PR';
+    }
+}
+
+async function createSkillGroupSnapshotContribution(id) {
+    if (!id) {
+        showAlert('Group id is required for snapshot.', 'warning');
+        return;
+    }
+    if (!window.confirm('Create a SNAPSHOT clone from this immutable skill group?')) {
+        return;
+    }
+    try {
+        const res = await fetch('/api/contributions/skills/' + encodeURIComponent(id) + '/snapshot', {
+            method: 'POST',
+            headers: contributionPostHeaders(),
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok || data.error) {
+            showAlert(data.error || data.message || 'Failed to create snapshot.', 'danger');
+            return;
+        }
+        showAlert('SNAPSHOT clone created.', 'success');
+        setTimeout(function () { location.reload(); }, 700);
+    } catch (_e) {
+        showAlert('Network error creating snapshot.', 'danger');
+    }
+}
+
+async function refreshSkillGroupContributionStatus(id) {
+    if (!id) {
+        showAlert('Group id is required to refresh status.', 'warning');
+        return;
+    }
+    try {
+        const res = await fetch('/api/contributions/promotions/reconcile', {
+            method: 'POST',
+            headers: contributionPostHeaders(),
+            body: JSON.stringify({})
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok || data.error) {
+            showAlert(data.error || data.message || 'Failed to refresh contribution status.', 'danger');
+            return;
+        }
+        const summary = data.summary || {};
+        const promoted = (summary.skillsPromotedToStaged || 0);
+        showAlert('Status refresh complete. Skill groups promoted to STAGED: ' + promoted + '.', 'success');
+        setTimeout(function () { location.reload(); }, 700);
+    } catch (_e) {
+        showAlert('Network error refreshing contribution status.', 'danger');
+    }
+}
+
 function resolveGroupName(groupUuid) {
     const group = allGroups.find(function (g) { return g.uuid === groupUuid; });
     return group ? group.name : groupUuid;
 }
 
 // ── Alert helper ──────────────────────────────────────────────────────────────
-function showAlert(msg, type) {
-    const area = document.getElementById('alert-area');
+function showAlert(msg, type, areaId) {
+    const area = document.getElementById(areaId || 'alert-area');
     if (!area) return;
     const tones = {
         success: 'border-emerald-700/60 bg-emerald-950/40 text-emerald-300',
@@ -1304,6 +1585,26 @@ function showAlert(msg, type) {
             area.innerHTML = '';
         });
     }
+}
+
+function resolveGroupArtifactVersion(group) {
+    if (!group) return 'SNAPSHOT';
+
+    const explicit = (group.artifactVersion || group.version || '').toString().trim();
+    const normalized = normalizeArtifactVersion(explicit);
+    if (normalized) return normalized;
+
+    return 'SNAPSHOT';
+}
+
+function normalizeArtifactVersion(raw) {
+    if (!raw) return '';
+    const value = String(raw).trim();
+    if (!value) return '';
+    if (value.toUpperCase() === 'SNAPSHOT') return 'SNAPSHOT';
+    if (/^[0-9]+\.[0-9]+$/.test(value)) return value;
+    if (/^[0-9]+$/.test(value)) return 'SNAPSHOT';
+    return value;
 }
 
 function showAlertIn(areaId, msg, type) {
@@ -1347,4 +1648,14 @@ function escapeHtml(str) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function escapeJs(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+    .replace(/"/g, '\\"')
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r');
 }

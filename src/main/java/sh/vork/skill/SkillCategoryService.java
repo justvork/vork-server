@@ -17,7 +17,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * Fetches and caches the canonical skill-category list from the vork-skills
+ * Fetches and caches the canonical skill-category list from the vork-central
  * GitHub repository.  The list is refreshed every 24 hours via a scheduled
  * task; on first call it is loaded eagerly.
  *
@@ -36,7 +36,7 @@ public class SkillCategoryService {
     private static final Logger log = LoggerFactory.getLogger(SkillCategoryService.class);
 
     static final String CATEGORIES_URL =
-            "https://raw.githubusercontent.com/vork-ai/vork-skills/main/categories.json";
+            "https://raw.githubusercontent.com/vork-ai/vork-central/main/categories.json";
 
     private static final long CACHE_TTL_MS = 24L * 60 * 60 * 1_000; // 24 hours
         private static final int STARTUP_REFRESH_ATTEMPTS = 3;

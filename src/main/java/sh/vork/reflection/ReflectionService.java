@@ -47,6 +47,7 @@ public class ReflectionService {
     private static final Logger log = LoggerFactory.getLogger(ReflectionService.class);
 
     private static final Pattern REFLECTION_ID_PATTERN = Pattern.compile("^[A-Za-z0-9]+$");
+    private static final Pattern IDENTITY_PATTERN = Pattern.compile("^[A-Za-z0-9]{3,64}$");
     private static final Pattern BINDING_NAME_PATTERN = Pattern.compile("^[A-Za-z0-9._-]+$");
     private static final Pattern TEMPLATE_TOKEN_PATTERN = Pattern.compile("\\{\\{\\s*([A-Za-z0-9._-]+)\\s*\\}\\}");
     private static final Set<String> METHODS_WITHOUT_BODY = Set.of("GET", "DELETE", "HEAD", "OPTIONS");
@@ -178,10 +179,17 @@ public class ReflectionService {
         ReflectionType type = parseGroupType(request.type());
         ReflectionAuthenticationMode authenticationMode = parseAuthenticationMode(request.authenticationMode());
         String oauthTemplateId = normalizeAndValidateOAuthSettings(type, authenticationMode, request.oauthTemplateId());
+        String groupId = identityOrDefault(request.groupId(), request.name(), "group");
+        String artifactId = identityOrDefault(request.artifactId(), request.name(), "reflectiongroup");
+        String version = "SNAPSHOT";
+        String uuid = toVid(groupId, artifactId, version);
+        if (reflectionGroupRepository.get(uuid) != null) {
+            throw new IllegalArgumentException("Reflection group already exists: " + uuid);
+        }
         String toolId = uniqueGroupToolId(request.name(), null);
         long now = System.currentTimeMillis();
         ReflectionGroup group = new ReflectionGroup(
-                UUID.randomUUID().toString(),
+                uuid,
             toolId,
                 request.name().trim(),
                 request.description() == null ? "" : request.description().trim(),
@@ -192,7 +200,10 @@ public class ReflectionService {
             normalizeBindingParameters(request.bindingParameters()),
                 authenticationMode,
                 oauthTemplateId,
-                1L,
+                groupId,
+                artifactId,
+                version,
+                ArtifactStatus.SNAPSHOT,
                 now,
                 now);
         reflectionGroupRepository.save(group);
@@ -225,7 +236,10 @@ public class ReflectionService {
             normalizeBindingParameters(request.bindingParameters()),
                 authenticationMode,
                 oauthTemplateId,
-                existing.version() + 1,
+                existing.groupId(),
+                existing.artifactId(),
+                existing.version(),
+                existing.artifactStatus(),
                 existing.createdAt(),
                 System.currentTimeMillis());
         reflectionGroupRepository.save(updated);
@@ -586,7 +600,10 @@ public class ReflectionService {
             group.bindingParameters(),
                 group.authenticationMode(),
                 group.oauthTemplateId(),
+                group.groupId(),
+                group.artifactId(),
                 group.version(),
+                group.artifactStatus(),
                 group.createdAt(),
                 group.updatedAt());
 
@@ -649,8 +666,12 @@ public class ReflectionService {
                 ? incomingGroup.name()
                 : incomingGroup.toolId(),
             incomingGroup.uuid());
+        String normalizedGroupId = nonBlank(incomingGroup.groupId(), "legacy");
+        String normalizedArtifactId = nonBlank(incomingGroup.artifactId(), "reflectiongroup");
+        String normalizedVersion = nonBlank(incomingGroup.version(), "SNAPSHOT");
+        String normalizedUuid = toVid(normalizedGroupId, normalizedArtifactId, normalizedVersion);
         ReflectionGroup normalizedGroup = new ReflectionGroup(
-                incomingGroup.uuid(),
+                normalizedUuid,
             toolId,
                 incomingGroup.name(),
                 incomingGroup.description(),
@@ -661,7 +682,10 @@ public class ReflectionService {
             normalizeBindingParameters(incomingGroup.bindingParameters()),
             normalizedAuthMode,
             normalizedOauthTemplateId,
-                incomingGroup.version() < 1 ? 1 : incomingGroup.version(),
+                normalizedGroupId,
+                normalizedArtifactId,
+                normalizedVersion,
+                incomingGroup.artifactStatus() == null ? ArtifactStatus.SNAPSHOT : incomingGroup.artifactStatus(),
                 incomingGroup.createdAt() > 0 ? incomingGroup.createdAt() : now,
                 incomingGroup.updatedAt() > 0 ? incomingGroup.updatedAt() : now);
         reflectionGroupRepository.save(normalizedGroup);
@@ -2055,6 +2079,39 @@ public class ReflectionService {
         }
     }
 
+    private static String requireIdentity(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(field + " is required.");
+        }
+        String trimmed = value.trim();
+        if (!IDENTITY_PATTERN.matcher(trimmed).matches()) {
+            throw new IllegalArgumentException(field + " must be alphanumeric and 3-64 characters.");
+        }
+        return trimmed;
+    }
+
+    private static String identityOrDefault(String value, String seed, String fallback) {
+        if (value != null && !value.isBlank()) {
+            return requireIdentity(value, fallback);
+        }
+        String compact = seed == null ? "" : seed.replaceAll("[^A-Za-z0-9]", "");
+        if (compact.length() < 3) {
+            compact = fallback;
+        }
+        if (compact.length() > 64) {
+            compact = compact.substring(0, 64);
+        }
+        return compact;
+    }
+
+    private static String nonBlank(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value.trim();
+    }
+
+    private static String toVid(String groupId, String artifactId, String version) {
+        return groupId + "-" + artifactId + "-" + version;
+    }
+
         public record ReflectionGroupRequest(
             String name,
             String description,
@@ -2064,7 +2121,22 @@ public class ReflectionService {
             List<SkillSecret> bindingSecrets,
             List<ReflectionBindingParameter> bindingParameters,
             String authenticationMode,
-            String oauthTemplateId) {
+            String oauthTemplateId,
+            String groupId,
+            String artifactId) {
+
+            public ReflectionGroupRequest(String name,
+                                          String description,
+                                          String type,
+                                          String baseUrl,
+                                          Boolean urlOverrideEnabled,
+                                          List<ReflectionBindingParameter> bindingParameters,
+                                          List<SkillSecret> bindingSecrets,
+                                          String authenticationMode,
+                                          String oauthTemplateId) {
+                this(name, description, type, baseUrl, urlOverrideEnabled, bindingSecrets, bindingParameters,
+                        authenticationMode, oauthTemplateId, "", "");
+            }
 
             public ReflectionGroupRequest(String name,
                                           String description,
@@ -2073,7 +2145,7 @@ public class ReflectionService {
                                           Boolean urlOverrideEnabled,
                                           List<SkillSecret> bindingSecrets,
                                           List<ReflectionBindingParameter> bindingParameters) {
-                this(name, description, type, baseUrl, urlOverrideEnabled, bindingSecrets, bindingParameters, "NONE", "");
+                this(name, description, type, baseUrl, urlOverrideEnabled, bindingSecrets, bindingParameters, "NONE", "", "", "");
             }
 
             public ReflectionGroupRequest(String name,
@@ -2082,7 +2154,7 @@ public class ReflectionService {
                                           String baseUrl,
                                           List<SkillSecret> bindingSecrets,
                                           List<ReflectionBindingParameter> bindingParameters) {
-                this(name, description, type, baseUrl, true, bindingSecrets, bindingParameters, "NONE", "");
+                this(name, description, type, baseUrl, true, bindingSecrets, bindingParameters, "NONE", "", "", "");
             }
         }
 

@@ -63,3 +63,8 @@
 .tool-description {
     font-size: 0.7rem;
 }
+
+.modal-dialog.agent-publish-modal-dialog {
+    width: 100%;
+    max-width: min(96vw, 72rem);
+}

@@ -4,17 +4,36 @@
 'use strict';
 
 let surfaceModal;
+let surfacePublishModal;
 let allSurfaces = [];
 let autoSurfaceArtifactIdEnabled = true;
+let githubConnection;
+const csrfToken = document.querySelector('meta[name="_csrf"]')?.getAttribute('content') || '';
+const csrfHeader = document.querySelector('meta[name="_csrf_header"]')?.getAttribute('content') || 'X-CSRF-TOKEN';
+
+function contributionPostHeaders() {
+    const headers = { 'Content-Type': 'application/json' };
+    if (csrfToken) {
+        headers[csrfHeader] = csrfToken;
+    }
+    return headers;
+}
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', function () {
     surfaceModal = new VorkModal(document.getElementById('surface-modal'));
+    surfacePublishModal = new VorkModal(document.getElementById('surface-publish-modal'));
+    githubConnection = window.VorkGitHubConnection
+        ? window.VorkGitHubConnection.init({
+            alertFn: showAlert
+        })
+        : null;
     loadSurfaces();
 
     document.getElementById('new-surface-btn').addEventListener('click', openCreate);
     document.getElementById('surface-save-btn').addEventListener('click', saveSurface);
+    document.getElementById('surface-publish-submit-btn').addEventListener('click', submitSurfacePublishFromModal);
     const nameInput = document.getElementById('surface-name');
     const artifactInput = document.getElementById('surface-artifact-id');
     const groupInput = document.getElementById('surface-group-id');
@@ -58,6 +77,20 @@ document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('surface-modal-label').textContent = 'New Surface';
         autoSurfaceArtifactIdEnabled = true;
     });
+
+    document.getElementById('surface-publish-modal').addEventListener('hidden.bs.modal', function () {
+        clearAlert('surface-publish-modal-alert');
+        document.getElementById('surface-publish-id').value = '';
+        document.getElementById('surface-publish-version').value = '';
+        document.getElementById('surface-publish-pr-title').value = '';
+        document.getElementById('surface-publish-change-summary').value = '';
+        document.getElementById('surface-publish-commit-message').value = '';
+        document.getElementById('surface-publish-pr-body').value = '';
+        document.getElementById('surface-publish-release-notes').value = '';
+        document.getElementById('surface-publish-reviewer-hints').value = '';
+        document.getElementById('surface-publish-breaking-change').checked = false;
+        setSurfacePublishLoading(false);
+    });
 });
 
 // ── Data loading ─────────────────────────────────────────────────────────────
@@ -99,9 +132,29 @@ function renderTable() {
         tr.id = 'surface-row-' + surface.uuid;
         tr.className = 'border-b border-zinc-800/80 last:border-0';
 
-        const surfaceIdentifier = surface.toolId || surface.uuid;
+        const surfaceIdentifier = surface.uuid;
+        const contributionIdentifier = surface.uuid;
         const version = surface.version || 'SNAPSHOT';
         const artifactStatus = surface.artifactStatus || 'SNAPSHOT';
+        const isSnapshot = artifactStatus === 'SNAPSHOT';
+        const canDelete = artifactStatus === 'SNAPSHOT'
+            || artifactStatus === 'SUBMITTED'
+            || artifactStatus === 'REJECTED';
+
+        const contributionActions = [];
+        if (isSnapshot) {
+            contributionActions.push('<button type="button" class="rounded-md border border-sky-500/40 px-2 py-1 text-xs text-sky-300 transition-colors hover:bg-sky-500/15 contrib-action" data-default-title="Recommend version" onclick="recommendSurfaceVersion(\'' + escapeJs(contributionIdentifier) + '\')" title="Recommend version" disabled><i class="fa-solid fa-lightbulb"></i></button>');
+            contributionActions.push('<button type="button" class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/15 contrib-action" data-default-title="Publish to staging via PR" onclick="publishSurfaceContribution(\'' + escapeJs(contributionIdentifier) + '\')" title="Publish to staging via PR" disabled><i class="fa-solid fa-cloud-arrow-up"></i></button>');
+        } else {
+            if (artifactStatus === 'SUBMITTED') {
+                contributionActions.push('<button type="button" class="rounded-md border border-blue-500/40 px-2 py-1 text-xs text-blue-300 transition-colors hover:bg-blue-500/15 contrib-action" data-default-title="Refresh status from GitHub" onclick="refreshSurfaceContributionStatus(\'' + escapeJs(contributionIdentifier) + '\')" title="Refresh status from GitHub" disabled><i class="fa-solid fa-rotate-right"></i></button>');
+            }
+            contributionActions.push('<button type="button" class="rounded-md border border-amber-500/40 px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-amber-500/15 contrib-action" data-default-title="Create SNAPSHOT clone from immutable version" onclick="createSurfaceSnapshotContribution(\'' + escapeJs(contributionIdentifier) + '\')" title="Create SNAPSHOT clone from immutable version" disabled><i class="fa-solid fa-code-branch"></i></button>');
+        }
+
+        const deleteAction = canDelete
+            ? '<button type="button" class="rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15" onclick="deleteSurface(\'' + escapeJs(surfaceIdentifier) + '\')" title="Delete"><i class="fa-solid fa-trash"></i></button>'
+            : '<button type="button" class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-500 cursor-not-allowed" title="Only SNAPSHOT, SUBMITTED, or REJECTED surfaces can be deleted" disabled><i class="fa-solid fa-trash"></i></button>';
 
         tr.innerHTML = ''
             + '<td class="px-3 py-2 font-semibold text-zinc-100">' + escapeHtml(surface.name || '') + '</td>'
@@ -115,14 +168,19 @@ function renderTable() {
             + '  <div class="inline-flex gap-1 justify-end">'
             + '    <a href="/surface/' + encodeURIComponent(surfaceIdentifier) + '/preview" target="_blank" rel="noopener noreferrer" class="rounded-md border border-emerald-500/40 px-2 py-1 text-xs text-emerald-300 transition-colors hover:bg-emerald-500/15" title="Preview surface"><i class="fa-solid fa-eye"></i></a>'
             + '    <a href="/surfaces/' + encodeURIComponent(surfaceIdentifier) + '/editor" class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/15" title="Open editor"><i class="fa-solid fa-pen-to-square"></i></a>'
-            + '    <button class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/15" onclick="exportSurfacePackage(\'' + escapeJs(surfaceIdentifier) + '\')" title="Export"><i class="fa-solid fa-file-export"></i></button>'
-            + '    <button class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800" onclick="openEdit(\'' + escapeJs(surfaceIdentifier) + '\')" title="Edit"><i class="fa-solid fa-pen"></i></button>'
-            + '    <button class="rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15" onclick="deleteSurface(\'' + escapeJs(surfaceIdentifier) + '\')" title="Delete"><i class="fa-solid fa-trash"></i></button>'
+            + '    <button type="button" class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/15" onclick="exportSurfacePackage(\'' + escapeJs(surfaceIdentifier) + '\')" title="Export"><i class="fa-solid fa-file-export"></i></button>'
+            + '    <button type="button" class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800" onclick="openEdit(\'' + escapeJs(surfaceIdentifier) + '\')" title="Edit"><i class="fa-solid fa-pen"></i></button>'
+            + contributionActions.join('')
+            + deleteAction
             + '  </div>'
             + '</td>';
 
         body.appendChild(tr);
     });
+
+    if (githubConnection && typeof githubConnection.refreshStatus === 'function') {
+        githubConnection.refreshStatus();
+    }
 }
 
 // ── Modal actions ────────────────────────────────────────────────────────────
@@ -142,11 +200,11 @@ function openCreate() {
 
 function openEdit(identifier) {
     const surface = allSurfaces.find(function (s) {
-        return s.uuid === identifier || s.toolId === identifier;
+        return s.uuid === identifier;
     });
     if (!surface) return;
 
-    document.getElementById('surface-uuid').value = surface.toolId || surface.uuid;
+    document.getElementById('surface-uuid').value = surface.uuid;
     document.getElementById('surface-name').value = surface.name || '';
     document.getElementById('surface-description').value = surface.description || '';
     document.getElementById('surface-group-id').value = surface.groupId || '';
@@ -206,15 +264,21 @@ async function saveSurface() {
 }
 
 async function deleteSurface(identifier) {
-    const surface = allSurfaces.find(function (s) { return s.uuid === identifier || s.toolId === identifier; });
+    const surface = allSurfaces.find(function (s) { return s.uuid === identifier; });
     const name = surface ? surface.name : 'this surface';
+    const status = (surface && surface.artifactStatus) ? surface.artifactStatus : 'SNAPSHOT';
+    if (status !== 'SNAPSHOT' && status !== 'SUBMITTED' && status !== 'REJECTED') {
+        showAlert('Only SNAPSHOT, SUBMITTED, or REJECTED surfaces can be deleted. This surface is ' + status + '.', 'warning');
+        return;
+    }
     if (!confirm('Delete "' + name + '"?')) {
         return;
     }
     try {
         const res = await fetch('/api/surfaces/' + encodeURIComponent(identifier), { method: 'DELETE' });
         if (!res.ok) {
-            showAlert('Delete failed.', 'warning');
+            const data = await res.json().catch(function () { return {}; });
+            showAlert(data.error || data.message || ('Delete failed (HTTP ' + res.status + ').'), 'warning');
             return;
         }
         await loadSurfaces();
@@ -294,6 +358,222 @@ async function importSurfaces(input) {
         showAlert('Network error during surface import: ' + (e.message || 'Unknown error'), 'danger');
     } finally {
         if (input) input.value = '';
+    }
+}
+
+async function recommendSurfaceVersion(id) {
+    if (!id) {
+        showAlert('Surface id is required for version recommendation.', 'warning');
+        return;
+    }
+    try {
+        const breakingChange = window.confirm('Does this release include breaking changes?\nOK = yes (major bump), Cancel = no (minor bump).');
+        const recommendUrl = '/api/contributions/surfaces/' + encodeURIComponent(id)
+            + '/recommend-version?breakingChange=' + encodeURIComponent(String(breakingChange));
+        const res = await fetch(recommendUrl, {
+            method: 'GET'
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok || data.error) {
+            showAlert(data.error || data.message || 'Failed to recommend version.', 'danger');
+            return;
+        }
+        const rec = data.recommendation || {};
+        const latest = rec.latestVersion ? ('Latest in staging: ' + rec.latestVersion + '. ') : 'No staging version found. ';
+        showAlert(latest + 'Recommended next version: ' + (rec.recommendedVersion || 'n/a') + '.', 'success');
+    } catch (_e) {
+        showAlert('Network error getting version recommendation.', 'danger');
+    }
+}
+
+async function publishSurfaceContribution(id) {
+    if (!id) {
+        showAlert('Surface id is required for publish.', 'warning');
+        return;
+    }
+
+    document.getElementById('surface-publish-id').value = id;
+    clearAlert('surface-publish-modal-alert');
+    setSurfacePublishLoading(true);
+    surfacePublishModal.show();
+
+    try {
+        const draftRes = await fetch('/api/contributions/surfaces/' + encodeURIComponent(id) + '/publish-draft', {
+            method: 'POST',
+            headers: contributionPostHeaders(),
+            body: JSON.stringify({})
+        });
+        const draftData = await draftRes.json().catch(function () { return {}; });
+        if (!draftRes.ok || draftData.error) {
+            showAlert(draftData.error || draftData.message || 'Failed to generate publish draft.', 'danger', 'surface-publish-modal-alert');
+            setSurfacePublishLoading(false);
+            return;
+        }
+
+        const draft = draftData.draft || {};
+        document.getElementById('surface-publish-version').value = (draft.version || '').trim();
+        document.getElementById('surface-publish-pr-title').value = (draft.prTitle || '').trim();
+        document.getElementById('surface-publish-change-summary').value = (draft.changeSummary || '').trim();
+        document.getElementById('surface-publish-commit-message').value = (draft.commitMessage || '').trim();
+        document.getElementById('surface-publish-pr-body').value = (draft.prBody || '').trim();
+        document.getElementById('surface-publish-release-notes').value = (draft.releaseNotes || '').trim();
+        document.getElementById('surface-publish-reviewer-hints').value = (draft.reviewerHints || '').trim();
+        document.getElementById('surface-publish-breaking-change').checked = !!draft.breakingChange;
+
+        if (draft.latestVersion) {
+            showAlert('Latest in staging: ' + draft.latestVersion + '. Draft generated and ready to edit.', 'success', 'surface-publish-modal-alert');
+        }
+
+        setSurfacePublishLoading(false);
+    } catch (_e) {
+        showAlert('Network error during draft generation.', 'danger', 'surface-publish-modal-alert');
+        setSurfacePublishLoading(false);
+    }
+}
+
+async function submitSurfacePublishFromModal() {
+    const id = document.getElementById('surface-publish-id').value;
+    const version = document.getElementById('surface-publish-version').value.trim();
+    const prTitle = document.getElementById('surface-publish-pr-title').value.trim();
+    const changeSummary = document.getElementById('surface-publish-change-summary').value.trim();
+    const commitMessage = document.getElementById('surface-publish-commit-message').value.trim();
+    const prBody = document.getElementById('surface-publish-pr-body').value.trim();
+    const releaseNotes = document.getElementById('surface-publish-release-notes').value.trim();
+    const reviewerHints = document.getElementById('surface-publish-reviewer-hints').value.trim();
+    const breakingChange = !!document.getElementById('surface-publish-breaking-change').checked;
+
+    if (!id) {
+        showAlert('Surface id is missing for publish.', 'danger', 'surface-publish-modal-alert');
+        return;
+    }
+    if (!/^[0-9]+\.[0-9]+$/.test(version) || version.toUpperCase() === 'SNAPSHOT') {
+        showAlert('Version must follow major.minor and cannot be SNAPSHOT.', 'danger', 'surface-publish-modal-alert');
+        return;
+    }
+    if (!prTitle) {
+        showAlert('PR title is required.', 'danger', 'surface-publish-modal-alert');
+        return;
+    }
+    if (!changeSummary) {
+        showAlert('Change summary is required.', 'danger', 'surface-publish-modal-alert');
+        return;
+    }
+
+    setSurfacePublishLoading(true, 'Creating PR...');
+    clearAlert('surface-publish-modal-alert');
+
+    try {
+        const publishRes = await fetch('/api/contributions/surfaces/' + encodeURIComponent(id) + '/publish', {
+            method: 'POST',
+            headers: contributionPostHeaders(),
+            body: JSON.stringify({
+                version: version,
+                commitMessage: commitMessage,
+                prTitle: prTitle,
+                prBody: prBody,
+                changeSummary: changeSummary,
+                breakingChange: breakingChange,
+                releaseNotes: releaseNotes,
+                reviewerHints: reviewerHints
+            })
+        });
+        const publishData = await publishRes.json().catch(function () { return {}; });
+        if (!publishRes.ok || publishData.error) {
+            showAlert(publishData.error || publishData.message || 'Publish failed.', 'danger', 'surface-publish-modal-alert');
+            setSurfacePublishLoading(false);
+            return;
+        }
+
+        const pullRequest = publishData.pullRequest || {};
+        showAlert('Published. PR: ' + (pullRequest.url || 'created'), 'success');
+        surfacePublishModal.hide();
+        setTimeout(function () { location.reload(); }, 900);
+    } catch (_e) {
+        showAlert('Network error during publish.', 'danger', 'surface-publish-modal-alert');
+        setSurfacePublishLoading(false);
+    }
+}
+
+function setSurfacePublishLoading(isLoading, loadingLabel) {
+    const fields = [
+        'surface-publish-version',
+        'surface-publish-pr-title',
+        'surface-publish-change-summary',
+        'surface-publish-commit-message',
+        'surface-publish-pr-body',
+        'surface-publish-release-notes',
+        'surface-publish-reviewer-hints',
+        'surface-publish-breaking-change'
+    ];
+    fields.forEach(function (id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (isLoading) {
+            el.setAttribute('disabled', 'disabled');
+        } else {
+            el.removeAttribute('disabled');
+        }
+    });
+
+    const submitBtn = document.getElementById('surface-publish-submit-btn');
+    if (!submitBtn) return;
+    if (isLoading) {
+        submitBtn.setAttribute('disabled', 'disabled');
+        submitBtn.dataset.label = submitBtn.textContent;
+        submitBtn.textContent = loadingLabel || 'Preparing draft...';
+    } else {
+        submitBtn.removeAttribute('disabled');
+        submitBtn.textContent = submitBtn.dataset.label || 'Submit PR';
+    }
+}
+
+async function createSurfaceSnapshotContribution(id) {
+    if (!id) {
+        showAlert('Surface id is required for snapshot.', 'warning');
+        return;
+    }
+    if (!window.confirm('Create a SNAPSHOT clone from this immutable surface?')) {
+        return;
+    }
+    try {
+        const res = await fetch('/api/contributions/surfaces/' + encodeURIComponent(id) + '/snapshot', {
+            method: 'POST',
+            headers: contributionPostHeaders(),
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok || data.error) {
+            showAlert(data.error || data.message || 'Failed to create snapshot.', 'danger');
+            return;
+        }
+        showAlert('SNAPSHOT clone created.', 'success');
+        setTimeout(function () { location.reload(); }, 700);
+    } catch (_e) {
+        showAlert('Network error creating snapshot.', 'danger');
+    }
+}
+
+async function refreshSurfaceContributionStatus(id) {
+    if (!id) {
+        showAlert('Surface id is required to refresh status.', 'warning');
+        return;
+    }
+    try {
+        const res = await fetch('/api/contributions/promotions/reconcile', {
+            method: 'POST',
+            headers: contributionPostHeaders(),
+            body: JSON.stringify({})
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok || data.error) {
+            showAlert(data.error || data.message || 'Failed to refresh contribution status.', 'danger');
+            return;
+        }
+        const summary = data.summary || {};
+        const promoted = (summary.surfacesPromotedToStaged || 0);
+        showAlert('Status refresh complete. Surfaces promoted to STAGED: ' + promoted + '.', 'success');
+        await loadSurfaces();
+    } catch (_e) {
+        showAlert('Network error refreshing contribution status.', 'danger');
     }
 }
 

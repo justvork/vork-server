@@ -16,11 +16,13 @@ let modalGroupBindingSecrets = [];
 let modalBindingParameterValues = {};
 let modalBindingSecretValues = {};
 let oauthConnectDefaults = null;
+let githubConnection = null;
 
 const alertArea = document.getElementById('alert-area');
 
 function init() {
     bindEvents();
+    initGitHubConnection();
     renderOAuthBindingCallbackAlert();
     loadAll();
 }
@@ -89,11 +91,16 @@ function bindEvents() {
     document.getElementById('binding-modal-cancel').addEventListener('click', closeBindingModal);
     document.getElementById('binding-modal-save').addEventListener('click', saveBinding);
 
+    document.getElementById('reflection-publish-modal-close').addEventListener('click', closeReflectionPublishModal);
+    document.getElementById('reflection-publish-modal-cancel').addEventListener('click', closeReflectionPublishModal);
+    document.getElementById('reflection-publish-submit-btn').addEventListener('click', submitReflectionPublishFromModal);
+
     document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape') {
             closeGroupModal();
             closeReflectionModal();
             closeBindingModal();
+            closeReflectionPublishModal();
         }
     });
 }
@@ -159,6 +166,24 @@ function renderGroups() {
     groups.forEach(function (entry) {
         const group = entry.group || entry;
         const groupReflections = reflectionsForGroupUuid(group.uuid);
+        const version = resolveGroupArtifactVersion(group);
+        const artifactStatus = group.artifactStatus || 'SNAPSHOT';
+        const isSnapshot = artifactStatus === 'SNAPSHOT';
+        const canDelete = artifactStatus === 'SNAPSHOT' || artifactStatus === 'SUBMITTED' || artifactStatus === 'REJECTED';
+        const contributionActions = [];
+        if (isSnapshot) {
+            contributionActions.push('<button type="button" class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 contrib-action" data-action="publish-group" data-id="' + escapeHtml(group.uuid) + '" data-default-title="Publish to staging via PR" title="Publish to staging via PR" disabled><i class="fa-solid fa-cloud-arrow-up"></i></button>');
+        } else {
+            if (artifactStatus === 'SUBMITTED') {
+                contributionActions.push('<button type="button" class="rounded-md border border-blue-500/40 px-2 py-1 text-xs text-blue-300 contrib-action" data-action="refresh-status" data-id="' + escapeHtml(group.uuid) + '" data-default-title="Refresh status from GitHub" title="Refresh status from GitHub" disabled><i class="fa-solid fa-rotate-right"></i></button>');
+            }
+            contributionActions.push('<button type="button" class="rounded-md border border-amber-500/40 px-2 py-1 text-xs text-amber-300 contrib-action" data-action="snapshot-group" data-id="' + escapeHtml(group.uuid) + '" data-default-title="Create SNAPSHOT clone from immutable version" title="Create SNAPSHOT clone from immutable version" disabled><i class="fa-solid fa-code-branch"></i></button>');
+        }
+
+        const deleteAction = canDelete
+            ? '<button class="rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300" data-action="delete-group" data-id="' + escapeHtml(group.uuid) + '" title="Delete group"><i class="fa-solid fa-trash"></i></button>'
+            : '<button type="button" class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-500 cursor-not-allowed" title="Only SNAPSHOT, SUBMITTED, or REJECTED groups can be deleted" disabled><i class="fa-solid fa-trash"></i></button>';
+
         const row = document.createElement('tr');
         row.className = 'border-b border-zinc-800/80 last:border-0 align-top';
         row.innerHTML = ''
@@ -173,18 +198,24 @@ function renderGroups() {
             + '<td class="px-3 py-3">'
             + renderBindingPillsHtml(entry.bindings || [], group.uuid)
             + '</td>'
+            + '<td class="px-3 py-3 text-xs font-mono text-zinc-400">' + escapeHtml(version) + '</td>'
+            + '<td class="px-3 py-3"><span class="inline-flex rounded-md border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-xs text-zinc-300">' + escapeHtml(artifactStatus) + '</span></td>'
             + '<td class="px-3 py-3 text-right">'
             + '  <div class="inline-flex gap-1 justify-end">'
             + (isReadOnly ? '' : ''
                 + '    <button class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200" data-action="edit-group" data-id="' + escapeHtml(group.uuid) + '" title="Edit group"><i class="fa-solid fa-pen"></i></button>'
                 + '    <button class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300" data-action="export-group" data-id="' + escapeHtml(group.uuid) + '" title="Export group"><i class="fa-solid fa-file-export"></i></button>'
-                + '    <button class="rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300" data-action="delete-group" data-id="' + escapeHtml(group.uuid) + '" title="Delete group"><i class="fa-solid fa-trash"></i></button>')
+                + contributionActions.join('')
+                + '    ' + deleteAction)
             + '  </div>'
             + '</td>';
         body.appendChild(row);
     });
 
     bindDynamicTableEvents(body);
+    applyReflectionContributionActionState(githubConnection && typeof githubConnection.isConnected === 'function'
+        ? githubConnection.isConnected()
+        : false);
 }
 
 function reflectionsForGroupUuid(groupUuid) {
@@ -283,6 +314,21 @@ function bindDynamicTableEvents(root) {
             deleteGroup(button.getAttribute('data-id'));
         });
     });
+    root.querySelectorAll('button[data-action="publish-group"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            publishReflectionGroupContribution(button.getAttribute('data-id'));
+        });
+    });
+    root.querySelectorAll('button[data-action="refresh-status"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            refreshReflectionGroupContributionStatus(button.getAttribute('data-id'));
+        });
+    });
+    root.querySelectorAll('button[data-action="snapshot-group"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            createReflectionGroupSnapshotContribution(button.getAttribute('data-id'));
+        });
+    });
     root.querySelectorAll('button[data-action="export-group"]').forEach(function (button) {
         button.addEventListener('click', function () {
             exportGroup(button.getAttribute('data-id'));
@@ -330,10 +376,246 @@ function bindDynamicTableEvents(root) {
     });
 }
 
+function initGitHubConnection() {
+    if (!window.VorkGitHubConnection || typeof window.VorkGitHubConnection.init !== 'function') {
+        return;
+    }
+    githubConnection = window.VorkGitHubConnection.init({
+        connectButtonId: 'github-connect-btn',
+        statusLabelId: 'github-connection-status',
+        alertFn: showAlert,
+        onStatusChange: function (status) {
+            applyReflectionContributionActionState(!!(status && status.connected));
+        }
+    });
+}
+
+function applyReflectionContributionActionState(isConnected) {
+    const reason = 'Connect GitHub before publishing or creating snapshots.';
+    document.querySelectorAll('.contrib-action').forEach(function (btn) {
+        if (!(btn instanceof HTMLButtonElement)) {
+            return;
+        }
+        btn.disabled = !isConnected;
+        if (!isConnected) {
+            btn.setAttribute('title', reason);
+        } else {
+            const defaultTitle = btn.getAttribute('data-default-title');
+            if (defaultTitle) {
+                btn.setAttribute('title', defaultTitle);
+            }
+        }
+    });
+}
+
+function resolveGroupArtifactVersion(group) {
+    const explicit = (group && (group.artifactVersion || group.version) ? String(group.artifactVersion || group.version) : '').trim();
+    if (!explicit) return 'SNAPSHOT';
+    if (explicit.toUpperCase() === 'SNAPSHOT') return 'SNAPSHOT';
+    if (/^[0-9]+\.[0-9]+$/.test(explicit)) return explicit;
+    if (/^[0-9]+$/.test(explicit)) return 'SNAPSHOT';
+    return explicit;
+}
+
+async function publishReflectionGroupContribution(id) {
+    if (!id) {
+        showAlert('Group id is required for publish.', 'warning');
+        return;
+    }
+
+    document.getElementById('reflection-publish-id').value = id;
+    clearReflectionPublishModalAlert();
+    setReflectionPublishLoading(true);
+    showModal('reflection-publish-modal');
+
+    try {
+        const draftRes = await fetch('/api/contributions/reflections/' + encodeURIComponent(id) + '/publish-draft', {
+            method: 'POST',
+            headers: buildJsonHeaders(),
+            body: JSON.stringify({})
+        });
+        const draftResult = await parseJson(draftRes);
+        if (!draftRes.ok) {
+            showReflectionPublishModalAlert(draftResult.error || 'Failed to prepare publish draft.', 'danger');
+            setReflectionPublishLoading(false);
+            return;
+        }
+
+        const draft = draftResult.draft || {};
+
+        document.getElementById('reflection-publish-version').value = String(draft.version || '').trim();
+        document.getElementById('reflection-publish-pr-title').value = String(draft.prTitle || '').trim();
+        document.getElementById('reflection-publish-change-summary').value = String(draft.changeSummary || '').trim();
+        document.getElementById('reflection-publish-commit-message').value = String(draft.commitMessage || '').trim();
+        document.getElementById('reflection-publish-pr-body').value = String(draft.prBody || '').trim();
+        document.getElementById('reflection-publish-release-notes').value = String(draft.releaseNotes || '').trim();
+        document.getElementById('reflection-publish-reviewer-hints').value = String(draft.reviewerHints || '').trim();
+        document.getElementById('reflection-publish-breaking-change').checked = !!draft.breakingChange;
+
+        if (draft.latestVersion) {
+            showReflectionPublishModalAlert('Latest in staging: ' + draft.latestVersion + '. Draft generated and ready to edit.', 'success');
+        }
+
+        setReflectionPublishLoading(false);
+    } catch (_error) {
+        showReflectionPublishModalAlert('Network error during draft generation.', 'danger');
+        setReflectionPublishLoading(false);
+    }
+}
+
+async function submitReflectionPublishFromModal() {
+    const id = (document.getElementById('reflection-publish-id').value || '').trim();
+    const version = (document.getElementById('reflection-publish-version').value || '').trim();
+    const prTitle = (document.getElementById('reflection-publish-pr-title').value || '').trim();
+    const changeSummary = (document.getElementById('reflection-publish-change-summary').value || '').trim();
+    const commitMessage = (document.getElementById('reflection-publish-commit-message').value || '').trim();
+    const prBody = (document.getElementById('reflection-publish-pr-body').value || '').trim();
+    const releaseNotes = (document.getElementById('reflection-publish-release-notes').value || '').trim();
+    const reviewerHints = (document.getElementById('reflection-publish-reviewer-hints').value || '').trim();
+    const breakingChange = !!document.getElementById('reflection-publish-breaking-change').checked;
+
+    if (!id) {
+        showReflectionPublishModalAlert('Group id is missing for publish.', 'danger');
+        return;
+    }
+    if (!/^[0-9]+\.[0-9]+$/.test(version) || version.toUpperCase() === 'SNAPSHOT') {
+        showReflectionPublishModalAlert('Version must follow major.minor and cannot be SNAPSHOT.', 'danger');
+        return;
+    }
+    if (!prTitle) {
+        showReflectionPublishModalAlert('PR title is required.', 'danger');
+        return;
+    }
+    if (!changeSummary) {
+        showReflectionPublishModalAlert('Change summary is required.', 'danger');
+        return;
+    }
+
+    setReflectionPublishLoading(true, 'Creating PR...');
+    clearReflectionPublishModalAlert();
+
+    try {
+        const publishRes = await fetch('/api/contributions/reflections/' + encodeURIComponent(id) + '/publish', {
+            method: 'POST',
+            headers: buildJsonHeaders(),
+            body: JSON.stringify({
+                version: version,
+                commitMessage: commitMessage,
+                prTitle: prTitle,
+                prBody: prBody,
+                changeSummary: changeSummary,
+                breakingChange: breakingChange,
+                releaseNotes: releaseNotes,
+                reviewerHints: reviewerHints
+            })
+        });
+        const publishResult = await parseJson(publishRes);
+        if (!publishRes.ok) {
+            showReflectionPublishModalAlert(publishResult.error || 'Failed to publish reflection group.', 'danger');
+            setReflectionPublishLoading(false);
+            return;
+        }
+
+        const pullRequest = publishResult.pullRequest || {};
+        showAlert('Published. PR: ' + (pullRequest.url || 'created'), 'success');
+        closeReflectionPublishModal();
+        await loadAll();
+    } catch (_error) {
+        showReflectionPublishModalAlert('Network error during publish.', 'danger');
+        setReflectionPublishLoading(false);
+    }
+}
+
+function setReflectionPublishLoading(isLoading, loadingLabel) {
+    const fields = [
+        'reflection-publish-version',
+        'reflection-publish-pr-title',
+        'reflection-publish-change-summary',
+        'reflection-publish-commit-message',
+        'reflection-publish-pr-body',
+        'reflection-publish-release-notes',
+        'reflection-publish-reviewer-hints',
+        'reflection-publish-breaking-change'
+    ];
+    fields.forEach(function (id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (isLoading) {
+            el.setAttribute('disabled', 'disabled');
+        } else {
+            el.removeAttribute('disabled');
+        }
+    });
+
+    const submitBtn = document.getElementById('reflection-publish-submit-btn');
+    if (!submitBtn) return;
+    if (isLoading) {
+        submitBtn.setAttribute('disabled', 'disabled');
+        submitBtn.dataset.label = submitBtn.textContent;
+        submitBtn.textContent = loadingLabel || 'Preparing draft...';
+    } else {
+        submitBtn.removeAttribute('disabled');
+        submitBtn.textContent = submitBtn.dataset.label || 'Submit PR';
+    }
+}
+
+async function createReflectionGroupSnapshotContribution(id) {
+    if (!id) {
+        showAlert('Group id is required for snapshot.', 'warning');
+        return;
+    }
+    if (!window.confirm('Create a SNAPSHOT clone from this immutable reflection group?')) {
+        return;
+    }
+    try {
+        const response = await fetch('/api/contributions/reflections/' + encodeURIComponent(id) + '/snapshot', {
+            method: 'POST',
+            headers: buildCsrfHeaders()
+        });
+        const result = await parseJson(response);
+        if (!response.ok) {
+            showAlert(result.error || 'Failed to create snapshot.', 'danger');
+            return;
+        }
+        showAlert('SNAPSHOT clone created.', 'success');
+        await loadAll();
+    } catch (_error) {
+        showAlert('Network error creating snapshot.', 'danger');
+    }
+}
+
+async function refreshReflectionGroupContributionStatus(id) {
+    if (!id) {
+        showAlert('Group id is required to refresh status.', 'warning');
+        return;
+    }
+    try {
+        const response = await fetch('/api/contributions/promotions/reconcile', {
+            method: 'POST',
+            headers: buildJsonHeaders(),
+            body: JSON.stringify({})
+        });
+        const result = await parseJson(response);
+        if (!response.ok) {
+            showAlert(result.error || 'Failed to refresh contribution status.', 'danger');
+            return;
+        }
+        const summary = result.summary || {};
+        showAlert('Status refresh complete. Reflection groups promoted to STAGED: ' + (summary.reflectionsPromotedToStaged || 0) + '.', 'success');
+        await loadAll();
+    } catch (_error) {
+        showAlert('Network error refreshing contribution status.', 'danger');
+    }
+}
+
 function openCreateGroupModal() {
     document.getElementById('group-modal-title').textContent = 'New Reflection Group';
     document.getElementById('group-id').value = '';
     document.getElementById('group-name').value = '';
+    document.getElementById('group-group-id').value = '';
+    document.getElementById('group-artifact-id').value = '';
+    document.getElementById('group-group-id').disabled = false;
+    document.getElementById('group-artifact-id').disabled = false;
     document.getElementById('group-description').value = '';
     document.getElementById('group-type').value = 'REST';
     document.getElementById('group-base-url').value = '';
@@ -359,6 +641,10 @@ function openEditGroupModal(uuid) {
     document.getElementById('group-modal-title').textContent = 'Edit Reflection Group';
     document.getElementById('group-id').value = group.uuid;
     document.getElementById('group-name').value = group.name || '';
+    document.getElementById('group-group-id').value = group.groupId || '';
+    document.getElementById('group-artifact-id').value = group.artifactId || '';
+    document.getElementById('group-group-id').disabled = true;
+    document.getElementById('group-artifact-id').disabled = true;
     document.getElementById('group-description').value = group.description || '';
     document.getElementById('group-type').value = group.type || 'REST';
     document.getElementById('group-base-url').value = group.baseUrl || '';
@@ -391,6 +677,8 @@ async function saveGroup() {
     const authenticationMode = document.getElementById('group-auth-mode').value;
     const oauthTemplateId = document.getElementById('group-oauth-template').value;
     const groupId = document.getElementById('group-id').value.trim();
+    const vidGroupId = document.getElementById('group-group-id').value.trim();
+    const artifactId = document.getElementById('group-artifact-id').value.trim();
     const payload = {
         name: document.getElementById('group-name').value.trim(),
         description: document.getElementById('group-description').value.trim(),
@@ -400,11 +688,21 @@ async function saveGroup() {
         bindingParameters: sanitizeBindingParameterSchema(modalGroupBindingParameters),
         bindingSecrets: sanitizeBindingSecretSchema(modalGroupBindingSecrets),
         authenticationMode: authenticationMode,
-        oauthTemplateId: authenticationMode === 'OAUTH' ? oauthTemplateId : ''
+        oauthTemplateId: authenticationMode === 'OAUTH' ? oauthTemplateId : '',
+        groupId: vidGroupId,
+        artifactId: artifactId
     };
 
     if (!payload.name) {
         showGroupModalAlert('Group name is required.', 'warning');
+        return;
+    }
+    if (!payload.groupId || !/^[A-Za-z0-9]{3,64}$/.test(payload.groupId)) {
+        showGroupModalAlert('Group ID must be alphanumeric and 3-64 characters.', 'warning');
+        return;
+    }
+    if (!payload.artifactId || !/^[A-Za-z0-9]{3,64}$/.test(payload.artifactId)) {
+        showGroupModalAlert('Artifact ID must be alphanumeric and 3-64 characters.', 'warning');
         return;
     }
     if (authenticationMode === 'OAUTH' && groupType !== 'REST') {
@@ -1499,6 +1797,21 @@ function closeBindingModal() {
     hideModal('binding-modal');
 }
 
+function closeReflectionPublishModal() {
+    hideModal('reflection-publish-modal');
+    document.getElementById('reflection-publish-id').value = '';
+    document.getElementById('reflection-publish-version').value = '';
+    document.getElementById('reflection-publish-pr-title').value = '';
+    document.getElementById('reflection-publish-change-summary').value = '';
+    document.getElementById('reflection-publish-commit-message').value = '';
+    document.getElementById('reflection-publish-pr-body').value = '';
+    document.getElementById('reflection-publish-release-notes').value = '';
+    document.getElementById('reflection-publish-reviewer-hints').value = '';
+    document.getElementById('reflection-publish-breaking-change').checked = false;
+    clearReflectionPublishModalAlert();
+    setReflectionPublishLoading(false);
+}
+
 function showModal(id) {
     document.getElementById(id).classList.remove('hidden');
 }
@@ -1533,6 +1846,14 @@ function showBindingModalAlert(message, type) {
 
 function clearBindingModalAlert() {
     document.getElementById('binding-modal-alert').innerHTML = '';
+}
+
+function showReflectionPublishModalAlert(message, type) {
+    document.getElementById('reflection-publish-modal-alert').innerHTML = '<div class="rounded-lg border px-3 py-2 text-sm ' + alertClass(type) + '">' + escapeHtml(message) + '</div>';
+}
+
+function clearReflectionPublishModalAlert() {
+    document.getElementById('reflection-publish-modal-alert').innerHTML = '';
 }
 
 function alertClass(type) {

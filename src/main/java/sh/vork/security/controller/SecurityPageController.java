@@ -3,6 +3,7 @@ package sh.vork.security.controller;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
 /**
@@ -79,5 +80,15 @@ public class SecurityPageController {
     @GetMapping("/access-denied")
     public String accessDenied() {
         return "access-denied";
+    }
+
+    @PostMapping("/access-denied")
+    public String accessDeniedPost() {
+        return "access-denied";
+    }
+
+    @GetMapping("/github/device-flow/authorize")
+    public String githubDeviceFlowAuthorize() {
+        return "github-device-flow-authorize";
     }
 }

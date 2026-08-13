@@ -107,3 +107,8 @@
 .remove-tool:hover {
     opacity: 1;
 }
+
+.modal-dialog.job-publish-modal-dialog {
+    width: 100%;
+    max-width: min(96vw, 72rem);
+}

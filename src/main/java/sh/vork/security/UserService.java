@@ -22,7 +22,7 @@ public class UserService {
     }
 
     public VorkUser getRequiredUser(String username) {
-        log.debug("ENTER getRequiredUser: username={}", username);
+        log.trace("ENTER getRequiredUser: username={}", username);
         if (username == null || username.isBlank()) {
             throw new IllegalArgumentException("Username must not be blank.");
         }
@@ -31,18 +31,18 @@ public class UserService {
         if (user == null) {
             throw new IllegalStateException("User not found: " + username);
         }
-        log.debug("EXIT getRequiredUser: username={}, enabled={}, role={}",
+        log.trace("EXIT getRequiredUser: username={}, enabled={}, role={}",
                 user.uuid(), user.isEnabled(), user.role());
         return user;
     }
 
     public VorkUser getRequiredEnabledUser(String username) {
-        log.debug("ENTER getRequiredEnabledUser: username={}", username);
+        log.trace("ENTER getRequiredEnabledUser: username={}", username);
         VorkUser user = getRequiredUser(username);
         if (!user.isEnabled()) {
             throw new IllegalStateException("User is disabled: " + username);
         }
-        log.debug("EXIT getRequiredEnabledUser: username={}", user.uuid());
+        log.trace("EXIT getRequiredEnabledUser: username={}", user.uuid());
         return user;
     }
 }

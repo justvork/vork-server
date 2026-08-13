@@ -13,17 +13,20 @@ import sh.vork.skill.SkillSecret;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record ReflectionGroup(
         String uuid,
-    String toolId,
+        String toolId,
         String name,
         String description,
         ReflectionType type,
-    String baseUrl,
-    Boolean urlOverrideEnabled,
-    List<SkillSecret> bindingSecrets,
-    List<ReflectionBindingParameter> bindingParameters,
-    ReflectionAuthenticationMode authenticationMode,
-    String oauthTemplateId,
-        long version,
+        String baseUrl,
+        Boolean urlOverrideEnabled,
+        List<SkillSecret> bindingSecrets,
+        List<ReflectionBindingParameter> bindingParameters,
+        ReflectionAuthenticationMode authenticationMode,
+        String oauthTemplateId,
+        String groupId,
+        String artifactId,
+        String version,
+        ArtifactStatus artifactStatus,
         long createdAt,
         long updatedAt
 ) implements DatabaseEntity {
@@ -66,9 +69,47 @@ public record ReflectionGroup(
         } else {
             oauthTemplateId = oauthTemplateId.trim();
         }
-        if (version < 1) {
-            version = 1;
+        if (groupId == null || groupId.isBlank()) {
+            groupId = "legacy";
         }
+        if (artifactId == null || artifactId.isBlank()) {
+            artifactId = "reflectiongroup";
+        }
+        if (version == null || version.isBlank()) {
+            version = "SNAPSHOT";
+        } else {
+            version = version.trim();
+            if (version.matches("^[0-9]+$")) {
+                version = "SNAPSHOT";
+            }
+        }
+        artifactStatus = artifactStatus == null ? ArtifactStatus.SNAPSHOT : artifactStatus;
+    }
+
+    /**
+     * VID-compatible alias retained for clients expecting artifactVersion.
+     */
+    public String artifactVersion() {
+        return version;
+    }
+
+    public ReflectionGroup(String uuid,
+                           String toolId,
+                           String name,
+                           String description,
+                           ReflectionType type,
+                           String baseUrl,
+                           Boolean urlOverrideEnabled,
+                           List<SkillSecret> bindingSecrets,
+                           List<ReflectionBindingParameter> bindingParameters,
+                           ReflectionAuthenticationMode authenticationMode,
+                           String oauthTemplateId,
+                           long ignoredLegacyVersion,
+                           long createdAt,
+                           long updatedAt) {
+        this(uuid, toolId, name, description, type, baseUrl, urlOverrideEnabled, bindingSecrets, bindingParameters,
+                authenticationMode, oauthTemplateId, "legacy", "reflectiongroup", "SNAPSHOT", ArtifactStatus.SNAPSHOT,
+                createdAt, updatedAt);
     }
 
     private static String normalizeToolId(String source) {

@@ -1,0 +1,184 @@
+.connect-shell {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1rem;
+    background:
+        radial-gradient(circle at 10% 10%, rgba(253, 170, 2, 0.16), transparent 45%),
+        radial-gradient(circle at 85% 20%, rgba(34, 211, 238, 0.14), transparent 40%),
+        #0a0a0a;
+}
+
+.connect-card {
+    width: min(760px, 100%);
+    border: 1px solid rgba(63, 63, 70, 0.9);
+    border-radius: 1rem;
+    background: rgba(17, 24, 39, 0.9);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    padding: 1.5rem;
+}
+
+.connect-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    margin-bottom: 1rem;
+}
+
+.connect-logo {
+    width: 40px;
+    height: 40px;
+}
+
+.connect-kicker {
+    margin: 0;
+    color: #93c5fd;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+}
+
+.connect-title {
+    margin: 0.15rem 0 0;
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #f8fafc;
+}
+
+.connect-summary {
+    color: #d4d4d8;
+    margin: 0 0 1rem;
+    line-height: 1.5;
+}
+
+.connect-steps {
+    margin: 0 0 1.2rem;
+    padding-left: 1.2rem;
+    color: #e4e4e7;
+}
+
+.connect-steps li + li {
+    margin-top: 0.35rem;
+}
+
+.code-row {
+    border: 1px solid rgba(113, 113, 122, 0.7);
+    border-radius: 0.8rem;
+    background: rgba(24, 24, 27, 0.85);
+    padding: 0.95rem 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.code-label {
+    margin: 0;
+    font-size: 0.75rem;
+    color: #a1a1aa;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.code-value {
+    margin: 0.3rem 0 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 1.35rem;
+    letter-spacing: 0.09em;
+    color: #fef08a;
+}
+
+.action-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    margin-bottom: 0.85rem;
+}
+
+.btn-primary,
+.btn-secondary,
+.btn-copy {
+    border: 1px solid transparent;
+    border-radius: 0.6rem;
+    padding: 0.65rem 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    font-size: 0.92rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.btn-primary {
+    background: #fdaa02;
+    color: #18181b;
+}
+
+.btn-primary:hover {
+    background: #e89a02;
+}
+
+.btn-secondary,
+.btn-copy {
+    background: rgba(39, 39, 42, 0.9);
+    border-color: rgba(82, 82, 91, 0.9);
+    color: #f4f4f5;
+}
+
+.btn-secondary:hover,
+.btn-copy:hover {
+    background: rgba(63, 63, 70, 0.95);
+    transform: translateY(-1px);
+}
+
+.status-text {
+    margin: 0;
+    font-size: 0.88rem;
+    color: #d4d4d8;
+    min-height: 1.2rem;
+}
+
+.status-text.success {
+    color: #86efac;
+}
+
+.status-text.error {
+    color: #fca5a5;
+}
+
+.status-text.info {
+    color: #93c5fd;
+}
+
+.return-row {
+    margin-top: 1rem;
+}
+
+.return-link {
+    color: #93c5fd;
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+
+.return-link:hover {
+    text-decoration: underline;
+}
+
+@media (max-width: 640px) {
+    .connect-card {
+        padding: 1rem;
+    }
+
+    .action-row {
+        grid-template-columns: 1fr;
+    }
+
+    .code-row {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}

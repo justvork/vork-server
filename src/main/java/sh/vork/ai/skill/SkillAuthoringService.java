@@ -1003,11 +1003,23 @@ Optional explicit fields:
         String groupName = !explicitTarget.isBlank()
                 ? normalizeGroupName(explicitTarget)
                 : normalizeGroupName(normalizedCategory + " Skills");
+        String groupId = compactAlphaNumeric(author == null || author.isBlank() ? "vork" : author, "vork");
+        String artifactId = compactAlphaNumeric(groupName, "skills");
         SkillService.SkillGroupRequest groupRequest = new SkillService.SkillGroupRequest(
                 groupName,
                 author == null ? "" : author,
-                normalizedCategory);
+                normalizedCategory,
+                groupId,
+                artifactId);
         return new GroupResolution(skillService.createGroup(groupRequest), true, groupName);
+    }
+
+    private static String compactAlphaNumeric(String raw, String fallback) {
+        String base = raw == null ? "" : raw.replaceAll("[^A-Za-z0-9]", "");
+        if (base.length() < 3) {
+            return fallback;
+        }
+        return base.length() > 64 ? base.substring(0, 64) : base;
     }
 
     private static String normalizeGroupName(String raw) {

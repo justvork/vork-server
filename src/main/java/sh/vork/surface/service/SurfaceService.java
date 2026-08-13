@@ -54,27 +54,6 @@ public class SurfaceService {
         return surfaceRepository.get(uuid);
     }
 
-    public Surface getByToolId(String toolId) {
-        if (toolId == null || toolId.isBlank()) {
-            return null;
-        }
-        String normalized = ToolIdGenerator.normalizeBase(toolId, "surface");
-        try (var stream = surfaceRepository.list(0, Integer.MAX_VALUE)) {
-            return stream
-                    .filter(surface -> normalized.equals(ToolIdGenerator.normalizeBase(surface.toolId(), "surface")))
-                    .findFirst()
-                    .orElse(null);
-        }
-    }
-
-    public Surface resolveByUuidOrToolId(String identifier) {
-        if (identifier == null || identifier.isBlank()) {
-            return null;
-        }
-        Surface direct = surfaceRepository.get(identifier);
-        return direct != null ? direct : getByToolId(identifier);
-    }
-
     /**
      * Creates a new surface, an associated AI session, and activates the
      * Surface Developer agent.
@@ -133,7 +112,7 @@ public class SurfaceService {
                           List<String> skillUuids,
                           List<String> reflectionBindingUuids,
                           List<String> jobUuids) {
-        Surface existing = resolveByUuidOrToolId(uuid);
+        Surface existing = surfaceRepository.get(uuid);
         if (existing == null) {
             return null;
         }
@@ -147,7 +126,7 @@ public class SurfaceService {
 
         Surface updated = new Surface(
                 existing.uuid(),
-            uniqueSurfaceToolId(name == null || name.isBlank() ? existing.name() : name, existing.uuid()),
+                existing.toolId(),
                 name == null || name.isBlank() ? existing.name() : name,
                 description == null ? existing.description() : description,
                 existing.sessionUuid(),
@@ -175,12 +154,12 @@ public class SurfaceService {
      * @return {@code true} if the surface existed and was deleted
      */
     public boolean delete(String uuid) {
-        Surface existing = resolveByUuidOrToolId(uuid);
+        Surface existing = surfaceRepository.get(uuid);
         if (existing == null) {
             return false;
         }
-        if (!existing.isSnapshotMutable()) {
-            throw new IllegalArgumentException("Only SNAPSHOT surfaces can be deleted.");
+        if (!existing.isDeletable()) {
+            throw new IllegalArgumentException("Only SNAPSHOT, SUBMITTED, or REJECTED surfaces can be deleted.");
         }
         surfaceRepository.delete(existing.uuid());
         log.info("Deleted surface [uuid={}, name={}]", existing.uuid(), existing.name());
@@ -195,7 +174,7 @@ public class SurfaceService {
      * @throws IllegalArgumentException if the surface does not exist
      */
     public AiSession ensureSession(String surfaceUuid, String username) {
-        Surface surface = resolveByUuidOrToolId(surfaceUuid);
+        Surface surface = surfaceRepository.get(surfaceUuid);
         if (surface == null) {
             throw new IllegalArgumentException("Surface not found: " + surfaceUuid);
         }
@@ -244,7 +223,7 @@ public class SurfaceService {
      * one if necessary.
      */
     public AiSession ensureExecutionSession(String surfaceUuid, String username) {
-        Surface surface = resolveByUuidOrToolId(surfaceUuid);
+        Surface surface = surfaceRepository.get(surfaceUuid);
         if (surface == null) {
             throw new IllegalArgumentException("Surface not found: " + surfaceUuid);
         }
@@ -295,7 +274,7 @@ public class SurfaceService {
             throw new IllegalArgumentException("skillId is required");
         }
 
-        Surface surface = resolveByUuidOrToolId(surfaceUuid);
+        Surface surface = surfaceRepository.get(surfaceUuid);
         if (surface == null) {
             throw new IllegalArgumentException("Surface not found: " + surfaceUuid);
         }
@@ -315,7 +294,7 @@ public class SurfaceService {
     }
 
     public List<Skill> listAttachedSkills(String surfaceUuid) {
-        Surface surface = resolveByUuidOrToolId(surfaceUuid);
+        Surface surface = surfaceRepository.get(surfaceUuid);
         if (surface == null) {
             throw new IllegalArgumentException("Surface not found: " + surfaceUuid);
         }

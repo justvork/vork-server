@@ -1,4 +1,14 @@
 spring:
+  web:
+    resources:
+      chain:
+        cache: false
+      cache:
+        cachecontrol:
+          no-store: true
+          no-cache: true
+          must-revalidate: true
+
   ai:
     google:
       genai:
@@ -22,6 +32,11 @@ spring:
       name: admin
       password: admin123
 
+vork:
+  github:
+    oauth:
+      device:
+        client-id: Ov23ligOfySQKpyQWgki
 # ── SSL / HTTPS ───────────────────────────────────────────────────────────────
 # Vork auto-generates a self-signed certificate on first startup in conf.d/ssl/.
 # Override these defaults via environment variables or system properties:

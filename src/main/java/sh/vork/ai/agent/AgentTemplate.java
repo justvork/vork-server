@@ -257,4 +257,15 @@ public record AgentTemplate(
     public boolean isSnapshotMutable() {
         return !systemAgent && (artifactStatus == null || artifactStatus == ArtifactStatus.SNAPSHOT);
     }
+
+    @JsonIgnore
+    public boolean isDeletable() {
+        if (systemAgent) {
+            return false;
+        }
+        return artifactStatus == null
+                || artifactStatus == ArtifactStatus.SNAPSHOT
+                || artifactStatus == ArtifactStatus.SUBMITTED
+                || artifactStatus == ArtifactStatus.REJECTED;
+    }
 }

@@ -32,6 +32,7 @@ import sh.vork.typegen.TypeGeneratorService;
 public class SkillService {
 
     private static final Logger log = LoggerFactory.getLogger(SkillService.class);
+    private static final java.util.regex.Pattern IDENTITY_PATTERN = java.util.regex.Pattern.compile("^[A-Za-z0-9]{3,64}$");
 
     private final DatabaseRepository<Skill> skillRepo;
     private final DatabaseRepository<SkillGroup> skillGroupRepo;
@@ -83,14 +84,24 @@ public class SkillService {
 
     public SkillGroup createGroup(SkillGroupRequest req) {
         log.debug("ENTER createGroup: [name={}]", req.name());
+        String groupId = requireIdentity(req.groupId(), "groupId");
+        String artifactId = requireIdentity(req.artifactId(), "artifactId");
+        String version = "SNAPSHOT";
+        String uuid = toVid(groupId, artifactId, version);
+        if (skillGroupRepo.get(uuid) != null) {
+            throw new IllegalArgumentException("Skill group already exists: " + uuid);
+        }
         long now = System.currentTimeMillis();
         SkillGroup group = new SkillGroup(
-                UUID.randomUUID().toString(),
+            uuid,
                 req.name(),
                 req.author(),
                 req.category(),
                 List.of(),
-                1L,
+            groupId,
+            artifactId,
+            version,
+            ArtifactStatus.SNAPSHOT,
                 now,
                 now);
         skillGroupRepo.save(group);
@@ -111,7 +122,10 @@ public class SkillService {
                 req.author(),
                 req.category(),
             existing.skills(),
-                existing.version() + 1,
+            existing.groupId(),
+            existing.artifactId(),
+            existing.version(),
+            existing.artifactStatus(),
                 existing.createdAt(),
                 System.currentTimeMillis());
         skillGroupRepo.save(updated);
@@ -478,7 +492,10 @@ public class SkillService {
                 group.author(),
                 group.category(),
                 skills,
+            group.groupId(),
+            group.artifactId(),
                 group.version(),
+            group.artifactStatus(),
                 group.createdAt(),
                 group.updatedAt());
 
@@ -556,16 +573,23 @@ public class SkillService {
         }
 
         long now = System.currentTimeMillis();
+        String normalizedGroupId = nonBlank(incomingGroup.groupId(), "legacy");
+        String normalizedArtifactId = nonBlank(incomingGroup.artifactId(), "skillgroup");
+        String normalizedVersion = nonBlank(incomingGroup.version(), "SNAPSHOT");
+        String normalizedUuid = toVid(normalizedGroupId, normalizedArtifactId, normalizedVersion);
         List<Skill> normalizedSkills = incomingSkills.stream()
-            .map(skill -> normalizeImportedSkill(skill, incomingGroup.uuid()))
+            .map(skill -> normalizeImportedSkill(skill, normalizedUuid))
             .toList();
         SkillGroup normalizedGroup = new SkillGroup(
-                incomingGroup.uuid(),
+            normalizedUuid,
                 incomingGroup.name(),
                 incomingGroup.author(),
                 incomingGroup.category(),
             normalizedSkills,
-                incomingGroup.version() < 1 ? 1 : incomingGroup.version(),
+            normalizedGroupId,
+            normalizedArtifactId,
+            normalizedVersion,
+            incomingGroup.artifactStatus() == null ? ArtifactStatus.SNAPSHOT : incomingGroup.artifactStatus(),
                 incomingGroup.createdAt() > 0 ? incomingGroup.createdAt() : now,
                 incomingGroup.updatedAt() > 0 ? incomingGroup.updatedAt() : now);
         skillGroupRepo.save(normalizedGroup);
@@ -623,10 +647,32 @@ public class SkillService {
                 group.author(),
                 group.category(),
                 embedded,
-                group.version() + 1,
+                group.groupId(),
+                group.artifactId(),
+                group.version(),
+                group.artifactStatus(),
                 group.createdAt(),
                 System.currentTimeMillis());
         skillGroupRepo.save(updated);
+    }
+
+    private static String requireIdentity(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(field + " is required.");
+        }
+        String trimmed = value.trim();
+        if (!IDENTITY_PATTERN.matcher(trimmed).matches()) {
+            throw new IllegalArgumentException(field + " must be alphanumeric and 3-64 characters.");
+        }
+        return trimmed;
+    }
+
+    private static String nonBlank(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value.trim();
+    }
+
+    private static String toVid(String groupId, String artifactId, String version) {
+        return groupId + "-" + artifactId + "-" + version;
     }
 
     private static List<Skill> sortSkills(List<Skill> skills) {
@@ -893,7 +939,9 @@ public class SkillService {
     public record SkillGroupRequest(
             String name,
             String author,
-            String category) {}
+            String category,
+            String groupId,
+            String artifactId) {}
 
     public record SkillRequest(
             String name,

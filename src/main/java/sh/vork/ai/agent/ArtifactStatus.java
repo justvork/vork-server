@@ -6,6 +6,7 @@ package sh.vork.ai.agent;
 public enum ArtifactStatus {
     SNAPSHOT,
     SUBMITTED,
+    REJECTED,
     STAGED,
     PUBLISHED
 }

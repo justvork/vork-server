@@ -1,9 +1,13 @@
 /* jobs-page.js */
 
 let jobModal;
+let jobPublishModal;
 let allJobs = [];
 let allUsers = [];
 let modalNotificationUsers = [];
+let githubConnection;
+const csrfToken = document.querySelector('meta[name="_csrf"]')?.getAttribute('content') || '';
+const csrfHeader = document.querySelector('meta[name="_csrf_header"]')?.getAttribute('content') || 'X-CSRF-TOKEN';
 
 const VID_GROUP_ID_PATTERN = /^[A-Za-z0-9]+$/;
 const VID_ARTIFACT_ID_PATTERN = /^[A-Za-z0-9]+$/;
@@ -12,8 +16,22 @@ function isLegacySlashId(id) {
     return typeof id === 'string' && id.indexOf('/') >= 0;
 }
 
+function contributionPostHeaders() {
+    const headers = { 'Content-Type': 'application/json' };
+    if (csrfToken) {
+        headers[csrfHeader] = csrfToken;
+    }
+    return headers;
+}
+
 document.addEventListener('DOMContentLoaded', function () {
     jobModal = new VorkModal(document.getElementById('jobModal'));
+    jobPublishModal = new VorkModal(document.getElementById('job-publish-modal'));
+    githubConnection = window.VorkGitHubConnection
+        ? window.VorkGitHubConnection.init({
+            alertFn: showAlert
+        })
+        : null;
     loadAgents();
     loadUsers();
     loadJobsJson();
@@ -290,6 +308,222 @@ function exportJobPackage(id) {
         : '/api/jobs/' + encodeURIComponent(id) + '/export';
 }
 
+async function recommendJobVersion(id) {
+    if (!id) {
+        showAlert('Job id is required for version recommendation.', 'warning');
+        return;
+    }
+    try {
+        const breakingChange = window.confirm('Does this release include breaking changes?\nOK = yes (major bump), Cancel = no (minor bump).');
+        const recommendUrl = '/api/contributions/jobs/' + encodeURIComponent(id)
+            + '/recommend-version?breakingChange=' + encodeURIComponent(String(breakingChange));
+        const res = await fetch(recommendUrl, {
+            method: 'GET'
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok || data.error) {
+            showAlert(data.error || data.message || 'Failed to recommend version.', 'danger');
+            return;
+        }
+        const rec = data.recommendation || {};
+        const latest = rec.latestVersion ? ('Latest in staging: ' + rec.latestVersion + '. ') : 'No staging version found. ';
+        showAlert(latest + 'Recommended next version: ' + (rec.recommendedVersion || 'n/a') + '.', 'success');
+    } catch (_e) {
+        showAlert('Network error getting version recommendation.', 'danger');
+    }
+}
+
+async function publishJobContribution(id) {
+    if (!id) {
+        showAlert('Job id is required for publish.', 'warning');
+        return;
+    }
+
+    document.getElementById('job-publish-id').value = id;
+    clearAlert('job-publish-modal-alert');
+    setJobPublishLoading(true);
+    jobPublishModal.show();
+
+    try {
+        const draftRes = await fetch('/api/contributions/jobs/' + encodeURIComponent(id) + '/publish-draft', {
+            method: 'POST',
+            headers: contributionPostHeaders(),
+            body: JSON.stringify({})
+        });
+        const draftData = await draftRes.json().catch(function () { return {}; });
+        if (!draftRes.ok || draftData.error) {
+            showAlert(draftData.error || draftData.message || 'Failed to generate publish draft.', 'danger', 'job-publish-modal-alert');
+            setJobPublishLoading(false);
+            return;
+        }
+
+        const draft = draftData.draft || {};
+        document.getElementById('job-publish-version').value = (draft.version || '').trim();
+        document.getElementById('job-publish-pr-title').value = (draft.prTitle || '').trim();
+        document.getElementById('job-publish-change-summary').value = (draft.changeSummary || '').trim();
+        document.getElementById('job-publish-commit-message').value = (draft.commitMessage || '').trim();
+        document.getElementById('job-publish-pr-body').value = (draft.prBody || '').trim();
+        document.getElementById('job-publish-release-notes').value = (draft.releaseNotes || '').trim();
+        document.getElementById('job-publish-reviewer-hints').value = (draft.reviewerHints || '').trim();
+        document.getElementById('job-publish-breaking-change').checked = !!draft.breakingChange;
+
+        if (draft.latestVersion) {
+            showAlert('Latest in staging: ' + draft.latestVersion + '. Draft generated and ready to edit.', 'success', 'job-publish-modal-alert');
+        }
+
+        setJobPublishLoading(false);
+    } catch (_e) {
+        showAlert('Network error during draft generation.', 'danger', 'job-publish-modal-alert');
+        setJobPublishLoading(false);
+    }
+}
+
+async function submitJobPublishFromModal() {
+    const id = document.getElementById('job-publish-id').value;
+    const version = document.getElementById('job-publish-version').value.trim();
+    const prTitle = document.getElementById('job-publish-pr-title').value.trim();
+    const changeSummary = document.getElementById('job-publish-change-summary').value.trim();
+    const commitMessage = document.getElementById('job-publish-commit-message').value.trim();
+    const prBody = document.getElementById('job-publish-pr-body').value.trim();
+    const releaseNotes = document.getElementById('job-publish-release-notes').value.trim();
+    const reviewerHints = document.getElementById('job-publish-reviewer-hints').value.trim();
+    const breakingChange = !!document.getElementById('job-publish-breaking-change').checked;
+
+    if (!id) {
+        showAlert('Job id is missing for publish.', 'danger', 'job-publish-modal-alert');
+        return;
+    }
+    if (!/^[0-9]+\.[0-9]+$/.test(version) || version.toUpperCase() === 'SNAPSHOT') {
+        showAlert('Version must follow major.minor and cannot be SNAPSHOT.', 'danger', 'job-publish-modal-alert');
+        return;
+    }
+    if (!prTitle) {
+        showAlert('PR title is required.', 'danger', 'job-publish-modal-alert');
+        return;
+    }
+    if (!changeSummary) {
+        showAlert('Change summary is required.', 'danger', 'job-publish-modal-alert');
+        return;
+    }
+
+    setJobPublishLoading(true, 'Creating PR...');
+    clearAlert('job-publish-modal-alert');
+
+    try {
+        const publishRes = await fetch('/api/contributions/jobs/' + encodeURIComponent(id) + '/publish', {
+            method: 'POST',
+            headers: contributionPostHeaders(),
+            body: JSON.stringify({
+                version: version,
+                commitMessage: commitMessage,
+                prTitle: prTitle,
+                prBody: prBody,
+                changeSummary: changeSummary,
+                breakingChange: breakingChange,
+                releaseNotes: releaseNotes,
+                reviewerHints: reviewerHints
+            })
+        });
+        const publishData = await publishRes.json().catch(function () { return {}; });
+        if (!publishRes.ok || publishData.error) {
+            showAlert(publishData.error || publishData.message || 'Publish failed.', 'danger', 'job-publish-modal-alert');
+            setJobPublishLoading(false);
+            return;
+        }
+
+        const pullRequest = publishData.pullRequest || {};
+        showAlert('Published. PR: ' + (pullRequest.url || 'created'), 'success');
+        jobPublishModal.hide();
+        setTimeout(function () { location.reload(); }, 900);
+    } catch (_e) {
+        showAlert('Network error during publish.', 'danger', 'job-publish-modal-alert');
+        setJobPublishLoading(false);
+    }
+}
+
+function setJobPublishLoading(isLoading, loadingLabel) {
+    const fields = [
+        'job-publish-version',
+        'job-publish-pr-title',
+        'job-publish-change-summary',
+        'job-publish-commit-message',
+        'job-publish-pr-body',
+        'job-publish-release-notes',
+        'job-publish-reviewer-hints',
+        'job-publish-breaking-change'
+    ];
+    fields.forEach(function (id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (isLoading) {
+            el.setAttribute('disabled', 'disabled');
+        } else {
+            el.removeAttribute('disabled');
+        }
+    });
+
+    const submitBtn = document.getElementById('job-publish-submit-btn');
+    if (!submitBtn) return;
+    if (isLoading) {
+        submitBtn.setAttribute('disabled', 'disabled');
+        submitBtn.dataset.label = submitBtn.textContent;
+        submitBtn.textContent = loadingLabel || 'Preparing draft...';
+    } else {
+        submitBtn.removeAttribute('disabled');
+        submitBtn.textContent = submitBtn.dataset.label || 'Submit PR';
+    }
+}
+
+async function createJobSnapshotContribution(id) {
+    if (!id) {
+        showAlert('Job id is required for snapshot.', 'warning');
+        return;
+    }
+    if (!window.confirm('Create a SNAPSHOT clone from this immutable job?')) {
+        return;
+    }
+    try {
+        const res = await fetch('/api/contributions/jobs/' + encodeURIComponent(id) + '/snapshot', {
+            method: 'POST',
+            headers: contributionPostHeaders(),
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok || data.error) {
+            showAlert(data.error || data.message || 'Failed to create snapshot.', 'danger');
+            return;
+        }
+        showAlert('SNAPSHOT clone created.', 'success');
+        setTimeout(function () { location.reload(); }, 700);
+    } catch (_e) {
+        showAlert('Network error creating snapshot.', 'danger');
+    }
+}
+
+async function refreshJobContributionStatus(id) {
+    if (!id) {
+        showAlert('Job id is required to refresh status.', 'warning');
+        return;
+    }
+    try {
+        const res = await fetch('/api/contributions/promotions/reconcile', {
+            method: 'POST',
+            headers: contributionPostHeaders(),
+            body: JSON.stringify({})
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok || data.error) {
+            showAlert(data.error || data.message || 'Failed to refresh contribution status.', 'danger');
+            return;
+        }
+        const summary = data.summary || {};
+        const promoted = (summary.jobsPromotedToStaged || 0);
+        showAlert('Status refresh complete. Jobs promoted to STAGED: ' + promoted + '.', 'success');
+        setTimeout(function () { location.reload(); }, 700);
+    } catch (_e) {
+        showAlert('Network error refreshing contribution status.', 'danger');
+    }
+}
+
 function renderNotificationUserPills() {
     const container = document.getElementById('job-notify-pill-container');
     if (!container) return;
@@ -443,10 +677,16 @@ async function importJobs(input) {
     }
 }
 
-function showAlert(msg, type) {
+function clearAlert(targetId) {
+    const area = document.getElementById(targetId || 'alert-area');
+    if (area) area.innerHTML = '';
+}
+
+function showAlert(msg, type, targetId) {
     const modalEl = document.getElementById('jobModal');
     const isOpen = modalEl && modalEl.classList.contains('show');
-    const area = document.getElementById(isOpen ? 'modal-alert-area' : 'alert-area');
+    const area = document.getElementById(targetId || (isOpen ? 'modal-alert-area' : 'alert-area'));
+    if (!area) return;
     area.innerHTML = '<div class="alert alert-' + type + ' alert-dismissible fade show py-2 small" role="alert">' +
         msg + '<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>';
 }

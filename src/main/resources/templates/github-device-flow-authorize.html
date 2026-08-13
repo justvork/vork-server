@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <title>Connect GitHub — Vork</title>
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="/css/github-device-flow-authorize.css" th:href="@{/css/github-device-flow-authorize.css}">
+</head>
+<body class="bg-zinc-950 text-zinc-100">
+<div class="connect-shell">
+    <div class="connect-card">
+        <div class="connect-brand">
+            <img src="/images/Vork-Faviconx128.png" th:src="@{/images/Vork-Faviconx128.png}" alt="Vork" class="connect-logo">
+            <div>
+                <p class="connect-kicker">GitHub Integration</p>
+                <h1 class="connect-title">Connect Your GitHub Account</h1>
+            </div>
+        </div>
+
+        <p class="connect-summary">
+            GitHub Device Flow requires a one-time code. Copy the code below, continue to GitHub, and enter it when prompted.
+        </p>
+
+        <ol class="connect-steps">
+            <li>Copy your one-time code.</li>
+            <li>Click Continue to GitHub to open a popup window.</li>
+            <li>Enter the code on github.com and approve access.</li>
+            <li>This page will detect completion automatically.</li>
+        </ol>
+
+        <div class="code-row">
+            <div>
+                <p class="code-label">Device Code</p>
+                <p id="device-code" class="code-value">Loading…</p>
+            </div>
+            <button id="copy-device-code-btn" type="button" class="btn-copy" title="Copy device code">
+                <i class="fa-regular fa-copy"></i>
+                <span>Copy</span>
+            </button>
+        </div>
+
+        <div class="action-row">
+            <button id="continue-github-btn" type="button" class="btn-primary">
+                <i class="fa-brands fa-github"></i>
+                <span>Continue To GitHub</span>
+            </button>
+            <button id="check-completion-btn" type="button" class="btn-secondary">
+                <i class="fa-solid fa-rotate"></i>
+                <span>I Entered The Code</span>
+            </button>
+        </div>
+
+        <p id="connect-status" class="status-text" role="status">Preparing device flow…</p>
+
+        <div class="return-row">
+            <a id="return-link" href="/" class="return-link">Return without connecting</a>
+        </div>
+    </div>
+</div>
+<script src="/js/github-device-flow-authorize.js?v=20260812.1" th:src="@{/js/github-device-flow-authorize.js(v='20260812.1')}"></script>
+</body>
+</html>

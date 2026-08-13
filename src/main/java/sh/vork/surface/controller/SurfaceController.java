@@ -181,7 +181,7 @@ public class SurfaceController {
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
     public ResponseEntity<?> getSurface(@PathVariable String uuid) {
         log.debug("ENTER getSurface: [uuid={}]", uuid);
-        Surface surface = surfaceService.resolveByUuidOrToolId(uuid);
+        Surface surface = surfaceService.get(uuid);
         if (surface == null) {
             return ResponseEntity.notFound().build();
         }
@@ -219,7 +219,7 @@ public class SurfaceController {
     public ResponseEntity<?> updateSurface(@PathVariable String uuid,
                                            @RequestBody UpdateSurfaceRequest req) {
         log.debug("ENTER updateSurface: [uuid={}]", uuid);
-        Surface existing = surfaceService.resolveByUuidOrToolId(uuid);
+        Surface existing = surfaceService.get(uuid);
         if (existing == null) {
             return ResponseEntity.notFound().build();
         }
@@ -248,12 +248,13 @@ public class SurfaceController {
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
     public ResponseEntity<?> deleteSurface(@PathVariable String uuid) {
         log.debug("ENTER deleteSurface: [uuid={}]", uuid);
-        Surface existing = surfaceService.resolveByUuidOrToolId(uuid);
+        Surface existing = surfaceService.get(uuid);
         if (existing == null) {
             return ResponseEntity.notFound().build();
         }
-        if (!existing.isSnapshotMutable()) {
-            return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT surfaces can be deleted."));
+        if (!existing.isDeletable()) {
+            log.warn("Refused to delete immutable surface [uuid={}, status={}]", uuid, existing.artifactStatus());
+            return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT, SUBMITTED, or REJECTED surfaces can be deleted."));
         }
         if (!surfaceService.delete(existing.uuid())) {
             return ResponseEntity.notFound().build();
@@ -269,14 +270,13 @@ public class SurfaceController {
     }
 
     private ResponseEntity<?> exportSurfaceById(String uuid) {
-        Surface surface = surfaceService.resolveByUuidOrToolId(uuid);
+        Surface surface = surfaceService.get(uuid);
         if (surface == null) {
             return ResponseEntity.notFound().build();
         }
 
         SurfaceArtifact artifact = new SurfaceArtifact(
                 surface.uuid(),
-                surface.toolId(),
                 surface.name(),
                 surface.description(),
                 surface.skillUuids(),
@@ -476,7 +476,7 @@ public class SurfaceController {
 
                 try {
                         surfaceService.ensureSession(uuid, principal.getName());
-                        Surface surface = surfaceService.resolveByUuidOrToolId(uuid);
+                        Surface surface = surfaceService.get(uuid);
                         if (surface == null) {
                                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                                                 .body(Map.of("status", "error", "message", "Surface not found."));
@@ -1004,7 +1004,6 @@ public class SurfaceController {
             @JsonIgnoreProperties(ignoreUnknown = true)
             public record SurfaceArtifact(
                 String uuid,
-                String toolId,
                 String name,
                 String description,
                 List<String> skillUuids,

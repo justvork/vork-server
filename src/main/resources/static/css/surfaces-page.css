@@ -40,6 +40,17 @@
     color: #c9f8e6;
 }
 
+.artifact-status-REJECTED {
+    background: rgba(244, 63, 94, 0.18);
+    border-color: rgba(244, 63, 94, 0.45);
+    color: #ffd1db;
+}
+
+.modal-dialog.surface-publish-modal-dialog {
+    width: 100%;
+    max-width: min(96vw, 72rem);
+}
+
 /* VorkModal backdrop (same as other pages) */
 .modal {
     display: none;

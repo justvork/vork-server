@@ -145,6 +145,27 @@ class JobsControllerTest {
     }
 
     @Test
+    void deleteJob_allowsSubmittedJob() {
+        AiSchedulerService schedulerService = mock(AiSchedulerService.class);
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<ScheduledJob> jobRepository = mock(DatabaseRepository.class);
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<AiSession> sessionRepository = mock(DatabaseRepository.class);
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<Skill> skillRepository = mock(DatabaseRepository.class);
+
+        ScheduledJob existing = job("vork-nightlyreport-1.0", "alice", "vork", "nightlyreport", "1.0", ArtifactStatus.SUBMITTED);
+        when(jobRepository.get(existing.id())).thenReturn(existing);
+
+        JobsController controller = new JobsController(schedulerService, jobRepository, sessionRepository, skillRepository, userManagementService());
+
+        ResponseEntity<?> response = controller.deleteJob(existing.id(), user("alice"));
+
+        assertEquals(200, response.getStatusCode().value());
+        verify(schedulerService).deleteJob(existing.id());
+    }
+
+    @Test
     void importJob_rejectsNonSnapshotArtifactStatus() {
         AiSchedulerService schedulerService = mock(AiSchedulerService.class);
         @SuppressWarnings("unchecked")

@@ -1,6 +1,7 @@
 /* agents-page.js */
 
 let agentModal;
+let agentPublishModal;
 let allAgents = [];
 let allTools = [];
 let allSkills = [];
@@ -17,16 +18,33 @@ let modalBindingUuids = [];
 let modalAssignedUsers = [];
 let modalAssignedJobs = [];
 let autoArtifactIdEnabled = true;
+let githubConnection;
 const AGENT_IDENTITY_REGEX = /^[A-Za-z0-9]+$/;
 const AGENT_IDENTITY_MIN_LEN = 3;
 const AGENT_IDENTITY_MAX_LEN = 64;
+const csrfToken = document.querySelector('meta[name="_csrf"]')?.getAttribute('content') || '';
+const csrfHeader = document.querySelector('meta[name="_csrf_header"]')?.getAttribute('content') || 'X-CSRF-TOKEN';
 
 function isLegacySlashId(id) {
     return typeof id === 'string' && id.indexOf('/') >= 0;
 }
 
+function contributionPostHeaders() {
+    const headers = { 'Content-Type': 'application/json' };
+    if (csrfToken) {
+        headers[csrfHeader] = csrfToken;
+    }
+    return headers;
+}
+
 document.addEventListener('DOMContentLoaded', function () {
     agentModal = new VorkModal(document.getElementById('agentModal'));
+    agentPublishModal = new VorkModal(document.getElementById('agent-publish-modal'));
+    githubConnection = window.VorkGitHubConnection
+        ? window.VorkGitHubConnection.init({
+            alertFn: showAlert
+        })
+        : null;
     loadData();
 
     const importBtn = document.getElementById('import-agents-btn');
@@ -987,6 +1005,222 @@ async function deleteAgent(id) {
     }
 }
 
+async function recommendAgentVersion(id) {
+    if (!id) {
+        showAlert('Agent id is required for version recommendation.', 'warning');
+        return;
+    }
+    try {
+        const breakingChange = window.confirm('Does this release include breaking changes?\nOK = yes (major bump), Cancel = no (minor bump).');
+        const recommendUrl = '/api/contributions/agents/' + encodeURIComponent(id)
+            + '/recommend-version?breakingChange=' + encodeURIComponent(String(breakingChange));
+        const res = await fetch(recommendUrl, {
+            method: 'GET'
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok || data.error) {
+            showAlert(data.error || data.message || 'Failed to recommend version.', 'danger');
+            return;
+        }
+        const rec = data.recommendation || {};
+        const latest = rec.latestVersion ? ('Latest in staging: ' + rec.latestVersion + '. ') : 'No staging version found. ';
+        showAlert(latest + 'Recommended next version: ' + (rec.recommendedVersion || 'n/a') + '.', 'success');
+    } catch (_e) {
+        showAlert('Network error getting version recommendation.', 'danger');
+    }
+}
+
+async function publishAgentContribution(id) {
+    if (!id) {
+        showAlert('Agent id is required for publish.', 'warning');
+        return;
+    }
+
+    document.getElementById('agent-publish-id').value = id;
+    clearAlert('agent-publish-modal-alert');
+    setAgentPublishLoading(true);
+    agentPublishModal.show();
+
+    try {
+        const draftRes = await fetch('/api/contributions/agents/' + encodeURIComponent(id) + '/publish-draft', {
+            method: 'POST',
+            headers: contributionPostHeaders(),
+            body: JSON.stringify({})
+        });
+        const draftData = await draftRes.json().catch(function () { return {}; });
+        if (!draftRes.ok || draftData.error) {
+            showAlert(draftData.error || draftData.message || 'Failed to generate publish draft.', 'danger', 'agent-publish-modal-alert');
+            setAgentPublishLoading(false);
+            return;
+        }
+
+        const draft = draftData.draft || {};
+        document.getElementById('agent-publish-version').value = (draft.version || '').trim();
+        document.getElementById('agent-publish-pr-title').value = (draft.prTitle || '').trim();
+        document.getElementById('agent-publish-change-summary').value = (draft.changeSummary || '').trim();
+        document.getElementById('agent-publish-commit-message').value = (draft.commitMessage || '').trim();
+        document.getElementById('agent-publish-pr-body').value = (draft.prBody || '').trim();
+        document.getElementById('agent-publish-release-notes').value = (draft.releaseNotes || '').trim();
+        document.getElementById('agent-publish-reviewer-hints').value = (draft.reviewerHints || '').trim();
+        document.getElementById('agent-publish-breaking-change').checked = !!draft.breakingChange;
+
+        if (draft.latestVersion) {
+            showAlert('Latest in staging: ' + draft.latestVersion + '. Draft generated and ready to edit.', 'success', 'agent-publish-modal-alert');
+        }
+
+        setAgentPublishLoading(false);
+    } catch (_e) {
+        showAlert('Network error during draft generation.', 'danger', 'agent-publish-modal-alert');
+        setAgentPublishLoading(false);
+    }
+}
+
+async function submitAgentPublishFromModal() {
+    const id = document.getElementById('agent-publish-id').value;
+    const version = document.getElementById('agent-publish-version').value.trim();
+    const prTitle = document.getElementById('agent-publish-pr-title').value.trim();
+    const changeSummary = document.getElementById('agent-publish-change-summary').value.trim();
+    const commitMessage = document.getElementById('agent-publish-commit-message').value.trim();
+    const prBody = document.getElementById('agent-publish-pr-body').value.trim();
+    const releaseNotes = document.getElementById('agent-publish-release-notes').value.trim();
+    const reviewerHints = document.getElementById('agent-publish-reviewer-hints').value.trim();
+    const breakingChange = !!document.getElementById('agent-publish-breaking-change').checked;
+
+    if (!id) {
+        showAlert('Agent id is missing for publish.', 'danger', 'agent-publish-modal-alert');
+        return;
+    }
+    if (!/^[0-9]+\.[0-9]+$/.test(version) || version.toUpperCase() === 'SNAPSHOT') {
+        showAlert('Version must follow major.minor and cannot be SNAPSHOT.', 'danger', 'agent-publish-modal-alert');
+        return;
+    }
+    if (!prTitle) {
+        showAlert('PR title is required.', 'danger', 'agent-publish-modal-alert');
+        return;
+    }
+    if (!changeSummary) {
+        showAlert('Change summary is required.', 'danger', 'agent-publish-modal-alert');
+        return;
+    }
+
+    setAgentPublishLoading(true, 'Creating PR...');
+    clearAlert('agent-publish-modal-alert');
+
+    try {
+        const publishRes = await fetch('/api/contributions/agents/' + encodeURIComponent(id) + '/publish', {
+            method: 'POST',
+            headers: contributionPostHeaders(),
+            body: JSON.stringify({
+                version: version,
+                commitMessage: commitMessage,
+                prTitle: prTitle,
+                prBody: prBody,
+                changeSummary: changeSummary,
+                breakingChange: breakingChange,
+                releaseNotes: releaseNotes,
+                reviewerHints: reviewerHints
+            })
+        });
+        const publishData = await publishRes.json().catch(function () { return {}; });
+        if (!publishRes.ok || publishData.error) {
+            showAlert(publishData.error || publishData.message || 'Publish failed.', 'danger', 'agent-publish-modal-alert');
+            setAgentPublishLoading(false);
+            return;
+        }
+
+        const pullRequest = publishData.pullRequest || {};
+        showAlert('Published. PR: ' + (pullRequest.url || 'created'), 'success');
+        agentPublishModal.hide();
+        setTimeout(function () { location.reload(); }, 900);
+    } catch (_e) {
+        showAlert('Network error during publish.', 'danger', 'agent-publish-modal-alert');
+        setAgentPublishLoading(false);
+    }
+}
+
+function setAgentPublishLoading(isLoading, loadingLabel) {
+    const fields = [
+        'agent-publish-version',
+        'agent-publish-pr-title',
+        'agent-publish-change-summary',
+        'agent-publish-commit-message',
+        'agent-publish-pr-body',
+        'agent-publish-release-notes',
+        'agent-publish-reviewer-hints',
+        'agent-publish-breaking-change'
+    ];
+    fields.forEach(function (id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (isLoading) {
+            el.setAttribute('disabled', 'disabled');
+        } else {
+            el.removeAttribute('disabled');
+        }
+    });
+
+    const submitBtn = document.getElementById('agent-publish-submit-btn');
+    if (!submitBtn) return;
+    if (isLoading) {
+        submitBtn.setAttribute('disabled', 'disabled');
+        submitBtn.dataset.label = submitBtn.textContent;
+        submitBtn.textContent = loadingLabel || 'Preparing draft...';
+    } else {
+        submitBtn.removeAttribute('disabled');
+        submitBtn.textContent = submitBtn.dataset.label || 'Submit PR';
+    }
+}
+
+async function createAgentSnapshotContribution(id) {
+    if (!id) {
+        showAlert('Agent id is required for snapshot.', 'warning');
+        return;
+    }
+    if (!window.confirm('Create a SNAPSHOT clone from this immutable agent?')) {
+        return;
+    }
+    try {
+        const res = await fetch('/api/contributions/agents/' + encodeURIComponent(id) + '/snapshot', {
+            method: 'POST',
+            headers: contributionPostHeaders(),
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok || data.error) {
+            showAlert(data.error || data.message || 'Failed to create snapshot.', 'danger');
+            return;
+        }
+        showAlert('SNAPSHOT clone created.', 'success');
+        setTimeout(function () { location.reload(); }, 700);
+    } catch (_e) {
+        showAlert('Network error creating snapshot.', 'danger');
+    }
+}
+
+async function refreshAgentContributionStatus(id) {
+    if (!id) {
+        showAlert('Agent id is required to refresh status.', 'warning');
+        return;
+    }
+    try {
+        const res = await fetch('/api/contributions/promotions/reconcile', {
+            method: 'POST',
+            headers: contributionPostHeaders(),
+            body: JSON.stringify({})
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (!res.ok || data.error) {
+            showAlert(data.error || data.message || 'Failed to refresh contribution status.', 'danger');
+            return;
+        }
+        const summary = data.summary || {};
+        const promoted = (summary.agentsPromotedToStaged || 0);
+        showAlert('Status refresh complete. Agents promoted to STAGED: ' + promoted + '.', 'success');
+        setTimeout(function () { location.reload(); }, 700);
+    } catch (_e) {
+        showAlert('Network error refreshing contribution status.', 'danger');
+    }
+}
+
 function exportAgentPackage(id) {
     if (!id) {
         showAlert('Agent id is missing for export.', 'warning');
@@ -1086,8 +1320,14 @@ async function importAgents(input) {
     }
 }
 
-function showAlert(msg, type) {
-    const area = document.getElementById('alert-area');
+function clearAlert(targetId) {
+    const area = document.getElementById(targetId || 'alert-area');
+    if (area) area.innerHTML = '';
+}
+
+function showAlert(msg, type, targetId) {
+    const area = document.getElementById(targetId || 'alert-area');
+    if (!area) return;
     area.innerHTML =
         '<div class="alert alert-' + type + ' alert-dismissible fade show" role="alert">' +
         escapeHtml(msg) +

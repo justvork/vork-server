@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -33,6 +34,7 @@ import sh.vork.reflection.ReflectionBinding;
 import sh.vork.reflection.ReflectionService;
 import sh.vork.skill.Skill;
 import sh.vork.skill.SkillVisibility;
+import sh.vork.surface.ArtifactStatus;
 import sh.vork.surface.Surface;
 import sh.vork.surface.service.SurfaceReflectionContractService;
 import sh.vork.surface.service.SurfaceService;
@@ -75,7 +77,7 @@ class SurfaceControllerTest {
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
         SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
 
-        when(surfaceService.resolveByUuidOrToolId("surface-1")).thenReturn(new Surface(
+        when(surfaceService.get("surface-1")).thenReturn(new Surface(
             "vork-surface1-SNAPSHOT",
             "surface1",
             "My Surface",
@@ -113,6 +115,77 @@ class SurfaceControllerTest {
         assertEquals(400, response.getStatusCode().value());
         Map<?, ?> body = assertInstanceOf(Map.class, response.getBody());
         assertEquals("Skill output schema required", body.get("error"));
+    }
+
+    @Test
+    void deleteSurface_allowsSubmittedSurface() {
+        SurfaceService surfaceService = mock(SurfaceService.class);
+        SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+        SurfaceReflectionContractService contractService = mock(SurfaceReflectionContractService.class);
+        ReflectionService reflectionService = mock(ReflectionService.class);
+        ChatService chatService = mock(ChatService.class);
+        SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
+
+        Surface existing = new Surface(
+            "vork-surface1-1.0",
+            "surface1",
+            "My Surface",
+            "desc",
+            "session-1",
+            "",
+            List.of(),
+            List.of(),
+            List.of(),
+            "vork",
+            "surface1",
+            "1.0",
+            ArtifactStatus.SUBMITTED,
+            1L,
+            1L);
+
+        when(surfaceService.get(existing.uuid())).thenReturn(existing);
+        when(surfaceService.delete(existing.uuid())).thenReturn(true);
+
+        ResponseEntity<?> response = controller.deleteSurface(existing.uuid());
+
+        assertEquals(200, response.getStatusCode().value());
+        verify(surfaceService).delete(existing.uuid());
+    }
+
+    @Test
+    void deleteSurface_rejectsStagedSurface() {
+        SurfaceService surfaceService = mock(SurfaceService.class);
+        SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+        SurfaceReflectionContractService contractService = mock(SurfaceReflectionContractService.class);
+        ReflectionService reflectionService = mock(ReflectionService.class);
+        ChatService chatService = mock(ChatService.class);
+        SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
+
+        Surface existing = new Surface(
+            "vork-surface1-1.1",
+            "surface1",
+            "My Surface",
+            "desc",
+            "session-1",
+            "",
+            List.of(),
+            List.of(),
+            List.of(),
+            "vork",
+            "surface1",
+            "1.1",
+            ArtifactStatus.STAGED,
+            1L,
+            1L);
+
+        when(surfaceService.get(existing.uuid())).thenReturn(existing);
+
+        ResponseEntity<?> response = controller.deleteSurface(existing.uuid());
+
+        assertEquals(403, response.getStatusCode().value());
+        verify(surfaceService, never()).delete(existing.uuid());
     }
 
     @Test
@@ -284,7 +357,7 @@ class SurfaceControllerTest {
             1L,
             1L);
 
-        when(surfaceService.resolveByUuidOrToolId("surface-1")).thenReturn(surface);
+        when(surfaceService.get("surface-1")).thenReturn(surface);
         when(sessionFileSystem.list(FileArea.SESSION, "editor-session-1", ""))
             .thenReturn(List.of(new sh.vork.filesystem.FileNode("index.html", "index.html", false, 12L, 1L)));
         when(sessionFileSystem.read(FileArea.SESSION, "editor-session-1", "index.html"))
@@ -330,7 +403,6 @@ class SurfaceControllerTest {
 
         SurfaceController.SurfaceArtifact incoming = new SurfaceController.SurfaceArtifact(
             "vork-importedsurface-SNAPSHOT",
-            "incoming-surface",
             "Imported Surface",
             "desc",
             List.of(),
@@ -440,7 +512,7 @@ class SurfaceControllerTest {
         Principal principal = () -> "admin";
         AiSession session = sessionWithMessages(List.of());
         when(surfaceService.ensureSession("surface-1", "admin")).thenReturn(session);
-        when(surfaceService.resolveByUuidOrToolId("surface-1")).thenReturn(new Surface(
+        when(surfaceService.get("surface-1")).thenReturn(new Surface(
             "surface-1", "surfaceone", "Surface", "", "session-1", "", List.of(), List.of("binding-1"), List.of(), 1L, 1L));
         when(reflectionService.getGroupByToolId("ordersgroup")).thenReturn(new sh.vork.reflection.ReflectionGroup(
             "group-1", "ordersgroup", "Orders Group", "", sh.vork.reflection.ReflectionType.REST,
@@ -943,7 +1015,7 @@ class SurfaceControllerTest {
                     List.of())));
         when(contractService.contractsForSurface("surface-1", null, null)).thenReturn(contracts);
 
-        when(surfaceService.resolveByUuidOrToolId("surface-1")).thenReturn(new Surface(
+        when(surfaceService.get("surface-1")).thenReturn(new Surface(
             "surface-1", "surfaceone", "Surface", "", "session-1", "", List.of(), List.of("binding-1"), List.of(), 1L, 1L));
         when(reflectionService.getGroupByToolId("ordersgroup")).thenReturn(new sh.vork.reflection.ReflectionGroup(
             "group-1", "ordersgroup", "Orders Group", "", sh.vork.reflection.ReflectionType.REST,
@@ -995,7 +1067,7 @@ class SurfaceControllerTest {
         Principal principal = () -> "admin";
         AiSession session = sessionWithMessages(List.of());
         when(surfaceService.ensureSession("surface-1", "admin")).thenReturn(session);
-        when(surfaceService.resolveByUuidOrToolId("surface-1")).thenReturn(new Surface(
+        when(surfaceService.get("surface-1")).thenReturn(new Surface(
             "surface-1", "surfaceone", "Surface", "", "session-1", "", List.of(), List.of("binding-1"), List.of(), 1L, 1L));
 
         when(reflectionService.getGroupByToolId("openroutedistancecalculator")).thenReturn(null);
@@ -1050,7 +1122,7 @@ class SurfaceControllerTest {
         Principal principal = () -> "admin";
         AiSession session = sessionWithMessages(List.of());
         when(surfaceService.ensureSession("surface-1", "admin")).thenReturn(session);
-        when(surfaceService.resolveByUuidOrToolId("surface-1")).thenReturn(new Surface(
+        when(surfaceService.get("surface-1")).thenReturn(new Surface(
             "surface-1", "surfaceone", "Surface", "", "session-1", "", List.of(), List.of("binding-1"), List.of(), 1L, 1L));
         when(reflectionService.getGroupByToolId("ordersgroup")).thenReturn(new sh.vork.reflection.ReflectionGroup(
             "group-1", "ordersgroup", "Orders Group", "", sh.vork.reflection.ReflectionType.REST,
@@ -1080,7 +1152,7 @@ class SurfaceControllerTest {
         Principal principal = () -> "admin";
         AiSession session = sessionWithMessages(List.of());
         when(surfaceService.ensureSession("surface-1", "admin")).thenReturn(session);
-        when(surfaceService.resolveByUuidOrToolId("surface-1")).thenReturn(new Surface(
+        when(surfaceService.get("surface-1")).thenReturn(new Surface(
             "surface-1", "surfaceone", "Surface", "", "session-1", "", List.of(), List.of("binding-1"), List.of(), 1L, 1L));
         when(reflectionService.getGroupByToolId("ordersgroup")).thenReturn(new sh.vork.reflection.ReflectionGroup(
             "group-1", "ordersgroup", "Orders Group", "", sh.vork.reflection.ReflectionType.REST,
@@ -1112,7 +1184,7 @@ class SurfaceControllerTest {
         Principal principal = () -> "admin";
         AiSession session = sessionWithMessages(List.of());
         when(surfaceService.ensureSession("surface-1", "admin")).thenReturn(session);
-        when(surfaceService.resolveByUuidOrToolId("surface-1")).thenReturn(new Surface(
+        when(surfaceService.get("surface-1")).thenReturn(new Surface(
             "surface-1", "surfaceone", "Surface", "", "session-1", "", List.of(), List.of("binding-1"), List.of(), 1L, 1L));
         when(reflectionService.getGroupByToolId("ordersgroup")).thenReturn(new sh.vork.reflection.ReflectionGroup(
             "group-1", "ordersgroup", "Orders Group", "", sh.vork.reflection.ReflectionType.REST,
@@ -1144,7 +1216,7 @@ class SurfaceControllerTest {
         Principal principal = () -> "admin";
         AiSession session = sessionWithMessages(List.of());
         when(surfaceService.ensureSession("surface-1", "admin")).thenReturn(session);
-        when(surfaceService.resolveByUuidOrToolId("surface-1")).thenReturn(new Surface(
+        when(surfaceService.get("surface-1")).thenReturn(new Surface(
             "surface-1", "surfaceone", "Surface", "", "session-1", "", List.of(), List.of("binding-1"), List.of(), 1L, 1L));
         when(reflectionService.getGroupByToolId("ordersgroup")).thenReturn(new sh.vork.reflection.ReflectionGroup(
             "group-1", "ordersgroup", "Orders Group", "", sh.vork.reflection.ReflectionType.REST,

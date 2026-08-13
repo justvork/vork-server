@@ -242,8 +242,8 @@ public class JobsController {
         if (existing == null) return ResponseEntity.notFound().build();
         if (!user.getUsername().equals(existing.userId()))
             return ResponseEntity.status(403).body(Map.of("error", "Forbidden"));
-        if (!existing.isSnapshotMutable()) {
-            return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT jobs can be deleted."));
+        if (!existing.isDeletable()) {
+            return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT, SUBMITTED, or REJECTED jobs can be deleted."));
         }
 
         schedulerService.deleteJob(id);

@@ -301,10 +301,10 @@ public class AgentController {
             return ResponseEntity.status(403)
                     .body(Map.of("error", "System agents cannot be deleted."));
         }
-        if (!existing.isSnapshotMutable()) {
-            log.warn("Refused to delete non-snapshot agent [id={}, status={}]", id, existing.artifactStatus());
+        if (!existing.isDeletable()) {
+            log.warn("Refused to delete immutable agent [id={}, status={}]", id, existing.artifactStatus());
             return ResponseEntity.status(403)
-                    .body(Map.of("error", "Only SNAPSHOT agents can be deleted."));
+                .body(Map.of("error", "Only SNAPSHOT, SUBMITTED, or REJECTED agents can be deleted."));
         }
 
         agentRepository.delete(id);

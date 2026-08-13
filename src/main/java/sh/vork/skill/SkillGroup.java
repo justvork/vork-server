@@ -18,8 +18,11 @@ public record SkillGroup(
         String       name,
         String       author,
         String       category,
-    List<Skill>  skills,
-        long         version,
+        List<Skill>  skills,
+        String       groupId,
+        String       artifactId,
+        String       version,
+        ArtifactStatus artifactStatus,
         long         createdAt,
         long         updatedAt
 ) implements DatabaseEntity {
@@ -29,6 +32,34 @@ public record SkillGroup(
         if (author == null) author = "";
         if (category == null) category = "";
         if (skills == null) skills = List.of();
-        if (version < 1) version = 1;
+        if (groupId == null || groupId.isBlank()) groupId = "legacy";
+        if (artifactId == null || artifactId.isBlank()) artifactId = "skillgroup";
+        if (version == null || version.isBlank()) {
+            version = "SNAPSHOT";
+        } else {
+            version = version.trim();
+            if (version.matches("^[0-9]+$")) {
+                version = "SNAPSHOT";
+            }
+        }
+        artifactStatus = artifactStatus == null ? ArtifactStatus.SNAPSHOT : artifactStatus;
+    }
+
+    /**
+     * VID-compatible alias retained for clients expecting artifactVersion.
+     */
+    public String artifactVersion() {
+        return version;
+    }
+
+    public SkillGroup(String uuid,
+                      String name,
+                      String author,
+                      String category,
+                      List<Skill> skills,
+                      long ignoredLegacyVersion,
+                      long createdAt,
+                      long updatedAt) {
+        this(uuid, name, author, category, skills, "legacy", "skillgroup", "SNAPSHOT", ArtifactStatus.SNAPSHOT, createdAt, updatedAt);
     }
 }

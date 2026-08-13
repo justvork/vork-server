@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <title>GitHub Settings — Vork</title>
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="/css/settings.css" th:href="@{/css/settings.css}">
+</head>
+<body class="bg-zinc-950 text-zinc-100">
+<div th:replace="~{fragments/header :: header}"></div>
+
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
+        <div>
+            <h2 class="flex items-center gap-2 text-2xl font-bold text-zinc-100">
+                <i class="fa-brands fa-github text-[#fdaa02]"></i>GitHub Connection
+            </h2>
+            <p class="vork-page-subtitle">Manage your GitHub account used for contribution publishing workflows.</p>
+        </div>
+    </div>
+
+    <div class="vork-content-stack max-w-3xl">
+        <div id="github-settings-alert"></div>
+
+        <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-4">
+                <div>
+                    <h3 class="text-lg font-semibold text-zinc-100">Account Status</h3>
+                    <p class="text-sm text-zinc-400">Use this page to connect or disconnect your GitHub account.</p>
+                </div>
+                <span id="github-connection-status" class="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1 text-sm text-zinc-300">
+                    Checking GitHub connection…
+                </span>
+            </div>
+
+            <div class="mt-4 flex flex-wrap items-center gap-2">
+                <button type="button" id="github-connect-btn" class="rounded-lg border border-cyan-500/40 px-3 py-2 text-sm font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15" title="Connect GitHub">
+                    <i class="fa-brands fa-github mr-2"></i>Connect GitHub
+                </button>
+                <button type="button" id="github-disconnect-btn" class="rounded-lg border border-zinc-600 px-3 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800" title="Disconnect GitHub" disabled>
+                    <i class="fa-solid fa-link-slash mr-2"></i>Disconnect GitHub
+                </button>
+            </div>
+
+            <div id="github-connection-hint" class="mt-4 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-200">
+                Connect GitHub to enable publishing and contribution workflows.
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/github-device-flow-ui.js?v=20260813.2" th:src="@{/js/github-device-flow-ui.js(v='20260813.2')}"></script>
+<script src="/js/settings-github.js?v=20260813.1" th:src="@{/js/settings-github.js(v='20260813.1')}"></script>
+</body>
+</html>

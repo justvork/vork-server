@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <title>Agents — Vork</title>
     <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
     <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
@@ -20,11 +22,15 @@
             <p class="vork-page-subtitle">Manage AI agent personas and their tool permissions</p>
         </div>
         <div class="vork-page-header-actions">
-            <button class="btn btn-outline-success" id="import-agents-btn" title="Import an agent from a JSON export file">
+            <span id="github-connection-status" class="small text-muted me-2">Checking GitHub connection…</span>
+            <button type="button" class="btn btn-outline-primary" id="github-connect-btn" title="Connect GitHub">
+                <i class="fa-brands fa-github me-2"></i>Connect GitHub
+            </button>
+            <button type="button" class="btn btn-outline-success" id="import-agents-btn" title="Import an agent from a JSON export file">
                 <i class="fa-solid fa-file-import me-2"></i>Import
             </button>
             <input type="file" id="import-agents-input" accept=".json,application/json" class="d-none">
-            <button class="btn btn-primary" onclick="openCreate()">
+            <button type="button" class="btn btn-primary" onclick="openCreate()">
             <i class="fa-solid fa-plus me-2"></i>New Agent
             </button>
         </div>
@@ -32,6 +38,9 @@
 
     <div class="vork-content-stack">
         <div id="alert-area"></div>
+        <div id="github-connection-hint" class="alert alert-info py-2 small mb-2" role="status">
+            Connect GitHub before publishing artifacts.
+        </div>
 
         <!-- Agents table -->
         <div class="card">
@@ -68,19 +77,51 @@
                         </td>
                         <td class="text-end">
                             <div class="d-flex gap-1 justify-content-end">
-                                <button class="btn btn-sm btn-outline-secondary"
+                                <button type="button" class="btn btn-sm btn-outline-secondary"
                                         th:attr="data-id=${agent.uuid()}"
                                         onclick="exportAgentPackage(this.dataset.id)"
                                         title="Export">
                                     <i class="fa-solid fa-file-export"></i>
                                 </button>
-                                <button class="btn btn-sm btn-outline-secondary"
+                                <button type="button" class="btn btn-sm btn-outline-secondary"
                                         th:attr="data-id=${agent.uuid()}"
                                         onclick="openEdit(this.dataset.id)"
                                         title="Edit">
                                     <i class="fa-solid fa-pen"></i>
                                 </button>
-                                <button class="btn btn-sm btn-outline-danger"
+                                <button type="button" class="btn btn-sm btn-outline-info contrib-action"
+                                    th:if="${(agent.artifactStatus() != null ? agent.artifactStatus().name() : 'SNAPSHOT') == 'SNAPSHOT'}"
+                                        th:attr="data-id=${agent.uuid()},data-default-title='Recommend version'"
+                                        onclick="recommendAgentVersion(this.dataset.id)"
+                                        title="Recommend version"
+                                        disabled>
+                                    <i class="fa-solid fa-lightbulb"></i>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-primary contrib-action"
+                                    th:if="${(agent.artifactStatus() != null ? agent.artifactStatus().name() : 'SNAPSHOT') == 'SNAPSHOT'}"
+                                        th:attr="data-id=${agent.uuid()},data-default-title='Publish to staging via PR'"
+                                        onclick="publishAgentContribution(this.dataset.id)"
+                                        title="Publish to staging via PR"
+                                        disabled>
+                                    <i class="fa-solid fa-cloud-arrow-up"></i>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-warning contrib-action"
+                                    th:if="${(agent.artifactStatus() != null ? agent.artifactStatus().name() : 'SNAPSHOT') != 'SNAPSHOT'}"
+                                        th:attr="data-id=${agent.uuid()},data-default-title='Create SNAPSHOT clone from immutable version'"
+                                        onclick="createAgentSnapshotContribution(this.dataset.id)"
+                                        title="Create SNAPSHOT clone from immutable version"
+                                        disabled>
+                                    <i class="fa-solid fa-code-branch"></i>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-info contrib-action"
+                                    th:if="${(agent.artifactStatus() != null ? agent.artifactStatus().name() : 'SNAPSHOT') == 'SUBMITTED'}"
+                                        th:attr="data-id=${agent.uuid()},data-default-title='Refresh status from GitHub'"
+                                        onclick="refreshAgentContributionStatus(this.dataset.id)"
+                                        title="Refresh status from GitHub"
+                                        disabled>
+                                    <i class="fa-solid fa-rotate-right"></i>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-danger"
                                         th:attr="data-id=${agent.uuid()}"
                                         th:disabled="${agent.systemAgent()}"
                                         th:title="${agent.systemAgent() ? 'System agents cannot be deleted' : 'Delete'}"
@@ -235,7 +276,73 @@
     </div>
 </div>
 
+<!-- Publish Draft Modal -->
+<div class="modal" id="agent-publish-modal" tabindex="-1" aria-labelledby="agent-publish-modal-label" aria-hidden="true">
+    <div class="modal-dialog agent-publish-modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="agent-publish-modal-label">Publish Agent Draft</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="agent-publish-id">
+                <div id="agent-publish-modal-alert" class="mb-3"></div>
+                <p class="mb-3 text-xs text-zinc-400">AI generated this draft using the default model. Review and edit any field before submitting.</p>
+
+                <div class="mb-3 row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label" for="agent-publish-version">Version <span class="text-danger">*</span></label>
+                        <input type="text" id="agent-publish-version" class="form-control" placeholder="e.g. 1.0">
+                    </div>
+                    <div class="col-md-6 d-flex align-items-end">
+                        <label class="form-check-label d-inline-flex align-items-center gap-2" for="agent-publish-breaking-change">
+                            <input type="checkbox" id="agent-publish-breaking-change" class="form-check-input mt-0">
+                            Breaking change
+                        </label>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label" for="agent-publish-pr-title">PR title <span class="text-danger">*</span></label>
+                    <input type="text" id="agent-publish-pr-title" class="form-control">
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label" for="agent-publish-change-summary">Change summary <span class="text-danger">*</span></label>
+                    <textarea id="agent-publish-change-summary" rows="2" class="form-control"></textarea>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label" for="agent-publish-commit-message">Commit message</label>
+                    <input type="text" id="agent-publish-commit-message" class="form-control">
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label" for="agent-publish-pr-body">PR body</label>
+                    <textarea id="agent-publish-pr-body" rows="4" class="form-control"></textarea>
+                </div>
+
+                <div class="mb-3 row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label" for="agent-publish-release-notes">Release notes</label>
+                        <textarea id="agent-publish-release-notes" rows="3" class="form-control"></textarea>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="agent-publish-reviewer-hints">Reviewer hints</label>
+                        <textarea id="agent-publish-reviewer-hints" rows="3" class="form-control"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" id="agent-publish-submit-btn" class="btn btn-primary" onclick="submitAgentPublishFromModal()">Submit PR</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
-<script src="/js/agents-page.js" th:src="@{/js/agents-page.js}"></script>
+<script src="/js/github-device-flow-ui.js?v=20260813.2" th:src="@{/js/github-device-flow-ui.js(v='20260813.2')}"></script>
+<script src="/js/agents-page.js?v=20260813.8" th:src="@{/js/agents-page.js(v='20260813.8')}"></script>
 </body>
 </html>

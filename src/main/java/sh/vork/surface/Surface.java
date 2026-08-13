@@ -111,6 +111,14 @@ public record Surface(
         return artifactStatus == null || artifactStatus == ArtifactStatus.SNAPSHOT;
     }
 
+    @JsonIgnore
+    public boolean isDeletable() {
+        return artifactStatus == null
+                || artifactStatus == ArtifactStatus.SNAPSHOT
+                || artifactStatus == ArtifactStatus.SUBMITTED
+                || artifactStatus == ArtifactStatus.REJECTED;
+    }
+
     private static String normalizeToolId(String source) {
         StringBuilder sb = new StringBuilder();
         String raw = source == null ? "" : source.trim().toLowerCase();

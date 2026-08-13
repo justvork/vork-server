@@ -290,6 +290,42 @@ class AgentControllerTest {
         }
 
         @Test
+        void deleteAgent_allowsSubmittedAgent() {
+                @SuppressWarnings("unchecked")
+                DatabaseRepository<AgentTemplate> agentRepo = mock(DatabaseRepository.class);
+                @SuppressWarnings("unchecked")
+                DatabaseRepository<ScheduledJob> jobRepo = mock(DatabaseRepository.class);
+                @SuppressWarnings("unchecked")
+                DatabaseRepository<Skill> skillRepo = mock(DatabaseRepository.class);
+                ReflectionService reflectionService = mock(ReflectionService.class);
+                BindingCatalogService bindingCatalogService = mock(BindingCatalogService.class);
+                AgentAssignmentService agentAssignmentService = mock(AgentAssignmentService.class);
+
+                AgentTemplate existing = new AgentTemplate(
+                                "vork-ops-SUBMITTED",
+                                "Ops Agent",
+                                "",
+                                List.of(),
+                                false,
+                                List.of(),
+                                AgentType.INTERACTIVE,
+                                List.of(),
+                                List.of(),
+                                null,
+                                "vork",
+                                "ops",
+                                "1.0",
+                                ArtifactStatus.SUBMITTED);
+                when(agentRepo.get("vork-ops-SUBMITTED")).thenReturn(existing);
+
+                AgentController controller = new AgentController(agentRepo, jobRepo, skillRepo, reflectionService, bindingCatalogService, agentAssignmentService);
+                ResponseEntity<?> response = controller.deleteAgent("vork-ops-SUBMITTED");
+
+                assertEquals(200, response.getStatusCode().value());
+                verify(agentRepo).delete("vork-ops-SUBMITTED");
+        }
+
+        @Test
         void importAgent_rejectsNonSnapshotStatus() {
                 @SuppressWarnings("unchecked")
                 DatabaseRepository<AgentTemplate> agentRepo = mock(DatabaseRepository.class);
