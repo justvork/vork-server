@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import sh.vork.ai.function.OAuthConnectRequest;
@@ -133,10 +134,10 @@ public class OAuthTemplateController {
 
     @PostMapping("/synchronize")
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
-    public ResponseEntity<?> synchronizeTemplatesFromMain() {
-        log.debug("ENTER synchronizeTemplatesFromMain");
+    public ResponseEntity<?> synchronizeTemplatesFromMain(@RequestParam(name = "repositoryName", required = false) String repositoryName) {
+        log.debug("ENTER synchronizeTemplatesFromMain: repositoryName={}", repositoryName);
         try {
-            OAuthTemplateService.OAuthTemplateSyncResult result = templateService.synchronizeFromMain();
+            OAuthTemplateService.OAuthTemplateSyncResult result = templateService.synchronizeFromRepository(repositoryName);
             log.debug("EXIT synchronizeTemplatesFromMain: created={}, updated={}, skipped={}",
                     result.created(), result.updated(), result.skipped());
             return ResponseEntity.ok(result);

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <title>Hub — Vork</title>
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="/css/hub.css" th:href="@{/css/hub.css}">
+</head>
+<body class="bg-zinc-950 text-zinc-100">
+<div th:replace="~{fragments/header :: header}"></div>
+
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
+        <div>
+            <h2 class="flex items-center gap-2 text-2xl font-bold text-zinc-100"><i class="fa-solid fa-compass text-[#fdaa02]"></i>Hub</h2>
+            <p class="vork-page-subtitle">Search and install artifacts from configured repositories</p>
+        </div>
+    </div>
+
+    <div class="vork-content-stack">
+        <div id="hub-alert-area"></div>
+
+        <div class="hub-toolbar rounded-xl border border-zinc-800 bg-zinc-900 p-3">
+            <div class="hub-toolbar-row">
+                <label for="hub-repository-select" class="text-xs uppercase tracking-wide text-zinc-400">Repository</label>
+                <select id="hub-repository-select" class="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"></select>
+                <span id="hub-repository-status" class="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-400">Loading repositories...</span>
+            </div>
+            <div class="hub-toolbar-row hub-toolbar-filters">
+                <input id="hub-search-input" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="Search by name, type, or artifact path">
+                <select id="hub-type-filter" class="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25">
+                    <option value="">All types</option>
+                    <option value="agent">Agent</option>
+                    <option value="job">Job</option>
+                    <option value="surface">Surface</option>
+                    <option value="skill-group">Skill Group</option>
+                    <option value="reflection-group">Reflection Group</option>
+                    <option value="oauth-template">OAuth Template</option>
+                </select>
+                <button id="hub-refresh-btn" class="rounded-lg border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800">
+                    <i class="fa-solid fa-rotate-right mr-2"></i>Refresh
+                </button>
+            </div>
+        </div>
+
+        <div class="hub-results-shell overflow-hidden p-1">
+            <div id="hub-empty-state" class="vork-empty-state-card hidden">
+                <i class="fa-solid fa-box-open vork-empty-icon"></i>
+                <p class="vork-empty-title">No artifacts matched your search</p>
+                <p class="vork-empty-hint">Try a broader search or switch repository.</p>
+            </div>
+            <div id="hub-results-grid" class="hub-results-grid hidden"></div>
+        </div>
+    </div>
+</div>
+
+<div id="hub-details-modal" class="fixed inset-0 z-50 hidden">
+    <div class="absolute inset-0 bg-black/60" data-action="close-details"></div>
+    <div class="absolute left-1/2 top-1/2 w-[92vw] max-w-4xl -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+            <h3 id="hub-details-title" class="text-sm font-semibold text-zinc-100">Artifact details</h3>
+            <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800" data-action="close-details" aria-label="Close">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+
+        <div class="grid gap-3 border-b border-zinc-800 px-4 py-3 text-sm text-zinc-200 md:grid-cols-[1fr_280px]">
+            <div>
+                <p id="hub-details-description" class="text-zinc-300"></p>
+                <dl class="mt-3 space-y-1 text-xs">
+                    <div class="grid grid-cols-[100px_1fr] gap-2">
+                        <dt class="text-zinc-500">Type</dt>
+                        <dd id="hub-details-type" class="text-zinc-200"></dd>
+                    </div>
+                    <div class="grid grid-cols-[100px_1fr] gap-2">
+                        <dt class="text-zinc-500">Repository</dt>
+                        <dd id="hub-details-repository" class="text-zinc-200"></dd>
+                    </div>
+                    <div class="grid grid-cols-[100px_1fr] gap-2">
+                        <dt class="text-zinc-500">Artifact path</dt>
+                        <dd id="hub-details-artifact-path" class="break-all font-mono text-zinc-300"></dd>
+                    </div>
+                    <div class="grid grid-cols-[100px_1fr] gap-2">
+                        <dt class="text-zinc-500">Install path</dt>
+                        <dd id="hub-details-install-path" class="break-all font-mono text-zinc-300"></dd>
+                    </div>
+                </dl>
+            </div>
+
+            <div class="flex flex-col items-start gap-2">
+                <img id="hub-details-logo" class="hidden h-20 w-20 rounded-lg border border-zinc-700 bg-zinc-950 object-cover" alt="Artifact logo">
+                <button id="hub-details-install-btn" type="button" class="rounded-md border border-emerald-500/40 px-3 py-1.5 text-sm text-emerald-300 transition-colors hover:bg-emerald-500/15">
+                    <i class="fa-solid fa-download mr-2"></i>Install
+                </button>
+            </div>
+        </div>
+
+        <div class="px-4 py-3">
+            <h4 class="mb-2 text-xs uppercase tracking-wide text-zinc-400">Documentation</h4>
+            <div id="hub-details-doc" class="hub-details-doc max-h-[35vh] overflow-auto rounded-lg border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-200">No documentation found for this artifact.</div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+<script src="/js/hub.js?v=20260814.2" th:src="@{/js/hub.js(v='20260814.2')}"></script>
+</body>
+</html>

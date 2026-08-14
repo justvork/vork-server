@@ -41,6 +41,18 @@
     <div class="vork-content-stack">
         <div id="alert-area"></div>
         <div id="github-connection-hint" class="hidden rounded-lg border border-cyan-700/60 bg-cyan-950/40 px-3 py-2 text-sm text-cyan-200"></div>
+        <div th:if="${canManageUsers}" class="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-3">
+            <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div class="text-sm text-zinc-300">
+                    <span class="font-medium text-zinc-200">Sync Source</span>
+                    <span class="ml-2 text-xs text-zinc-500">Choose which repository source to use for Synchronize Main.</span>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <select id="hub-repository-select" class="min-w-64 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25"></select>
+                    <span id="hub-repository-status" class="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-400">Loading repositories...</span>
+                </div>
+            </div>
+        </div>
 
         <div class="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
             <div id="empty-state" class="vork-empty-state-card hidden">
@@ -222,6 +234,6 @@
 </div>
 
 <script src="/js/github-device-flow-ui.js?v=20260813.3" th:src="@{/js/github-device-flow-ui.js(v='20260813.3')}"></script>
-<script src="/js/settings-oauth-templates.js?v=20260813.3" th:src="@{/js/settings-oauth-templates.js(v='20260813.3')}"></script>
+<script src="/js/settings-oauth-templates.js?v=20260814.1" th:src="@{/js/settings-oauth-templates.js(v='20260814.1')}"></script>
 </body>
 </html>

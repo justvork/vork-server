@@ -50,6 +50,12 @@ vork:
 #   ssl:
 #     cert-dir: conf.d/ssl
 #     http-port: 8080
+  additionalRepositories: ${VORK_ADDITIONAL_REPOSITORIES:}
+  additionalRepositoriesFailFast: ${VORK_ADDITIONAL_REPOSITORIES_FAIL_FAST:false}
+  hub:
+    scan:
+      # Rebuild repository catalogs every 24h by default.
+      refresh-ms: ${VORK_HUB_SCAN_REFRESH_MS:86400000}
 
 # When adding a second provider, add its block here, e.g.:
 #  openai:

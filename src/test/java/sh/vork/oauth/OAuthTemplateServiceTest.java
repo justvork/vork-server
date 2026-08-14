@@ -16,6 +16,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import sh.vork.hub.repository.HubRepositoryDefinition;
+import sh.vork.hub.repository.HubRepositoryRegistryService;
 import sh.vork.orm.RepositoryFactory;
 import sh.vork.orm.mock.MapDatabaseRepository;
 
@@ -25,6 +27,9 @@ class OAuthTemplateServiceTest {
     @Mock
     private RepositoryFactory repositoryFactory;
 
+        @Mock
+        private HubRepositoryRegistryService hubRepositoryRegistryService;
+
     private OAuthTemplateService service;
 
     @BeforeEach
@@ -33,6 +38,40 @@ class OAuthTemplateServiceTest {
         when(repositoryFactory.create(OAuthTemplateEntity.class)).thenReturn(templateRepository);
         service = new OAuthTemplateService(repositoryFactory);
     }
+
+        @Test
+        void resolveSyncRootUsesProductionRepositoryFromHubRegistry() {
+                OAuthTemplateService serviceWithRegistry = new OAuthTemplateService(repositoryFactory, hubRepositoryRegistryService);
+                when(hubRepositoryRegistryService.resolveRepositories()).thenReturn(List.of(
+                                new HubRepositoryDefinition("Staging", URI.create("https://raw.githubusercontent.com/justvork/vork-central/staging"), false, true, "ok"),
+                                new HubRepositoryDefinition("Production", URI.create("https://raw.githubusercontent.com/example/custom-central/main/nested/path"), true, true, "ok")));
+
+                URI root = serviceWithRegistry.resolveSyncRoot();
+
+                assertEquals(URI.create("https://raw.githubusercontent.com/example/custom-central/main/nested/path"), root);
+        }
+
+        @Test
+        void resolveSyncRootFallsBackToDefaultWhenHubRegistryFails() {
+                OAuthTemplateService serviceWithRegistry = new OAuthTemplateService(repositoryFactory, hubRepositoryRegistryService);
+                when(hubRepositoryRegistryService.resolveRepositories()).thenThrow(new IllegalStateException("boom"));
+
+                URI root = serviceWithRegistry.resolveSyncRoot();
+
+                assertEquals(URI.create("https://raw.githubusercontent.com/justvork/vork-central/main"), root);
+        }
+
+        @Test
+        void resolveSyncRootUsesPreferredRepositoryNameWhenProvided() {
+                OAuthTemplateService serviceWithRegistry = new OAuthTemplateService(repositoryFactory, hubRepositoryRegistryService);
+                when(hubRepositoryRegistryService.resolveRepositories()).thenReturn(List.of(
+                                new HubRepositoryDefinition("Production", URI.create("https://raw.githubusercontent.com/justvork/vork-central/main"), false, true, "ok"),
+                                new HubRepositoryDefinition("Examples", URI.create("file:///tmp/vork-examples"), true, true, "ok")));
+
+                URI root = serviceWithRegistry.resolveSyncRoot("Examples");
+
+                assertEquals(URI.create("file:///tmp/vork-examples"), root);
+        }
 
     @Test
     void createAndGetTemplateRoundTrip() {

@@ -2,6 +2,7 @@
 /* jshint esversion: 6 */
 
 let allTemplates = [];
+let hubRepositories = [];
 const isReadOnly = document.body.getAttribute('data-oauth-templates-read-only') === 'true';
 let githubConnection = null;
 
@@ -9,6 +10,8 @@ const csrfToken = document.querySelector('meta[name="_csrf"]')?.getAttribute('co
 const csrfHeader = document.querySelector('meta[name="_csrf_header"]')?.getAttribute('content') || 'X-CSRF-TOKEN';
 
 const alertArea = document.getElementById('alert-area');
+const hubRepositorySelect = document.getElementById('hub-repository-select');
+const hubRepositoryStatus = document.getElementById('hub-repository-status');
 const emptyState = document.getElementById('empty-state');
 const tableContainer = document.getElementById('table-container');
 const templatesBody = document.getElementById('templates-body');
@@ -83,6 +86,9 @@ function init() {
     if (syncMainButton) {
         syncMainButton.addEventListener('click', synchronizeTemplatesFromMain);
     }
+    if (hubRepositorySelect) {
+        hubRepositorySelect.addEventListener('change', updateSelectedRepositoryStatus);
+    }
     document.getElementById('oauth-template-publish-close').addEventListener('click', closePublishModal);
     document.getElementById('oauth-template-publish-cancel').addEventListener('click', closePublishModal);
     document.getElementById('oauth-template-publish-submit').addEventListener('click', submitOAuthTemplatePublishFromModal);
@@ -97,6 +103,9 @@ function init() {
         }
     });
 
+    if (!isReadOnly) {
+        loadHubRepositories();
+    }
     loadTemplates();
 }
 
@@ -395,6 +404,10 @@ async function deleteTemplate(id) {
 }
 
 async function synchronizeTemplatesFromMain() {
+    const selectedRepositoryName = getSelectedRepositoryName();
+    const selectedRepository = getSelectedRepository();
+    const selectedName = selectedRepositoryName || 'Production';
+
     if (!window.confirm('Synchronize OAuth templates from main branch? Local rows with matching clientName will be updated.')) {
         return;
     }
@@ -403,7 +416,10 @@ async function synchronizeTemplatesFromMain() {
         if (csrfToken) {
             headers[csrfHeader] = csrfToken;
         }
-        const response = await fetch('/api/oauth-templates/synchronize', {
+        const query = selectedRepositoryName
+            ? '?repositoryName=' + encodeURIComponent(selectedRepositoryName)
+            : '';
+        const response = await fetch('/api/oauth-templates/synchronize' + query, {
             method: 'POST',
             headers: headers
         });
@@ -412,7 +428,8 @@ async function synchronizeTemplatesFromMain() {
             showAlert(result.message || 'Failed to synchronize templates from main.', 'danger');
             return;
         }
-        showAlert('Synchronized from main: created ' + (result.created || 0)
+        const sourceLabel = selectedRepository ? selectedRepository.name : selectedName;
+        showAlert('Synchronized from ' + sourceLabel + ': created ' + (result.created || 0)
             + ', updated ' + (result.updated || 0)
             + ', skipped ' + (result.skipped || 0) + '.', 'success');
         await loadTemplates();
@@ -815,6 +832,98 @@ async function parseJson(response) {
     } catch (_ignored) {
         return {};
     }
+}
+
+async function loadHubRepositories() {
+    if (!hubRepositorySelect || !hubRepositoryStatus) {
+        return;
+    }
+    hubRepositorySelect.innerHTML = '';
+    hubRepositoryStatus.textContent = 'Loading repositories...';
+
+    try {
+        const response = await fetch('/api/hub/repositories');
+        const result = await parseJson(response);
+        if (!response.ok || !Array.isArray(result)) {
+            throw new Error('HTTP ' + response.status);
+        }
+
+        hubRepositories = result;
+        result.forEach(function (repo) {
+            const option = document.createElement('option');
+            option.value = repo.name || '';
+            const availabilityMarker = repo.available ? '' : ' (unavailable)';
+            option.textContent = (repo.name || 'Unnamed') + availabilityMarker;
+            if (repo.name && repo.name.toLowerCase() === 'production') {
+                option.selected = true;
+            }
+            hubRepositorySelect.appendChild(option);
+        });
+
+        if (hubRepositorySelect.options.length === 0) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = 'Production';
+            hubRepositorySelect.appendChild(option);
+        }
+
+        updateSelectedRepositoryStatus();
+    } catch (_error) {
+        hubRepositories = [];
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'Production';
+        hubRepositorySelect.innerHTML = '';
+        hubRepositorySelect.appendChild(option);
+        hubRepositoryStatus.className = 'rounded-md border border-amber-700/60 bg-amber-950/40 px-2 py-1 text-xs text-amber-300';
+        hubRepositoryStatus.textContent = 'Repository list unavailable. Defaulting to Production.';
+    }
+}
+
+function getSelectedRepositoryName() {
+    if (!hubRepositorySelect) {
+        return '';
+    }
+    const selected = (hubRepositorySelect.value || '').trim();
+    if (!selected || selected.toLowerCase() === 'production') {
+        return '';
+    }
+    return selected;
+}
+
+function getSelectedRepository() {
+    if (!hubRepositorySelect || !hubRepositories || hubRepositories.length === 0) {
+        return null;
+    }
+    const selectedName = (hubRepositorySelect.value || '').trim().toLowerCase();
+    if (!selectedName) {
+        return null;
+    }
+    return hubRepositories.find(function (repo) {
+        return String(repo.name || '').toLowerCase() === selectedName;
+    }) || null;
+}
+
+function updateSelectedRepositoryStatus() {
+    if (!hubRepositoryStatus) {
+        return;
+    }
+    const selectedRepository = getSelectedRepository();
+    if (!selectedRepository) {
+        hubRepositoryStatus.className = 'rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-400';
+        hubRepositoryStatus.textContent = 'Using Production.';
+        return;
+    }
+
+    if (selectedRepository.available) {
+        hubRepositoryStatus.className = 'rounded-md border border-emerald-700/60 bg-emerald-950/40 px-2 py-1 text-xs text-emerald-300';
+        hubRepositoryStatus.textContent = 'Available: ' + (selectedRepository.baseUrl || '');
+        return;
+    }
+
+    hubRepositoryStatus.className = 'rounded-md border border-amber-700/60 bg-amber-950/40 px-2 py-1 text-xs text-amber-300';
+    hubRepositoryStatus.textContent = (selectedRepository.message || 'Selected repository is currently unavailable')
+        + (selectedRepository.baseUrl ? ' [' + selectedRepository.baseUrl + ']' : '');
 }
 
 function escapeHtml(value) {

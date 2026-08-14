@@ -8,6 +8,8 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Comparator;
@@ -17,7 +19,10 @@ import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import sh.vork.hub.repository.HubRepositoryDefinition;
+import sh.vork.hub.repository.HubRepositoryRegistryService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.RepositoryFactory;
 
@@ -28,15 +33,23 @@ import sh.vork.orm.RepositoryFactory;
 public class OAuthTemplateService {
 
     private static final Logger log = LoggerFactory.getLogger(OAuthTemplateService.class);
-    private static final String MAIN_TEMPLATES_API_URL =
-            "https://api.github.com/repos/justvork/vork-central/contents/oauth-templates?ref=main";
+    private static final URI DEFAULT_SYNC_ROOT =
+            URI.create("https://raw.githubusercontent.com/justvork/vork-central/main");
 
     private final DatabaseRepository<OAuthTemplateEntity> templateRepository;
+    private final HubRepositoryRegistryService hubRepositoryRegistryService;
     private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @Autowired
+    public OAuthTemplateService(RepositoryFactory factory, HubRepositoryRegistryService hubRepositoryRegistryService) {
+        this.templateRepository = factory.create(OAuthTemplateEntity.class);
+        this.hubRepositoryRegistryService = hubRepositoryRegistryService;
+    }
+
     public OAuthTemplateService(RepositoryFactory factory) {
         this.templateRepository = factory.create(OAuthTemplateEntity.class);
+        this.hubRepositoryRegistryService = null;
     }
 
     public List<OAuthTemplate> listTemplates() {
@@ -254,10 +267,15 @@ public class OAuthTemplateService {
     }
 
     public OAuthTemplateSyncResult synchronizeFromMain() {
+        return synchronizeFromRepository(null);
+    }
+
+    public OAuthTemplateSyncResult synchronizeFromRepository(String repositoryName) {
         log.debug("ENTER synchronizeFromMain");
-        List<String> fileNames = listMainTemplateFiles();
+        URI syncRoot = resolveSyncRoot(repositoryName);
+        List<String> fileNames = listMainTemplateFiles(syncRoot);
         if (fileNames.isEmpty()) {
-            log.info("OAuth template sync found no templates in main repository");
+            log.info("OAuth template sync found no templates in repository [name={}, root={}]", repositoryName, syncRoot);
             return new OAuthTemplateSyncResult("ok", "No templates found in main branch.", 0, 0, 0, 0);
         }
 
@@ -272,7 +290,7 @@ public class OAuthTemplateService {
                 continue;
             }
 
-            OAuthTemplate remote = fetchTemplateFromMain(fileName);
+            OAuthTemplate remote = fetchTemplateFromMain(syncRoot, fileName);
             if (remote == null) {
                 skipped++;
                 continue;
@@ -332,7 +350,8 @@ public class OAuthTemplateService {
             updated++;
         }
 
-        log.info("OAuth template sync from main completed [created={}, updated={}, skipped={}]", created, updated, skipped);
+        log.info("OAuth template sync completed [repositoryName={}, root={}, created={}, updated={}, skipped={}]",
+            repositoryName, syncRoot, created, updated, skipped);
         log.debug("EXIT synchronizeFromMain");
         return new OAuthTemplateSyncResult(
                 "ok",
@@ -434,9 +453,31 @@ public class OAuthTemplateService {
         return Map.copyOf(out);
     }
 
-    private List<String> listMainTemplateFiles() {
+    private List<String> listMainTemplateFiles(URI root) {
+        if ("file".equalsIgnoreCase(root.getScheme())) {
+            return listTemplateFilesFromLocalRepository(root);
+        }
+
+        GitHubRawRef githubRawRef = parseGitHubRawRef(root);
+        if (githubRawRef == null) {
+            log.warn("OAuth sync currently supports file:// and raw.githubusercontent.com roots only [root={}]", root);
+            return List.of();
+        }
+
+        String contentsPath = githubRawRef.basePath().isBlank()
+                ? "oauth-templates"
+                : githubRawRef.basePath() + "/oauth-templates";
+        String apiUrl = "https://api.github.com/repos/"
+                + githubRawRef.owner()
+                + "/"
+                + githubRawRef.repo()
+                + "/contents/"
+                + contentsPath
+                + "?ref="
+                + githubRawRef.ref();
+
         try {
-            HttpRequest request = HttpRequest.newBuilder(URI.create(MAIN_TEMPLATES_API_URL))
+            HttpRequest request = HttpRequest.newBuilder(URI.create(apiUrl))
                     .header("Accept", "application/vnd.github+json")
                     .header("X-GitHub-Api-Version", "2022-11-28")
                     .GET()
@@ -449,13 +490,13 @@ public class OAuthTemplateService {
                 throw new IllegalStateException("GitHub listing failed with status " + response.statusCode());
             }
 
-            JsonNode root = objectMapper.readTree(response.body());
-            if (!root.isArray()) {
+            JsonNode jsonRoot = objectMapper.readTree(response.body());
+            if (!jsonRoot.isArray()) {
                 return List.of();
             }
 
             List<String> files = new java.util.ArrayList<>();
-            for (JsonNode node : root) {
+            for (JsonNode node : jsonRoot) {
                 if (!"file".equals(node.path("type").asText(""))) {
                     continue;
                 }
@@ -473,8 +514,16 @@ public class OAuthTemplateService {
         }
     }
 
-    private OAuthTemplate fetchTemplateFromMain(String fileName) {
-        String url = "https://raw.githubusercontent.com/justvork/vork-central/main/oauth-templates/"
+    private OAuthTemplate fetchTemplateFromMain(URI root, String fileName) {
+        if ("file".equalsIgnoreCase(root.getScheme())) {
+            return fetchTemplateFromLocalRepository(root, fileName);
+        }
+
+        String rootValue = root.toString();
+        if (rootValue.endsWith("/")) {
+            rootValue = rootValue.substring(0, rootValue.length() - 1);
+        }
+        String url = rootValue + "/oauth-templates/"
                 + URLEncoder.encode(fileName, StandardCharsets.UTF_8).replace("+", "%20");
         try {
             HttpRequest request = HttpRequest.newBuilder(URI.create(url))
@@ -531,6 +580,149 @@ public class OAuthTemplateService {
             log.warn("Failed to fetch OAuth template from main [file={}]: {}", fileName, ex.getMessage());
             return null;
         }
+    }
+
+    URI resolveSyncRoot() {
+        return resolveSyncRoot(null);
+    }
+
+    URI resolveSyncRoot(String preferredRepositoryName) {
+        if (hubRepositoryRegistryService == null) {
+            return DEFAULT_SYNC_ROOT;
+        }
+        try {
+            List<HubRepositoryDefinition> repositories = hubRepositoryRegistryService.resolveRepositories();
+            String preferred = preferredRepositoryName == null ? "" : preferredRepositoryName.trim();
+            if (!preferred.isBlank()) {
+                for (HubRepositoryDefinition repository : repositories) {
+                    if (repository != null
+                            && repository.name() != null
+                            && preferred.equalsIgnoreCase(repository.name())
+                            && repository.baseUrl() != null) {
+                        return repository.baseUrl();
+                    }
+                }
+            }
+            for (HubRepositoryDefinition repository : repositories) {
+                if (repository != null
+                        && repository.name() != null
+                        && "production".equalsIgnoreCase(repository.name())
+                        && repository.baseUrl() != null) {
+                    return repository.baseUrl();
+                }
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Failed to resolve Hub repositories for OAuth sync, using default root: {}", ex.getMessage());
+        }
+        return DEFAULT_SYNC_ROOT;
+    }
+
+    private List<String> listTemplateFilesFromLocalRepository(URI root) {
+        try {
+            Path templateDir = Path.of(root).resolve("oauth-templates");
+            if (!Files.exists(templateDir) || !Files.isDirectory(templateDir)) {
+                return List.of();
+            }
+            try (var stream = Files.list(templateDir)) {
+                return stream
+                        .filter(Files::isRegularFile)
+                        .map(path -> path.getFileName().toString())
+                        .filter(name -> name.endsWith(".json"))
+                        .sorted(String.CASE_INSENSITIVE_ORDER)
+                        .toList();
+            }
+        } catch (IOException | RuntimeException ex) {
+            log.warn("Failed to list OAuth templates from local repository [{}]: {}", root, ex.getMessage());
+            return List.of();
+        }
+    }
+
+    private OAuthTemplate fetchTemplateFromLocalRepository(URI root, String fileName) {
+        try {
+            Path file = Path.of(root).resolve("oauth-templates").resolve(fileName).normalize();
+            if (!Files.exists(file) || !Files.isRegularFile(file)) {
+                return null;
+            }
+            String body = Files.readString(file, StandardCharsets.UTF_8);
+            JsonNode json = objectMapper.readTree(body);
+            return parseTemplateJson(json);
+        } catch (IOException | RuntimeException ex) {
+            log.warn("Failed to fetch OAuth template from local repository [file={}]: {}", fileName, ex.getMessage());
+            return null;
+        }
+    }
+
+    private OAuthTemplate parseTemplateJson(JsonNode json) {
+        String authorizeEndpoint = json.path("authorizeEndpoint").asText("").trim();
+        String tokenEndpoint = json.path("tokenEndpoint").asText("").trim();
+
+        List<String> scopes = new java.util.ArrayList<>();
+        JsonNode scopesNode = json.path("scopes");
+        if (scopesNode.isArray()) {
+            for (JsonNode scope : scopesNode) {
+                String value = scope.asText("").trim();
+                if (!value.isBlank()) {
+                    scopes.add(value);
+                }
+            }
+        }
+
+        Map<String, String> authParams = new LinkedHashMap<>();
+        JsonNode authNode = json.path("authorizationParameters");
+        if (authNode.isObject()) {
+            authNode.properties().forEach(entry -> {
+                String key = entry.getKey() == null ? "" : entry.getKey().trim();
+                String value = entry.getValue() == null ? "" : entry.getValue().asText("").trim();
+                if (!key.isBlank()) {
+                    authParams.put(key, value);
+                }
+            });
+        }
+
+        return new OAuthTemplate(
+                null,
+                json.path("name").asText("").trim(),
+                json.path("clientName").asText("").trim(),
+                json.path("description").asText("").trim(),
+                authorizeEndpoint.isBlank() ? null : URI.create(authorizeEndpoint),
+                tokenEndpoint.isBlank() ? null : URI.create(tokenEndpoint),
+                List.copyOf(scopes),
+                Map.copyOf(authParams),
+                ArtifactStatus.PUBLISHED);
+    }
+
+    private GitHubRawRef parseGitHubRawRef(URI root) {
+        if (root == null || root.getHost() == null) {
+            return null;
+        }
+        if (!"raw.githubusercontent.com".equalsIgnoreCase(root.getHost())) {
+            return null;
+        }
+
+        String path = root.getPath() == null ? "" : root.getPath();
+        String[] segments = path.split("/");
+        java.util.ArrayList<String> tokens = new java.util.ArrayList<>();
+        for (String segment : segments) {
+            String value = segment == null ? "" : segment.trim();
+            if (!value.isBlank()) {
+                tokens.add(value);
+            }
+        }
+        if (tokens.size() < 3) {
+            return null;
+        }
+
+        String owner = tokens.get(0);
+        String repo = tokens.get(1);
+        String ref = tokens.get(2);
+        String basePath = "";
+        if (tokens.size() > 3) {
+            basePath = String.join("/", tokens.subList(3, tokens.size()));
+        }
+        return new GitHubRawRef(owner, repo, ref, basePath);
+    }
+
+    private record GitHubRawRef(String owner, String repo, String ref, String basePath) {
     }
 
     private OAuthTemplate toModel(OAuthTemplateEntity entity) {
