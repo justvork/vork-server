@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.orm.DatabaseEntity;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.oauth.OAuthTemplateEntity;
 import sh.vork.reflection.ReflectionGroup;
 import sh.vork.scheduling.domain.ScheduledJob;
 import sh.vork.skill.SkillGroup;
@@ -32,6 +33,7 @@ public class ContributionLifecyclePromotionService {
     private final DatabaseRepository<Surface> surfaceRepository;
     private final DatabaseRepository<SkillGroup> skillGroupRepository;
     private final DatabaseRepository<ReflectionGroup> reflectionGroupRepository;
+    private final DatabaseRepository<OAuthTemplateEntity> oauthTemplateRepository;
     private final DatabaseRepository<ContributionSubmission> contributionSubmissionRepository;
     private final GitHubContributionApiClient contributionApiClient;
 
@@ -40,6 +42,7 @@ public class ContributionLifecyclePromotionService {
                                                 DatabaseRepository<Surface> surfaceRepository,
                                                 DatabaseRepository<SkillGroup> skillGroupRepository,
                                                 DatabaseRepository<ReflectionGroup> reflectionGroupRepository,
+                                                DatabaseRepository<OAuthTemplateEntity> oauthTemplateRepository,
                                                 DatabaseRepository<ContributionSubmission> contributionSubmissionRepository,
                                                 GitHubContributionApiClient contributionApiClient) {
         this.agentRepository = agentRepository;
@@ -47,6 +50,7 @@ public class ContributionLifecyclePromotionService {
         this.surfaceRepository = surfaceRepository;
         this.skillGroupRepository = skillGroupRepository;
         this.reflectionGroupRepository = reflectionGroupRepository;
+        this.oauthTemplateRepository = oauthTemplateRepository;
         this.contributionSubmissionRepository = contributionSubmissionRepository;
         this.contributionApiClient = contributionApiClient;
     }
@@ -54,7 +58,7 @@ public class ContributionLifecyclePromotionService {
     @Scheduled(fixedDelayString = "${vork.contributions.promotion-interval-ms:3600000}")
     public void scheduledReconcileLifecycleStatuses() {
         PromotionSummary summary = reconcileLifecycleStatuses();
-        log.info("Contribution promotion pass complete [agentsToStaged={}, agentsToPublished={}, jobsToStaged={}, jobsToPublished={}, surfacesToStaged={}, surfacesToPublished={}, skillsToStaged={}, skillsToPublished={}, reflectionsToStaged={}, reflectionsToPublished={}]",
+        log.info("Contribution promotion pass complete [agentsToStaged={}, agentsToPublished={}, jobsToStaged={}, jobsToPublished={}, surfacesToStaged={}, surfacesToPublished={}, skillsToStaged={}, skillsToPublished={}, reflectionsToStaged={}, reflectionsToPublished={}, oauthTemplatesToStaged={}, oauthTemplatesToPublished={}]",
                 summary.agentsPromotedToStaged(),
                 summary.agentsPromotedToPublished(),
                 summary.jobsPromotedToStaged(),
@@ -64,7 +68,9 @@ public class ContributionLifecyclePromotionService {
             summary.skillsPromotedToStaged(),
             summary.skillsPromotedToPublished(),
             summary.reflectionsPromotedToStaged(),
-            summary.reflectionsPromotedToPublished());
+            summary.reflectionsPromotedToPublished(),
+            summary.oauthTemplatesPromotedToStaged(),
+            summary.oauthTemplatesPromotedToPublished());
     }
 
     public PromotionSummary reconcileLifecycleStatuses() {
@@ -85,6 +91,9 @@ public class ContributionLifecyclePromotionService {
         AtomicInteger reflectionsToStaged = new AtomicInteger();
         AtomicInteger reflectionsToPublished = new AtomicInteger();
         AtomicInteger reflectionsToRejected = new AtomicInteger();
+        AtomicInteger oauthTemplatesToStaged = new AtomicInteger();
+        AtomicInteger oauthTemplatesToPublished = new AtomicInteger();
+        AtomicInteger oauthTemplatesToRejected = new AtomicInteger();
 
         processPaged(agentRepository, agent -> {
             if (agent == null || agent.systemAgent() || agent.groupId() == null || agent.artifactId() == null || agent.version() == null) {
@@ -492,6 +501,89 @@ public class ContributionLifecyclePromotionService {
             }
         });
 
+        processPaged(oauthTemplateRepository, template -> {
+            if (template == null || template.clientName() == null || template.clientName().isBlank()) {
+                return;
+            }
+            String jsonPath = "oauth-templates/" + template.clientName() + ".json";
+
+            if (template.artifactStatus() == sh.vork.oauth.ArtifactStatus.SUBMITTED) {
+                if (isRejectedPr("oauth-template", template.uuid())) {
+                    OAuthTemplateEntity rejected = new OAuthTemplateEntity(
+                            template.uuid(),
+                            template.name(),
+                            template.clientName(),
+                            template.description(),
+                            template.authorizeEndpoint(),
+                            template.tokenEndpoint(),
+                            template.scopes(),
+                            template.authorizationParameters(),
+                            sh.vork.oauth.ArtifactStatus.REJECTED,
+                            template.createdAt(),
+                            System.currentTimeMillis());
+                    oauthTemplateRepository.save(rejected);
+                    oauthTemplatesToRejected.incrementAndGet();
+                    log.info("OAuth template marked REJECTED after PR closed without merge [id={}]", template.uuid());
+                    return;
+                }
+                if (safePathExists(MAIN_BRANCH, jsonPath)) {
+                    OAuthTemplateEntity published = new OAuthTemplateEntity(
+                            template.uuid(),
+                            template.name(),
+                            template.clientName(),
+                            template.description(),
+                            template.authorizeEndpoint(),
+                            template.tokenEndpoint(),
+                            template.scopes(),
+                            template.authorizationParameters(),
+                            sh.vork.oauth.ArtifactStatus.PUBLISHED,
+                            template.createdAt(),
+                            System.currentTimeMillis());
+                    oauthTemplateRepository.save(published);
+                    oauthTemplatesToPublished.incrementAndGet();
+                    log.debug("Step 11: oauth template promoted to PUBLISHED [id={}]", template.uuid());
+                    return;
+                }
+                if (safePathExists(STAGING_BRANCH, jsonPath)) {
+                    OAuthTemplateEntity staged = new OAuthTemplateEntity(
+                            template.uuid(),
+                            template.name(),
+                            template.clientName(),
+                            template.description(),
+                            template.authorizeEndpoint(),
+                            template.tokenEndpoint(),
+                            template.scopes(),
+                            template.authorizationParameters(),
+                            sh.vork.oauth.ArtifactStatus.STAGED,
+                            template.createdAt(),
+                            System.currentTimeMillis());
+                    oauthTemplateRepository.save(staged);
+                    oauthTemplatesToStaged.incrementAndGet();
+                    log.debug("Step 12: oauth template promoted to STAGED [id={}]", template.uuid());
+                }
+                return;
+            }
+
+            if (template.artifactStatus() == sh.vork.oauth.ArtifactStatus.STAGED
+                    && safePathExists(MAIN_BRANCH, jsonPath)) {
+                OAuthTemplateEntity published = new OAuthTemplateEntity(
+                        template.uuid(),
+                        template.name(),
+                        template.clientName(),
+                        template.description(),
+                        template.authorizeEndpoint(),
+                        template.tokenEndpoint(),
+                        template.scopes(),
+                        template.authorizationParameters(),
+                        sh.vork.oauth.ArtifactStatus.PUBLISHED,
+                        template.createdAt(),
+                        System.currentTimeMillis());
+                oauthTemplateRepository.save(published);
+                oauthTemplatesToPublished.incrementAndGet();
+                log.debug("Step 13: oauth template promoted to PUBLISHED [id={}]", template.uuid());
+            }
+        });
+
         PromotionSummary summary = new PromotionSummary(
                 agentsToStaged.get(),
                 agentsToPublished.get(),
@@ -507,7 +599,10 @@ public class ContributionLifecyclePromotionService {
                 skillsToRejected.get(),
                 reflectionsToStaged.get(),
                 reflectionsToPublished.get(),
-                reflectionsToRejected.get());
+                reflectionsToRejected.get(),
+                oauthTemplatesToStaged.get(),
+                oauthTemplatesToPublished.get(),
+                oauthTemplatesToRejected.get());
         log.debug("EXIT reconcileLifecycleStatuses: summary={}", summary);
         return summary;
     }
@@ -572,6 +667,9 @@ public class ContributionLifecyclePromotionService {
                                    int skillsPromotedToRejected,
                                    int reflectionsPromotedToStaged,
                                    int reflectionsPromotedToPublished,
-                                   int reflectionsPromotedToRejected) {
+                                   int reflectionsPromotedToRejected,
+                                   int oauthTemplatesPromotedToStaged,
+                                   int oauthTemplatesPromotedToPublished,
+                                   int oauthTemplatesPromotedToRejected) {
     }
 }

@@ -3,7 +3,9 @@ package sh.vork.github.contribution;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -16,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.userdetails.User;
@@ -29,6 +32,7 @@ import sh.vork.ai.agent.ArtifactStatus;
 import sh.vork.filesystem.FileArea;
 import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.oauth.OAuthTemplateEntity;
 import sh.vork.reflection.Reflection;
 import sh.vork.reflection.ReflectionBinding;
 import sh.vork.reflection.ReflectionGroup;
@@ -70,6 +74,9 @@ class ContributionControllerTest {
         private DatabaseRepository<ReflectionBinding> reflectionBindingRepository;
 
         @Mock
+        private DatabaseRepository<OAuthTemplateEntity> oauthTemplateRepository;
+
+        @Mock
         private DatabaseRepository<ContributionSubmission> contributionSubmissionRepository;
 
     @Mock
@@ -80,6 +87,9 @@ class ContributionControllerTest {
 
         @Mock
         private ContributionVersionRecommendationService recommendationService;
+
+        @Mock
+        private ContributionDependencyValidator dependencyValidator;
 
         @Mock
         private AiOrchestrationService aiOrchestrationService;
@@ -106,15 +116,100 @@ class ContributionControllerTest {
                                 reflectionGroupRepository,
                                 reflectionRepository,
                                 reflectionBindingRepository,
+                                oauthTemplateRepository,
                                 contributionSubmissionRepository,
                                 contributionService,
                                 promotionService,
                                 recommendationService,
+                                dependencyValidator,
                                 aiOrchestrationService,
                                 systemSettingsService,
                                 surfaceService,
                                 sessionFileSystem,
                                 new ObjectMapper());
+
+                ContributionDependencyValidator.DependencyValidationReport okAgent =
+                        new ContributionDependencyValidator.DependencyValidationReport(
+                                "agent", "", true, "All dependencies are STAGED.", List.of(), List.of(), List.of());
+                ContributionDependencyValidator.DependencyValidationReport okJob =
+                        new ContributionDependencyValidator.DependencyValidationReport(
+                                "job", "", true, "All dependencies are STAGED.", List.of(), List.of(), List.of());
+                ContributionDependencyValidator.DependencyValidationReport okSurface =
+                        new ContributionDependencyValidator.DependencyValidationReport(
+                                "surface", "", true, "All dependencies are STAGED.", List.of(), List.of(), List.of());
+                ContributionDependencyValidator.DependencyValidationReport okSkill =
+                        new ContributionDependencyValidator.DependencyValidationReport(
+                                "skill-group", "", true, "All dependencies are STAGED.", List.of(), List.of(), List.of());
+                ContributionDependencyValidator.DependencyValidationReport okReflection =
+                        new ContributionDependencyValidator.DependencyValidationReport(
+                                "reflection-group", "", true, "All dependencies are STAGED.", List.of(), List.of(), List.of());
+
+                Mockito.lenient().when(dependencyValidator.validateAgent(anyString())).thenReturn(okAgent);
+                Mockito.lenient().when(dependencyValidator.validateJob(anyString())).thenReturn(okJob);
+                Mockito.lenient().when(dependencyValidator.validateSurface(anyString())).thenReturn(okSurface);
+                Mockito.lenient().when(dependencyValidator.validateSkillGroup(anyString())).thenReturn(okSkill);
+                Mockito.lenient().when(dependencyValidator.validateReflectionGroup(anyString())).thenReturn(okReflection);
+    }
+
+    @Test
+    void publishReflectionBlocksWhenDependencyNotStaged() {
+        ReflectionGroup snapshot = new ReflectionGroup(
+                "reflection-demo-SNAPSHOT",
+                "demo",
+                "Demo Reflection",
+                "desc",
+                sh.vork.reflection.ReflectionType.REST,
+                "https://api.example.test",
+                true,
+                List.of(),
+                List.of(),
+                sh.vork.reflection.ReflectionAuthenticationMode.OAUTH,
+                "oauth-demo",
+                "demo",
+                "reflection",
+                "SNAPSHOT",
+                sh.vork.reflection.ArtifactStatus.SNAPSHOT,
+                System.currentTimeMillis(),
+                System.currentTimeMillis());
+
+        when(reflectionGroupRepository.get("reflection-demo-SNAPSHOT")).thenReturn(snapshot);
+        when(dependencyValidator.validateReflectionGroup("reflection-demo-SNAPSHOT"))
+                .thenReturn(new ContributionDependencyValidator.DependencyValidationReport(
+                        "reflection-group",
+                        "reflection-demo-SNAPSHOT",
+                        false,
+                        "Dependency validation failed for reflection-group reflection-demo-SNAPSHOT.",
+                        List.of(),
+                        List.of(new ContributionDependencyValidator.DependencyIssue(
+                                "oauth-template",
+                                "oauth-demo",
+                                "Demo OAuth",
+                                "SNAPSHOT",
+                                "reflection-group:reflection-demo-SNAPSHOT -> oauth-template:oauth-demo",
+                                "Dependency status must be STAGED or PUBLISHED before PR generation.")),
+                        List.of()));
+
+        ContributionController.PublishRequest request = new ContributionController.PublishRequest(
+                "1.0",
+                "feat: publish reflection",
+                "Publish reflection",
+                "Body",
+                "Summary",
+                false,
+                "",
+                "");
+
+        ResponseEntity<?> response = controller.publishReflection(
+                "reflection-demo-SNAPSHOT",
+                request,
+                User.withUsername("alice").password("x").authorities("USERS_MANAGE").build());
+
+        assertEquals(409, response.getStatusCode().value());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) response.getBody();
+        assertNotNull(payload);
+        assertNotNull(payload.get("dependencyReport"));
+        verify(contributionService, never()).submitContribution(any());
     }
 
     @Test
@@ -435,7 +530,7 @@ class ContributionControllerTest {
         @Test
         void reconcileContributionPromotionsReturnsSummary() {
                 ContributionLifecyclePromotionService.PromotionSummary summary =
-                                new ContributionLifecyclePromotionService.PromotionSummary(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+                                new ContributionLifecyclePromotionService.PromotionSummary(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18);
                 when(promotionService.reconcileLifecycleStatuses()).thenReturn(summary);
 
                 ResponseEntity<?> response = controller.reconcileContributionPromotions();
@@ -608,5 +703,56 @@ class ContributionControllerTest {
         assertEquals(sh.vork.skill.ArtifactStatus.SNAPSHOT, cloned.artifactStatus());
         verify(skillRepository).save(any(Skill.class));
         verify(skillGroupRepository).save(any(SkillGroup.class));
+    }
+
+    @Test
+    void publishOAuthTemplateSubmitsPrAndMarksTemplateSubmitted() {
+        OAuthTemplateEntity snapshot = new OAuthTemplateEntity(
+                "oauth-template-1",
+                "Google Workspace OAuth",
+                "google_workspace_oauth",
+                "Google OAuth defaults",
+                "https://accounts.google.com/o/oauth2/v2/auth",
+                "https://oauth2.googleapis.com/token",
+                List.of("openid", "email"),
+                Map.of("access_type", "offline"),
+                sh.vork.oauth.ArtifactStatus.SNAPSHOT,
+                1L,
+                1L);
+        when(oauthTemplateRepository.get("oauth-template-1")).thenReturn(snapshot);
+        when(contributionService.submitContribution(any()))
+                .thenReturn(new ContributionSubmitResult(
+                        "justvork",
+                        "vork-central",
+                        "staging",
+                        "octocat",
+                        "vork-central",
+                        "contrib/oauth-template/google-workspace-123",
+                        99L,
+                        "https://github.com/justvork/vork-central/pull/99"));
+
+        ContributionController.PublishMetadataRequest request = new ContributionController.PublishMetadataRequest(
+                "feat: publish oauth template",
+                "Publish Google Workspace OAuth template",
+                "Body",
+                "Add provider template",
+                "- note",
+                "- hint");
+
+        ResponseEntity<?> response = controller.publishOAuthTemplate(
+                "oauth-template-1",
+                request,
+                User.withUsername("alice").password("x").authorities("USERS_MANAGE").build());
+
+        assertEquals(200, response.getStatusCode().value());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) response.getBody();
+        assertEquals("ok", payload.get("status"));
+
+        ArgumentCaptor<ContributionSubmitRequest> reqCaptor = ArgumentCaptor.forClass(ContributionSubmitRequest.class);
+        verify(contributionService).submitContribution(reqCaptor.capture());
+        assertEquals("oauth-templates/google_workspace_oauth.json", reqCaptor.getValue().files().get(0).path());
+        verify(oauthTemplateRepository).save(any(OAuthTemplateEntity.class));
+        verify(contributionSubmissionRepository).save(any(ContributionSubmission.class));
     }
 }

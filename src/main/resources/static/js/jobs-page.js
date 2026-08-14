@@ -333,10 +333,29 @@ async function recommendJobVersion(id) {
     }
 }
 
+async function checkJobContributionDependencies(id) {
+    if (!id) {
+        showAlert('Job id is required for dependency pre-check.', 'warning');
+        return;
+    }
+    if (window.VorkDependencyPrecheck && typeof window.VorkDependencyPrecheck.runAndDisplay === 'function') {
+        await window.VorkDependencyPrecheck.runAndDisplay('jobs', id, 'Job', showAlert);
+        return;
+    }
+    showAlert('Dependency pre-check helper is not available on this page.', 'warning');
+}
+
 async function publishJobContribution(id) {
     if (!id) {
         showAlert('Job id is required for publish.', 'warning');
         return;
+    }
+
+    if (window.VorkDependencyPrecheck && typeof window.VorkDependencyPrecheck.runAndGate === 'function') {
+        const ready = await window.VorkDependencyPrecheck.runAndGate('jobs', id, 'Job', showAlert);
+        if (!ready) {
+            return;
+        }
     }
 
     document.getElementById('job-publish-id').value = id;

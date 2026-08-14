@@ -142,8 +142,8 @@ function renderTable() {
             || artifactStatus === 'REJECTED';
 
         const contributionActions = [];
+            contributionActions.push('<button type="button" class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800" onclick="checkSurfaceContributionDependencies(\'' + escapeJs(contributionIdentifier) + '\')" title="Dependency pre-check"><i class="fa-solid fa-list-check"></i></button>');
         if (isSnapshot) {
-            contributionActions.push('<button type="button" class="rounded-md border border-sky-500/40 px-2 py-1 text-xs text-sky-300 transition-colors hover:bg-sky-500/15 contrib-action" data-default-title="Recommend version" onclick="recommendSurfaceVersion(\'' + escapeJs(contributionIdentifier) + '\')" title="Recommend version" disabled><i class="fa-solid fa-lightbulb"></i></button>');
             contributionActions.push('<button type="button" class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/15 contrib-action" data-default-title="Publish to staging via PR" onclick="publishSurfaceContribution(\'' + escapeJs(contributionIdentifier) + '\')" title="Publish to staging via PR" disabled><i class="fa-solid fa-cloud-arrow-up"></i></button>');
         } else {
             if (artifactStatus === 'SUBMITTED') {
@@ -361,35 +361,29 @@ async function importSurfaces(input) {
     }
 }
 
-async function recommendSurfaceVersion(id) {
+async function checkSurfaceContributionDependencies(id) {
     if (!id) {
-        showAlert('Surface id is required for version recommendation.', 'warning');
+        showAlert('Surface id is required for dependency pre-check.', 'warning');
         return;
     }
-    try {
-        const breakingChange = window.confirm('Does this release include breaking changes?\nOK = yes (major bump), Cancel = no (minor bump).');
-        const recommendUrl = '/api/contributions/surfaces/' + encodeURIComponent(id)
-            + '/recommend-version?breakingChange=' + encodeURIComponent(String(breakingChange));
-        const res = await fetch(recommendUrl, {
-            method: 'GET'
-        });
-        const data = await res.json().catch(function () { return {}; });
-        if (!res.ok || data.error) {
-            showAlert(data.error || data.message || 'Failed to recommend version.', 'danger');
-            return;
-        }
-        const rec = data.recommendation || {};
-        const latest = rec.latestVersion ? ('Latest in staging: ' + rec.latestVersion + '. ') : 'No staging version found. ';
-        showAlert(latest + 'Recommended next version: ' + (rec.recommendedVersion || 'n/a') + '.', 'success');
-    } catch (_e) {
-        showAlert('Network error getting version recommendation.', 'danger');
+    if (window.VorkDependencyPrecheck && typeof window.VorkDependencyPrecheck.runAndDisplay === 'function') {
+        await window.VorkDependencyPrecheck.runAndDisplay('surfaces', id, 'Surface', showAlert);
+        return;
     }
+    showAlert('Dependency pre-check helper is not available on this page.', 'warning');
 }
 
 async function publishSurfaceContribution(id) {
     if (!id) {
         showAlert('Surface id is required for publish.', 'warning');
         return;
+    }
+
+    if (window.VorkDependencyPrecheck && typeof window.VorkDependencyPrecheck.runAndGate === 'function') {
+        const ready = await window.VorkDependencyPrecheck.runAndGate('surfaces', id, 'Surface', showAlert);
+        if (!ready) {
+            return;
+        }
     }
 
     document.getElementById('surface-publish-id').value = id;

@@ -21,8 +21,15 @@
             <p class="vork-page-subtitle">Shared OAuth metadata templates. This is separate from per-user OAuth Clients.</p>
         </div>
         <div class="vork-page-header-actions">
+            <span id="github-connection-status" class="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-400">Checking GitHub...</span>
+            <button th:if="${canManageUsers}" id="github-connect-btn" class="rounded-lg border border-cyan-500/40 px-3 py-2 text-sm font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15">
+                <i class="fa-brands fa-github mr-2"></i>Connect GitHub
+            </button>
             <button th:if="${canManageUsers}" id="new-template-btn" class="rounded-lg bg-[#fdaa02] px-3 py-2 text-sm font-semibold text-black transition-colors hover:bg-[#e89a02]">
                 <i class="fa-solid fa-plus mr-2"></i>New Template
+            </button>
+            <button th:if="${canManageUsers}" id="sync-main-btn" class="rounded-lg border border-blue-500/40 px-3 py-2 text-sm font-medium text-blue-300 transition-colors hover:bg-blue-500/15 contrib-action" data-default-title="Synchronize templates from main" title="Synchronize templates from main" disabled>
+                <i class="fa-solid fa-rotate mr-2"></i>Synchronize Main
             </button>
             <button th:if="${canManageUsers}" id="import-templates-btn" class="rounded-lg border border-emerald-500/40 px-3 py-2 text-sm font-medium text-emerald-300 transition-colors hover:bg-emerald-500/15">
                 <i class="fa-solid fa-file-import mr-2"></i>Import Templates
@@ -33,6 +40,7 @@
 
     <div class="vork-content-stack">
         <div id="alert-area"></div>
+        <div id="github-connection-hint" class="hidden rounded-lg border border-cyan-700/60 bg-cyan-950/40 px-3 py-2 text-sm text-cyan-200"></div>
 
         <div class="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
             <div id="empty-state" class="vork-empty-state-card hidden">
@@ -45,8 +53,10 @@
                     <thead>
                     <tr class="border-b border-zinc-800 text-xs uppercase tracking-wide text-zinc-400">
                         <th class="px-3 py-2">Name</th>
+                        <th class="px-3 py-2">Client Name</th>
                         <th class="px-3 py-2">Description</th>
                         <th class="px-3 py-2">Scopes</th>
+                        <th class="px-3 py-2">Artifact Status</th>
                         <th class="px-3 py-2 text-right">Actions</th>
                     </tr>
                     </thead>
@@ -162,6 +172,56 @@
     </div>
 </div>
 
-<script src="/js/settings-oauth-templates.js" th:src="@{/js/settings-oauth-templates.js}"></script>
+<div id="oauth-template-publish-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div class="w-full max-w-4xl rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
+            <h3 class="text-lg font-semibold text-zinc-100">Publish OAuth Template Draft</h3>
+            <button id="oauth-template-publish-close" class="rounded-md border border-zinc-700 px-2 py-1 text-zinc-300 transition-colors hover:bg-zinc-800" aria-label="Close">x</button>
+        </div>
+        <div class="space-y-3 px-5 py-4">
+            <input id="oauth-template-publish-id" type="hidden">
+            <div id="oauth-template-publish-alert"></div>
+            <p class="text-xs text-zinc-400">AI generated this draft metadata. Review and edit before submitting the PR.</p>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="oauth-template-publish-pr-title">PR title <span class="text-rose-400">*</span></label>
+                <input id="oauth-template-publish-pr-title" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
+            </div>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="oauth-template-publish-change-summary">Change summary <span class="text-rose-400">*</span></label>
+                <textarea id="oauth-template-publish-change-summary" rows="2" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"></textarea>
+            </div>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="oauth-template-publish-commit-message">Commit message</label>
+                <input id="oauth-template-publish-commit-message" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
+            </div>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="oauth-template-publish-pr-body">PR body</label>
+                <textarea id="oauth-template-publish-pr-body" rows="4" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"></textarea>
+            </div>
+
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="oauth-template-publish-release-notes">Release notes</label>
+                    <textarea id="oauth-template-publish-release-notes" rows="3" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"></textarea>
+                </div>
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="oauth-template-publish-reviewer-hints">Reviewer hints</label>
+                    <textarea id="oauth-template-publish-reviewer-hints" rows="3" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"></textarea>
+                </div>
+            </div>
+        </div>
+        <div class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">
+            <button id="oauth-template-publish-cancel" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800">Cancel</button>
+            <button id="oauth-template-publish-submit" class="rounded-lg border border-cyan-500/40 px-3 py-2 text-sm font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15">Submit PR</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/github-device-flow-ui.js?v=20260813.3" th:src="@{/js/github-device-flow-ui.js(v='20260813.3')}"></script>
+<script src="/js/settings-oauth-templates.js?v=20260813.3" th:src="@{/js/settings-oauth-templates.js(v='20260813.3')}"></script>
 </body>
 </html>

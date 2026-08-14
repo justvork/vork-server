@@ -41,6 +41,7 @@ import sh.vork.orm.DatabaseRepository;
 import sh.vork.reflection.Reflection;
 import sh.vork.reflection.ReflectionBinding;
 import sh.vork.reflection.ReflectionGroup;
+import sh.vork.oauth.OAuthTemplateEntity;
 import sh.vork.scheduling.domain.ScheduledJob;
 import sh.vork.setup.SystemSettings;
 import sh.vork.setup.SystemSettingsService;
@@ -77,10 +78,12 @@ public class ContributionController {
     private final DatabaseRepository<ReflectionGroup> reflectionGroupRepository;
     private final DatabaseRepository<Reflection> reflectionRepository;
     private final DatabaseRepository<ReflectionBinding> reflectionBindingRepository;
+    private final DatabaseRepository<OAuthTemplateEntity> oauthTemplateRepository;
     private final DatabaseRepository<ContributionSubmission> contributionSubmissionRepository;
     private final GitHubForkContributionService contributionService;
     private final ContributionLifecyclePromotionService promotionService;
     private final ContributionVersionRecommendationService recommendationService;
+    private final ContributionDependencyValidator dependencyValidator;
     private final AiOrchestrationService aiOrchestrationService;
     private final SystemSettingsService systemSettingsService;
     private final SurfaceService surfaceService;
@@ -95,10 +98,12 @@ public class ContributionController {
                                   DatabaseRepository<ReflectionGroup> reflectionGroupRepository,
                                   DatabaseRepository<Reflection> reflectionRepository,
                                   DatabaseRepository<ReflectionBinding> reflectionBindingRepository,
+                                  DatabaseRepository<OAuthTemplateEntity> oauthTemplateRepository,
                                   DatabaseRepository<ContributionSubmission> contributionSubmissionRepository,
                                   GitHubForkContributionService contributionService,
                                   ContributionLifecyclePromotionService promotionService,
                                   ContributionVersionRecommendationService recommendationService,
+                                  ContributionDependencyValidator dependencyValidator,
                                   AiOrchestrationService aiOrchestrationService,
                                   SystemSettingsService systemSettingsService,
                                   SurfaceService surfaceService,
@@ -112,10 +117,12 @@ public class ContributionController {
         this.reflectionGroupRepository = reflectionGroupRepository;
         this.reflectionRepository = reflectionRepository;
         this.reflectionBindingRepository = reflectionBindingRepository;
+        this.oauthTemplateRepository = oauthTemplateRepository;
         this.contributionSubmissionRepository = contributionSubmissionRepository;
         this.contributionService = contributionService;
         this.promotionService = promotionService;
         this.recommendationService = recommendationService;
+        this.dependencyValidator = dependencyValidator;
         this.aiOrchestrationService = aiOrchestrationService;
         this.systemSettingsService = systemSettingsService;
         this.surfaceService = surfaceService;
@@ -280,6 +287,27 @@ public class ContributionController {
         return ResponseEntity.ok(Map.of("status", "ok", "draft", draft));
     }
 
+    @PostMapping("/oauth-templates/{id}/publish-draft")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> draftOAuthTemplatePublish(@PathVariable String id,
+                                                       @RequestBody(required = false) PublishDraftRequest request) {
+        log.debug("ENTER draftOAuthTemplatePublish: id={}", id);
+        OAuthTemplateEntity existing = oauthTemplateRepository.get(id);
+        if (existing == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if (existing.artifactStatus() != sh.vork.oauth.ArtifactStatus.SNAPSHOT
+                && existing.artifactStatus() != sh.vork.oauth.ArtifactStatus.REJECTED) {
+            return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT or REJECTED OAuth templates can be published."));
+        }
+        if (existing.clientName() == null || existing.clientName().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "OAuth template is missing clientName."));
+        }
+
+        PublishMetadataDraft draft = buildOAuthTemplatePublishDraft(existing);
+        return ResponseEntity.ok(Map.of("status", "ok", "draft", draft));
+    }
+
     @PostMapping("/agents/{id}/publish")
     @PreAuthorize("hasAuthority('AGENTS_WRITE')")
     public ResponseEntity<?> publishAgent(@PathVariable String id,
@@ -298,6 +326,12 @@ public class ContributionController {
         }
         if (!existing.isSnapshotMutable()) {
             return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT agents can be published."));
+        }
+
+        ResponseEntity<?> dependencyFailure = dependencyFailureIfAny(
+                dependencyValidator.validateAgent(existing.uuid()));
+        if (dependencyFailure != null) {
+            return dependencyFailure;
         }
 
         String validationError = validatePublishRequest(request, existing.groupId(), existing.artifactId(), "Agent");
@@ -411,6 +445,12 @@ public class ContributionController {
         }
         if (user == null || user.getUsername() == null || !user.getUsername().equals(existing.userId())) {
             return ResponseEntity.status(403).body(Map.of("error", "Forbidden"));
+        }
+
+        ResponseEntity<?> dependencyFailure = dependencyFailureIfAny(
+                dependencyValidator.validateJob(existing.id()));
+        if (dependencyFailure != null) {
+            return dependencyFailure;
         }
 
         String validationError = validatePublishRequest(request, existing.groupId(), existing.artifactId(), "Job");
@@ -532,6 +572,12 @@ public class ContributionController {
         }
         if (!existing.isSnapshotMutable()) {
             return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT surfaces can be published."));
+        }
+
+        ResponseEntity<?> dependencyFailure = dependencyFailureIfAny(
+                dependencyValidator.validateSurface(existing.uuid()));
+        if (dependencyFailure != null) {
+            return dependencyFailure;
         }
 
         String validationError = validatePublishRequest(request, existing.groupId(), existing.artifactId(), "Surface");
@@ -667,6 +713,12 @@ public class ContributionController {
             return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT skill groups can be published."));
         }
 
+        ResponseEntity<?> dependencyFailure = dependencyFailureIfAny(
+                dependencyValidator.validateSkillGroup(existing.uuid()));
+        if (dependencyFailure != null) {
+            return dependencyFailure;
+        }
+
         String validationError = validatePublishRequest(request, existing.groupId(), existing.artifactId(), "Skill group");
         if (validationError != null) {
             return ResponseEntity.badRequest().body(Map.of("error", validationError));
@@ -781,6 +833,12 @@ public class ContributionController {
             return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT reflection groups can be published."));
         }
 
+        ResponseEntity<?> dependencyFailure = dependencyFailureIfAny(
+                dependencyValidator.validateReflectionGroup(existing.uuid()));
+        if (dependencyFailure != null) {
+            return dependencyFailure;
+        }
+
         String validationError = validatePublishRequest(request, existing.groupId(), existing.artifactId(), "Reflection group");
         if (validationError != null) {
             return ResponseEntity.badRequest().body(Map.of("error", validationError));
@@ -890,6 +948,135 @@ public class ContributionController {
                         "branch", result.branchName(),
                         "forkOwner", result.forkOwner(),
                         "forkRepository", result.forkRepository())));
+    }
+
+    @PostMapping("/oauth-templates/{id}/publish")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> publishOAuthTemplate(@PathVariable String id,
+                                                  @RequestBody PublishMetadataRequest request,
+                                                  @AuthenticationPrincipal UserDetails user) {
+        log.debug("ENTER publishOAuthTemplate: id={}, user={}", id, user == null ? null : user.getUsername());
+        if (user == null || user.getUsername() == null || user.getUsername().isBlank()) {
+            return ResponseEntity.status(403).body(Map.of("error", "Forbidden"));
+        }
+        OAuthTemplateEntity existing = oauthTemplateRepository.get(id);
+        if (existing == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if (existing.artifactStatus() != sh.vork.oauth.ArtifactStatus.SNAPSHOT
+                && existing.artifactStatus() != sh.vork.oauth.ArtifactStatus.REJECTED) {
+            return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT or REJECTED OAuth templates can be published."));
+        }
+        if (existing.clientName() == null || existing.clientName().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "OAuth template is missing clientName."));
+        }
+
+        String validationError = validateOAuthTemplatePublishRequest(request, existing);
+        if (validationError != null) {
+            return ResponseEntity.badRequest().body(Map.of("error", validationError));
+        }
+
+        String templateJson;
+        try {
+            templateJson = objectMapper.writerWithDefaultPrettyPrinter()
+                    .writeValueAsString(toOAuthTemplateContributionArtifact(existing));
+        } catch (JsonProcessingException ex) {
+            log.error("Failed to serialize oauth-template for contribution [id={}]: {}",
+                    id, ex.getMessage(), ex);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to serialize contribution artifact."));
+        }
+
+        String clientName = existing.clientName().trim();
+        String branch = buildBranchNameNoVersion("oauth-template", clientName);
+        String commitMessage = request.commitMessage() == null || request.commitMessage().isBlank()
+                ? "contrib(oauth-template): publish \"" + clientName + "\""
+                : request.commitMessage().trim();
+        String prBody = request.prBody() == null ? "" : request.prBody().trim();
+
+        ContributionSubmitRequest submitRequest = new ContributionSubmitRequest(
+                user.getUsername(),
+                branch,
+                commitMessage,
+                request.prTitle().trim(),
+                prBody,
+                new ContributionTarget(OFFICIAL_OWNER, OFFICIAL_REPOSITORY, OFFICIAL_STAGING_BRANCH),
+                List.of(new ContributionFile(
+                        "oauth-templates/" + clientName + ".json",
+                        templateJson)));
+
+        ContributionSubmitResult result;
+        try {
+            result = contributionService.submitContribution(submitRequest);
+        } catch (RuntimeException ex) {
+            log.warn("OAuth-template contribution publish failed [id={}, branch={}]: {}", id, branch, ex.getMessage());
+            return ResponseEntity.status(502).body(Map.of("error", "Contribution submission failed: " + ex.getMessage()));
+        }
+
+        OAuthTemplateEntity submitted = new OAuthTemplateEntity(
+                existing.uuid(),
+                existing.name(),
+                existing.clientName(),
+                existing.description(),
+                existing.authorizeEndpoint(),
+                existing.tokenEndpoint(),
+                existing.scopes(),
+                existing.authorizationParameters(),
+                sh.vork.oauth.ArtifactStatus.SUBMITTED,
+                existing.createdAt(),
+                System.currentTimeMillis());
+        oauthTemplateRepository.save(submitted);
+        contributionSubmissionRepository.save(new ContributionSubmission(
+                submissionKey("oauth-template", submitted.uuid()),
+                "oauth-template",
+                submitted.uuid(),
+                result.upstreamOwner(),
+                result.upstreamRepository(),
+                result.baseBranch(),
+                result.branchName(),
+                result.pullRequestNumber(),
+                result.pullRequestUrl(),
+                System.currentTimeMillis(),
+                System.currentTimeMillis()));
+
+        log.info("OAuth-template submitted [id={}, clientName={}, pr={}]", submitted.uuid(), clientName, result.pullRequestUrl());
+        return ResponseEntity.ok(Map.of(
+                "status", "ok",
+                "artifact", submitted,
+                "pullRequest", Map.of(
+                        "number", result.pullRequestNumber(),
+                        "url", result.pullRequestUrl(),
+                        "branch", result.branchName(),
+                        "forkOwner", result.forkOwner(),
+                        "forkRepository", result.forkRepository())));
+    }
+
+    @GetMapping("/{componentType}/{id}/dependency-check")
+    public ResponseEntity<?> dependencyCheck(@PathVariable String componentType,
+                                             @PathVariable String id) {
+        log.debug("ENTER dependencyCheck: componentType={}, id={}", componentType, id);
+        if (componentType == null || componentType.isBlank() || id == null || id.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "componentType and id are required."));
+        }
+
+        ContributionDependencyValidator.DependencyValidationReport report;
+        switch (componentType.trim().toLowerCase()) {
+            case "agents" -> report = dependencyValidator.validateAgent(id);
+            case "jobs" -> report = dependencyValidator.validateJob(id);
+            case "surfaces" -> report = dependencyValidator.validateSurface(id);
+            case "skills" -> report = dependencyValidator.validateSkillGroup(id);
+            case "reflections" -> report = dependencyValidator.validateReflectionGroup(id);
+            default -> {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "error", "Unsupported componentType for dependency check: " + componentType,
+                        "supported", List.of("agents", "jobs", "surfaces", "skills", "reflections")));
+            }
+        }
+
+        log.debug("EXIT dependencyCheck: componentType={}, id={}, valid={}, issues={}",
+                componentType, id, report.valid(), report.issues().size());
+        return ResponseEntity.ok(Map.of(
+                "status", report.valid() ? "ok" : "blocked",
+                "report", report));
     }
 
     @PostMapping("/agents/{id}/recommend-version")
@@ -1376,6 +1563,32 @@ public class ContributionController {
         return null;
     }
 
+    private static String validateOAuthTemplatePublishRequest(PublishMetadataRequest request,
+                                                              OAuthTemplateEntity existing) {
+        if (request == null) {
+            return "Publish request is required.";
+        }
+        if (request.prTitle() == null || request.prTitle().isBlank()) {
+            return "prTitle is required.";
+        }
+        if (request.changeSummary() == null || request.changeSummary().isBlank()) {
+            return "changeSummary is required.";
+        }
+        if (existing == null || existing.clientName() == null || existing.clientName().isBlank()) {
+            return "OAuth template is missing clientName.";
+        }
+        return null;
+    }
+
+    private static ResponseEntity<?> dependencyFailureIfAny(ContributionDependencyValidator.DependencyValidationReport report) {
+        if (report == null || report.valid()) {
+            return null;
+        }
+        return ResponseEntity.status(409).body(Map.of(
+                "error", report.summary(),
+                "dependencyReport", report));
+    }
+
     private static String toVid(String groupId, String artifactId, String version) {
         return groupId + "-" + artifactId + "-" + version;
     }
@@ -1387,6 +1600,13 @@ public class ContributionController {
         String safeVersion = sanitizeSegment(version);
         long timestamp = Instant.now().getEpochSecond();
         return "contrib/" + safeType + "/" + safeGroup + "-" + safeArtifact + "-" + safeVersion + "-" + timestamp;
+    }
+
+    private static String buildBranchNameNoVersion(String type, String identity) {
+        String safeType = sanitizeSegment(type);
+        String safeIdentity = sanitizeSegment(identity);
+        long timestamp = Instant.now().getEpochSecond();
+        return "contrib/" + safeType + "/" + safeIdentity + "-" + timestamp;
     }
 
     private String readSurfaceAsset(Surface surface,
@@ -1743,6 +1963,80 @@ public class ContributionController {
         artifact.put("bindings", bindings == null ? List.of() : bindings);
         return artifact;
     }
+
+        private Map<String, Object> toOAuthTemplateContributionArtifact(OAuthTemplateEntity template) {
+        Map<String, Object> artifact = new LinkedHashMap<>();
+        artifact.put("name", template.name());
+        artifact.put("clientName", template.clientName());
+        artifact.put("description", template.description());
+        artifact.put("authorizeEndpoint", template.authorizeEndpoint());
+        artifact.put("tokenEndpoint", template.tokenEndpoint());
+        artifact.put("scopes", template.scopes() == null ? List.of() : template.scopes());
+        artifact.put("authorizationParameters", template.authorizationParameters() == null ? Map.of() : template.authorizationParameters());
+        return artifact;
+        }
+
+        private PublishMetadataDraft buildOAuthTemplatePublishDraft(OAuthTemplateEntity existing) {
+        Map<String, Object> artifact = toOAuthTemplateContributionArtifact(existing);
+        String prompt = """
+            You are preparing a GitHub pull request draft for an OAuth template artifact.
+
+            OAuth templates are not versioned. The artifact will be committed to:
+            oauth-templates/<clientName>.json
+
+            Return STRICT JSON only (no markdown, no prose) with exactly these fields:
+            prTitle, changeSummary, commitMessage, prBody, releaseNotes, reviewerHints.
+
+            Writing style requirements:
+            - Write clear, practical language for engineering reviewers.
+            - Explain what provider/template was added or changed.
+            - Do not include placeholder text.
+            - releaseNotes and reviewerHints must each be non-empty and include 2-6 concise bullet points.
+
+            Context:
+            templateUuid: %s
+            clientName: %s
+            artifactJson: %s
+            """.formatted(
+            nonBlank(existing.uuid(), "unknown"),
+            nonBlank(existing.clientName(), "unknown"),
+            toCompactJson(artifact));
+
+        String aiRaw = null;
+        try {
+            AiProvider provider = resolveDefaultProvider();
+            aiRaw = aiOrchestrationService.generate(prompt, provider);
+            log.debug("AI draft raw response [artifactType=oauth-template, artifactUuid={}]: {}", existing.uuid(), aiRaw);
+        } catch (RuntimeException ex) {
+            log.warn("AI publish draft generation failed; using defaults [artifactType=oauth-template, artifactUuid={}]: {}",
+                existing.uuid(), ex.getMessage());
+        }
+
+        Map<String, Object> ai = parseJsonObjectFromText(aiRaw);
+        String headline = "\"" + nonBlank(existing.name(), nonBlank(existing.clientName(), "oauth template")) + "\"";
+        String clientName = nonBlank(existing.clientName(), "oauth-template");
+        String changeSummary = humanizeIfGeneric(
+            nonBlank(asString(ai.get("changeSummary")), "Updates OAuth template " + headline + " for clientName " + clientName + "."),
+            "Updates OAuth template " + headline + " for clientName " + clientName + ".");
+        String prTitle = humanizeIfGeneric(
+            nonBlank(asString(ai.get("prTitle")), "Update OAuth template " + headline),
+            "Update OAuth template " + headline);
+        String commitMessage = humanizeCommitMessage(
+            asString(ai.get("commitMessage")),
+            "contrib(oauth-template): update \"" + clientName + "\"");
+        String prBody = humanizeIfGeneric(
+            nonBlank(asString(ai.get("prBody")),
+                "## What this changes\n" + changeSummary + "\n\n## Artifact path\n- oauth-templates/" + clientName + ".json"),
+            "## What this changes\n" + changeSummary + "\n\n## Artifact path\n- oauth-templates/" + clientName + ".json");
+        String releaseNotes = nonBlank(
+            asString(ai.get("releaseNotes")),
+            "- Updated OAuth template " + headline + ".\n- Artifact path: oauth-templates/" + clientName + ".json");
+        String reviewerHints = nonBlank(
+            asString(ai.get("reviewerHints")),
+            "- Verify authorize and token endpoints.\n- Verify scopes and authorization parameter compatibility.");
+
+        return new PublishMetadataDraft(commitMessage, prTitle, prBody, changeSummary, releaseNotes, reviewerHints);
+        }
 
     private List<Skill> skillsForGroup(SkillGroup group) {
         if (group == null) {
@@ -2240,6 +2534,26 @@ public class ContributionController {
                 String releaseNotes,
                 String reviewerHints,
                 String latestVersion
+            ) {
+            }
+
+            public record PublishMetadataRequest(
+                String commitMessage,
+                String prTitle,
+                String prBody,
+                String changeSummary,
+                String releaseNotes,
+                String reviewerHints
+            ) {
+            }
+
+            public record PublishMetadataDraft(
+                String commitMessage,
+                String prTitle,
+                String prBody,
+                String changeSummary,
+                String releaseNotes,
+                String reviewerHints
             ) {
             }
 

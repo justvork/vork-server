@@ -1,6 +1,15 @@
 package sh.vork.oauth;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -19,8 +28,12 @@ import sh.vork.orm.RepositoryFactory;
 public class OAuthTemplateService {
 
     private static final Logger log = LoggerFactory.getLogger(OAuthTemplateService.class);
+    private static final String MAIN_TEMPLATES_API_URL =
+            "https://api.github.com/repos/justvork/vork-central/contents/oauth-templates?ref=main";
 
     private final DatabaseRepository<OAuthTemplateEntity> templateRepository;
+    private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build();
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public OAuthTemplateService(RepositoryFactory factory) {
         this.templateRepository = factory.create(OAuthTemplateEntity.class);
@@ -71,6 +84,7 @@ public class OAuthTemplateService {
         for (OAuthTemplate template : pkg.templates()) {
             OAuthTemplate normalized = normalizeAndValidate(template);
             UUID id = normalized.id() == null ? UUID.randomUUID() : normalized.id();
+            ensureUniqueClientName(normalized.clientName(), id);
 
             OAuthTemplateEntity existing = templateRepository.get(id.toString());
             if (existing == null) {
@@ -78,12 +92,13 @@ public class OAuthTemplateService {
                 OAuthTemplateEntity createdEntity = new OAuthTemplateEntity(
                         id.toString(),
                         normalized.name(),
-                    normalized.clientName(),
+                        normalized.clientName(),
                         normalized.description(),
                         normalized.authorizeEndpoint().toString(),
                         normalized.tokenEndpoint().toString(),
                         List.copyOf(normalized.scopes()),
                         Map.copyOf(normalized.authorizationParameters()),
+                        normalized.artifactStatus(),
                         now,
                         now);
                 templateRepository.save(createdEntity);
@@ -92,12 +107,13 @@ public class OAuthTemplateService {
                 OAuthTemplateEntity updatedEntity = new OAuthTemplateEntity(
                         existing.uuid(),
                         normalized.name(),
-                    normalized.clientName(),
+                        normalized.clientName(),
                         normalized.description(),
                         normalized.authorizeEndpoint().toString(),
                         normalized.tokenEndpoint().toString(),
                         List.copyOf(normalized.scopes()),
                         Map.copyOf(normalized.authorizationParameters()),
+                        normalized.artifactStatus(),
                         existing.createdAt(),
                         System.currentTimeMillis());
                 templateRepository.save(updatedEntity);
@@ -128,18 +144,20 @@ public class OAuthTemplateService {
     public OAuthTemplate createTemplate(OAuthTemplate template) {
         log.debug("ENTER createTemplate: name={}", template == null ? "null" : template.name());
         OAuthTemplate normalized = normalizeAndValidate(template);
+        ensureUniqueClientName(normalized.clientName(), null);
         UUID id = normalized.id() == null ? UUID.randomUUID() : normalized.id();
         long now = System.currentTimeMillis();
 
         OAuthTemplateEntity entity = new OAuthTemplateEntity(
                 id.toString(),
                 normalized.name(),
-            normalized.clientName(),
+                normalized.clientName(),
                 normalized.description(),
                 normalized.authorizeEndpoint().toString(),
                 normalized.tokenEndpoint().toString(),
                 List.copyOf(normalized.scopes()),
                 Map.copyOf(normalized.authorizationParameters()),
+                ArtifactStatus.SNAPSHOT,
                 now,
                 now);
 
@@ -161,19 +179,25 @@ public class OAuthTemplateService {
             log.debug("EXIT updateTemplate: template not found [id={}]", id);
             return null;
         }
+        if (existing.artifactStatus() != ArtifactStatus.SNAPSHOT
+                && existing.artifactStatus() != ArtifactStatus.REJECTED) {
+            throw new IllegalArgumentException("Only SNAPSHOT or REJECTED OAuth templates can be edited.");
+        }
 
         OAuthTemplate normalized = normalizeAndValidate(template);
+        ensureUniqueClientName(normalized.clientName(), id);
         long now = System.currentTimeMillis();
 
         OAuthTemplateEntity updated = new OAuthTemplateEntity(
                 existing.uuid(),
                 normalized.name(),
-            normalized.clientName(),
+                normalized.clientName(),
                 normalized.description(),
                 normalized.authorizeEndpoint().toString(),
                 normalized.tokenEndpoint().toString(),
                 List.copyOf(normalized.scopes()),
                 Map.copyOf(normalized.authorizationParameters()),
+                existing.artifactStatus(),
                 existing.createdAt(),
                 now);
 
@@ -194,10 +218,129 @@ public class OAuthTemplateService {
             log.debug("EXIT deleteTemplate: template not found [id={}]", id);
             return false;
         }
+        if (existing.artifactStatus() != ArtifactStatus.SNAPSHOT
+                && existing.artifactStatus() != ArtifactStatus.REJECTED) {
+            throw new IllegalArgumentException("Only SNAPSHOT or REJECTED OAuth templates can be deleted.");
+        }
         templateRepository.delete(id.toString());
         log.info("OAuth template deleted [id={}, name={}]", id, existing.name());
         log.debug("EXIT deleteTemplate: id={}", id);
         return true;
+    }
+
+    public OAuthTemplate markSubmitted(UUID id) {
+        log.debug("ENTER markSubmitted: id={}", id);
+        OAuthTemplateEntity existing = id == null ? null : templateRepository.get(id.toString());
+        if (existing == null) {
+            log.debug("EXIT markSubmitted: template not found [id={}]", id);
+            return null;
+        }
+        OAuthTemplateEntity updated = new OAuthTemplateEntity(
+                existing.uuid(),
+                existing.name(),
+                existing.clientName(),
+                existing.description(),
+                existing.authorizeEndpoint(),
+                existing.tokenEndpoint(),
+                existing.scopes(),
+                existing.authorizationParameters(),
+                ArtifactStatus.SUBMITTED,
+                existing.createdAt(),
+                System.currentTimeMillis());
+        templateRepository.save(updated);
+        OAuthTemplate result = toModel(updated);
+        log.debug("EXIT markSubmitted: id={}, status={}", id, result.artifactStatus());
+        return result;
+    }
+
+    public OAuthTemplateSyncResult synchronizeFromMain() {
+        log.debug("ENTER synchronizeFromMain");
+        List<String> fileNames = listMainTemplateFiles();
+        if (fileNames.isEmpty()) {
+            log.info("OAuth template sync found no templates in main repository");
+            return new OAuthTemplateSyncResult("ok", "No templates found in main branch.", 0, 0, 0, 0);
+        }
+
+        int created = 0;
+        int updated = 0;
+        int skipped = 0;
+
+        for (String fileName : fileNames) {
+            String clientName = fileName.substring(0, fileName.length() - ".json".length()).trim();
+            if (clientName.isBlank()) {
+                skipped++;
+                continue;
+            }
+
+            OAuthTemplate remote = fetchTemplateFromMain(fileName);
+            if (remote == null) {
+                skipped++;
+                continue;
+            }
+
+            OAuthTemplate normalized;
+            try {
+                normalized = normalizeAndValidate(new OAuthTemplate(
+                        remote.id(),
+                        remote.name(),
+                        clientName,
+                        remote.description(),
+                        remote.authorizeEndpoint(),
+                        remote.tokenEndpoint(),
+                        remote.scopes(),
+                        remote.authorizationParameters(),
+                        ArtifactStatus.PUBLISHED));
+            } catch (IllegalArgumentException ex) {
+                log.warn("Skipping invalid OAuth template from main [file={}]: {}", fileName, ex.getMessage());
+                skipped++;
+                continue;
+            }
+
+            OAuthTemplateEntity existing = findEntityByClientName(clientName);
+            if (existing == null) {
+                long now = System.currentTimeMillis();
+                OAuthTemplateEntity createdEntity = new OAuthTemplateEntity(
+                        UUID.randomUUID().toString(),
+                        normalized.name(),
+                        normalized.clientName(),
+                        normalized.description(),
+                        normalized.authorizeEndpoint().toString(),
+                        normalized.tokenEndpoint().toString(),
+                        List.copyOf(normalized.scopes()),
+                        Map.copyOf(normalized.authorizationParameters()),
+                        ArtifactStatus.PUBLISHED,
+                        now,
+                        now);
+                templateRepository.save(createdEntity);
+                created++;
+                continue;
+            }
+
+            OAuthTemplateEntity updatedEntity = new OAuthTemplateEntity(
+                    existing.uuid(),
+                    normalized.name(),
+                    normalized.clientName(),
+                    normalized.description(),
+                    normalized.authorizeEndpoint().toString(),
+                    normalized.tokenEndpoint().toString(),
+                    List.copyOf(normalized.scopes()),
+                    Map.copyOf(normalized.authorizationParameters()),
+                    ArtifactStatus.PUBLISHED,
+                    existing.createdAt(),
+                    System.currentTimeMillis());
+            templateRepository.save(updatedEntity);
+            updated++;
+        }
+
+        log.info("OAuth template sync from main completed [created={}, updated={}, skipped={}]", created, updated, skipped);
+        log.debug("EXIT synchronizeFromMain");
+        return new OAuthTemplateSyncResult(
+                "ok",
+                "Synchronized OAuth templates from main.",
+                created,
+                updated,
+                created + updated,
+                skipped);
     }
 
     private OAuthTemplate normalizeAndValidate(OAuthTemplate template) {
@@ -234,12 +377,45 @@ public class OAuthTemplateService {
         return new OAuthTemplate(
                 template.id(),
                 name,
-            clientName,
+                clientName,
                 description,
                 template.authorizeEndpoint(),
                 template.tokenEndpoint(),
                 scopes,
-                authorizationParameters);
+                authorizationParameters,
+                template.artifactStatus() == null ? ArtifactStatus.SNAPSHOT : template.artifactStatus());
+    }
+
+    private void ensureUniqueClientName(String clientName, UUID currentId) {
+        OAuthTemplateEntity existing = findEntityByClientName(clientName);
+        if (existing == null) {
+            return;
+        }
+        if (currentId != null && currentId.toString().equals(existing.uuid())) {
+            return;
+        }
+        throw new IllegalArgumentException("clientName already exists: " + clientName);
+    }
+
+    private OAuthTemplateEntity findEntityByClientName(String clientName) {
+        if (clientName == null || clientName.isBlank()) {
+            return null;
+        }
+        long total = templateRepository.count();
+        int pageSize = 200;
+        int pages = (int) ((total + pageSize - 1) / pageSize);
+        for (int page = 0; page < pages; page++) {
+            try (var stream = templateRepository.list(page, pageSize)) {
+                OAuthTemplateEntity found = stream
+                        .filter(e -> e != null && clientName.equals(e.clientName()))
+                        .findFirst()
+                        .orElse(null);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
     }
 
     private Map<String, String> sanitizeParams(Map<String, String> input) {
@@ -258,28 +434,140 @@ public class OAuthTemplateService {
         return Map.copyOf(out);
     }
 
+    private List<String> listMainTemplateFiles() {
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(MAIN_TEMPLATES_API_URL))
+                    .header("Accept", "application/vnd.github+json")
+                    .header("X-GitHub-Api-Version", "2022-11-28")
+                    .GET()
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() == 404) {
+                return List.of();
+            }
+            if (response.statusCode() >= 400) {
+                throw new IllegalStateException("GitHub listing failed with status " + response.statusCode());
+            }
+
+            JsonNode root = objectMapper.readTree(response.body());
+            if (!root.isArray()) {
+                return List.of();
+            }
+
+            List<String> files = new java.util.ArrayList<>();
+            for (JsonNode node : root) {
+                if (!"file".equals(node.path("type").asText(""))) {
+                    continue;
+                }
+                String name = node.path("name").asText("");
+                if (name.endsWith(".json")) {
+                    files.add(name);
+                }
+            }
+            return List.copyOf(files);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Failed to list OAuth templates from main: " + ex.getMessage(), ex);
+        } catch (IOException ex) {
+            throw new IllegalStateException("Failed to list OAuth templates from main: " + ex.getMessage(), ex);
+        }
+    }
+
+    private OAuthTemplate fetchTemplateFromMain(String fileName) {
+        String url = "https://raw.githubusercontent.com/justvork/vork-central/main/oauth-templates/"
+                + URLEncoder.encode(fileName, StandardCharsets.UTF_8).replace("+", "%20");
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 400) {
+                throw new IllegalStateException("GitHub template fetch failed with status " + response.statusCode());
+            }
+
+            JsonNode json = objectMapper.readTree(response.body());
+            String authorizeEndpoint = json.path("authorizeEndpoint").asText("").trim();
+            String tokenEndpoint = json.path("tokenEndpoint").asText("").trim();
+
+            List<String> scopes = new java.util.ArrayList<>();
+            JsonNode scopesNode = json.path("scopes");
+            if (scopesNode.isArray()) {
+                for (JsonNode scope : scopesNode) {
+                    String value = scope.asText("").trim();
+                    if (!value.isBlank()) {
+                        scopes.add(value);
+                    }
+                }
+            }
+
+            Map<String, String> authParams = new LinkedHashMap<>();
+            JsonNode authNode = json.path("authorizationParameters");
+            if (authNode.isObject()) {
+                authNode.properties().forEach(entry -> {
+                    String key = entry.getKey() == null ? "" : entry.getKey().trim();
+                    String value = entry.getValue() == null ? "" : entry.getValue().asText("").trim();
+                    if (!key.isBlank()) {
+                        authParams.put(key, value);
+                    }
+                });
+            }
+
+            return new OAuthTemplate(
+                    null,
+                    json.path("name").asText("").trim(),
+                    json.path("clientName").asText("").trim(),
+                    json.path("description").asText("").trim(),
+                    authorizeEndpoint.isBlank() ? null : URI.create(authorizeEndpoint),
+                    tokenEndpoint.isBlank() ? null : URI.create(tokenEndpoint),
+                    List.copyOf(scopes),
+                    Map.copyOf(authParams),
+                    ArtifactStatus.PUBLISHED);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            log.warn("Failed to fetch OAuth template from main [file={}]: {}", fileName, ex.getMessage());
+            return null;
+        } catch (IOException | RuntimeException ex) {
+            log.warn("Failed to fetch OAuth template from main [file={}]: {}", fileName, ex.getMessage());
+            return null;
+        }
+    }
+
     private OAuthTemplate toModel(OAuthTemplateEntity entity) {
         return new OAuthTemplate(
                 UUID.fromString(entity.uuid()),
                 entity.name(),
-            entity.clientName(),
+                entity.clientName(),
                 entity.description(),
                 URI.create(entity.authorizeEndpoint()),
                 URI.create(entity.tokenEndpoint()),
                 entity.scopes(),
-                entity.authorizationParameters());
+                entity.authorizationParameters(),
+                entity.artifactStatus());
     }
 
-        public record OAuthTemplateExportPackage(
+    public record OAuthTemplateExportPackage(
             String vorkOAuthTemplateExport,
             int version,
             List<OAuthTemplate> templates
-        ) {}
+    ) {
+    }
 
-        public record OAuthTemplateImportResult(
+    public record OAuthTemplateImportResult(
             String status,
             String message,
             int created,
             int updated
-        ) {}
+    ) {
+    }
+
+    public record OAuthTemplateSyncResult(
+            String status,
+            String message,
+            int created,
+            int updated,
+            int synchronizedCount,
+            int skipped
+    ) {
+    }
 }

@@ -44,7 +44,8 @@ class OAuthTemplateServiceTest {
                 URI.create("https://accounts.google.com/o/oauth2/v2/auth"),
                 URI.create("https://oauth2.googleapis.com/token"),
                 List.of("openid", "email"),
-                Map.of("access_type", "offline", "prompt", "consent")));
+                Map.of("access_type", "offline", "prompt", "consent"),
+                ArtifactStatus.SNAPSHOT));
 
         assertNotNull(created.id());
         assertEquals("Google OAuth", created.name());
@@ -68,7 +69,8 @@ class OAuthTemplateServiceTest {
                 URI.create("https://github.com/login/oauth/authorize"),
                 URI.create("https://github.com/login/oauth/access_token"),
                 List.of("repo"),
-                Map.of("allow_signup", "false")));
+                Map.of("allow_signup", "false"),
+                ArtifactStatus.SNAPSHOT));
 
         OAuthTemplate updated = service.updateTemplate(created.id(), new OAuthTemplate(
                 created.id(),
@@ -78,7 +80,8 @@ class OAuthTemplateServiceTest {
                 URI.create("https://github.com/login/oauth/authorize"),
                 URI.create("https://github.com/login/oauth/access_token"),
                 List.of("repo", "read:user"),
-                Map.of("allow_signup", "true")));
+                Map.of("allow_signup", "true"),
+                ArtifactStatus.SNAPSHOT));
 
         assertNotNull(updated);
         assertEquals(created.id(), updated.id());
@@ -98,7 +101,8 @@ class OAuthTemplateServiceTest {
                 URI.create("https://login.xero.com/identity/connect/authorize"),
                 URI.create("https://identity.xero.com/connect/token"),
                 List.of("openid"),
-                Map.of()));
+                Map.of(),
+                ArtifactStatus.SNAPSHOT));
 
         boolean deleted = service.deleteTemplate(created.id());
         assertTrue(deleted);
@@ -120,7 +124,8 @@ class OAuthTemplateServiceTest {
                 URI.create("https://accounts.google.com/o/oauth2/v2/auth"),
                 URI.create("https://oauth2.googleapis.com/token"),
                 List.of("openid", "email"),
-                Map.of("access_type", "offline")));
+                Map.of("access_type", "offline"),
+                ArtifactStatus.SNAPSHOT));
 
                 OAuthTemplateService.OAuthTemplateExportPackage pkg = service.exportTemplate(created.id());
 
@@ -152,7 +157,8 @@ class OAuthTemplateServiceTest {
                                 URI.create("https://example.com/auth"),
                                 URI.create("https://example.com/token"),
                                 List.of("scope1"),
-                                Map.of("prompt", "consent")))));
+                                Map.of("prompt", "consent"),
+                                ArtifactStatus.SNAPSHOT))));
 
         assertEquals("ok", first.status());
         assertEquals(1, first.created());
@@ -170,7 +176,8 @@ class OAuthTemplateServiceTest {
                                 URI.create("https://example.com/auth"),
                                 URI.create("https://example.com/token"),
                                 List.of("scope1", "scope2"),
-                                Map.of("prompt", "login")))));
+                                Map.of("prompt", "login"),
+                                ArtifactStatus.SNAPSHOT))));
 
         assertEquals("ok", second.status());
         assertEquals(0, second.created());
@@ -194,8 +201,38 @@ class OAuthTemplateServiceTest {
                                 URI.create("https://accounts.google.com/o/oauth2/v2/auth"),
                                 URI.create("https://oauth2.googleapis.com/token"),
                                 List.of("https://www.googleapis.com/auth/calendar.readonly"),
-                                Map.of()));
+                                Map.of(),
+                                ArtifactStatus.SNAPSHOT));
 
                 assertEquals("google_calendar_read_only", created.clientName());
+        }
+
+        @Test
+        void createTemplateRejectsDuplicateClientName() {
+                service.createTemplate(new OAuthTemplate(
+                                null,
+                                "Template A",
+                                "duplicate_client",
+                                "A",
+                                URI.create("https://example.com/auth"),
+                                URI.create("https://example.com/token"),
+                                List.of("scope"),
+                                Map.of(),
+                                ArtifactStatus.SNAPSHOT));
+
+                IllegalArgumentException error = org.junit.jupiter.api.Assertions.assertThrows(
+                                IllegalArgumentException.class,
+                                () -> service.createTemplate(new OAuthTemplate(
+                                                null,
+                                                "Template B",
+                                                "duplicate_client",
+                                                "B",
+                                                URI.create("https://example.com/auth"),
+                                                URI.create("https://example.com/token"),
+                                                List.of("scope"),
+                                                Map.of(),
+                                                ArtifactStatus.SNAPSHOT)));
+
+                assertTrue(error.getMessage().contains("clientName already exists"));
         }
 }

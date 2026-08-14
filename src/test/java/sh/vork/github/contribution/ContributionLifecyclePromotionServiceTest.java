@@ -19,6 +19,7 @@ import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.agent.AgentType;
 import sh.vork.ai.agent.ArtifactStatus;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.oauth.OAuthTemplateEntity;
 import sh.vork.reflection.ReflectionGroup;
 import sh.vork.scheduling.domain.DurationType;
 import sh.vork.scheduling.domain.InvocationType;
@@ -46,6 +47,9 @@ class ContributionLifecyclePromotionServiceTest {
         private DatabaseRepository<ReflectionGroup> reflectionGroupRepository;
 
         @Mock
+        private DatabaseRepository<OAuthTemplateEntity> oauthTemplateRepository;
+
+        @Mock
         private DatabaseRepository<ContributionSubmission> contributionSubmissionRepository;
 
     @Mock
@@ -59,6 +63,7 @@ class ContributionLifecyclePromotionServiceTest {
                 surfaceRepository,
                 skillGroupRepository,
                 reflectionGroupRepository,
+                oauthTemplateRepository,
                 contributionSubmissionRepository,
                 contributionApiClient);
 
@@ -106,6 +111,7 @@ class ContributionLifecyclePromotionServiceTest {
                 surfaceRepository,
                 skillGroupRepository,
                 reflectionGroupRepository,
+                oauthTemplateRepository,
                 contributionSubmissionRepository,
                 contributionApiClient);
 
@@ -162,6 +168,7 @@ class ContributionLifecyclePromotionServiceTest {
                 surfaceRepository,
                 skillGroupRepository,
                 reflectionGroupRepository,
+                oauthTemplateRepository,
                 contributionSubmissionRepository,
                 contributionApiClient);
 
@@ -206,6 +213,7 @@ class ContributionLifecyclePromotionServiceTest {
                 surfaceRepository,
                 skillGroupRepository,
                 reflectionGroupRepository,
+                oauthTemplateRepository,
                 contributionSubmissionRepository,
                 contributionApiClient);
 
@@ -261,6 +269,7 @@ class ContributionLifecyclePromotionServiceTest {
                                 surfaceRepository,
                                 skillGroupRepository,
                                 reflectionGroupRepository,
+                                oauthTemplateRepository,
                                 contributionSubmissionRepository,
                                 contributionApiClient);
 
@@ -294,4 +303,46 @@ class ContributionLifecyclePromotionServiceTest {
                 verify(skillGroupRepository).save(captor.capture());
                 assertEquals(sh.vork.skill.ArtifactStatus.STAGED, captor.getValue().artifactStatus());
         }
+
+    @Test
+    void reconcilePromotesSubmittedOAuthTemplateToPublishedWhenPathExistsInMain() {
+        ContributionLifecyclePromotionService service = new ContributionLifecyclePromotionService(
+                agentRepository,
+                jobRepository,
+                surfaceRepository,
+                skillGroupRepository,
+                reflectionGroupRepository,
+                oauthTemplateRepository,
+                contributionSubmissionRepository,
+                contributionApiClient);
+
+        OAuthTemplateEntity submitted = new OAuthTemplateEntity(
+                "oauth-template-1",
+                "Google OAuth",
+                "google_oauth",
+                "desc",
+                "https://accounts.google.com/o/oauth2/v2/auth",
+                "https://oauth2.googleapis.com/token",
+                List.of("openid"),
+                java.util.Map.of(),
+                sh.vork.oauth.ArtifactStatus.SUBMITTED,
+                1L,
+                2L);
+
+        when(oauthTemplateRepository.count()).thenReturn(1L);
+        when(oauthTemplateRepository.list(0, 200)).thenReturn(Stream.of(submitted));
+        when(contributionApiClient.pathExistsInBranch(
+                eq("justvork"),
+                eq("vork-central"),
+                eq("main"),
+                eq("oauth-templates/google_oauth.json")))
+                .thenReturn(true);
+
+        ContributionLifecyclePromotionService.PromotionSummary summary = service.reconcileLifecycleStatuses();
+
+        assertEquals(1, summary.oauthTemplatesPromotedToPublished());
+        ArgumentCaptor<OAuthTemplateEntity> captor = ArgumentCaptor.forClass(OAuthTemplateEntity.class);
+        verify(oauthTemplateRepository).save(captor.capture());
+        assertEquals(sh.vork.oauth.ArtifactStatus.PUBLISHED, captor.getValue().artifactStatus());
+    }
 }

@@ -16,6 +16,7 @@ public record OAuthTemplateEntity(
         String tokenEndpoint,
         List<String> scopes,
         Map<String, String> authorizationParameters,
+        ArtifactStatus artifactStatus,
         long createdAt,
         long updatedAt
 ) implements DatabaseEntity {
@@ -42,5 +43,6 @@ public record OAuthTemplateEntity(
         if (authorizationParameters == null) {
             authorizationParameters = Map.of();
         }
+        artifactStatus = artifactStatus == null ? ArtifactStatus.SNAPSHOT : artifactStatus;
     }
 }

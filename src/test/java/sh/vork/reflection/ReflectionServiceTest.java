@@ -67,7 +67,8 @@ class ReflectionServiceTest {
                 URI.create("https://github.com/login/oauth/authorize"),
                 URI.create("https://github.com/login/oauth/access_token"),
                 List.of("repo"),
-                Map.of());
+                Map.of(),
+                sh.vork.oauth.ArtifactStatus.SNAPSHOT);
         when(oauthTemplateService.getTemplate(any(UUID.class))).thenReturn(oauthTemplate);
 
         SkillSecretSubstitutor skillSecretSubstitutor = mock(SkillSecretSubstitutor.class);

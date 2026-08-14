@@ -166,6 +166,12 @@
                                         disabled>
                                     <i class="fa-solid fa-lightbulb"></i>
                                 </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary"
+                                        th:attr="data-id=${job.id()}"
+                                        onclick="checkJobContributionDependencies(this.dataset.id)"
+                                        title="Dependency pre-check">
+                                    <i class="fa-solid fa-list-check"></i>
+                                </button>
                                 <button type="button" class="btn btn-sm btn-outline-primary contrib-action"
                                     th:if="${(job.artifactStatus() != null ? job.artifactStatus().name() : 'SNAPSHOT') == 'SNAPSHOT'}"
                                         th:attr="data-id=${job.id()},data-default-title='Publish to staging via PR'"
@@ -404,7 +410,8 @@
 </div>
 
 <script src="/js/github-device-flow-ui.js?v=20260813.2" th:src="@{/js/github-device-flow-ui.js(v='20260813.2')}"></script>
-<script src="/js/jobs-page.js?v=20260813.8" th:src="@{/js/jobs-page.js(v='20260813.8')}"></script>
+<script src="/js/contribution-dependency-precheck.js?v=20260813.3" th:src="@{/js/contribution-dependency-precheck.js(v='20260813.3')}"></script>
+<script src="/js/jobs-page.js?v=20260813.10" th:src="@{/js/jobs-page.js(v='20260813.10')}"></script>
 <script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
 </body>
 </html>

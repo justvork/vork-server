@@ -92,11 +92,15 @@ public class OAuthTemplateController {
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
     public ResponseEntity<?> deleteTemplate(@PathVariable UUID id) {
         log.debug("ENTER deleteTemplate: id={}", id);
-        boolean deleted = templateService.deleteTemplate(id);
-        if (!deleted) {
-            return ResponseEntity.notFound().build();
+        try {
+            boolean deleted = templateService.deleteTemplate(id);
+            if (!deleted) {
+                return ResponseEntity.notFound().build();
+            }
+            return ResponseEntity.ok(Map.of("ok", true));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
         }
-        return ResponseEntity.ok(Map.of("ok", true));
     }
 
     @GetMapping("/{id}/export")
@@ -125,6 +129,24 @@ public class OAuthTemplateController {
             return ResponseEntity.badRequest().body(result);
         }
         return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("/synchronize")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> synchronizeTemplatesFromMain() {
+        log.debug("ENTER synchronizeTemplatesFromMain");
+        try {
+            OAuthTemplateService.OAuthTemplateSyncResult result = templateService.synchronizeFromMain();
+            log.debug("EXIT synchronizeTemplatesFromMain: created={}, updated={}, skipped={}",
+                    result.created(), result.updated(), result.skipped());
+            return ResponseEntity.ok(result);
+        } catch (RuntimeException ex) {
+            log.warn("synchronizeTemplatesFromMain failed: {}", ex.getMessage());
+            return ResponseEntity.status(502).body(Map.of(
+                    "status", "error",
+                    "message", "Failed to synchronize OAuth templates from main.",
+                    "detail", ex.getMessage()));
+        }
     }
 
     @PostMapping("/{id}/connect")

@@ -16,7 +16,8 @@ public record OAuthTemplate(
         URI authorizeEndpoint,
         URI tokenEndpoint,
         List<String> scopes,
-        Map<String, String> authorizationParameters
+    Map<String, String> authorizationParameters,
+    ArtifactStatus artifactStatus
 ) {
     public OAuthTemplate {
         if (clientName == null || clientName.isBlank()) {
@@ -31,5 +32,10 @@ public record OAuthTemplate(
         if (authorizationParameters == null) {
             authorizationParameters = Map.of();
         }
+        artifactStatus = artifactStatus == null ? ArtifactStatus.SNAPSHOT : artifactStatus;
+    }
+
+    public boolean isSnapshotMutable() {
+        return artifactStatus == ArtifactStatus.SNAPSHOT || artifactStatus == ArtifactStatus.REJECTED;
     }
 }

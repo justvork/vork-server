@@ -1030,10 +1030,29 @@ async function recommendAgentVersion(id) {
     }
 }
 
+async function checkAgentContributionDependencies(id) {
+    if (!id) {
+        showAlert('Agent id is required for dependency pre-check.', 'warning');
+        return;
+    }
+    if (window.VorkDependencyPrecheck && typeof window.VorkDependencyPrecheck.runAndDisplay === 'function') {
+        await window.VorkDependencyPrecheck.runAndDisplay('agents', id, 'Agent', showAlert);
+        return;
+    }
+    showAlert('Dependency pre-check helper is not available on this page.', 'warning');
+}
+
 async function publishAgentContribution(id) {
     if (!id) {
         showAlert('Agent id is required for publish.', 'warning');
         return;
+    }
+
+    if (window.VorkDependencyPrecheck && typeof window.VorkDependencyPrecheck.runAndGate === 'function') {
+        const ready = await window.VorkDependencyPrecheck.runAndGate('agents', id, 'Agent', showAlert);
+        if (!ready) {
+            return;
+        }
     }
 
     document.getElementById('agent-publish-id').value = id;

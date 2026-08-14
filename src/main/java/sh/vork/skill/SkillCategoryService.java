@@ -36,7 +36,7 @@ public class SkillCategoryService {
     private static final Logger log = LoggerFactory.getLogger(SkillCategoryService.class);
 
     static final String CATEGORIES_URL =
-            "https://raw.githubusercontent.com/vork-ai/vork-central/main/categories.json";
+            "https://raw.githubusercontent.com/justvork/vork-central/main/categories.json";
 
     private static final long CACHE_TTL_MS = 24L * 60 * 60 * 1_000; // 24 hours
         private static final int STARTUP_REFRESH_ATTEMPTS = 3;

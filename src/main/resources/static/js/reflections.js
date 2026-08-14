@@ -171,6 +171,7 @@ function renderGroups() {
         const isSnapshot = artifactStatus === 'SNAPSHOT';
         const canDelete = artifactStatus === 'SNAPSHOT' || artifactStatus === 'SUBMITTED' || artifactStatus === 'REJECTED';
         const contributionActions = [];
+        contributionActions.push('<button type="button" class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200" data-action="check-deps" data-id="' + escapeHtml(group.uuid) + '" title="Dependency pre-check"><i class="fa-solid fa-list-check"></i></button>');
         if (isSnapshot) {
             contributionActions.push('<button type="button" class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 contrib-action" data-action="publish-group" data-id="' + escapeHtml(group.uuid) + '" data-default-title="Publish to staging via PR" title="Publish to staging via PR" disabled><i class="fa-solid fa-cloud-arrow-up"></i></button>');
         } else {
@@ -319,6 +320,11 @@ function bindDynamicTableEvents(root) {
             publishReflectionGroupContribution(button.getAttribute('data-id'));
         });
     });
+    root.querySelectorAll('button[data-action="check-deps"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            checkReflectionGroupContributionDependencies(button.getAttribute('data-id'));
+        });
+    });
     root.querySelectorAll('button[data-action="refresh-status"]').forEach(function (button) {
         button.addEventListener('click', function () {
             refreshReflectionGroupContributionStatus(button.getAttribute('data-id'));
@@ -423,6 +429,13 @@ async function publishReflectionGroupContribution(id) {
         return;
     }
 
+    if (window.VorkDependencyPrecheck && typeof window.VorkDependencyPrecheck.runAndGate === 'function') {
+        const ready = await window.VorkDependencyPrecheck.runAndGate('reflections', id, 'Reflection group', showAlert);
+        if (!ready) {
+            return;
+        }
+    }
+
     document.getElementById('reflection-publish-id').value = id;
     clearReflectionPublishModalAlert();
     setReflectionPublishLoading(true);
@@ -461,6 +474,18 @@ async function publishReflectionGroupContribution(id) {
         showReflectionPublishModalAlert('Network error during draft generation.', 'danger');
         setReflectionPublishLoading(false);
     }
+}
+
+async function checkReflectionGroupContributionDependencies(id) {
+    if (!id) {
+        showAlert('Reflection group id is required for dependency pre-check.', 'warning');
+        return;
+    }
+    if (window.VorkDependencyPrecheck && typeof window.VorkDependencyPrecheck.runAndDisplay === 'function') {
+        await window.VorkDependencyPrecheck.runAndDisplay('reflections', id, 'Reflection group', showAlert);
+        return;
+    }
+    showAlert('Dependency pre-check helper is not available on this page.', 'warning');
 }
 
 async function submitReflectionPublishFromModal() {

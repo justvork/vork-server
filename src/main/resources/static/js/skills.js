@@ -204,6 +204,7 @@ function renderGroupTable() {
                     + '<button class="mb-1 inline-flex items-center rounded-full border border-dashed border-zinc-600 px-2.5 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" onclick="openCreate(\'' + escapeHtml(group.uuid) + '\')" title="Add skill to group"><i class="fa-solid fa-plus mr-1"></i>Add</button>';
 
         const contributionActions = [];
+        contributionActions.push('<button type="button" class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800" onclick="checkSkillGroupContributionDependencies(\'' + escapeJs(group.uuid) + '\')" title="Dependency pre-check"><i class="fa-solid fa-list-check"></i></button>');
         if (isSnapshot) {
             contributionActions.push('<button type="button" class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/15 contrib-action" data-default-title="Publish to staging via PR" onclick="publishSkillGroupContribution(\'' + escapeJs(group.uuid) + '\')" title="Publish to staging via PR" disabled><i class="fa-solid fa-cloud-arrow-up"></i></button>');
         } else {
@@ -1367,10 +1368,29 @@ async function deleteGroup(groupUuid) {
     }
 }
 
+async function checkSkillGroupContributionDependencies(id) {
+    if (!id) {
+        showAlert('Group id is required for dependency pre-check.', 'warning');
+        return;
+    }
+    if (window.VorkDependencyPrecheck && typeof window.VorkDependencyPrecheck.runAndDisplay === 'function') {
+        await window.VorkDependencyPrecheck.runAndDisplay('skills', id, 'Skill group', showAlert);
+        return;
+    }
+    showAlert('Dependency pre-check helper is not available on this page.', 'warning');
+}
+
 async function publishSkillGroupContribution(id) {
     if (!id) {
         showAlert('Group id is required for publish.', 'warning');
         return;
+    }
+
+    if (window.VorkDependencyPrecheck && typeof window.VorkDependencyPrecheck.runAndGate === 'function') {
+        const ready = await window.VorkDependencyPrecheck.runAndGate('skills', id, 'Skill group', showAlert);
+        if (!ready) {
+            return;
+        }
     }
 
     document.getElementById('skill-publish-id').value = id;
