@@ -1,0 +1,19 @@
+{
+  "vorkOAuthTemplateExport": "vorkOAuthTemplateExport",
+  "version": 1,
+  "templates": [
+    {
+      "id": null,
+      "name": "Installable OAuth Template 07",
+      "clientName": "install_oauth_07",
+      "description": "Installable placeholder OAuth template",
+      "authorizeEndpoint": "https://auth.example.com/install/07/authorize",
+      "tokenEndpoint": "https://auth.example.com/install/07/token",
+      "scopes": ["openid", "profile"],
+      "authorizationParameters": {
+        "prompt": "consent"
+      },
+      "artifactStatus": "SNAPSHOT"
+    }
+  ]
+}

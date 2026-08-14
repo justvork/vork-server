@@ -1,0 +1,17 @@
+{
+  "uuid": "demo-agent04-1.0",
+  "name": "Example Agent 04",
+  "systemPrompt": "You are Example Agent 04. Respond concisely.",
+  "allowedTools": [],
+  "systemAgent": false,
+  "skillUuids": [],
+  "agentType": "INTERACTIVE",
+  "bindingUuids": [],
+  "assignedUsernames": [],
+  "jobUuids": [],
+  "recommendedModel": "GEMINI:gemini-2.5-flash",
+  "groupId": "demo",
+  "artifactId": "agent04",
+  "version": "1.0",
+  "artifactStatus": "SNAPSHOT"
+}

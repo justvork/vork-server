@@ -1,0 +1,43 @@
+{
+  "vorkReflectionGroupExport": "1.0",
+  "group": {
+    "uuid": "demo-reflectionset01-SNAPSHOT",
+    "toolId": "reflectionset01",
+    "name": "Installable Reflection Group 01",
+    "description": "Placeholder installable reflection group",
+    "type": "REST",
+    "baseUrl": "https://example.org/install/01",
+    "urlOverrideEnabled": true,
+    "bindingSecrets": [],
+    "bindingParameters": [],
+    "authenticationMode": "NONE",
+    "oauthTemplateId": "",
+    "groupId": "demo",
+    "artifactId": "reflectionset01",
+    "version": "SNAPSHOT",
+    "artifactStatus": "SNAPSHOT",
+    "createdAt": 1786723408000,
+    "updatedAt": 1786723408000
+  },
+  "reflections": [
+    {
+      "uuid": "demo-reflectionset01-SNAPSHOT-reflection",
+      "id": "installReflection01",
+      "name": "Installable Reflection 01",
+      "description": "Placeholder installable reflection",
+      "groupUuid": "demo-reflectionset01-SNAPSHOT",
+      "inputParameters": [],
+      "method": "GET",
+      "url": "/items/01",
+      "headers": {},
+      "queryParameters": {},
+      "bodyTemplate": "",
+      "requestContentType": "application/json",
+      "responseContentType": "application/json",
+      "outputSchema": "",
+      "version": 1,
+      "createdAt": 1786723408000,
+      "updatedAt": 1786723408000
+    }
+  ]
+}

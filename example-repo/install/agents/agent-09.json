@@ -1,0 +1,20 @@
+{
+  "vorkAgentExport": "1.0",
+  "agent": {
+    "uuid": "demo-agent09-SNAPSHOT",
+    "name": "Installable Agent 09",
+    "systemPrompt": "Installable example agent 09",
+    "allowedTools": [],
+    "systemAgent": false,
+    "skillUuids": [],
+    "agentType": "INTERACTIVE",
+    "bindingUuids": [],
+    "assignedUsernames": [],
+    "jobUuids": [],
+    "recommendedModel": "GEMINI:gemini-2.5-flash",
+    "groupId": "demo",
+    "artifactId": "agent09",
+    "version": "SNAPSHOT",
+    "artifactStatus": "SNAPSHOT"
+  }
+}

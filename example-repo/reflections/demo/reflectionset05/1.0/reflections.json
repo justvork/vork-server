@@ -1,0 +1,54 @@
+{
+  "group": {
+    "uuid": "demo-reflectionset05-1.0",
+    "toolId": "reflectionset05",
+    "name": "Example Reflection Group 05",
+    "description": "Placeholder reflection group",
+    "type": "REST",
+    "baseUrl": "https://example.org/api/05",
+    "urlOverrideEnabled": true,
+    "bindingSecrets": [],
+    "bindingParameters": [],
+    "authenticationMode": "NONE",
+    "oauthTemplateId": "",
+    "groupId": "demo",
+    "artifactId": "reflectionset05",
+    "version": "1.0",
+    "artifactStatus": "SNAPSHOT",
+    "createdAt": 1786723372000,
+    "updatedAt": 1786723372000
+  },
+  "reflections": [
+    {
+      "uuid": "demo-reflectionset05-1.0-reflection",
+      "id": "exampleReflection05",
+      "name": "Example Reflection 05",
+      "description": "Placeholder reflection endpoint",
+      "groupUuid": "demo-reflectionset05-1.0",
+      "inputParameters": [],
+      "method": "GET",
+      "url": "/resource/05",
+      "headers": {},
+      "queryParameters": {},
+      "bodyTemplate": "",
+      "requestContentType": "application/json",
+      "responseContentType": "application/json",
+      "outputSchema": "",
+      "version": 1,
+      "createdAt": 1786723372000,
+      "updatedAt": 1786723372000
+    }
+  ],
+  "bindings": [
+    {
+      "uuid": "demo-reflectionset05-1.0-binding",
+      "groupUuid": "demo-reflectionset05-1.0",
+      "name": "default",
+      "baseUrl": "https://example.org/api/05",
+      "parameterValues": {},
+      "version": 1,
+      "createdAt": 1786723372000,
+      "updatedAt": 1786723372000
+    }
+  ]
+}

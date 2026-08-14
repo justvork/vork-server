@@ -1,0 +1,23 @@
+{
+  "vorkJobExport": "1.0",
+  "job": {
+    "id": "ops-job05-SNAPSHOT",
+    "name": "Installable Job 05",
+    "aiPrompt": "Run installable job 05",
+    "invocationType": "MANUAL",
+    "repeatDuration": 0,
+    "durationType": "MINUTES",
+    "agentTemplateId": "",
+    "provider": "GEMINI",
+    "modelId": "gemini-2.5-flash",
+    "oobTimeoutMinutes": 240,
+    "expectedOutput": "",
+    "skillUuids": [],
+    "toolIds": [],
+    "groupId": "ops",
+    "artifactId": "job05",
+    "version": "SNAPSHOT",
+    "artifactStatus": "SNAPSHOT"
+  },
+  "session": null
+}

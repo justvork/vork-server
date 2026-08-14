@@ -1,0 +1,12 @@
+{
+  "name": "Example OAuth Template 04",
+  "clientName": "example_oauth_04",
+  "description": "Placeholder OAuth template for Hub testing",
+  "authorizeEndpoint": "https://auth.example.com/04/authorize",
+  "tokenEndpoint": "https://auth.example.com/04/token",
+  "scopes": ["openid", "profile"],
+  "authorizationParameters": {
+    "prompt": "consent",
+    "access_type": "offline"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "uuid": "ux-surface09-1.0",
+  "toolId": "surface09",
+  "name": "Example Surface 09",
+  "description": "Placeholder surface for Hub testing",
+  "sessionUuid": "",
+  "executionSessionUuid": "",
+  "skillUuids": [],
+  "reflectionBindingUuids": [],
+  "jobUuids": [],
+  "groupId": "ux",
+  "artifactId": "surface09",
+  "version": "1.0",
+  "artifactStatus": "SNAPSHOT",
+  "createdAt": 1786723371000,
+  "updatedAt": 1786723371000
+}

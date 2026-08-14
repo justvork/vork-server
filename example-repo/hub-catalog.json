@@ -1,0 +1,14 @@
+{
+  "name": "Vork Example Local Repository",
+  "version": "1.0",
+  "description": "Fixture catalog for Hub browse/install testing.",
+  "componentTypes": ["agents", "jobs", "surfaces", "skills", "reflections", "oauth-templates"],
+  "counts": {
+    "agents": 10,
+    "jobs": 10,
+    "surfaces": 10,
+    "skills": 10,
+    "reflections": 10,
+    "oauth-templates": 10
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "vorkSkillGroupExport": "1.0",
+  "group": {
+    "uuid": "demo-skillset10-SNAPSHOT",
+    "name": "Installable Skill Group 10",
+    "author": "Vork Example Repo",
+    "category": "Utilities",
+    "skills": [
+      {
+        "uuid": "demo-skillset10-SNAPSHOT-skill",
+        "name": "Installable Skill 10",
+        "description": "Placeholder installable skill",
+        "groupUuid": "demo-skillset10-SNAPSHOT",
+        "visibility": "PUBLIC",
+        "parameters": [],
+        "instructions": "Execute installable skill 10",
+        "allowedTools": [],
+        "allowedTypes": [],
+        "subSkillUuids": [],
+        "recommendedModel": "GEMINI:gemini-2.5-flash",
+        "outputContentType": "none",
+        "outputSchema": "",
+        "version": 1,
+        "createdAt": 1786723409000,
+        "updatedAt": 1786723409000,
+        "secrets": [],
+        "bindingUuids": []
+      }
+    ],
+    "groupId": "demo",
+    "artifactId": "skillset10",
+    "version": "SNAPSHOT",
+    "artifactStatus": "SNAPSHOT",
+    "createdAt": 1786723409000,
+    "updatedAt": 1786723409000
+  },
+  "types": []
+}
