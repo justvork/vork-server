@@ -22,8 +22,12 @@ public record SendNotificationRequest(
         String title,
 
         @JsonProperty(required = true, value = "body")
-        @JsonPropertyDescription("Plain-text body of the notification.")
+        @JsonPropertyDescription("Body of the notification. Use plain text by default.")
         String body,
+
+        @JsonProperty(value = "bodyContentType")
+        @JsonPropertyDescription("Optional body MIME type. Supported values: text/plain (default) or text/html.")
+        String bodyContentType,
 
         @JsonProperty(required = true, value = "address")
         @JsonPropertyDescription(

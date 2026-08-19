@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.io.ByteArrayInputStream;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
@@ -754,5 +755,115 @@ class ContributionControllerTest {
         assertEquals("oauth-templates/google_workspace_oauth.json", reqCaptor.getValue().files().get(0).path());
         verify(oauthTemplateRepository).save(any(OAuthTemplateEntity.class));
         verify(contributionSubmissionRepository).save(any(ContributionSubmission.class));
+    }
+
+    @Test
+    void publishAgentIncludesLogoWhenProvided() {
+        AgentTemplate snapshot = new AgentTemplate(
+                "demo-core-SNAPSHOT",
+                "Demo",
+                "prompt",
+                List.of(),
+                false,
+                List.of(),
+                AgentType.INTERACTIVE,
+                List.of(),
+                List.of(),
+                List.of(),
+                null,
+                "demo",
+                "core",
+                "SNAPSHOT",
+                ArtifactStatus.SNAPSHOT);
+
+        when(agentRepository.get("demo-core-SNAPSHOT")).thenReturn(snapshot);
+        when(agentRepository.get("demo-core-1.0")).thenReturn(null);
+        when(contributionService.submitContribution(any()))
+                .thenReturn(new ContributionSubmitResult(
+                        "justvork",
+                        "vork-central",
+                        "staging",
+                        "octocat",
+                        "vork-central",
+                        "contrib/agent/demo-core-1.0",
+                        42L,
+                        "https://github.com/justvork/vork-central/pull/42"));
+
+        String logoBase64 = Base64.getEncoder().encodeToString(new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47});
+        ContributionController.PublishRequest request = new ContributionController.PublishRequest(
+                "1.0",
+                "feat: publish demo core",
+                "Publish demo/core 1.0",
+                "Body",
+                "Summary",
+                false,
+                "",
+                "",
+                logoBase64,
+                "logo.png");
+
+        ResponseEntity<?> response = controller.publishAgent(
+                "demo-core-SNAPSHOT",
+                request,
+                User.withUsername("alice").password("x").authorities("AGENTS_WRITE").build());
+
+        assertEquals(200, response.getStatusCode().value());
+
+        ArgumentCaptor<ContributionSubmitRequest> reqCaptor = ArgumentCaptor.forClass(ContributionSubmitRequest.class);
+        verify(contributionService).submitContribution(reqCaptor.capture());
+        assertEquals(2, reqCaptor.getValue().files().size());
+        assertEquals("agents/demo/core/1.0/logo.png", reqCaptor.getValue().files().get(1).path());
+        assertEquals(ContributionFile.ENCODING_BASE64, reqCaptor.getValue().files().get(1).encoding());
+    }
+
+    @Test
+    void publishOAuthTemplateIncludesLogoWhenProvided() {
+        OAuthTemplateEntity snapshot = new OAuthTemplateEntity(
+                "oauth-template-1",
+                "Google Workspace OAuth",
+                "google_workspace_oauth",
+                "Google OAuth defaults",
+                "https://accounts.google.com/o/oauth2/v2/auth",
+                "https://oauth2.googleapis.com/token",
+                List.of("openid", "email"),
+                Map.of("access_type", "offline"),
+                sh.vork.oauth.ArtifactStatus.SNAPSHOT,
+                1L,
+                1L);
+        when(oauthTemplateRepository.get("oauth-template-1")).thenReturn(snapshot);
+        when(contributionService.submitContribution(any()))
+                .thenReturn(new ContributionSubmitResult(
+                        "justvork",
+                        "vork-central",
+                        "staging",
+                        "octocat",
+                        "vork-central",
+                        "contrib/oauth-template/google-workspace-123",
+                        99L,
+                        "https://github.com/justvork/vork-central/pull/99"));
+
+        String logoBase64 = Base64.getEncoder().encodeToString("<svg/>".getBytes());
+        ContributionController.PublishMetadataRequest request = new ContributionController.PublishMetadataRequest(
+                "feat: publish oauth template",
+                "Publish Google Workspace OAuth template",
+                "Body",
+                "Add provider template",
+                "- note",
+                "- hint",
+                logoBase64,
+                "brand.svg");
+
+        ResponseEntity<?> response = controller.publishOAuthTemplate(
+                "oauth-template-1",
+                request,
+                User.withUsername("alice").password("x").authorities("USERS_MANAGE").build());
+
+        assertEquals(200, response.getStatusCode().value());
+
+        ArgumentCaptor<ContributionSubmitRequest> reqCaptor = ArgumentCaptor.forClass(ContributionSubmitRequest.class);
+        verify(contributionService).submitContribution(reqCaptor.capture());
+        assertEquals(2, reqCaptor.getValue().files().size());
+        assertEquals("oauth-templates/google_workspace_oauth.svg", reqCaptor.getValue().files().get(1).path());
+        assertEquals(ContributionFile.ENCODING_BASE64, reqCaptor.getValue().files().get(1).encoding());
     }
 }

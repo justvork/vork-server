@@ -19,8 +19,12 @@ public record Notification(
         String       body,
         byte[]       attachment,
         String       attachmentFilename,
-        String       attachmentMimeType
+        String       attachmentMimeType,
+        String       bodyContentType
 ) {
+    public static final String CONTENT_TYPE_TEXT = "text/plain";
+    public static final String CONTENT_TYPE_HTML = "text/html";
+
     public Notification {
         if (recipients == null || recipients.isEmpty()) {
             throw new IllegalArgumentException("At least one recipient is required.");
@@ -31,10 +35,31 @@ public record Notification(
         if (body == null) {
             body = "";
         }
+        if (bodyContentType == null || bodyContentType.isBlank()) {
+            bodyContentType = CONTENT_TYPE_TEXT;
+        }
+        bodyContentType = bodyContentType.trim().toLowerCase();
+        if (!CONTENT_TYPE_TEXT.equals(bodyContentType) && !CONTENT_TYPE_HTML.equals(bodyContentType)) {
+            bodyContentType = CONTENT_TYPE_TEXT;
+        }
+    }
+
+    public Notification(List<String> recipients,
+                        String title,
+                        String body,
+                        byte[] attachment,
+                        String attachmentFilename,
+                        String attachmentMimeType) {
+        this(recipients, title, body, attachment, attachmentFilename, attachmentMimeType, CONTENT_TYPE_TEXT);
     }
 
     /** Convenience factory — no attachment. */
     public static Notification of(List<String> recipients, String title, String body) {
-        return new Notification(recipients, title, body, null, null, null);
+        return new Notification(recipients, title, body, null, null, null, CONTENT_TYPE_TEXT);
+    }
+
+    /** Convenience factory — no attachment and explicit body content type. */
+    public static Notification of(List<String> recipients, String title, String body, String bodyContentType) {
+        return new Notification(recipients, title, body, null, null, null, bodyContentType);
     }
 }

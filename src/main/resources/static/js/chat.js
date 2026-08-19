@@ -1820,6 +1820,9 @@ let _skillsSearchCache = null;
 /** Reflection bindings loaded from /api/chat/reflection-bindings. */
 let _reflectionBindingsCache = null;
 let _reflectionBindingsCacheLoadedAt = 0;
+/** MCP bindings loaded from /api/chat/mcp-bindings. */
+let _mcpBindingsCache = null;
+let _mcpBindingsCacheLoadedAt = 0;
 const CONCIERGE_AGENT_ID = 'agent-tpl-concierge-001';
 let _canManageSessionExtras = false;
 
@@ -1845,9 +1848,16 @@ async function loadSkillsPanel(uuid) {
         config.agentReflectionBindings || [],
         false,
         uuid);
+    const mergedSessionBindings = []
+        .concat((config.sessionReflectionBindings || []).map(function (b) {
+            return Object.assign({ kind: 'reflection' }, b);
+        }))
+        .concat((config.sessionMcpBindings || []).map(function (b) {
+            return Object.assign({ kind: 'mcp' }, b);
+        }));
     renderReflectionBindingPills(
         'session-reflection-bindings-list',
-        config.sessionReflectionBindings || [],
+        mergedSessionBindings,
         _canManageSessionExtras,
         uuid);
 }
@@ -1960,8 +1970,11 @@ function renderReflectionBindingPills(containerId, bindings, removable, sessionU
     bindings.forEach(function (binding) {
         const pill = document.createElement('span');
         pill.className = 'tool-pill ' + (removable ? 'session-tool-pill' : 'agent-tool-pill');
-        const label = binding.label || ((binding.groupName || binding.groupUuid || 'Group')
-            + ' (' + (binding.bindingName || binding.uuid) + ')');
+        const isMcp = String(binding.kind || '').toLowerCase() === 'mcp';
+        const label = binding.label || (isMcp
+            ? ((binding.name || binding.uuid) + ' [MCP]')
+            : ((binding.groupName || binding.groupUuid || 'Group')
+                + ' (' + (binding.bindingName || binding.uuid) + ')'));
         pill.title = label;
         pill.textContent = label;
         if (removable) {
@@ -1970,7 +1983,11 @@ function renderReflectionBindingPills(containerId, bindings, removable, sessionU
             removeBtn.innerHTML = '&times;';
             removeBtn.title = 'Remove';
             removeBtn.addEventListener('click', function () {
-                removeSessionReflectionBindingAction(sessionUuidRef, binding.uuid);
+                if (isMcp) {
+                    removeSessionMcpBindingAction(sessionUuidRef, binding.uuid);
+                } else {
+                    removeSessionReflectionBindingAction(sessionUuidRef, binding.uuid);
+                }
             });
             pill.appendChild(removeBtn);
         }
@@ -2024,6 +2041,22 @@ async function addSessionReflectionBindingAction(uuid, bindingUuid) {
             + '/session-reflection-bindings/' + encodeURIComponent(bindingUuid), { method: 'POST' });
         if (resp.ok) loadSkillsPanel(uuid);
     } catch (e) { console.error('addSessionReflectionBinding failed:', e); }
+}
+
+async function removeSessionMcpBindingAction(uuid, bindingUuid) {
+    try {
+        const resp = await fetch('/api/chat/session/' + encodeURIComponent(uuid)
+            + '/session-mcp-bindings/' + encodeURIComponent(bindingUuid), { method: 'DELETE' });
+        if (resp.ok) loadSkillsPanel(uuid);
+    } catch (e) { console.error('removeSessionMcpBinding failed:', e); }
+}
+
+async function addSessionMcpBindingAction(uuid, bindingUuid) {
+    try {
+        const resp = await fetch('/api/chat/session/' + encodeURIComponent(uuid)
+            + '/session-mcp-bindings/' + encodeURIComponent(bindingUuid), { method: 'POST' });
+        if (resp.ok) loadSkillsPanel(uuid);
+    } catch (e) { console.error('addSessionMcpBinding failed:', e); }
 }
 
 // ── Skill search autocomplete ─────────────────────────────────────────────────
@@ -2136,8 +2169,9 @@ function setupReflectionBindingSearch() {
         dropdown.innerHTML = '';
         if (query.length < 1) return;
         const now = Date.now();
-        const cacheExpired = !_reflectionBindingsCache || (now - _reflectionBindingsCacheLoadedAt) > 30000;
-        if (cacheExpired) {
+        const reflectionCacheExpired = !_reflectionBindingsCache || (now - _reflectionBindingsCacheLoadedAt) > 30000;
+        const mcpCacheExpired = !_mcpBindingsCache || (now - _mcpBindingsCacheLoadedAt) > 30000;
+        if (reflectionCacheExpired) {
             try {
                 const resp = await fetch('/api/chat/reflection-bindings');
                 if (resp.ok) {
@@ -2146,20 +2180,47 @@ function setupReflectionBindingSearch() {
                 }
             } catch (e) { _reflectionBindingsCache = []; }
         }
-        const matches = (_reflectionBindingsCache || []).filter(function (b) {
+        if (mcpCacheExpired) {
+            try {
+                const resp = await fetch('/api/chat/mcp-bindings');
+                if (resp.ok) {
+                    _mcpBindingsCache = await resp.json();
+                    _mcpBindingsCacheLoadedAt = now;
+                }
+            } catch (e) { _mcpBindingsCache = []; }
+        }
+
+        const reflectionMatches = (_reflectionBindingsCache || []).filter(function (b) {
             const label = (b.label || '').toLowerCase();
             const groupName = (b.groupName || '').toLowerCase();
             const bindingName = (b.bindingName || '').toLowerCase();
             return label.includes(query) || groupName.includes(query) || bindingName.includes(query);
-        }).slice(0, 10);
+        }).map(function (b) { return Object.assign({ kind: 'reflection' }, b); });
+        const mcpMatches = (_mcpBindingsCache || []).filter(function (b) {
+            const label = (b.label || '').toLowerCase();
+            const name = (b.name || '').toLowerCase();
+            const url = (b.baseUrl || '').toLowerCase();
+            return label.includes(query) || name.includes(query) || url.includes(query);
+        }).map(function (b) { return Object.assign({ kind: 'mcp' }, b); });
+
+        const matches = reflectionMatches.concat(mcpMatches).slice(0, 10);
         if (matches.length === 0) return;
         matches.forEach(function (binding) {
             const item = document.createElement('div');
             item.className = 'skills-search-item';
-            item.textContent = binding.label || ((binding.groupName || binding.groupUuid || 'Group')
-                + ' (' + (binding.bindingName || binding.uuid) + ')');
+            const isMcp = String(binding.kind || '').toLowerCase() === 'mcp';
+            item.textContent = isMcp
+                ? (binding.label || ((binding.name || binding.uuid) + ' [MCP]'))
+                : (binding.label || ((binding.groupName || binding.groupUuid || 'Group')
+                    + ' (' + (binding.bindingName || binding.uuid) + ')'));
             item.addEventListener('click', function () {
-                if (sessionUuid) addSessionReflectionBindingAction(sessionUuid, binding.uuid);
+                if (sessionUuid) {
+                    if (isMcp) {
+                        addSessionMcpBindingAction(sessionUuid, binding.uuid);
+                    } else {
+                        addSessionReflectionBindingAction(sessionUuid, binding.uuid);
+                    }
+                }
                 input.value = '';
                 dropdown.classList.add('hidden');
             });
@@ -2705,8 +2766,8 @@ function checkPendingSessions() {
             var count = sessions.length;
             var label = count === 1 ? '1 session is' : count + ' sessions are';
             alertEl.innerHTML =
-                '<i class="fa-solid fa-inbox mr-2"></i>'
-                + '<strong>' + label + ' waiting for your input.</strong> '
+                '<i class="fa-solid fa-circle-exclamation mr-2"></i>'
+                + '<strong>' + label + ' needs attention.</strong> '
                 + '<a href="/pending-sessions" class="pending-alert-link">Review now</a>'
                 + '<button type="button" class="pending-alert-close ml-auto inline-flex h-6 w-6 items-center justify-center rounded-md border border-zinc-600 text-zinc-200 transition-colors hover:bg-zinc-800" aria-label="Dismiss">×</button>';
             alertEl.classList.remove('hidden');

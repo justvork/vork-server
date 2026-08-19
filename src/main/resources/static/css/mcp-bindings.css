@@ -1,0 +1,307 @@
+.mcp-bindings-table {
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.mcp-bindings-table th,
+.mcp-bindings-table td {
+    border-bottom: 1px solid rgba(63, 63, 70, 0.7);
+    padding: 0.65rem 0.75rem;
+    font-size: 0.8rem;
+    text-align: left;
+    vertical-align: middle;
+}
+
+.mcp-bindings-table th {
+    color: rgb(161 161 170);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+}
+
+.mcp-bindings-table td {
+    color: rgb(228 228 231);
+}
+
+.mcp-bindings-table .actions {
+    text-align: right;
+}
+
+.mcp-bindings-table .status-pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    border: 1px solid;
+    padding: 0.1rem 0.5rem;
+    font-size: 0.69rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.status-inactive {
+    color: rgb(212 212 216);
+    background: rgba(63, 63, 70, 0.25);
+    border-color: rgba(113, 113, 122, 0.8);
+}
+
+.status-active {
+    color: rgb(110 231 183);
+    background: rgba(6, 78, 59, 0.35);
+    border-color: rgba(16, 185, 129, 0.45);
+}
+
+.status-drifted {
+    color: rgb(253 186 116);
+    background: rgba(120, 53, 15, 0.35);
+    border-color: rgba(245, 158, 11, 0.45);
+}
+
+.status-error {
+    color: rgb(252 165 165);
+    background: rgba(127, 29, 29, 0.35);
+    border-color: rgba(239, 68, 68, 0.45);
+}
+
+.mcp-bindings-row-actions {
+    display: flex;
+    gap: 0.4rem;
+    justify-content: flex-end;
+}
+
+.mcp-bindings-row-actions button {
+    border: 1px solid rgba(113, 113, 122, 0.8);
+    background: rgba(24, 24, 27, 0.8);
+    color: rgb(228, 228, 231);
+    border-radius: 0.45rem;
+    padding: 0.25rem 0.4rem;
+    font-size: 0.72rem;
+    line-height: 1;
+}
+
+.mcp-bindings-row-actions button:hover {
+    background: rgba(39, 39, 42, 0.95);
+}
+
+.mcp-bindings-row-actions .danger {
+    border-color: rgba(244, 63, 94, 0.6);
+    color: rgb(253, 164, 175);
+}
+
+.mcp-tool-pill-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.mcp-tool-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border-radius: 999px;
+    border: 1px solid rgba(82, 82, 91, 0.85);
+    background: rgba(24, 24, 27, 0.85);
+    color: rgb(228, 228, 231);
+    padding: 0.15rem 0.45rem;
+    font-size: 0.68rem;
+    line-height: 1.1;
+}
+
+.mcp-tool-pill:hover {
+    border-color: rgba(250, 170, 2, 0.75);
+    background: rgba(250, 170, 2, 0.12);
+}
+
+.mcp-tool-pill.enabled {
+    border-color: rgba(16, 185, 129, 0.6);
+}
+
+.mcp-tool-pill.disabled {
+    border-color: rgba(113, 113, 122, 0.75);
+    color: rgb(161, 161, 170);
+}
+
+.mcp-tool-pill-state {
+    font-size: 0.62rem;
+    border-left: 1px solid rgba(113, 113, 122, 0.75);
+    padding-left: 0.3rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.mcp-tool-param-row {
+    border: 1px solid rgba(63, 63, 70, 0.75);
+    border-radius: 0.5rem;
+    background: rgba(24, 24, 27, 0.75);
+    padding: 0.6rem;
+    margin-bottom: 0.6rem;
+}
+
+.mcp-tool-param-meta {
+    font-size: 0.7rem;
+    color: rgb(161, 161, 170);
+}
+
+.mcp-tool-param-row select,
+.mcp-tool-param-row input {
+    width: 100%;
+    border: 1px solid rgba(82, 82, 91, 0.9);
+    border-radius: 0.4rem;
+    background: rgba(9, 9, 11, 0.95);
+    color: rgb(244, 244, 245);
+    padding: 0.32rem 0.45rem;
+    font-size: 0.74rem;
+}
+
+.mcp-catalog-tabs {
+    display: inline-flex;
+    gap: 0.35rem;
+    border: 1px solid rgba(63, 63, 70, 0.8);
+    background: rgba(24, 24, 27, 0.75);
+    border-radius: 0.6rem;
+    padding: 0.22rem;
+}
+
+.mcp-catalog-tabs button {
+    border: 0;
+    background: transparent;
+    color: rgb(161, 161, 170);
+    border-radius: 0.45rem;
+    padding: 0.34rem 0.6rem;
+    font-size: 0.74rem;
+    font-weight: 600;
+}
+
+.mcp-catalog-tabs button.active {
+    background: rgba(250, 170, 2, 0.2);
+    color: rgb(254, 243, 199);
+}
+
+.mcp-catalog-list {
+    margin-top: 0.5rem;
+    display: grid;
+    gap: 0.5rem;
+}
+
+.mcp-catalog-item {
+    border: 1px solid rgba(63, 63, 70, 0.75);
+    border-radius: 0.5rem;
+    background: rgba(24, 24, 27, 0.7);
+    padding: 0.55rem 0.65rem;
+}
+
+.mcp-catalog-item-title {
+    font-size: 0.78rem;
+    color: rgb(228, 228, 231);
+    font-weight: 600;
+}
+
+.mcp-catalog-item-meta {
+    font-size: 0.69rem;
+    color: rgb(161, 161, 170);
+    margin-top: 0.18rem;
+}
+
+.mcp-catalog-item-desc {
+    font-size: 0.72rem;
+    color: rgb(212, 212, 216);
+    margin-top: 0.25rem;
+}
+
+.mcp-vid-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+#mcpToolModal .mcp-tool-modal-dialog {
+    max-width: min(98vw, 1180px);
+}
+
+#mcpToolModal .modal-content {
+    min-height: 68vh;
+    max-height: 94vh;
+}
+
+#mcpToolModal .modal-body {
+    overflow-y: auto;
+}
+
+.mcp-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    cursor: pointer;
+    user-select: none;
+    color: rgb(228, 228, 231);
+}
+
+.mcp-toggle input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.mcp-toggle-slider {
+    position: relative;
+    width: 2.2rem;
+    height: 1.25rem;
+    border-radius: 999px;
+    border: 1px solid rgba(82, 82, 91, 0.9);
+    background: rgba(39, 39, 42, 0.95);
+    transition: all 0.2s ease;
+}
+
+.mcp-toggle-slider::after {
+    content: "";
+    position: absolute;
+    left: 0.12rem;
+    top: 0.11rem;
+    width: 0.9rem;
+    height: 0.9rem;
+    border-radius: 999px;
+    background: rgb(212, 212, 216);
+    transition: transform 0.2s ease;
+}
+
+.mcp-toggle input:checked + .mcp-toggle-slider {
+    border-color: rgba(250, 170, 2, 0.75);
+    background: rgba(250, 170, 2, 0.25);
+}
+
+.mcp-toggle input:checked + .mcp-toggle-slider::after {
+    transform: translateX(0.92rem);
+    background: rgb(254, 240, 138);
+}
+
+.mcp-toggle input:focus-visible + .mcp-toggle-slider {
+    box-shadow: 0 0 0 2px rgba(250, 170, 2, 0.25);
+}
+
+.mcp-toggle input:disabled + .mcp-toggle-slider {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.mcp-toggle-label {
+    font-size: 0.85rem;
+    line-height: 1.1;
+}
+
+@media (max-width: 900px) {
+    .mcp-bindings-table th,
+    .mcp-bindings-table td {
+        font-size: 0.75rem;
+        padding: 0.55rem 0.55rem;
+    }
+
+    .mcp-bindings-row-actions {
+        flex-wrap: wrap;
+    }
+}
+
+@media (max-width: 575.98px) {
+    .mcp-vid-grid {
+        grid-template-columns: 1fr;
+    }
+}

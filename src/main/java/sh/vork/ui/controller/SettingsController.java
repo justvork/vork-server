@@ -124,6 +124,16 @@ public class SettingsController {
         return "settings/knowledge";
     }
 
+    @GetMapping("/hub")
+    public String hub() {
+        return "redirect:/hub";
+    }
+
+    @GetMapping("/data-inspector")
+    public String dataInspector() {
+        return "redirect:/data-inspector";
+    }
+
     @GetMapping("/secrets")
     public String secrets() {
         return "settings/secrets";

@@ -3073,7 +3073,11 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
                             log.debug("Tool sendNotification invoked: providerConfigId={}, address={}",
                                     req.providerConfigId(), req.address());
                             String result = directNotificationService.send(
-                                    req.providerConfigId(), req.title(), req.body(), req.address());
+                                    req.providerConfigId(),
+                                    req.title(),
+                                    req.body(),
+                                    req.bodyContentType(),
+                                    req.address());
                             if ("ok".equals(result)) {
                                 return "{\"status\":\"ok\"}";
                             }
@@ -3084,6 +3088,7 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
                         "Send a notification to an arbitrary email address or phone number. "
                         + "Call listNotificationProviders first to get a valid providerConfigId "
                         + "and confirm the address type is supported. "
+                    + "For email providers, set bodyContentType=text/html to send HTML email. "
                         + "address must match the provider type: email address for email providers, "
                         + "E.164 phone number (e.g. +14155552671) for SMS providers.")
                 .inputType(SendNotificationRequest.class)

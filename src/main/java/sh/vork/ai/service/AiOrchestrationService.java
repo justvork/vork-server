@@ -90,6 +90,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 "downloadFolderAsZip",
                 "createPdf");
         private static final String SESSION_REFLECTION_BINDING_UUIDS_ENV = "SESSION_REFLECTION_BINDING_UUIDS";
+        private static final String SESSION_MCP_BINDING_UUIDS_ENV = "SESSION_MCP_BINDING_UUIDS";
 
         /**
          * Builds the structured-output mandate injected at the end of every system prompt.
@@ -188,6 +189,10 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         @org.springframework.beans.factory.annotation.Autowired
         @Lazy
         private sh.vork.reflection.ReflectionToolCallbackFactory reflectionToolCallbackFactory;
+
+        @org.springframework.beans.factory.annotation.Autowired
+        @Lazy
+        private sh.vork.mcp.runtime.McpRuntimeToolService mcpRuntimeToolService;
 
         @org.springframework.beans.factory.annotation.Autowired
         public AiOrchestrationService(Map<AiProvider, ChatClient> chatClientRegistry,
@@ -821,8 +826,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         .map(t -> t.getToolDefinition().name())
                         .collect(Collectors.toCollection(java.util.HashSet::new));
 
-                // Always provide hidden session filesystem tools for all agents.
-                // They remain hidden from listAvailableTools / UI because the beans are @Hidden.
+                // Hidden sandboxed filesystem tools are always available by default.
                 for (ToolCallback hiddenFsTool : resolveAlwaysOnHiddenFileTools()) {
                         String name = hiddenFsTool.getToolDefinition().name();
                         if (presentNames.add(name)) {
@@ -875,20 +879,6 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 }
                                 log.debug("Session skill tools injected [session={}, count={}]", sessionUuid, sessionInjected);
                         }
-                        // Discovery tools are no longer auto-injected.
-                        // They must be explicitly assigned to the active agent/session.
-                        String listAvailableToolsName = listAvailableToolsCallback.getToolDefinition().name();
-                        if (presentNames.contains(listAvailableToolsName)
-                                && merged.stream().noneMatch(t -> listAvailableToolsName.equals(t.getToolDefinition().name()))) {
-                                merged.add(listAvailableToolsCallback);
-                        }
-
-                        String listAgentTemplatesName = listAgentTemplatesCallback.getToolDefinition().name();
-                        if (presentNames.contains(listAgentTemplatesName)
-                                && merged.stream().noneMatch(t -> listAgentTemplatesName.equals(t.getToolDefinition().name()))) {
-                                merged.add(listAgentTemplatesCallback);
-                        }
-
                 }
 
                 // Inject reflection tools dynamically only when binding assignments are present.
@@ -897,7 +887,8 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 boolean isSurfaceDeveloperSession = sessionForSkillCheck != null
                         && sh.vork.ai.lifecycle.AgentTemplateSeeder.UUID_SURFACE_DEVELOPER
                         .equals(sessionForSkillCheck.getActiveAgentTemplateId());
-                if (reflectionService != null
+                if (!inSkillFrame
+                        && reflectionService != null
                         && reflectionToolCallbackFactory != null
                         && sessionForSkillCheck != null
                         && !isSurfaceDeveloperSession) {
@@ -926,16 +917,30 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 } else if (isSurfaceDeveloperSession) {
                         log.debug("Reflection tool injection skipped for Surface Developer session [session={}]", sessionUuid);
                 }
-                if (!sessionTools.isEmpty()) {
+
+                if (!inSkillFrame && mcpRuntimeToolService != null && sessionForSkillCheck != null) {
+                        List<String> effectiveMcpBindingUuids = resolveEffectiveMcpBindingUuids(
+                                sessionForSkillCheck,
+                                inSkillFrame);
+                        List<ToolCallback> mcpTools = mcpRuntimeToolService
+                                .listToolCallbacksForBindings(effectiveMcpBindingUuids);
+                        int mcpInjected = 0;
+                        for (ToolCallback mcpTool : mcpTools) {
+                                String mcpToolName = mcpTool.getToolDefinition().name();
+                                if (presentNames.add(mcpToolName)) {
+                                        merged.add(mcpTool);
+                                        mcpInjected++;
+                                }
+                        }
+                        if (mcpInjected > 0) {
+                                log.debug("MCP runtime tools injected [session={}, count={}, bindings={}]",
+                                        sessionUuid, mcpInjected, effectiveMcpBindingUuids.size());
+                        }
+                }
+
+                if (!inSkillFrame && !sessionTools.isEmpty()) {
                         int beforeMerge = merged.size();
                         for (ToolCallback st : sessionTools) {
-                                // completeBackgroundTask belongs only to the parent agent loop.
-                                // Exposing it inside a skill frame lets the AI short-circuit the
-                                // whole job instead of returning FINISHED_TURN to the skill sub-loop
-                                // and then completing the task from the parent loop.
-                                if (inSkillFrame && "completeBackgroundTask".equals(st.getToolDefinition().name())) {
-                                        continue;
-                                }
                                 merged.add(st);
                         }
                         int added = merged.size() - beforeMerge;
@@ -943,17 +948,8 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 log.debug("Merged {} session-scoped tool(s) [session={}]", added, sessionUuid);
                         }
                 }
-                if (presentNames.add("recordProgress") && recordProgressCallback != null) {
-                        merged.add(recordProgressCallback);
-                }
-                if (presentNames.add("memory") && memoryCallback != null) {
-                        merged.add(memoryCallback);
-                }
-                if (presentNames.add("getDateTime") && getDateTimeCallback != null) {
-                        merged.add(getDateTimeCallback);
-                }
-                // think is mandatory — always available regardless of skill-frame depth.
-                if (presentNames.add("think")) merged.add(thinkCallback);
+                // Strict visibility mode: utility callbacks (recordProgress/memory/getDateTime/think)
+                // are not auto-injected. They must be attached via agent allowedTools or session tools.
                 tools = merged.toArray(ToolCallback[]::new);
 
                 // Wrap every tool callback with the secret substitutor so that {{KEY}} tokens
@@ -1386,6 +1382,61 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 return List.copyOf(parsed);
         }
 
+        private List<String> resolveEffectiveMcpBindingUuids(AiSession session, boolean inSkillFrame) {
+                if (session == null) {
+                        return List.of();
+                }
+
+                LinkedHashSet<String> resolved = new LinkedHashSet<>(parseSessionMcpBindingUuids(session));
+
+                AgentTemplate template = null;
+                if (session.getActiveAgentTemplateId() != null && !session.getActiveAgentTemplateId().isBlank()) {
+                        template = agentTemplateRepo.get(session.getActiveAgentTemplateId());
+                }
+                if (template != null && template.bindingUuids() != null) {
+                        for (String bindingUuid : template.bindingUuids()) {
+                                if (bindingUuid != null && !bindingUuid.isBlank()) {
+                                        resolved.add(bindingUuid.trim());
+                                }
+                        }
+                }
+
+                if (inSkillFrame && session.skillStack() != null && !session.skillStack().isEmpty()) {
+                        sh.vork.skill.SkillFrame top = session.skillStack().getLast();
+                        sh.vork.skill.Skill activeSkill = skillRepo.get(top.skillUuid());
+                        if (activeSkill != null && activeSkill.bindingUuids() != null) {
+                                for (String bindingUuid : activeSkill.bindingUuids()) {
+                                        if (bindingUuid != null && !bindingUuid.isBlank()) {
+                                                resolved.add(bindingUuid.trim());
+                                        }
+                                }
+                        }
+                }
+
+                return List.copyOf(resolved);
+        }
+
+        private List<String> parseSessionMcpBindingUuids(AiSession session) {
+                if (session == null || session.environmentVariables() == null) {
+                        return List.of();
+                }
+                String raw = session.environmentVariables().get(SESSION_MCP_BINDING_UUIDS_ENV);
+                if (raw == null || raw.isBlank()) {
+                        return List.of();
+                }
+                LinkedHashSet<String> parsed = new LinkedHashSet<>();
+                for (String token : raw.split(",")) {
+                        if (token == null) {
+                                continue;
+                        }
+                        String trimmed = token.trim();
+                        if (!trimmed.isBlank()) {
+                                parsed.add(trimmed);
+                        }
+                }
+                return List.copyOf(parsed);
+        }
+
         private void mergeBindingUuids(LinkedHashMap<String, LinkedHashSet<String>> target,
                                        List<Reflection> allReflections,
                                        List<String> bindingUuids) {
@@ -1632,6 +1683,19 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         ToolCallback callback = skillToolCallbackFactory.create(skill);
                         if (toolName.equals(callback.getToolDefinition().name())) {
                                 return callback;
+                        }
+                }
+
+                // MCP runtime tools are attached dynamically from effective binding UUIDs.
+                boolean inSkillFrame = session.skillStack() != null && !session.skillStack().isEmpty();
+                if (mcpRuntimeToolService != null) {
+                        List<String> effectiveMcpBindingUuids = resolveEffectiveMcpBindingUuids(session, inSkillFrame);
+                        if (!effectiveMcpBindingUuids.isEmpty()) {
+                                for (ToolCallback callback : mcpRuntimeToolService.listToolCallbacksForBindings(effectiveMcpBindingUuids)) {
+                                        if (toolName.equals(callback.getToolDefinition().name())) {
+                                                return callback;
+                                        }
+                                }
                         }
                 }
 

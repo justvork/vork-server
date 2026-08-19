@@ -109,6 +109,18 @@ public class DirectNotificationService {
      * @return {@code "ok"} on success, or a human-readable error string on failure
      */
     public String send(String providerConfigId, String title, String body, String address) {
+        return send(providerConfigId, title, body, Notification.CONTENT_TYPE_TEXT, address);
+    }
+
+    /**
+     * Sends a notification to {@code address} using the provider config identified
+     * by {@code providerConfigId} and explicit body content type.
+     */
+    public String send(String providerConfigId,
+                       String title,
+                       String body,
+                       String bodyContentType,
+                       String address) {
         log.debug("ENTER send: providerConfigId={}, address={}", providerConfigId, address);
 
         NotificationProviderConfig cfg = providerConfigRepo.get(providerConfigId);
@@ -134,7 +146,7 @@ public class DirectNotificationService {
         }
 
         try {
-            Notification notification = Notification.of(List.of(address), title, body);
+            Notification notification = Notification.of(List.of(address), title, body, bodyContentType);
             provider.send(notification, cfg.settings());
             log.info("Direct notification sent via '{}' to '{}' [configId={}]",
                     cfg.providerKey(), address, providerConfigId);

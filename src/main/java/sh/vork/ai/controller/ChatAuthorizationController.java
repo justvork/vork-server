@@ -330,98 +330,104 @@ public class ChatAuthorizationController {
                 ));
             }
 
-            log.info("Resuming model call [historyMessages={}]", history.size());
-            String finalText = null;
-            ToolExecutionContext.bindSessionUuid(sessionUuid);
-            ToolExecutionContext.hydrate(effectiveEnvironmentVariables);
-            try {
-                String continuationPrompt = "DENIED".equals(action)
-                        ? "The tool call was denied by the user. Do not call tools again for this request."
-                            + " Explain to the user why you cannot proceed and suggest alternatives if any."
-                        : "The tool result is already available in the conversation history."
-                            + " Summarize the result for the user and provide any concise next-step guidance.";
-                final int MAX_RESUME_ITERATIONS = 10;
-                for (int resumeIter = 0; resumeIter < MAX_RESUME_ITERATIONS; resumeIter++) {
-                    String rawResponse;
-                        rawResponse = aiService.generateWithHistory(
-                            history, continuationPrompt, resolveProvider(session.provider()));
-                    StructuredAgentResponse structured = extractStructured(rawResponse);
-                    if ("CONTINUE_TURN".equals(structured.status())) {
-                        String progressText = structured.textResponse() != null && !structured.textResponse().isBlank()
-                                ? structured.textResponse() : "";
-                        progressText = sanitizeUserFacingText(progressText);
-                        if (!progressText.isBlank()) {
-                            UiEventFrame progressEvent = new UiEventFrame(
-                                    UUID.randomUUID().toString(), "TEXT_RESPONSE", "CHAT_OUTPUT", progressText, null);
-                            messaging.convertAndSend("/topic/chat/" + sessionUuid, progressEvent);
-                            updated.add(new AiChatMessage(UUID.randomUUID().toString(), "ASSISTANT",
-                                    progressText, System.currentTimeMillis(), null, null, null, null));
-                        }
-                        history.add(new AssistantMessage(progressText.isBlank() ? rawResponse : progressText));
-                        continuationPrompt = "Continue executing the task. Use available tools as needed.";
-                        log.debug("Resume CONTINUE_TURN [session={}, iter={}]", sessionUuid, resumeIter);
-                    } else if ("DELEGATE_TURN".equals(structured.status()) && chatService != null) {
-                        String targetId = chatService.switchActiveAgentByName(sessionUuid, structured.targetAgent());
-                        if (targetId != null) {
-                            UiEventFrame transitionEvent = new UiEventFrame(UUID.randomUUID().toString(),
-                                    "AGENT_TRANSITION", "AGENT_TRANSITION",
-                                    "Changed to " + structured.targetAgent(), null);
-                            messaging.convertAndSend("/topic/chat/" + sessionUuid, transitionEvent);
-                            updated.add(new AiChatMessage(UUID.randomUUID().toString(), "AGENT_TRANSITION",
-                                    "Changed to " + structured.targetAgent(),
-                                    System.currentTimeMillis(), null, null, null, null));
-                                String handoffText = resolveUserVisibleText(structured, rawResponse);
-                            history.add(new AssistantMessage(handoffText));
-                            continuationPrompt = structured.delegationInstructions() != null
-                                    ? structured.delegationInstructions() : "Proceed with the assigned task.";
-                            log.info("Resume DELEGATE_TURN: agent switched [session={}, target={}]",
-                                    sessionUuid, structured.targetAgent());
-                            continue;
-                        }
-                        log.warn("Resume DELEGATE_TURN: agent not found, treating as FINISHED_TURN [target={}, session={}]",
-                                structured.targetAgent(), sessionUuid);
-                        finalText = resolveUserVisibleText(structured, rawResponse);
-                        break;
-                    } else if ("SWITCH_AGENT".equals(structured.status()) && chatService != null) {
-                        String targetId = chatService.switchActiveAgentByName(sessionUuid, structured.targetAgent());
-                        if (targetId != null) {
-                            String agentDisplayName = structured.targetAgent() != null
-                                    ? structured.targetAgent() : "Unknown Agent";
-                            UiEventFrame transitionEvent = new UiEventFrame(UUID.randomUUID().toString(),
-                                    "AGENT_TRANSITION", "AGENT_TRANSITION",
-                                    "Changed to " + agentDisplayName, null);
-                            messaging.convertAndSend("/topic/chat/" + sessionUuid, transitionEvent);
-                            updated.add(new AiChatMessage(UUID.randomUUID().toString(), "AGENT_TRANSITION",
-                                    "Changed to " + agentDisplayName,
-                                    System.currentTimeMillis(), null, null, null, null));
-                            log.info("Resume SWITCH_AGENT: agent switched [session={}, target={}]",
-                                    sessionUuid, structured.targetAgent());
-                        } else {
-                            log.warn("Resume SWITCH_AGENT: agent not found [target={}, session={}]",
-                                    structured.targetAgent(), sessionUuid);
-                        }
-                        finalText = resolveUserVisibleText(structured, rawResponse);
-                        break;
-                    } else {
-                        String candidateText = resolveUserVisibleText(structured, rawResponse);
-                        if (isOAuthPlaceholderOnly(candidateText)
-                                && popCompletedSkillFrameForOAuthPlaceholder(sessionUuid, candidateText, history)) {
-                            continuationPrompt = "A nested OAuth connect step has completed and produced a bearer placeholder token in history. "
-                                    + "Continue executing the parent task now using the available tools. "
-                                    + "Do NOT output OAuth token placeholders in user-visible text.";
-                            log.info("Suppressed OAuth placeholder-only FINISHED_TURN and continued parent flow [session={}]",
-                                    sessionUuid);
-                            continue;
-                        }
-                        finalText = candidateText;
-                        break;
-                    }
-                }
-                if (finalText == null) {
-                    finalText = "Processing required too many steps and was interrupted. Please try again.";
-                }
+            String finalText = extractDirectApprovedMcpText(action, toolName, toolResponse.responseData());
+            if (finalText != null && !finalText.isBlank()) {
+                log.info("Bypassing model resume for approved MCP text response [tool={}]", toolName);
                 finalText = sanitizeUserFacingText(finalText);
-            } catch (ToolSuspensionException ex) {
+            } else {
+                log.info("Resuming model call [historyMessages={}]", history.size());
+                ToolExecutionContext.bindSessionUuid(sessionUuid);
+                ToolExecutionContext.hydrate(effectiveEnvironmentVariables);
+                try {
+                    String continuationPrompt = "DENIED".equals(action)
+                            ? "The tool call was denied by the user. Do not call tools again for this request."
+                                + " Explain to the user why you cannot proceed and suggest alternatives if any."
+                            : "The approved tool result is already available in the conversation history."
+                                + " If the latest tool response is plain text intended for end users, return it verbatim"
+                                + " and do not add commentary, wrappers, or next-step suggestions."
+                                + " If the tool response is structured data, provide a concise, accurate summary.";
+                    final int MAX_RESUME_ITERATIONS = 10;
+                    for (int resumeIter = 0; resumeIter < MAX_RESUME_ITERATIONS; resumeIter++) {
+                        String rawResponse;
+                            rawResponse = aiService.generateWithHistory(
+                                history, continuationPrompt, resolveProvider(session.provider()));
+                        StructuredAgentResponse structured = extractStructured(rawResponse);
+                        if ("CONTINUE_TURN".equals(structured.status())) {
+                            String progressText = structured.textResponse() != null && !structured.textResponse().isBlank()
+                                    ? structured.textResponse() : "";
+                            progressText = sanitizeUserFacingText(progressText);
+                            if (!progressText.isBlank()) {
+                                UiEventFrame progressEvent = new UiEventFrame(
+                                        UUID.randomUUID().toString(), "TEXT_RESPONSE", "CHAT_OUTPUT", progressText, null);
+                                messaging.convertAndSend("/topic/chat/" + sessionUuid, progressEvent);
+                                updated.add(new AiChatMessage(UUID.randomUUID().toString(), "ASSISTANT",
+                                        progressText, System.currentTimeMillis(), null, null, null, null));
+                            }
+                            history.add(new AssistantMessage(progressText.isBlank() ? rawResponse : progressText));
+                            continuationPrompt = "Continue executing the task. Use available tools as needed.";
+                            log.debug("Resume CONTINUE_TURN [session={}, iter={}]", sessionUuid, resumeIter);
+                        } else if ("DELEGATE_TURN".equals(structured.status()) && chatService != null) {
+                            String targetId = chatService.switchActiveAgentByName(sessionUuid, structured.targetAgent());
+                            if (targetId != null) {
+                                UiEventFrame transitionEvent = new UiEventFrame(UUID.randomUUID().toString(),
+                                        "AGENT_TRANSITION", "AGENT_TRANSITION",
+                                        "Changed to " + structured.targetAgent(), null);
+                                messaging.convertAndSend("/topic/chat/" + sessionUuid, transitionEvent);
+                                updated.add(new AiChatMessage(UUID.randomUUID().toString(), "AGENT_TRANSITION",
+                                        "Changed to " + structured.targetAgent(),
+                                        System.currentTimeMillis(), null, null, null, null));
+                                    String handoffText = resolveUserVisibleText(structured, rawResponse);
+                                history.add(new AssistantMessage(handoffText));
+                                continuationPrompt = structured.delegationInstructions() != null
+                                        ? structured.delegationInstructions() : "Proceed with the assigned task.";
+                                log.info("Resume DELEGATE_TURN: agent switched [session={}, target={}]",
+                                        sessionUuid, structured.targetAgent());
+                                continue;
+                            }
+                            log.warn("Resume DELEGATE_TURN: agent not found, treating as FINISHED_TURN [target={}, session={}]",
+                                    structured.targetAgent(), sessionUuid);
+                            finalText = resolveUserVisibleText(structured, rawResponse);
+                            break;
+                        } else if ("SWITCH_AGENT".equals(structured.status()) && chatService != null) {
+                            String targetId = chatService.switchActiveAgentByName(sessionUuid, structured.targetAgent());
+                            if (targetId != null) {
+                                String agentDisplayName = structured.targetAgent() != null
+                                        ? structured.targetAgent() : "Unknown Agent";
+                                UiEventFrame transitionEvent = new UiEventFrame(UUID.randomUUID().toString(),
+                                        "AGENT_TRANSITION", "AGENT_TRANSITION",
+                                        "Changed to " + agentDisplayName, null);
+                                messaging.convertAndSend("/topic/chat/" + sessionUuid, transitionEvent);
+                                updated.add(new AiChatMessage(UUID.randomUUID().toString(), "AGENT_TRANSITION",
+                                        "Changed to " + agentDisplayName,
+                                        System.currentTimeMillis(), null, null, null, null));
+                                log.info("Resume SWITCH_AGENT: agent switched [session={}, target={}]",
+                                        sessionUuid, structured.targetAgent());
+                            } else {
+                                log.warn("Resume SWITCH_AGENT: agent not found [target={}, session={}]",
+                                        structured.targetAgent(), sessionUuid);
+                            }
+                            finalText = resolveUserVisibleText(structured, rawResponse);
+                            break;
+                        } else {
+                            String candidateText = resolveUserVisibleText(structured, rawResponse);
+                            if (isOAuthPlaceholderOnly(candidateText)
+                                    && popCompletedSkillFrameForOAuthPlaceholder(sessionUuid, candidateText, history)) {
+                                continuationPrompt = "A nested OAuth connect step has completed and produced a bearer placeholder token in history. "
+                                        + "Continue executing the parent task now using the available tools. "
+                                        + "Do NOT output OAuth token placeholders in user-visible text.";
+                                log.info("Suppressed OAuth placeholder-only FINISHED_TURN and continued parent flow [session={}]",
+                                        sessionUuid);
+                                continue;
+                            }
+                            finalText = candidateText;
+                            break;
+                        }
+                    }
+                    if (finalText == null) {
+                        finalText = "Processing required too many steps and was interrupted. Please try again.";
+                    }
+                    finalText = sanitizeUserFacingText(finalText);
+                } catch (ToolSuspensionException ex) {
                 String simulatedToolCallId = "pending-" + UUID.randomUUID();
                 List<AiChatMessage.ToolCallRef> pendingToolCalls = List.of(
                     new AiChatMessage.ToolCallRef(simulatedToolCallId, "FUNCTION", ex.getToolName(), ex.getArguments()));
@@ -477,7 +483,7 @@ public class ChatAuthorizationController {
                     "eventId", suspendedPromptEvent.eventId(),
                     "toolName", ex.getToolName()
                 ));
-            } catch (Exception ex) {
+                } catch (Exception ex) {
                 log.error("Resumed model call failed [session={}]: {}", sessionUuid, ex.getMessage(), ex);
 
                 UiEventFrame errorEvent = new UiEventFrame(
@@ -522,6 +528,7 @@ public class ChatAuthorizationController {
                     "status", "ERROR",
                     "message", "Failed to continue session after tool execution"
                 ));
+                }
             }
 
             // Clean up any leftover pending-id use-once rule before returning
@@ -1069,18 +1076,9 @@ public class ChatAuthorizationController {
                 if ("executeTerminalCommand".equals(toolName)) {
                     return buildTerminalToolResponse(argumentsJson, toolResult);
                 }
-                // Prefer raw tool JSON if the tool already returns a JSON object.
-                try {
-                    objectMapper.readValue(toolResult, new TypeReference<Map<String, Object>>() {});
-                    return toolResult;
-                } catch (Exception ignored) {
-                    return toJson(Map.of(
-                            "status", "APPROVED",
-                            "action", action,
-                            "fields", fields,
-                            "result", toolResult
-                    ));
-                }
+                // Preserve exact tool output after approval so gated and non-gated executions
+                // produce the same downstream behavior (especially for plain-text tools).
+                return toolResult == null ? "" : toolResult;
             }
             case "DENIED", "DENY" -> {
                 return toJson(Map.of(
@@ -1398,6 +1396,61 @@ public class ChatAuthorizationController {
             return "DENIED";
         }
         return action.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private static boolean isApprovedAction(String action) {
+        if (action == null) {
+            return false;
+        }
+        return switch (action) {
+            case "ONCE", "ALLOW_ONCE", "SESSION", "ALLOW_SESSION", "ALWAYS", "ALLOW_ALWAYS", "SAVE", "CONTINUE", "SUBMIT" -> true;
+            default -> false;
+        };
+    }
+
+    private String extractDirectApprovedMcpText(String action,
+                                                String toolName,
+                                                String responseData) {
+        if (toolName == null || !toolName.startsWith("mcp_")) {
+            return null;
+        }
+        if (!isApprovedAction(action)) {
+            return null;
+        }
+        if (responseData == null || responseData.isBlank()) {
+            return null;
+        }
+
+        try {
+            Map<String, Object> payload = objectMapper.readValue(responseData, new TypeReference<Map<String, Object>>() {});
+            Object contentObj = payload.get("content");
+            if (!(contentObj instanceof List<?> contentList) || contentList.isEmpty()) {
+                return null;
+            }
+
+            List<String> parts = new ArrayList<>();
+            for (Object item : contentList) {
+                if (!(item instanceof Map<?, ?> part)) {
+                    return null;
+                }
+                Object type = part.get("type");
+                Object text = part.get("text");
+                if (!"text".equals(String.valueOf(type)) || text == null) {
+                    return null;
+                }
+                String value = String.valueOf(text).trim();
+                if (!value.isBlank()) {
+                    parts.add(value);
+                }
+            }
+
+            if (parts.isEmpty()) {
+                return null;
+            }
+            return String.join("\n", parts);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private static String resolveSuspendedArguments(String priorArguments, String suspendedArguments) {

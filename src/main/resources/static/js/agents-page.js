@@ -130,6 +130,7 @@ async function loadData() {
             fetch('/api/skills'),
             fetch('/api/reflections'),
             fetch('/api/chat/bindings'),
+            fetch('/api/chat/mcp-bindings'),
             fetch('/api/users'),
             fetch('/api/jobs'),
             fetch('/api/ai/providers')
@@ -139,14 +140,25 @@ async function loadData() {
         const skillsRes = results[2];
         const reflectionsRes = results[3];
         const bindingsRes = results[4];
-        const usersRes = results[5];
-        const jobsRes = results[6];
-        const providerRes = results[7];
+        const mcpBindingsRes = results[5];
+        const usersRes = results[6];
+        const jobsRes = results[7];
+        const providerRes = results[8];
         allAgents = agentsRes.ok ? await agentsRes.json() : [];
         allTools = toolsRes.ok ? await toolsRes.json() : [];
         allSkills = skillsRes.ok ? await skillsRes.json() : [];
         allReflections = reflectionsRes.ok ? await reflectionsRes.json() : [];
-        allReflectionGroups = bindingsRes.ok ? await bindingsRes.json() : [];
+        const reflectionBindingCatalog = bindingsRes.ok ? await bindingsRes.json() : [];
+        const mcpBindings = mcpBindingsRes.ok ? await mcpBindingsRes.json() : [];
+        allReflectionGroups = reflectionBindingCatalog.concat((mcpBindings || []).map(function (binding) {
+            return {
+                bindingId: binding.uuid,
+                displayName: binding.label || (binding.name + ' [MCP]'),
+                providerId: 'mcp',
+                profiles: [],
+                description: binding.baseUrl || ''
+            };
+        }));
         allUsers = usersRes.ok ? await usersRes.json() : [];
         allJobs = jobsRes.ok ? await jobsRes.json() : [];
         providerGroups = providerRes.ok ? await providerRes.json() : [];

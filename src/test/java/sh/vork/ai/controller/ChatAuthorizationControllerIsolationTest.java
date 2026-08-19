@@ -326,10 +326,63 @@ class ChatAuthorizationControllerIsolationTest {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> responses = (List<Map<String, Object>>) payload.get("responses");
         assertNotNull(responses);
-                @SuppressWarnings("unchecked")
-                Map<String, Object> responseData = objectMapper.readValue(String.valueOf(responses.get(0).get("responseData")), Map.class);
-                assertEquals("APPROVED", responseData.get("status"));
-                assertEquals("true", responseData.get("result"));
+        assertEquals("true", String.valueOf(responses.get(0).get("responseData")));
+    }
+
+    @Test
+    void respond_authorizedMcpTextResponse_isReturnedVerbatimWithoutModelResume() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+        MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+
+        String sessionUuid = "session-mcp-direct";
+        AiChatMessage prompt = promptMessage(
+                "evt-mcp-direct",
+                "mcp_everything__echo",
+                "pending-mcp-direct",
+                "{\"message\":\"foo\"}",
+                "Need approval");
+
+        sessionRepo.save(new AiSession(
+                sessionUuid,
+                AiProvider.GEMINI.name(),
+                SessionOriginMode.WEB,
+                "admin",
+                "Untitled",
+                System.currentTimeMillis(),
+                0,
+                List.of(prompt),
+                AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.AWAITING_INPUT, null, null, null, null, null));
+
+        RecordingAiService aiService = new RecordingAiService("should-not-be-used");
+
+        ChatAuthorizationController controller = new ChatAuthorizationController(
+                sessionRepo,
+                new AuthorizationRuleEngine(java.util.Set.<String>of()),
+                aiService,
+                new SimpMessagingTemplate(new NoOpMessageChannel()),
+                objectMapper,
+                List.of(allowingMcpEchoTool()),
+                Runnable::run,
+                new RecordingSchedulerService(),
+                null,
+                mock(SecureCredentialStore.class),
+                null,
+                mock(UserService.class));
+
+        ResponseEntity<Map<String, Object>> response = controller.respond(
+                sessionUuid,
+                new ChatAuthorizationController.InteractionResponse("evt-mcp-direct", "AUTHORIZE_TOOL", "ONCE", Map.of()));
+
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals("WEB_RESUMED", response.getBody().get("status"));
+        assertEquals(0, aiService.generateWithHistoryCalls);
+
+        AiSession saved = sessionRepo.get(sessionUuid);
+        assertNotNull(saved);
+        AiChatMessage assistant = saved.messages().get(saved.messages().size() - 1);
+        assertEquals("ASSISTANT", assistant.role());
+        assertEquals("Echo: foo", assistant.content());
     }
 
     @Test
@@ -888,6 +941,18 @@ class ChatAuthorizationControllerIsolationTest {
                 .build();
     }
 
+        private static ToolCallback allowingMcpEchoTool() {
+                return FunctionToolCallback
+                                .builder("mcp_everything__echo", (DummyEchoToolRequest req) ->
+                                                "{\"content\":[{\"type\":\"text\",\"text\":\"Echo: " + req.message() + "\"}]}")
+                                .description("Test-only MCP echo callback")
+                                .inputType(DummyEchoToolRequest.class)
+                                .build();
+        }
+
     record DummyCompileToolRequest(String source) {
     }
+
+        record DummyEchoToolRequest(String message) {
+        }
 }

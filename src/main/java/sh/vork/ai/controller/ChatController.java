@@ -36,6 +36,8 @@ import sh.vork.ai.terminal.TerminalStreamRouter;
 import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.binding.BindingCatalogService;
 import sh.vork.binding.BindingSummary;
+import sh.vork.mcp.model.McpBindingStatus;
+import sh.vork.mcp.service.McpBindingService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.reflection.Reflection;
 import sh.vork.reflection.ReflectionBinding;
@@ -69,6 +71,7 @@ public class ChatController {
     private final SessionEnvironmentService sessionEnvironmentService;
     private final ReflectionService reflectionService;
     private final BindingCatalogService bindingCatalogService;
+    private final McpBindingService mcpBindingService;
 
 
 
@@ -79,7 +82,8 @@ public class ChatController {
                           DatabaseRepository<Skill> skillRepository,
                           SessionEnvironmentService sessionEnvironmentService,
                           ReflectionService reflectionService,
-                          BindingCatalogService bindingCatalogService) {
+                          BindingCatalogService bindingCatalogService,
+                          McpBindingService mcpBindingService) {
         this.chatService = chatService;
         this.messaging   = messaging;
         this.aiOrchestrationService = aiOrchestrationService;
@@ -89,6 +93,7 @@ public class ChatController {
         this.sessionEnvironmentService = sessionEnvironmentService;
         this.reflectionService = reflectionService;
         this.bindingCatalogService = bindingCatalogService;
+        this.mcpBindingService = mcpBindingService;
     }
 
     // ── HTTP ──────────────────────────────────────────────────────────────────
@@ -321,6 +326,47 @@ public class ChatController {
         }
     }
 
+    @PostMapping("/session/{sessionUuid}/session-mcp-bindings/{bindingUuid}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> addSessionMcpBinding(@PathVariable String sessionUuid,
+                                                  @PathVariable String bindingUuid) {
+        log.debug("ENTER addSessionMcpBinding: [session={}, bindingUuid={}]", sessionUuid, bindingUuid);
+        try {
+            var binding = mcpBindingService.get(bindingUuid);
+            if (binding == null) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "status", "ERROR",
+                        "message", "Unknown MCP binding UUID: " + bindingUuid));
+            }
+            if (binding.status() != McpBindingStatus.ACTIVE) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "status", "ERROR",
+                        "message", "MCP binding must be ACTIVE before attaching to a session."));
+            }
+            AiSession updated = chatService.addSessionMcpBinding(sessionUuid, bindingUuid);
+            return ResponseEntity.ok(Map.of(
+                    "status", "OK",
+                    "sessionMcpBindingUuids", chatService.getSessionMcpBindingUuids(updated)));
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/session/{sessionUuid}/session-mcp-bindings/{bindingUuid}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> removeSessionMcpBinding(@PathVariable String sessionUuid,
+                                                     @PathVariable String bindingUuid) {
+        log.debug("ENTER removeSessionMcpBinding: [session={}, bindingUuid={}]", sessionUuid, bindingUuid);
+        try {
+            AiSession updated = chatService.removeSessionMcpBinding(sessionUuid, bindingUuid);
+            return ResponseEntity.ok(Map.of(
+                    "status", "OK",
+                    "sessionMcpBindingUuids", chatService.getSessionMcpBindingUuids(updated)));
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
+        }
+    }
+
     @GetMapping("/reflection-bindings")
     public List<ReflectionBindingSummary> listReflectionBindings() {
         log.debug("ENTER listReflectionBindings");
@@ -341,6 +387,21 @@ public class ChatController {
     public List<BindingSummary> listBindings() {
         log.debug("ENTER listBindings");
         return bindingCatalogService.listBindings();
+    }
+
+    @GetMapping("/mcp-bindings")
+    public List<McpBindingSummary> listMcpBindings() {
+        log.debug("ENTER listMcpBindingsForChat");
+        return mcpBindingService.list().stream()
+            .filter(b -> b.status() == McpBindingStatus.ACTIVE)
+                .map(b -> new McpBindingSummary(
+                        b.uuid(),
+                        b.name(),
+                b.status().name(),
+                        b.baseUrl(),
+                        mcpBindingService.listTools(b.uuid()).stream().filter(t -> t.enabled()).count(),
+                        b.name() + " [MCP]"))
+                .toList();
     }
 
     /** Returns all non-hidden tools from the registry, optionally filtered by category. */
@@ -441,6 +502,19 @@ public class ChatController {
                         label);
                     })
                     .toList();
+                    List<McpBindingSummary> sessionMcpBindings = chatService
+                        .getSessionMcpBindingUuids(session)
+                        .stream()
+                        .map(mcpBindingService::get)
+                        .filter(java.util.Objects::nonNull)
+                        .map(binding -> new McpBindingSummary(
+                            binding.uuid(),
+                            binding.name(),
+                                binding.status().name(),
+                            binding.baseUrl(),
+                            mcpBindingService.listTools(binding.uuid()).stream().filter(t -> t.enabled()).count(),
+                            binding.name() + " [MCP]"))
+                        .toList();
             return ResponseEntity.ok(new AgentConfigResponse(
                     tpl != null ? tpl.uuid() : null,
                     tpl != null ? tpl.name() : null,
@@ -450,6 +524,7 @@ public class ChatController {
                     sessionTools,
                     agentReflectionBindings,
                     sessionReflectionBindings,
+                        sessionMcpBindings,
                     canManageSessionExtras));
         } catch (IllegalStateException ex) {
             return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
@@ -563,6 +638,13 @@ public class ChatController {
                                     String bindingName,
                                     String label) {}
 
+    record McpBindingSummary(String uuid,
+                             String name,
+                             String status,
+                             String baseUrl,
+                             long toolCount,
+                             String label) {}
+
     private ToolSummary resolveToolSummaryById(String toolId) {
         if (toolId == null || toolId.isBlank()) {
             return null;
@@ -589,5 +671,6 @@ public class ChatController {
             List<ToolSummary> sessionTools,
             List<ReflectionBindingSummary> agentReflectionBindings,
             List<ReflectionBindingSummary> sessionReflectionBindings,
+            List<McpBindingSummary> sessionMcpBindings,
             boolean canManageSessionExtras) {}
 }

@@ -20,6 +20,8 @@ import sh.vork.binding.BindingCatalogService;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.entity.AiSession;
+import sh.vork.mcp.model.McpBindingStatus;
+import sh.vork.mcp.service.McpBindingService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.typegen.JavaType;
 import sh.vork.typegen.TypeGeneratorService;
@@ -55,6 +57,10 @@ public class SkillService {
     @Lazy
     @Autowired
     private BindingCatalogService bindingCatalogService;
+
+    @Lazy
+    @Autowired
+    private McpBindingService mcpBindingService;
 
     public SkillService(DatabaseRepository<Skill> skillRepo,
                         DatabaseRepository<SkillGroup> skillGroupRepo,
@@ -737,6 +743,13 @@ public class SkillService {
                 .map(binding -> binding.bindingId())
                 .filter(java.util.Objects::nonNull)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (mcpBindingService != null) {
+            mcpBindingService.list().stream()
+                .filter(binding -> binding.status() == McpBindingStatus.ACTIVE)
+                .map(binding -> binding.uuid())
+                .filter(java.util.Objects::nonNull)
+                .forEach(knownBindingIds::add);
+        }
 
         LinkedHashSet<String> normalized = new LinkedHashSet<>();
         for (String bindingUuid : bindingUuids) {

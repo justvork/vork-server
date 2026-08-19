@@ -5,7 +5,7 @@
     {
       "id": null,
       "name": "Installable OAuth Template 01",
-      "clientName": "install_oauth_01",
+      "clientName": "example_oauth_01",
       "description": "Installable placeholder OAuth template",
       "authorizeEndpoint": "https://auth.example.com/install/01/authorize",
       "tokenEndpoint": "https://auth.example.com/install/01/token",

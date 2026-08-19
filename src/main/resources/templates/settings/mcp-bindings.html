@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <title>MCP Bindings - Vork</title>
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="/css/settings.css" th:href="@{/css/settings.css}">
+    <link rel="stylesheet" href="/css/mcp-bindings.css" th:href="@{/css/mcp-bindings.css}">
+</head>
+<body class="bg-zinc-950 text-zinc-100">
+<div th:replace="~{fragments/header :: header}"></div>
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
+        <div>
+            <h2 class="flex items-center gap-2 text-2xl font-bold text-zinc-100"><i class="fa-solid fa-plug-circle-bolt text-[#fdaa02]"></i>MCP Bindings</h2>
+            <p class="vork-page-subtitle">Configure MCP endpoints, validate connectivity, sync contracts, and control runtime activation.</p>
+        </div>
+        <div class="vork-page-header-actions">
+            <button id="mcp-create-btn" class="rounded-lg bg-[#fdaa02] px-3 py-2 text-sm font-semibold text-black transition-colors hover:bg-[#e89a02]">
+                <i class="fa-solid fa-plus mr-2"></i>New Binding
+            </button>
+        </div>
+    </div>
+
+    <div class="vork-content-stack">
+        <div id="mcp-alert-area"></div>
+
+        <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-3">
+            <div id="mcp-empty-state" class="vork-empty-state-card hidden">
+                <i class="fa-solid fa-link-slash vork-empty-icon"></i>
+                <p class="vork-empty-title">No MCP bindings configured</p>
+                <p class="vork-empty-hint">Create a binding to discover tools and connect an MCP server.</p>
+            </div>
+
+            <div id="mcp-table-wrap" class="overflow-x-auto hidden">
+                <table class="min-w-full mcp-bindings-table">
+                    <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Base URL</th>
+                        <th>Transport</th>
+                        <th>Status</th>
+                        <th>Tools</th>
+                        <th>Resources</th>
+                        <th>Prompts</th>
+                        <th>Last Sync</th>
+                        <th class="actions">Actions</th>
+                    </tr>
+                    </thead>
+                    <tbody id="mcp-bindings-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="mcpBindingModal" tabindex="-1" aria-labelledby="mcpBindingModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="mcpBindingModalLabel">Create MCP Binding</h5>
+                <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-700 text-zinc-300 transition-colors hover:bg-zinc-800" data-bs-dismiss="modal" aria-label="Close">x</button>
+            </div>
+            <div class="modal-body">
+                <div id="mcp-modal-alert-area" class="mb-3"></div>
+                <input type="hidden" id="mcp-binding-uuid">
+
+                <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="mcp-binding-name">Name <span class="text-rose-400">*</span></label>
+                    <input type="text" id="mcp-binding-name" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. github-mcp-prod">
+                </div>
+
+                <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="mcp-binding-base-url">Base URL <span class="text-rose-400">*</span></label>
+                    <input type="url" id="mcp-binding-base-url" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="https://mcp.example.com">
+                </div>
+
+                <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="mcp-binding-transport">Transport <span class="text-rose-400">*</span></label>
+                    <select id="mcp-binding-transport" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25">
+                        <option value="STREAMABLE_HTTP">STREAMABLE HTTP</option>
+                        <option value="SSE">SSE</option>
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="mcp-binding-auth">Authorization</label>
+                    <input type="password" id="mcp-binding-auth" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="Bearer ...">
+                    <p class="mt-1 text-xs text-zinc-500">Optional. Leave blank on edit to keep the current secret.</p>
+                </div>
+
+                <div class="mcp-vid-grid">
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="mcp-binding-group-id">groupId</label>
+                        <input type="text" id="mcp-binding-group-id" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="mcp-binding-artifact-id">artifactId</label>
+                        <input type="text" id="mcp-binding-artifact-id" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="mcp-binding-version">version</label>
+                        <input type="text" id="mcp-binding-version" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" value="SNAPSHOT">
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="mcp-binding-artifact-status">artifactStatus</label>
+                        <select id="mcp-binding-artifact-status" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25">
+                            <option value="SNAPSHOT" selected>SNAPSHOT</option>
+                            <option value="SUBMITTED">SUBMITTED</option>
+                            <option value="STAGED">STAGED</option>
+                            <option value="PUBLISHED">PUBLISHED</option>
+                            <option value="REJECTED">REJECTED</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" id="mcp-save-btn" class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-sm font-semibold text-black transition-colors hover:bg-[#e89a02]">
+                    <i class="fa-solid fa-save mr-1"></i>Save
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="mcpToolModal" tabindex="-1" aria-labelledby="mcpToolModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl mcp-tool-modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="mcpToolModalLabel">Configure MCP Tool</h5>
+                <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-700 text-zinc-300 transition-colors hover:bg-zinc-800" data-bs-dismiss="modal" aria-label="Close">x</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="mcp-tool-binding-uuid">
+                <input type="hidden" id="mcp-tool-id">
+
+                <div class="mb-3 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2">
+                    <div class="text-xs text-zinc-500">Tool</div>
+                    <div id="mcp-tool-name" class="text-sm font-semibold text-zinc-100">-</div>
+                    <div id="mcp-tool-key" class="text-xs text-zinc-500">toolId=-</div>
+                </div>
+
+                <div id="mcp-tool-description-wrap" class="mb-3 hidden">
+                    <label class="mb-1 block text-sm font-medium text-zinc-300">Description</label>
+                    <textarea id="mcp-tool-description" readonly rows="3" class="w-full rounded-lg border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-300 cursor-default resize-none" placeholder="No description available"></textarea>
+                </div>
+
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2 mb-3">
+                    <label class="mcp-toggle" for="mcp-tool-enabled">
+                        <input type="checkbox" id="mcp-tool-enabled">
+                        <span class="mcp-toggle-slider" aria-hidden="true"></span>
+                        <span class="mcp-toggle-label">Enabled</span>
+                    </label>
+                    <label class="mcp-toggle" for="mcp-tool-requires-auth">
+                        <input type="checkbox" id="mcp-tool-requires-auth">
+                        <span class="mcp-toggle-slider" aria-hidden="true"></span>
+                        <span class="mcp-toggle-label">Requires Authorization</span>
+                    </label>
+                </div>
+
+                <div id="mcp-tool-params-wrap" class="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2">
+                    <div id="mcp-tool-params-empty" class="text-xs text-zinc-500">No parameters.</div>
+                    <div id="mcp-tool-params"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" id="mcp-tool-save-btn" class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-sm font-semibold text-black transition-colors hover:bg-[#e89a02]">
+                    <i class="fa-solid fa-save mr-1"></i>Save Tool Config
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
+<script src="/js/mcp-bindings.js" th:src="@{/js/mcp-bindings.js}"></script>
+</body>
+</html>

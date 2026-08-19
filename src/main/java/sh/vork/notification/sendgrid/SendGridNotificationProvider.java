@@ -168,8 +168,12 @@ public class SendGridNotificationProvider implements NotificationProvider {
         root.put("subject", n.title());
 
         // Content
-        root.put("content", List.of(Map.of("type", "text/plain", "value",
-                n.body() != null && !n.body().isBlank() ? n.body() : " ")));
+        String body = n.body() != null && !n.body().isBlank() ? n.body() : " ";
+        if (Notification.CONTENT_TYPE_HTML.equals(n.bodyContentType())) {
+            root.put("content", List.of(Map.of("type", "text/html", "value", body)));
+        } else {
+            root.put("content", List.of(Map.of("type", "text/plain", "value", body)));
+        }
 
         // Attachment
         if (n.attachment() != null && n.attachment().length > 0) {

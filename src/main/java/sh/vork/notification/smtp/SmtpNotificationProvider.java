@@ -120,10 +120,12 @@ public class SmtpNotificationProvider implements NotificationProvider {
         JavaMailSenderImpl sender = buildSender(host, port, useTls, useAuth, username, password);
 
         try {
+            boolean isHtml = Notification.CONTENT_TYPE_HTML.equals(notification.bodyContentType());
             for (String recipient : notification.recipients()) {
                 sendOne(sender, fromEmail, fromName, recipient,
                         notification.title(),
-                        notification.body() != null ? notification.body() : "");
+                        notification.body() != null ? notification.body() : "",
+                        isHtml);
                 log.debug("Step: email sent [to={}, subject={}]", recipient, notification.title());
             }
             log.info("Notification sent via SMTP [recipients={}, host={}]",
@@ -161,13 +163,13 @@ public class SmtpNotificationProvider implements NotificationProvider {
     }
 
     private void sendOne(JavaMailSenderImpl sender, String fromEmail, String fromName,
-                         String recipient, String subject, String body) throws MessagingException {
+                         String recipient, String subject, String body, boolean isHtml) throws MessagingException {
         MimeMessage message = sender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
         helper.setFrom(fromName.isBlank() ? fromEmail : fromName + " <" + fromEmail + ">");
         helper.setTo(recipient);
         helper.setSubject(subject);
-        helper.setText(body, false);
+        helper.setText(body, isHtml);
         sender.send(message);
     }
 }

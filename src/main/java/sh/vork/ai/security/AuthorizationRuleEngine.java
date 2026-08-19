@@ -161,8 +161,19 @@ public class AuthorizationRuleEngine {
      * @param toolCallId the unique call-execution ID emitted by the model for this invocation
      */
     public boolean requiresAuthorization(String toolName, String username, String toolCallId) {
+        return requiresAuthorization(toolName, username, toolCallId, false);
+    }
+
+    /**
+     * Returns {@code true} when authorization is required, with optional explicit enforcement
+     * for tools that are not annotated with {@link Restricted}.
+     *
+     * @param forceRestricted when {@code true}, evaluate exception rules even if the tool is not
+     *                        present in the discovered restricted-tool set.
+     */
+    public boolean requiresAuthorization(String toolName, String username, String toolCallId, boolean forceRestricted) {
         // 1. Not restricted — pass immediately
-        if (!restrictedToolNames.contains(toolName)) {
+        if (!forceRestricted && !restrictedToolNames.contains(toolName)) {
             return false;
         }
 

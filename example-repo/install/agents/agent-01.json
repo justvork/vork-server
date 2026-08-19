@@ -14,7 +14,7 @@
     "recommendedModel": "GEMINI:gemini-2.5-flash",
     "groupId": "demo",
     "artifactId": "agent01",
-    "version": "SNAPSHOT",
+    "version": "1.0",
     "artifactStatus": "SNAPSHOT"
   }
 }

@@ -14,6 +14,7 @@ import sh.vork.ai.terminal.TerminalStreamRouter;
 import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.ai.registry.ToolRegistry;
 import sh.vork.binding.BindingCatalogService;
+import sh.vork.mcp.service.McpBindingService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.reflection.Reflection;
 import sh.vork.reflection.ReflectionService;
@@ -49,7 +50,8 @@ class ChatControllerAttachmentBroadcastTest {
                 (DatabaseRepository<Skill>) mock(DatabaseRepository.class),
                 mock(SessionEnvironmentService.class),
                 mock(ReflectionService.class),
-                mock(BindingCatalogService.class)
+                mock(BindingCatalogService.class),
+                mock(McpBindingService.class)
         );
 
         String sessionUuid = "session-zip-broadcast";
@@ -130,7 +132,8 @@ class ChatControllerAttachmentBroadcastTest {
                                 (DatabaseRepository<Skill>) mock(DatabaseRepository.class),
                                 mock(SessionEnvironmentService.class),
                                 reflectionService,
-                                mock(BindingCatalogService.class)
+                                mock(BindingCatalogService.class),
+                                mock(McpBindingService.class)
                 );
 
                 ResponseEntity<?> response = controller.addSessionTool("session-1", "reflection-tool-id");
@@ -176,7 +179,8 @@ class ChatControllerAttachmentBroadcastTest {
                                 (DatabaseRepository<Skill>) mock(DatabaseRepository.class),
                                 mock(SessionEnvironmentService.class),
                                 reflectionService,
-                                mock(BindingCatalogService.class)
+                                mock(BindingCatalogService.class),
+                                mock(McpBindingService.class)
                 );
 
                 ResponseEntity<?> response = controller.addSessionTool("session-1", "listFiles");

@@ -65,7 +65,7 @@ public class GitHubForkContributionService {
 
         List<ContributionFile> files = request.files();
         for (ContributionFile file : files) {
-            String encoded = Base64.getEncoder().encodeToString(file.content().getBytes(StandardCharsets.UTF_8));
+            String encoded = toGitHubBase64(file);
             apiClient.createOrUpdateFile(
                     accessToken,
                     fork.owner(),
@@ -74,7 +74,8 @@ public class GitHubForkContributionService {
                     file.path().trim(),
                     encoded,
                     request.commitMessage().trim());
-            log.debug("Step 5: committed file [branch={}, path={}]", request.branchName(), file.path());
+            log.debug("Step 5: committed file [branch={}, path={}, encoding={}]",
+                request.branchName(), file.path(), file.encoding());
         }
 
         GitHubContributionApiClient.PullRequestRef pr = apiClient.createPullRequest(
@@ -141,8 +142,26 @@ public class GitHubForkContributionService {
             if (file.content() == null) {
                 return "Each file must include non-null content.";
             }
+            if (!ContributionFile.ENCODING_TEXT.equals(file.encoding())
+                    && !ContributionFile.ENCODING_BASE64.equals(file.encoding())) {
+                return "Each file must include a valid encoding: text or base64.";
+            }
+            if (ContributionFile.ENCODING_BASE64.equals(file.encoding())) {
+                try {
+                    Base64.getDecoder().decode(file.content());
+                } catch (IllegalArgumentException ex) {
+                    return "Each base64-encoded file must include valid base64 content.";
+                }
+            }
         }
         return null;
+    }
+
+    private static String toGitHubBase64(ContributionFile file) {
+        if (ContributionFile.ENCODING_BASE64.equals(file.encoding())) {
+            return file.content();
+        }
+        return Base64.getEncoder().encodeToString(file.content().getBytes(StandardCharsets.UTF_8));
     }
 
     private static boolean isBlank(String value) {

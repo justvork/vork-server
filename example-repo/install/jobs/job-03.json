@@ -16,7 +16,7 @@
     "toolIds": [],
     "groupId": "ops",
     "artifactId": "job03",
-    "version": "SNAPSHOT",
+    "version": "1.0",
     "artifactStatus": "SNAPSHOT"
   },
   "session": null

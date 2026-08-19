@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import sh.vork.hub.repository.HubRepositoryDefinition;
@@ -41,6 +42,7 @@ public class HubCatalogService {
     private final long cacheTtlMs;
     private final ConcurrentHashMap<String, CachedCatalog> cacheByRepository = new ConcurrentHashMap<>();
 
+    @Autowired
     public HubCatalogService(HubRepositoryRegistryService repositoryRegistryService,
                              ObjectMapper objectMapper) {
         this(repositoryRegistryService, objectMapper, DEFAULT_CACHE_TTL_MS);
@@ -262,6 +264,9 @@ public class HubCatalogService {
             if (endpoint == null) {
                 continue;
             }
+
+            String logoPath = resolveLogoPath(repository, file, metadata);
+            String docPath = resolveDocPath(repository, file, metadata);
             items.add(new HubCatalogItem(
                     buildItemId(file.type(), file.relativePath(), index),
                     file.type(),
@@ -269,8 +274,8 @@ public class HubCatalogService {
                     metadata.description(),
                     file.relativePath(),
                     file.relativePath(),
-                    "",
-                    "",
+                    docPath,
+                    logoPath,
                     endpoint,
                     repository.name(),
                     repository.baseUrl() == null ? "" : repository.baseUrl().toString()
@@ -395,7 +400,7 @@ public class HubCatalogService {
         String fallbackDescription = "Installable " + file.type().replace('-', ' ') + " artifact.";
 
         if (!file.relativePath().toLowerCase(Locale.ROOT).endsWith(".json")) {
-            return new InstallMetadata(fallbackName, fallbackDescription);
+            return new InstallMetadata(fallbackName, fallbackDescription, "", "", "", "");
         }
 
         try {
@@ -404,17 +409,140 @@ public class HubCatalogService {
 
             String name = extractName(file.type(), root);
             String description = extractDescription(file.type(), root);
+            String groupId = extractGroupId(file.type(), root);
+            String artifactId = extractArtifactId(file.type(), root);
+            String version = extractVersion(file.type(), root);
+            String clientName = extractClientName(file.type(), root);
             if (name.isBlank()) {
                 name = fallbackName;
             }
             if (description.isBlank()) {
                 description = fallbackDescription;
             }
-            return new InstallMetadata(name, description);
+            return new InstallMetadata(name, description, groupId, artifactId, version, clientName);
         } catch (RuntimeException | IOException ex) {
             log.debug("Failed to inspect metadata for {}: {}", file.relativePath(), ex.getMessage());
-            return new InstallMetadata(fallbackName, fallbackDescription);
+            return new InstallMetadata(fallbackName, fallbackDescription, "", "", "", "");
         }
+    }
+
+    private String resolveLogoPath(HubRepositoryDefinition repository,
+                                   ScannedInstallFile file,
+                                   InstallMetadata metadata) {
+        List<String> candidates = new ArrayList<>();
+        String baseName = installBaseName(file.relativePath());
+
+        if ("oauth-template".equals(file.type()) && !metadata.clientName().isBlank()) {
+            candidates.add("oauth-templates/" + metadata.clientName() + ".svg");
+            candidates.add("oauth-templates/" + metadata.clientName() + ".png");
+            candidates.add("oauth-templates/" + metadata.clientName() + ".jpg");
+        }
+
+        String rootFolder = artifactRootFolder(file.type());
+        if (!rootFolder.isBlank() && !metadata.groupId().isBlank() && !metadata.artifactId().isBlank()) {
+            String version = metadata.version().isBlank() ? "1.0" : metadata.version();
+            candidates.add(rootFolder + "/" + metadata.groupId() + "/" + metadata.artifactId() + "/" + version + "/logo.svg");
+            candidates.add(rootFolder + "/" + metadata.groupId() + "/" + metadata.artifactId() + "/" + version + "/logo.png");
+            candidates.add(rootFolder + "/" + metadata.groupId() + "/" + metadata.artifactId() + "/" + version + "/logo.jpg");
+            candidates.add(rootFolder + "/" + metadata.groupId() + "/" + metadata.artifactId() + "/logo.svg");
+            candidates.add(rootFolder + "/" + metadata.groupId() + "/" + metadata.artifactId() + "/logo.png");
+            candidates.add(rootFolder + "/" + metadata.groupId() + "/" + metadata.artifactId() + "/logo.jpg");
+        }
+
+        candidates.add("logos/" + baseName + ".svg");
+        candidates.add("logos/" + baseName + ".png");
+        candidates.add("logos/" + baseName + ".jpg");
+
+        return findFirstExistingPath(repository, candidates);
+    }
+
+    private String resolveDocPath(HubRepositoryDefinition repository,
+                                  ScannedInstallFile file,
+                                  InstallMetadata metadata) {
+        List<String> candidates = new ArrayList<>();
+        String baseName = installBaseName(file.relativePath());
+
+        if ("oauth-template".equals(file.type()) && !metadata.clientName().isBlank()) {
+            candidates.add("oauth-templates/" + metadata.clientName() + ".md");
+        }
+
+        String rootFolder = artifactRootFolder(file.type());
+        if (!rootFolder.isBlank() && !metadata.groupId().isBlank() && !metadata.artifactId().isBlank()) {
+            String version = metadata.version().isBlank() ? "1.0" : metadata.version();
+            candidates.add(rootFolder + "/" + metadata.groupId() + "/" + metadata.artifactId() + "/" + version + "/README.md");
+            candidates.add(rootFolder + "/" + metadata.groupId() + "/" + metadata.artifactId() + "/README.md");
+        }
+
+        candidates.add("docs/" + baseName + ".md");
+        return findFirstExistingPath(repository, candidates);
+    }
+
+    private String findFirstExistingPath(HubRepositoryDefinition repository, List<String> candidates) {
+        for (String candidate : candidates) {
+            if (candidate == null || candidate.isBlank()) {
+                continue;
+            }
+            try {
+                readRepositoryPath(repository, candidate);
+                return candidate;
+            } catch (RuntimeException ignored) {
+                // Candidate does not exist or is not accessible; continue probing.
+            }
+        }
+        return "";
+    }
+
+    private String extractGroupId(String type, JsonNode root) {
+        return switch (type) {
+            case "agent" -> root.path("agent").path("groupId").asText("").trim();
+            case "job" -> root.path("job").path("groupId").asText("").trim();
+            case "skill-group", "reflection-group" -> root.path("group").path("groupId").asText("").trim();
+            default -> "";
+        };
+    }
+
+    private String extractArtifactId(String type, JsonNode root) {
+        return switch (type) {
+            case "agent" -> root.path("agent").path("artifactId").asText("").trim();
+            case "job" -> root.path("job").path("artifactId").asText("").trim();
+            case "skill-group", "reflection-group" -> root.path("group").path("artifactId").asText("").trim();
+            default -> "";
+        };
+    }
+
+    private String extractVersion(String type, JsonNode root) {
+        return switch (type) {
+            case "agent" -> root.path("agent").path("version").asText("").trim();
+            case "job" -> root.path("job").path("version").asText("").trim();
+            case "skill-group", "reflection-group" -> root.path("group").path("version").asText("").trim();
+            default -> "";
+        };
+    }
+
+    private String extractClientName(String type, JsonNode root) {
+        if (!"oauth-template".equals(type)) {
+            return "";
+        }
+        if (!root.path("templates").isArray() || root.path("templates").isEmpty()) {
+            return "";
+        }
+        return root.path("templates").get(0).path("clientName").asText("").trim();
+    }
+
+    private String artifactRootFolder(String type) {
+        return switch (type) {
+            case "agent" -> "agents";
+            case "job" -> "jobs";
+            case "surface" -> "surfaces";
+            case "skill-group" -> "skills";
+            case "reflection-group" -> "reflections";
+            default -> "";
+        };
+    }
+
+    private static String installBaseName(String installPath) {
+        String fileName = fileNameFromPath(installPath);
+        return fileName.replaceAll("\\.[^.]+$", "");
     }
 
     private String extractName(String type, JsonNode root) {
@@ -670,7 +798,14 @@ public class HubCatalogService {
     private record ScannedInstallFile(String type, String relativePath) {
     }
 
-    private record InstallMetadata(String name, String description) {
+        private record InstallMetadata(
+            String name,
+            String description,
+            String groupId,
+            String artifactId,
+            String version,
+            String clientName
+        ) {
     }
 
     private record GitHubRawRef(String owner, String repo, String ref, String basePath) {

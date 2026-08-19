@@ -4,6 +4,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ModelAttribute;
+import jakarta.servlet.http.HttpSession;
 
 import sh.vork.security.Permission;
 
@@ -13,8 +14,23 @@ import sh.vork.security.Permission;
 @ControllerAdvice
 public class GlobalUiAccessAdvice {
 
+    private static final String NAV_LAYOUT_SESSION_KEY = "VORK_NAV_LAYOUT";
+
     @ModelAttribute("canManageUsers")
     public boolean canManageUsers() {
+        return hasManageUsersPermission();
+    }
+
+    @ModelAttribute("navAdminView")
+    public boolean navAdminView(HttpSession session) {
+        if (!hasManageUsersPermission()) {
+            return false;
+        }
+        Object mode = session == null ? null : session.getAttribute(NAV_LAYOUT_SESSION_KEY);
+        return mode == null || !"USER".equalsIgnoreCase(String.valueOf(mode));
+    }
+
+    private static boolean hasManageUsersPermission() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || auth.getAuthorities() == null) {
             return false;

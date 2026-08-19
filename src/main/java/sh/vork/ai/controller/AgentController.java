@@ -12,6 +12,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -33,6 +35,8 @@ import sh.vork.ai.agent.ArtifactStatus;
 import sh.vork.ai.service.AgentAssignmentService;
 import sh.vork.ai.lifecycle.AgentTemplateSeeder;
 import sh.vork.binding.BindingCatalogService;
+import sh.vork.mcp.model.McpBindingStatus;
+import sh.vork.mcp.service.McpBindingService;
 import sh.vork.reflection.Reflection;
 import sh.vork.reflection.ReflectionService;
 import sh.vork.scheduling.domain.ScheduledJob;
@@ -65,6 +69,10 @@ public class AgentController {
     private final ReflectionService reflectionService;
     private final BindingCatalogService bindingCatalogService;
     private final AgentAssignmentService agentAssignmentService;
+
+    @Lazy
+    @Autowired
+    private McpBindingService mcpBindingService;
 
     public AgentController(DatabaseRepository<AgentTemplate> agentRepository,
                            DatabaseRepository<ScheduledJob> jobRepository,
@@ -624,6 +632,13 @@ public class AgentController {
                 .map(binding -> binding.bindingId())
                 .filter(java.util.Objects::nonNull)
                 .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+        if (mcpBindingService != null) {
+            mcpBindingService.list().stream()
+                .filter(binding -> binding.status() == McpBindingStatus.ACTIVE)
+                .map(binding -> binding.uuid())
+                .filter(java.util.Objects::nonNull)
+                .forEach(knownBindingIds::add);
+        }
 
         for (String bindingUuid : bindingUuids) {
             if (bindingUuid == null || bindingUuid.isBlank()) {

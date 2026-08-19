@@ -95,6 +95,7 @@ public class ChatService {
     private static final String DEFAULT_RELAY_BASE_URL = "https://relay.vork.sh";
     private static final String WEB_INPUT_RELAY_ENABLED_ENV = "WEB_INPUT_RELAY_ENABLED";
     private static final String SESSION_REFLECTION_BINDING_UUIDS_ENV = "SESSION_REFLECTION_BINDING_UUIDS";
+    private static final String SESSION_MCP_BINDING_UUIDS_ENV = "SESSION_MCP_BINDING_UUIDS";
     private static final String TOGGLE_INPUT_RELAY_TOOL = "toggleInputRelay";
     private static final String GENERATED_ATTACHMENTS_CONTEXT_KEY = "generated.session.attachments";
     private static final Pattern SESSION_FILE_DOWNLOAD_URL_PATTERN =
@@ -1384,6 +1385,88 @@ public class ChatService {
                 session.skillStack(), session.sessionSkillUuids(), session.sessionToolIds());
         sessionRepo.save(saved);
         log.info("Session reflection bindings replaced [session={}, count={}]", sessionUuid, normalized.size());
+        return saved;
+    }
+
+    /** Returns session-level MCP binding UUIDs attached to this chat session. */
+    public List<String> getSessionMcpBindingUuids(String sessionUuid) {
+        AiSession session = getSessionForCurrentUser(sessionUuid);
+        return getSessionMcpBindingUuids(session);
+    }
+
+    /** Returns session-level MCP binding UUIDs from an already-loaded session. */
+    public List<String> getSessionMcpBindingUuids(AiSession session) {
+        if (session == null || session.environmentVariables() == null) {
+            return List.of();
+        }
+        String raw = session.environmentVariables().get(SESSION_MCP_BINDING_UUIDS_ENV);
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        List<String> parsed = new ArrayList<>();
+        for (String token : raw.split(",")) {
+            if (token == null) {
+                continue;
+            }
+            String trimmed = token.trim();
+            if (!trimmed.isBlank() && !parsed.contains(trimmed)) {
+                parsed.add(trimmed);
+            }
+        }
+        return List.copyOf(parsed);
+    }
+
+    /** Adds an MCP binding UUID to the session-level MCP binding list. */
+    public AiSession addSessionMcpBinding(String sessionUuid, String bindingUuid) {
+        AiSession session = getSessionForCurrentUser(sessionUuid);
+        List<String> existing = new ArrayList<>(getSessionMcpBindingUuids(session));
+        if (existing.contains(bindingUuid)) {
+            return session;
+        }
+        existing.add(bindingUuid);
+
+        Map<String, String> env = new HashMap<>(session.environmentVariables() == null
+                ? Map.of()
+                : session.environmentVariables());
+        env.put(SESSION_MCP_BINDING_UUIDS_ENV, String.join(",", existing));
+
+        AiSession saved = new AiSession(
+                session.uuid(), session.provider(), session.originMode(),
+                session.username(), session.name(), session.createdAt(),
+                session.currentRoundCount(), session.messages(),
+                Collections.unmodifiableMap(env), session.status(),
+                session.activeAgentTemplateId(), session.modelId(),
+                session.skillStack(), session.sessionSkillUuids(), session.sessionToolIds());
+        sessionRepo.save(saved);
+        log.info("Session MCP binding added [session={}, bindingUuid={}]", sessionUuid, bindingUuid);
+        return saved;
+    }
+
+    /** Removes an MCP binding UUID from the session-level MCP binding list. */
+    public AiSession removeSessionMcpBinding(String sessionUuid, String bindingUuid) {
+        AiSession session = getSessionForCurrentUser(sessionUuid);
+        List<String> updated = getSessionMcpBindingUuids(session).stream()
+                .filter(id -> !id.equals(bindingUuid))
+                .toList();
+
+        Map<String, String> env = new HashMap<>(session.environmentVariables() == null
+                ? Map.of()
+                : session.environmentVariables());
+        if (updated.isEmpty()) {
+            env.remove(SESSION_MCP_BINDING_UUIDS_ENV);
+        } else {
+            env.put(SESSION_MCP_BINDING_UUIDS_ENV, String.join(",", updated));
+        }
+
+        AiSession saved = new AiSession(
+                session.uuid(), session.provider(), session.originMode(),
+                session.username(), session.name(), session.createdAt(),
+                session.currentRoundCount(), session.messages(),
+                Collections.unmodifiableMap(env), session.status(),
+                session.activeAgentTemplateId(), session.modelId(),
+                session.skillStack(), session.sessionSkillUuids(), session.sessionToolIds());
+        sessionRepo.save(saved);
+        log.info("Session MCP binding removed [session={}, bindingUuid={}]", sessionUuid, bindingUuid);
         return saved;
     }
 

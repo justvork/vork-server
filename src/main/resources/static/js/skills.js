@@ -95,7 +95,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 async function loadData() {
     try {
-        const [skillsRes, groupsRes, toolsRes, typesRes, catsRes, reflectionsRes, reflectionGroupsRes, providersRes] = await Promise.all([
+        const [skillsRes, groupsRes, toolsRes, typesRes, catsRes, reflectionsRes, reflectionGroupsRes, mcpBindingsRes, providersRes] = await Promise.all([
             fetch('/api/skills?includePrivate=true'),
             fetch('/api/skill-groups'),
             fetch('/api/management/tools'),
@@ -103,6 +103,7 @@ async function loadData() {
             fetch('/api/skills/categories'),
             fetch('/api/reflections'),
             fetch('/api/chat/bindings'),
+            fetch('/api/chat/mcp-bindings'),
             fetch('/api/ai/providers')
         ]);
         allSkills     = skillsRes.ok ? await skillsRes.json() : [];
@@ -112,7 +113,17 @@ async function loadData() {
         allTypes      = typesRes.ok  ? await typesRes.json()  : [];
         allCategories = catsRes.ok   ? await catsRes.json()   : [];
         allReflections = reflectionsRes.ok ? await reflectionsRes.json() : [];
-        allReflectionGroups = reflectionGroupsRes.ok ? await reflectionGroupsRes.json() : [];
+        const reflectionBindingCatalog = reflectionGroupsRes.ok ? await reflectionGroupsRes.json() : [];
+        const mcpBindings = mcpBindingsRes.ok ? await mcpBindingsRes.json() : [];
+        allReflectionGroups = reflectionBindingCatalog.concat((mcpBindings || []).map(function (binding) {
+            return {
+                bindingId: binding.uuid,
+                displayName: binding.label || (binding.name + ' [MCP]'),
+                providerId: 'mcp',
+                profiles: [],
+                description: binding.baseUrl || ''
+            };
+        }));
         providerGroups = providersRes.ok ? await providersRes.json() : [];
         providerGroupByKey = (providerGroups || []).reduce(function (acc, group) {
             if (group && group.providerKey) {

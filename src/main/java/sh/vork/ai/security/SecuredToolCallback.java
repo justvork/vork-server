@@ -28,10 +28,16 @@ public class SecuredToolCallback implements ToolCallback {
 
     private final ToolCallback delegate;
     private final AuthorizationRuleEngine ruleEngine;
+    private final boolean forceAuthorization;
 
     public SecuredToolCallback(ToolCallback delegate, AuthorizationRuleEngine ruleEngine) {
+        this(delegate, ruleEngine, false);
+    }
+
+    public SecuredToolCallback(ToolCallback delegate, AuthorizationRuleEngine ruleEngine, boolean forceAuthorization) {
         this.delegate = delegate;
         this.ruleEngine = ruleEngine;
+        this.forceAuthorization = forceAuthorization;
     }
 
     @Override
@@ -59,7 +65,7 @@ public class SecuredToolCallback implements ToolCallback {
         String toolName = delegate.getToolDefinition().name();
         String effectiveArguments = resolveArguments(arguments, toolContext);
 
-        if (ruleEngine.requiresAuthorization(toolName, username, "pending-id")) {
+        if (ruleEngine.requiresAuthorization(toolName, username, "pending-id", forceAuthorization)) {
             String reasoning = extractReasoning(toolContext);
             String displayArguments = formatForDisplay(effectiveArguments);
             String toolDisplayName = formatToolDisplayName(toolName);

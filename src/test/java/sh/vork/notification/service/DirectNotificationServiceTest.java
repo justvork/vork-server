@@ -184,6 +184,18 @@ class DirectNotificationServiceTest {
         }
 
         @Test
+        void passesRequestedHtmlBodyContentType() throws Exception {
+            var service = new DirectNotificationService(repo, ctx);
+            service.send(sgConfigId, "My Title", "<h1>My Body</h1>", Notification.CONTENT_TYPE_HTML, "target@test.com");
+
+            var captor = org.mockito.ArgumentCaptor.forClass(Notification.class);
+            verify(sendgrid).send(captor.capture(), any());
+
+            Notification sent = captor.getValue();
+            assertEquals(Notification.CONTENT_TYPE_HTML, sent.bodyContentType());
+        }
+
+        @Test
         void returnsErrorForUnknownConfigId() throws Exception {
             var service = new DirectNotificationService(repo, ctx);
             String result = service.send("non-existent-uuid", "Hi", "Body", "x@y.com");

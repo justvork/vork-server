@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -381,6 +382,13 @@ public class ContributionController {
                 : request.commitMessage().trim();
         String prBody = request.prBody() == null ? "" : request.prBody().trim();
 
+        String artifactBasePath = "agents/" + existing.groupId() + "/" + existing.artifactId() + "/" + nextVersion;
+        List<ContributionFile> files = new ArrayList<>();
+        files.add(new ContributionFile(
+            artifactBasePath + "/agent.json",
+            agentJson));
+        appendArtifactLogoIfPresent(files, request.logoBase64(), request.logoFileName(), artifactBasePath);
+
         ContributionSubmitRequest submitRequest = new ContributionSubmitRequest(
                 user.getUsername(),
                 branch,
@@ -388,9 +396,7 @@ public class ContributionController {
                 request.prTitle().trim(),
                 prBody,
                 new ContributionTarget(OFFICIAL_OWNER, OFFICIAL_REPOSITORY, OFFICIAL_STAGING_BRANCH),
-                List.of(new ContributionFile(
-                        "agents/" + existing.groupId() + "/" + existing.artifactId() + "/" + nextVersion + "/agent.json",
-                        agentJson)));
+            files);
 
         ContributionSubmitResult result;
         try {
@@ -509,6 +515,13 @@ public class ContributionController {
                 : request.commitMessage().trim();
         String prBody = request.prBody() == null ? "" : request.prBody().trim();
 
+        String artifactBasePath = "jobs/" + existing.groupId() + "/" + existing.artifactId() + "/" + nextVersion;
+        List<ContributionFile> files = new ArrayList<>();
+        files.add(new ContributionFile(
+            artifactBasePath + "/job.json",
+            jobJson));
+        appendArtifactLogoIfPresent(files, request.logoBase64(), request.logoFileName(), artifactBasePath);
+
         ContributionSubmitRequest submitRequest = new ContributionSubmitRequest(
                 user.getUsername(),
                 branch,
@@ -516,9 +529,7 @@ public class ContributionController {
                 request.prTitle().trim(),
                 prBody,
                 new ContributionTarget(OFFICIAL_OWNER, OFFICIAL_REPOSITORY, OFFICIAL_STAGING_BRANCH),
-                List.of(new ContributionFile(
-                        "jobs/" + existing.groupId() + "/" + existing.artifactId() + "/" + nextVersion + "/job.json",
-                        jobJson)));
+            files);
 
         ContributionSubmitResult result;
         try {
@@ -641,6 +652,19 @@ public class ContributionController {
                 : request.commitMessage().trim();
         String prBody = request.prBody() == null ? "" : request.prBody().trim();
 
+        String artifactBasePath = "surfaces/" + existing.groupId() + "/" + existing.artifactId() + "/" + nextVersion;
+        List<ContributionFile> files = new ArrayList<>();
+        files.add(new ContributionFile(
+            artifactBasePath + "/surface.json",
+            surfaceJson));
+        files.add(new ContributionFile(
+            artifactBasePath + "/assets/index.html",
+            indexHtml));
+        files.add(new ContributionFile(
+            artifactBasePath + "/assets/script.js",
+            scriptJs));
+        appendArtifactLogoIfPresent(files, request.logoBase64(), request.logoFileName(), artifactBasePath);
+
         ContributionSubmitRequest submitRequest = new ContributionSubmitRequest(
                 user.getUsername(),
                 branch,
@@ -648,16 +672,7 @@ public class ContributionController {
                 request.prTitle().trim(),
                 prBody,
                 new ContributionTarget(OFFICIAL_OWNER, OFFICIAL_REPOSITORY, OFFICIAL_STAGING_BRANCH),
-                List.of(
-                        new ContributionFile(
-                                "surfaces/" + existing.groupId() + "/" + existing.artifactId() + "/" + nextVersion + "/surface.json",
-                                surfaceJson),
-                        new ContributionFile(
-                                "surfaces/" + existing.groupId() + "/" + existing.artifactId() + "/" + nextVersion + "/assets/index.html",
-                                indexHtml),
-                        new ContributionFile(
-                                "surfaces/" + existing.groupId() + "/" + existing.artifactId() + "/" + nextVersion + "/assets/script.js",
-                                scriptJs)));
+            files);
 
         ContributionSubmitResult result;
         try {
@@ -767,6 +782,13 @@ public class ContributionController {
                 : request.commitMessage().trim();
         String prBody = request.prBody() == null ? "" : request.prBody().trim();
 
+        String artifactBasePath = "skills/" + existing.groupId() + "/" + existing.artifactId() + "/" + nextVersion;
+        List<ContributionFile> files = new ArrayList<>();
+        files.add(new ContributionFile(
+            artifactBasePath + "/skills.json",
+            skillsJson));
+        appendArtifactLogoIfPresent(files, request.logoBase64(), request.logoFileName(), artifactBasePath);
+
         ContributionSubmitRequest submitRequest = new ContributionSubmitRequest(
                 user.getUsername(),
                 branch,
@@ -774,9 +796,7 @@ public class ContributionController {
                 request.prTitle().trim(),
                 prBody,
                 new ContributionTarget(OFFICIAL_OWNER, OFFICIAL_REPOSITORY, OFFICIAL_STAGING_BRANCH),
-                List.of(new ContributionFile(
-                        "skills/" + existing.groupId() + "/" + existing.artifactId() + "/" + nextVersion + "/skills.json",
-                        skillsJson)));
+            files);
 
         ContributionSubmitResult result;
         try {
@@ -900,6 +920,13 @@ public class ContributionController {
                 : request.commitMessage().trim();
         String prBody = request.prBody() == null ? "" : request.prBody().trim();
 
+        String artifactBasePath = "reflections/" + existing.groupId() + "/" + existing.artifactId() + "/" + nextVersion;
+        List<ContributionFile> files = new ArrayList<>();
+        files.add(new ContributionFile(
+            artifactBasePath + "/reflections.json",
+            reflectionsJson));
+        appendArtifactLogoIfPresent(files, request.logoBase64(), request.logoFileName(), artifactBasePath);
+
         ContributionSubmitRequest submitRequest = new ContributionSubmitRequest(
                 user.getUsername(),
                 branch,
@@ -907,9 +934,7 @@ public class ContributionController {
                 request.prTitle().trim(),
                 prBody,
                 new ContributionTarget(OFFICIAL_OWNER, OFFICIAL_REPOSITORY, OFFICIAL_STAGING_BRANCH),
-                List.of(new ContributionFile(
-                        "reflections/" + existing.groupId() + "/" + existing.artifactId() + "/" + nextVersion + "/reflections.json",
-                        reflectionsJson)));
+            files);
 
         ContributionSubmitResult result;
         try {
@@ -993,6 +1018,12 @@ public class ContributionController {
                 : request.commitMessage().trim();
         String prBody = request.prBody() == null ? "" : request.prBody().trim();
 
+        List<ContributionFile> files = new ArrayList<>();
+        files.add(new ContributionFile(
+            "oauth-templates/" + clientName + ".json",
+            templateJson));
+        appendNamedLogoIfPresent(files, request.logoBase64(), request.logoFileName(), "oauth-templates/" + clientName);
+
         ContributionSubmitRequest submitRequest = new ContributionSubmitRequest(
                 user.getUsername(),
                 branch,
@@ -1000,9 +1031,7 @@ public class ContributionController {
                 request.prTitle().trim(),
                 prBody,
                 new ContributionTarget(OFFICIAL_OWNER, OFFICIAL_REPOSITORY, OFFICIAL_STAGING_BRANCH),
-                List.of(new ContributionFile(
-                        "oauth-templates/" + clientName + ".json",
-                        templateJson)));
+            files);
 
         ContributionSubmitResult result;
         try {
@@ -1560,6 +1589,10 @@ public class ContributionController {
                 || artifactId == null || artifactId.isBlank()) {
             return artifactKind + " is missing contribution identity metadata (groupId/artifactId).";
         }
+        String logoValidationError = validateOptionalLogoPayload(request.logoBase64(), request.logoFileName());
+        if (logoValidationError != null) {
+            return logoValidationError;
+        }
         return null;
     }
 
@@ -1577,6 +1610,66 @@ public class ContributionController {
         if (existing == null || existing.clientName() == null || existing.clientName().isBlank()) {
             return "OAuth template is missing clientName.";
         }
+        String logoValidationError = validateOptionalLogoPayload(request.logoBase64(), request.logoFileName());
+        if (logoValidationError != null) {
+            return logoValidationError;
+        }
+        return null;
+    }
+
+    private static String validateOptionalLogoPayload(String logoBase64, String logoFileName) {
+        boolean hasLogoContent = logoBase64 != null && !logoBase64.isBlank();
+        boolean hasLogoFileName = logoFileName != null && !logoFileName.isBlank();
+        if (hasLogoContent != hasLogoFileName) {
+            return "logoBase64 and logoFileName must be provided together.";
+        }
+        if (!hasLogoContent) {
+            return null;
+        }
+        String ext = normalizeLogoExtension(logoFileName);
+        if (ext == null) {
+            return "logoFileName must end with one of: .svg, .png, .jpg, .jpeg, .gif, .webp";
+        }
+        try {
+            Base64.getDecoder().decode(logoBase64.trim());
+        } catch (IllegalArgumentException ex) {
+            return "logoBase64 must be valid base64-encoded image content.";
+        }
+        return null;
+    }
+
+    private static void appendArtifactLogoIfPresent(List<ContributionFile> files,
+                                                    String logoBase64,
+                                                    String logoFileName,
+                                                    String artifactBasePath) {
+        appendNamedLogoIfPresent(files, logoBase64, logoFileName, artifactBasePath + "/logo");
+    }
+
+    private static void appendNamedLogoIfPresent(List<ContributionFile> files,
+                                                 String logoBase64,
+                                                 String logoFileName,
+                                                 String pathWithoutExtension) {
+        if (logoBase64 == null || logoBase64.isBlank()) {
+            return;
+        }
+        String ext = normalizeLogoExtension(logoFileName);
+        if (ext == null) {
+            throw new IllegalArgumentException("Unsupported logo extension.");
+        }
+        files.add(ContributionFile.base64(pathWithoutExtension + "." + ext, logoBase64.trim()));
+    }
+
+    private static String normalizeLogoExtension(String logoFileName) {
+        if (logoFileName == null || logoFileName.isBlank()) {
+            return null;
+        }
+        String lower = logoFileName.trim().toLowerCase();
+        if (lower.endsWith(".svg")) return "svg";
+        if (lower.endsWith(".png")) return "png";
+        if (lower.endsWith(".jpg")) return "jpg";
+        if (lower.endsWith(".jpeg")) return "jpeg";
+        if (lower.endsWith(".gif")) return "gif";
+        if (lower.endsWith(".webp")) return "webp";
         return null;
     }
 
@@ -2517,8 +2610,20 @@ public class ContributionController {
             String changeSummary,
             boolean breakingChange,
             String releaseNotes,
-            String reviewerHints
+            String reviewerHints,
+            String logoBase64,
+            String logoFileName
     ) {
+        public PublishRequest(String version,
+                              String commitMessage,
+                              String prTitle,
+                              String prBody,
+                              String changeSummary,
+                              boolean breakingChange,
+                              String releaseNotes,
+                              String reviewerHints) {
+            this(version, commitMessage, prTitle, prBody, changeSummary, breakingChange, releaseNotes, reviewerHints, null, null);
+        }
     }
 
             public record PublishDraftRequest(String context) {
@@ -2543,8 +2648,18 @@ public class ContributionController {
                 String prBody,
                 String changeSummary,
                 String releaseNotes,
-                String reviewerHints
+                String reviewerHints,
+                String logoBase64,
+                String logoFileName
             ) {
+                public PublishMetadataRequest(String commitMessage,
+                                              String prTitle,
+                                              String prBody,
+                                              String changeSummary,
+                                              String releaseNotes,
+                                              String reviewerHints) {
+                    this(commitMessage, prTitle, prBody, changeSummary, releaseNotes, reviewerHints, null, null);
+                }
             }
 
             public record PublishMetadataDraft(
