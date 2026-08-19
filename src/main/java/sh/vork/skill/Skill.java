@@ -13,7 +13,7 @@ import java.util.List;
  *
  * <p>When executed, a skill runs in its own {@link sh.vork.ai.entity.AiSession}
  * with {@code originMode=SKILL} so that authorization/input requests surface
- * through the normal pending-sessions flow and the session is fully resumable.
+ * through the normal attention flow and the session is fully resumable.
  *
  * @param uuid           unique MongoDB _id
  * @param name           human-readable name

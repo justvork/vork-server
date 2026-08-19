@@ -108,7 +108,7 @@ class TelegramChatResumptionServiceTest {
         UserService userService = mock(UserService.class);
 
         when(userService.getRequiredEnabledUser("alice"))
-                .thenReturn(new VorkUser("alice", "hash", "USER", true, 0L, 0L));
+                .thenReturn(new VorkUser("alice", "Alice", "hash", "USER", true, 0L, 0L));
         when(aiService.generateWithHistory(anyList(), anyString(), any()))
                 .thenReturn("{\"status\":\"FINISHED_TURN\",\"textResponse\":\"done\"}");
 

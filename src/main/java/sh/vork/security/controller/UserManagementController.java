@@ -39,10 +39,12 @@ public class UserManagementController {
     public ResponseEntity<?> createUser(@RequestBody CreateUserRequest request) {
         log.debug("ENTER createUser: username={}, role={}", request.username(), request.role());
         try {
-            VorkUser created = userManagementService.createUser(request.username(), request.password(), request.role());
+            VorkUser created = userManagementService.createUser(
+                    request.username(), request.displayName(), request.password(), request.role());
             return ResponseEntity.ok(Map.of(
                     "status", "ok",
                     "username", created.uuid(),
+                    "displayName", created.displayName(),
                     "role", created.role(),
                     "enabled", created.isEnabled()));
         } catch (IllegalArgumentException ex) {
@@ -111,7 +113,7 @@ public class UserManagementController {
         }
     }
 
-    record CreateUserRequest(String username, String password, String role) {}
+    record CreateUserRequest(String username, String displayName, String password, String role) {}
     record UpdateRoleRequest(String role) {}
     record SetEnabledRequest(boolean enabled) {}
     record ResetPasswordRequest(String newPassword) {}

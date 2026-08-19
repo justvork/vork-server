@@ -37,7 +37,7 @@ class SecureCredentialStoreTest {
 
     @Test
     void savesAndGetsSecretForUserAndName() {
-        VorkUser user = new VorkUser("alice", "hash", "USER", true, 0L, 0L);
+        VorkUser user = new VorkUser("alice", "Alice", "hash", "USER", true, 0L, 0L);
 
         store.saveSecret(user, "apiKey", "secret-123");
 
@@ -46,15 +46,15 @@ class SecureCredentialStoreTest {
 
     @Test
     void returnsNullWhenSecretDoesNotExist() {
-        VorkUser user = new VorkUser("alice", "hash", "USER", true, 0L, 0L);
+        VorkUser user = new VorkUser("alice", "Alice", "hash", "USER", true, 0L, 0L);
 
         assertNull(store.getSecret(user, "missing"));
     }
 
     @Test
     void scopesSecretsByUserAndName() {
-        VorkUser alice = new VorkUser("alice", "hash", "USER", true, 0L, 0L);
-        VorkUser bob = new VorkUser("bob", "hash", "USER", true, 0L, 0L);
+        VorkUser alice = new VorkUser("alice", "Alice", "hash", "USER", true, 0L, 0L);
+        VorkUser bob = new VorkUser("bob", "Bob", "hash", "USER", true, 0L, 0L);
 
         store.saveSecret(alice, "token", "alice-token");
         store.saveSecret(bob, "token", "bob-token");

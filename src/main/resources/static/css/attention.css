@@ -1,4 +1,4 @@
-/* ── Pending Sessions page styles ────────────────────────────────────────── */
+/* Attention page styles */
 
 .pending-table {
     font-size: 0.875rem;
@@ -45,8 +45,6 @@
     font-size: 0.8rem;
     color: var(--vork-muted);
 }
-
-/* ── Input modal ─────────────────────────────────────────────────────────── */
 
 .modal-reasoning {
     background: rgba(255, 255, 255, 0.04);

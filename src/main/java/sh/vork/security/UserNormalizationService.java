@@ -37,6 +37,7 @@ public class UserNormalizationService {
                 if (roleChanged || enabledChanged) {
                     updates.add(new VorkUser(
                             user.uuid(),
+                            user.displayName(),
                             user.passwordHash(),
                             normalizedRole.name(),
                             normalizedEnabled,

@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -58,6 +59,7 @@ import sh.vork.ai.function.Base64EncodeStringRequest;
 import sh.vork.ai.function.CheckProcessRequest;
 import sh.vork.ai.function.CompileTypeRequest;
 import sh.vork.ai.function.CountTypeInstancesRequest;
+import sh.vork.ai.function.CreateAttentionAlertToolRequest;
 import sh.vork.ai.function.CreateFolderRequest;
 import sh.vork.ai.function.CreateMongoDbConnectionRequest;
 import sh.vork.ai.function.CreatePdfRequest;
@@ -138,6 +140,12 @@ import sh.vork.ai.security.SecuredToolCallback;
 import sh.vork.ai.security.VisualizableToolCallback;
 import sh.vork.ai.service.AgentAssignmentService;
 import sh.vork.ai.skill.SkillAuthoringService;
+import sh.vork.attention.AttentionAlert;
+import sh.vork.attention.AttentionAlertService;
+import sh.vork.attention.AttentionResolutionPolicy;
+import sh.vork.attention.AttentionSourceType;
+import sh.vork.channel.ChannelRef;
+import sh.vork.channel.ChannelService;
 import sh.vork.ai.tool.CheckProcessTool;
 import sh.vork.ai.tool.CompleteBackgroundTaskRequest;
 import sh.vork.ai.tool.CompleteSkillExecutionRequest;
@@ -3020,6 +3028,157 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
             return "{\"type\":\"array\",\"items\":" + itemSchema + "}";
         }
         return buildSchema(type);
+    }
+
+    @Bean
+    @ToolCategory("Attention")
+    public ToolCallback createAttentionAlert(AttentionAlertService attentionAlertService,
+                                             ChannelService channelService) {
+        return FunctionToolCallback
+                .builder("createAttentionAlert", (CreateAttentionAlertToolRequest req) -> {
+                    if (req == null) {
+                        return "{\"status\":\"error\",\"message\":\"request is required\"}";
+                    }
+
+                    LinkedHashSet<String> resolvedChannels = new LinkedHashSet<>();
+
+                    if (req.selectedChannelName() != null && !req.selectedChannelName().isBlank()) {
+                        channelService.resolveByChannelName(req.selectedChannelName())
+                                .ifPresent(ref -> resolvedChannels.add(ref.channelName()));
+                        if (resolvedChannels.isEmpty()) {
+                            return "{\"status\":\"error\",\"message\":\"Selected channel not found: "
+                                    + req.selectedChannelName().replace("\"", "'") + "\"}";
+                        }
+                    }
+
+                    List<String> requestedChannels = req.channelNames() == null ? List.of() : req.channelNames();
+                    if (resolvedChannels.isEmpty() && requestedChannels.isEmpty()) {
+                        String username = resolveUsername();
+                        if (username == null || username.isBlank()) {
+                            return "{\"status\":\"error\",\"message\":\"channelNames is required when no authenticated user exists\"}";
+                        }
+                        resolvedChannels.add(username);
+                    }
+
+                    for (String requested : requestedChannels) {
+                        if (requested == null || requested.isBlank()) {
+                            continue;
+                        }
+
+                        var exact = channelService.resolveByChannelName(requested);
+                        if (exact.isPresent()) {
+                            resolvedChannels.add(exact.get().channelName());
+                            continue;
+                        }
+
+                        List<ChannelRef> candidates = channelService.search(requested, 8);
+                        if (candidates.isEmpty()) {
+                            return "{\"status\":\"error\",\"message\":\"Unknown channel: "
+                                    + requested.replace("\"", "'") + "\"}";
+                        }
+                        if (candidates.size() > 1) {
+                            throw new ToolSuspensionException(
+                                    "createAttentionAlert",
+                                    safeJson(req),
+                                    "Multiple channels matched '" + requested + "'. Please choose one.",
+                                    buildAttentionChannelSelectionForm(requested, candidates));
+                        }
+                        resolvedChannels.add(candidates.getFirst().channelName());
+                    }
+
+                    AttentionResolutionPolicy policy;
+                    try {
+                        policy = parseResolutionPolicy(req.resolutionPolicy(), req.actionUrl());
+                    } catch (IllegalArgumentException ex) {
+                        String provided = req.resolutionPolicy() == null ? "null"
+                                : req.resolutionPolicy().replace("\"", "'");
+                        return "{\"status\":\"error\",\"message\":\"Invalid resolutionPolicy: "
+                                + provided
+                            + ". Valid values: ACTION_REQUIRED, DISMISSABLE. Do not use FIRST_ACK or ALL_ACK.\"}";
+                    }
+
+                    if (policy == AttentionResolutionPolicy.ACTION_REQUIRED
+                            && (req.actionUrl() == null || req.actionUrl().isBlank())) {
+                        return "{\"status\":\"error\",\"message\":\"actionUrl is required when resolutionPolicy is ACTION_REQUIRED\"}";
+                    }
+
+                    AttentionSourceType sourceType;
+                    try {
+                        sourceType = req.sourceType() == null || req.sourceType().isBlank()
+                                ? AttentionSourceType.CUSTOM
+                                : AttentionSourceType.valueOf(req.sourceType().trim().toUpperCase(Locale.ROOT));
+                    } catch (IllegalArgumentException ex) {
+                        return "{\"status\":\"error\",\"message\":\"Invalid sourceType: "
+                                + req.sourceType().replace("\"", "'") + "\"}";
+                    }
+
+                    AttentionAlert created = attentionAlertService.create(
+                            new AttentionAlertService.CreateAttentionAlertCommand(
+                                    List.copyOf(resolvedChannels),
+                                    req.alertName(),
+                                    req.description(),
+                                    policy,
+                                    req.actionUrl(),
+                                    req.attentionAt() == null ? 0L : req.attentionAt(),
+                                    sourceType,
+                                    req.sourceId()));
+
+                        try {
+                        return objectMapper.writeValueAsString(Map.of(
+                            "status", "ok",
+                            "alertUuid", created.uuid(),
+                            "channels", created.channelNames(),
+                            "policy", created.resolutionPolicy().name(),
+                            "sourceType", created.sourceType().name()));
+                        } catch (Exception ex) {
+                        return "{\"status\":\"error\",\"message\":\""
+                            + ex.getMessage().replace("\"", "'") + "\"}";
+                        }
+                })
+                .description("Create an attention alert for one or more channels. Channel names are globally unique and case-insensitive."
+                    + " Resolution policy must be ACTION_REQUIRED or DISMISSABLE."
+                    + " Prefer DISMISSABLE when there is no actionUrl, and use ACTION_REQUIRED when actionUrl is present."
+                    + " Never use FIRST_ACK or ALL_ACK."
+                    + " If a channel query is ambiguous, this tool suspends and asks the user to choose the intended channel.")
+                .inputType(CreateAttentionAlertToolRequest.class)
+                .build();
+    }
+
+    private static AttentionResolutionPolicy parseResolutionPolicy(String rawPolicy, String actionUrl) {
+        if (rawPolicy == null || rawPolicy.isBlank()) {
+            return actionUrl == null || actionUrl.isBlank()
+                    ? AttentionResolutionPolicy.DISMISSABLE
+                    : AttentionResolutionPolicy.ACTION_REQUIRED;
+        }
+
+        return AttentionResolutionPolicy.valueOf(rawPolicy.trim().toUpperCase(Locale.ROOT));
+    }
+
+    private static InteractionFormSchema buildAttentionChannelSelectionForm(String query,
+                                                                             List<ChannelRef> candidates) {
+        List<FormAction> actions = List.of(new FormAction("ONCE", "Create Alert", "primary"));
+        List<String> options = new ArrayList<>();
+        for (ChannelRef candidate : candidates) {
+            options.add(candidate.channelName());
+        }
+
+        List<FormField> fields = List.of(
+                new FormField(
+                        "selectedChannelName",
+                        "SELECT",
+                        "Channel",
+                        "",
+                        "Multiple channels matched '" + query + "'. Select the target channel.",
+                        true,
+                        FieldSource.CONVERSATION,
+                        options));
+
+        return new InteractionFormSchema(
+                "ATTENTION_CHANNEL_SELECTION",
+                "Select Channel",
+                "Choose exactly one channel for this alert.",
+                fields,
+                actions);
     }
 
     // ── Notifications ─────────────────────────────────────────────────────────

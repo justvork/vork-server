@@ -6,6 +6,7 @@
 
     var REFRESH_INTERVAL_MS = 10000;
     var refreshHandle = null;
+    var initialized = false;
 
     function updateNeedsAttentionBadge() {
         var link = document.getElementById('needs-attention-link');
@@ -14,15 +15,15 @@
             return;
         }
 
-        fetch('/api/chat/sessions/pending-input')
+        fetch('/api/attention/count')
             .then(function (r) {
                 if (!r.ok) {
                     throw new Error('HTTP ' + r.status);
                 }
                 return r.json();
             })
-            .then(function (items) {
-                var count = Array.isArray(items) ? items.length : 0;
+            .then(function (payload) {
+                var count = Number(payload && payload.count ? payload.count : 0);
                 if (count <= 0) {
                     badge.classList.add('hidden');
                     badge.textContent = '0';
@@ -39,7 +40,12 @@
             });
     }
 
-    document.addEventListener('DOMContentLoaded', function () {
+    function initNeedsAttentionBadge() {
+        if (initialized) {
+            return;
+        }
+        initialized = true;
+
         updateNeedsAttentionBadge();
 
         if (refreshHandle !== null) {
@@ -58,5 +64,11 @@
                 refreshHandle = null;
             }
         }, { once: true });
-    });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initNeedsAttentionBadge, { once: true });
+    } else {
+        initNeedsAttentionBadge();
+    }
 }());

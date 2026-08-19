@@ -415,9 +415,9 @@ body.sidebar-collapsed .sidebar-tab-btn {
     max-width: 14rem;
 }
 
-/* ── Pending-sessions alert bar ──────────────────────────────────────────── */
+/* ── Attention alert banner ──────────────────────────────────────────────── */
 
-.pending-sessions-alert {
+.attention-alert-banner {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -429,18 +429,18 @@ body.sidebar-collapsed .sidebar-tab-btn {
     color: #ffc107;
 }
 
-.pending-sessions-alert .pending-alert-link {
+.attention-alert-banner .pending-alert-link {
     color: #ffd54f;
     font-weight: 600;
     text-decoration: underline;
     text-decoration-color: rgba(255, 213, 79, 0.5);
 }
 
-.pending-sessions-alert .pending-alert-link:hover {
+.attention-alert-banner .pending-alert-link:hover {
     color: #fff;
 }
 
-.pending-sessions-alert .btn-close-sm {
+.attention-alert-banner .btn-close-sm {
     width: 0.65em;
     height: 0.65em;
 }

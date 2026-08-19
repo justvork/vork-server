@@ -107,8 +107,8 @@
     <!-- Header -->
     <div th:replace="~{fragments/header :: header}"></div>
 
-    <!-- Pending-input alert (shown by chat.js when off-channel sessions need input) -->
-    <div id="pending-sessions-alert" class="hidden pending-sessions-alert" role="alert"></div>
+    <!-- Attention alert (shown by chat.js when due alerts exist) -->
+    <div id="attention-alert-banner" class="hidden attention-alert-banner" role="alert"></div>
 
     <!-- Messages -->
     <main id="messages-area" class="chat-messages">

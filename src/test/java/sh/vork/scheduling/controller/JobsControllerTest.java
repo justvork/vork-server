@@ -33,8 +33,8 @@ class JobsControllerTest {
     private static UserManagementService userManagementService() {
         UserManagementService userManagementService = mock(UserManagementService.class);
         when(userManagementService.listUsers()).thenReturn(List.of(
-                new UserManagementService.UserSummary("alice", "ADMIN", true, 0L, 0L),
-                new UserManagementService.UserSummary("bob", "USER", true, 0L, 0L)
+                new UserManagementService.UserSummary("alice", "Alice", "ADMIN", true, 0L, 0L),
+                new UserManagementService.UserSummary("bob", "Bob", "USER", true, 0L, 0L)
         ));
         return userManagementService;
     }

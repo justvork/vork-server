@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <title>Needs Attention — Vork</title>
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="/css/attention.css" th:href="@{/css/attention.css}">
+</head>
+<body class="bg-zinc-950 text-zinc-100">
+<div th:replace="~{fragments/header :: header}"></div>
+
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
+        <div>
+            <h2 class="flex items-center gap-2 text-2xl font-bold text-zinc-100">
+                <i class="fa-solid fa-circle-exclamation text-[#fdaa02]"></i>Needs Attention
+            </h2>
+            <p class="vork-page-subtitle">Action-required and dismissable alerts</p>
+        </div>
+        <div class="vork-page-header-actions">
+            <button class="rounded-lg border border-zinc-600 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800" onclick="window.location.reload()">
+                <i class="fa-solid fa-rotate-right mr-1"></i>Refresh
+            </button>
+        </div>
+    </div>
+
+    <div id="attention-loading" class="rounded-xl border border-zinc-800 bg-zinc-900">
+        <div class="vork-empty-state-card">
+            <div class="h-6 w-6 animate-spin rounded-full border-2 border-zinc-600 border-t-zinc-300" role="status" aria-label="Loading"></div>
+            <p class="vork-empty-hint mt-2">Checking attention alerts…</p>
+        </div>
+    </div>
+
+    <div id="attention-empty" class="hidden rounded-xl border border-zinc-800 bg-zinc-900">
+        <div class="vork-empty-state-card">
+            <i class="fa-solid fa-circle-check vork-empty-icon text-emerald-400"></i>
+            <p class="vork-empty-title">All clear</p>
+            <p class="vork-empty-hint">No alerts need attention right now.</p>
+        </div>
+    </div>
+
+    <div id="attention-table-wrap" class="hidden">
+        <div class="rounded-xl border border-zinc-800 bg-zinc-900">
+            <div class="overflow-x-auto">
+                <table class="min-w-full pending-table text-left text-sm text-zinc-200">
+                    <thead>
+                    <tr>
+                        <th class="px-3 py-2">Name</th>
+                        <th class="px-3 py-2">Description</th>
+                        <th class="px-3 py-2">Policy</th>
+                        <th class="px-3 py-2">Attention Time</th>
+                        <th class="px-3 py-2"></th>
+                    </tr>
+                    </thead>
+                    <tbody id="attention-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="remind-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 p-4">
+    <div class="w-full max-w-md rounded-xl border border-zinc-700 bg-zinc-900 p-4 shadow-2xl">
+        <div class="mb-3 flex items-center justify-between">
+            <h3 class="text-lg font-semibold text-zinc-100">Remind Me Later</h3>
+            <button id="remind-modal-close" type="button" class="rounded-md border border-zinc-600 px-2 py-1 text-zinc-200 hover:bg-zinc-800">×</button>
+        </div>
+        <p class="mb-3 text-sm text-zinc-400">Choose when this alert should return.</p>
+
+        <div class="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <button type="button" data-remind-preset="TOMORROW" class="rounded-lg border border-zinc-600 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-800">Tomorrow</button>
+            <button type="button" data-remind-preset="IN_7_DAYS" class="rounded-lg border border-zinc-600 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-800">In 7 Days</button>
+            <button type="button" data-remind-preset="IN_30_DAYS" class="rounded-lg border border-zinc-600 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-800">In 30 Days</button>
+        </div>
+
+        <label for="remind-custom-datetime" class="mb-1 block text-xs font-medium uppercase tracking-wide text-zinc-400">Custom Date & Time</label>
+        <input id="remind-custom-datetime" type="datetime-local" class="mb-3 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/30">
+        <p id="remind-modal-error" class="mb-3 hidden text-xs text-rose-300"></p>
+
+        <div class="flex items-center justify-end gap-2">
+            <button id="remind-modal-cancel" type="button" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-800">Cancel</button>
+            <button id="remind-modal-submit" type="button" class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-xs font-semibold text-black hover:bg-[#e89a02]">Set Reminder</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/attention.js" th:src="@{/js/attention.js}"></script>
+</body>
+</html>

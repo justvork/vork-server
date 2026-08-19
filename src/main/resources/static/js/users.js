@@ -40,6 +40,7 @@
                     method: "POST",
                     body: JSON.stringify({
                         username: formData.get("username"),
+                        displayName: formData.get("displayName"),
                         password: formData.get("password"),
                         role: formData.get("role"),
                     }),

@@ -8,6 +8,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import sh.vork.channel.ChannelService;
+import sh.vork.channel.UserChannelProvider;
+import java.util.List;
 
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.mock.MapDatabaseRepository;
@@ -22,17 +25,19 @@ class UserManagementServiceTest {
     void setUp() {
         userRepository = new MapDatabaseRepository<>(VorkUser.class);
         passwordEncoder = new BCryptPasswordEncoder();
-        userManagementService = new UserManagementService(userRepository, passwordEncoder);
+        ChannelService channelService = new ChannelService(List.of(new UserChannelProvider(userRepository)));
+        userManagementService = new UserManagementService(userRepository, passwordEncoder, channelService);
 
         long now = System.currentTimeMillis();
-        userRepository.save(new VorkUser("admin", passwordEncoder.encode("supersecret"), "ADMIN", true, now, now));
+        userRepository.save(new VorkUser("admin", "Admin", passwordEncoder.encode("supersecret"), "ADMIN", true, now, now));
     }
 
     @Test
     void createUserPersistsEncodedPasswordAndRole() {
-        VorkUser created = userManagementService.createUser("alice", "password123", "USER");
+        VorkUser created = userManagementService.createUser("alice", "Alice", "password123", "USER");
 
         assertEquals("alice", created.uuid());
+        assertEquals("Alice", created.displayName());
         assertEquals("USER", created.role());
         assertTrue(created.isEnabled());
         assertTrue(passwordEncoder.matches("password123", created.passwordHash()));
@@ -54,7 +59,7 @@ class UserManagementServiceTest {
 
     @Test
     void canDemoteAdminWhenAnotherAdminExists() {
-        userManagementService.createUser("backup", "password123", "ADMIN");
+        userManagementService.createUser("backup", "Backup", "password123", "ADMIN");
 
         VorkUser updated = userManagementService.updateRole("admin", "USER");
 

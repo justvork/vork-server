@@ -1,3 +1,4 @@
+<th:block th:fragment="header">
 <header class="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 px-4 py-2">
     <div class="flex items-center gap-2">
         <a href="/" th:href="@{/}" class="flex items-center gap-2 no-underline group">
@@ -44,12 +45,12 @@
            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800">
             <i class="fa-solid fa-clock-rotate-left"></i>
         </a>
-        <a th:if="${!navAdminView}" href="/pending-sessions" th:href="@{/pending-sessions}" title="Needs Attention"
+        <a href="/attention" th:href="@{/attention}" title="Needs Attention"
            id="needs-attention-link"
            class="relative inline-flex h-8 items-center justify-center gap-1 rounded-lg border border-zinc-700 px-2.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800">
             <i class="fa-solid fa-circle-exclamation"></i>
             <span class="hidden sm:inline">Needs Attention</span>
-            <span id="needs-attention-badge" class="hidden absolute -top-1.5 -right-1.5 min-w-[1.1rem] rounded-full bg-[#fdaa02] px-1 text-[10px] font-bold text-black text-center leading-4">0</span>
+            <span id="needs-attention-badge" class="hidden pointer-events-none absolute right-0 top-0 z-20 min-w-[1.1rem] -translate-y-1/2 translate-x-1/2 rounded-full bg-[#fdaa02] px-1 text-center text-[10px] font-bold leading-4 text-black">0</span>
         </a>
         <a th:if="${canManageUsers and navAdminView}" href="/settings" th:href="@{/settings}" title="Settings"
            id="settings-btn"
@@ -77,3 +78,4 @@
     </nav>
 </header>
 <script src="/js/header-nav.js" th:src="@{/js/header-nav.js}"></script>
+</th:block>

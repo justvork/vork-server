@@ -2744,31 +2744,31 @@ const welcomeSignal = (function () {
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
-// ── Pending sessions alert ────────────────────────────────────────────────────
+// ── Attention alert banner ───────────────────────────────────────────────────
 
 /**
- * Checks whether there are any off-channel sessions (Telegram / Background)
- * currently awaiting user input.  If so, shows a non-intrusive amber alert bar
- * above the message feed with a link to /pending-sessions.
+ * Checks whether there are any due alerts in the global attention feed.
+ * If so, shows a non-intrusive amber alert bar above the message feed
+ * with a link to /attention.
  *
  * Called once per session initialisation so the user is notified at login time.
  */
 function checkPendingSessions() {
-    fetch('/api/chat/sessions/pending-input')
+    fetch('/api/attention/count')
         .then(function (r) { return r.ok ? r.json() : Promise.reject('HTTP ' + r.status); })
-        .then(function (sessions) {
-            var alertEl = document.getElementById('pending-sessions-alert');
+        .then(function (payload) {
+            var alertEl = document.getElementById('attention-alert-banner');
             if (!alertEl) return;
-            if (!sessions || sessions.length === 0) {
+            var count = Number(payload && payload.count ? payload.count : 0);
+            if (!Number.isFinite(count) || count <= 0) {
                 alertEl.classList.add('hidden');
                 return;
             }
-            var count = sessions.length;
-            var label = count === 1 ? '1 session is' : count + ' sessions are';
+            var label = count === 1 ? '1 alert is' : count + ' alerts are';
             alertEl.innerHTML =
                 '<i class="fa-solid fa-circle-exclamation mr-2"></i>'
                 + '<strong>' + label + ' needs attention.</strong> '
-                + '<a href="/pending-sessions" class="pending-alert-link">Review now</a>'
+                + '<a href="/attention" class="pending-alert-link">Review now</a>'
                 + '<button type="button" class="pending-alert-close ml-auto inline-flex h-6 w-6 items-center justify-center rounded-md border border-zinc-600 text-zinc-200 transition-colors hover:bg-zinc-800" aria-label="Dismiss">×</button>';
             alertEl.classList.remove('hidden');
 

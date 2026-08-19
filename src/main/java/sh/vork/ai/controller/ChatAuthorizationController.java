@@ -58,6 +58,7 @@ import sh.vork.ai.security.AuthorizationRuleEngine;
 import sh.vork.ai.security.VisualizableTool;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
+import sh.vork.attention.AttentionSignalService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.scheduling.service.AiSchedulerService;
 import sh.vork.scheduling.service.SystemBackgroundAuthentication;
@@ -90,6 +91,9 @@ public class ChatAuthorizationController {
     private final SecureCredentialStore secureCredentialStore;
     private final SessionEnvironmentService sessionEnvironmentService;
     private final UserService userService;
+
+    @Autowired(required = false)
+    private AttentionSignalService attentionSignalService;
 
     @Autowired
     public ChatAuthorizationController(DatabaseRepository<AiSession> sessionRepo,
@@ -285,6 +289,7 @@ public class ChatAuthorizationController {
                         session.skillStack(),
                         session.sessionSkillUuids(),
                         session.sessionToolIds()));
+                    resolveSessionSuspensionAlert(sessionUuid);
             }
 
             if (originMode == SessionOriginMode.BACKGROUND) {
@@ -304,6 +309,7 @@ public class ChatAuthorizationController {
                     session.skillStack(),
                     session.sessionSkillUuids(),
                     session.sessionToolIds()));
+                resolveSessionSuspensionAlert(sessionUuid);
 
                 aiBackgroundExecutor.execute(() -> {
                     ToolExecutionContext.bindSessionUuid(sessionUuid);
@@ -470,6 +476,7 @@ public class ChatAuthorizationController {
                     session.skillStack(),
                     session.sessionSkillUuids(),
                     session.sessionToolIds()));
+                publishSessionSuspensionAlert(sessionUuid, session.username(), ex.getToolName(), justification);
 
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, suspendedPromptEvent);
                 log.info("Resumed call suspended again [tool={}, session={}]", ex.getToolName(), sessionUuid);
@@ -519,6 +526,7 @@ public class ChatAuthorizationController {
                     session.skillStack(),
                     session.sessionSkillUuids(),
                     session.sessionToolIds()));
+                resolveSessionSuspensionAlert(sessionUuid);
 
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, errorEvent);
                 ToolExecutionContext.remove(GENERATED_ATTACHMENTS_CONTEXT_KEY);
@@ -584,6 +592,7 @@ public class ChatAuthorizationController {
                     currentStack,
                     session.sessionSkillUuids(),
                     session.sessionToolIds()));
+                    resolveSessionSuspensionAlert(sessionUuid);
 
             if (chatService != null) {
                 chatService.maybeGenerateSessionName(session.uuid());
@@ -1340,6 +1349,7 @@ public class ChatAuthorizationController {
             session.skillStack(),
             session.sessionSkillUuids(),
             session.sessionToolIds()));
+        publishSessionSuspensionAlert(sessionUuid, session.username(), ex.getToolName(), justification);
 
         messaging.convertAndSend("/topic/chat/" + sessionUuid, suspendedPromptEvent);
         log.info("Tool execution suspended for additional input [tool={}, session={}]",
@@ -1406,6 +1416,23 @@ public class ChatAuthorizationController {
             case "ONCE", "ALLOW_ONCE", "SESSION", "ALLOW_SESSION", "ALWAYS", "ALLOW_ALWAYS", "SAVE", "CONTINUE", "SUBMIT" -> true;
             default -> false;
         };
+    }
+
+    private void publishSessionSuspensionAlert(String sessionUuid,
+                                               String username,
+                                               String toolName,
+                                               String reason) {
+        if (attentionSignalService == null) {
+            return;
+        }
+        attentionSignalService.onSessionSuspended(sessionUuid, username, toolName, reason);
+    }
+
+    private void resolveSessionSuspensionAlert(String sessionUuid) {
+        if (attentionSignalService == null) {
+            return;
+        }
+        attentionSignalService.onSessionResumed(sessionUuid);
     }
 
     private String extractDirectApprovedMcpText(String action,

@@ -28,11 +28,15 @@
         <div class="border-b border-zinc-800 px-4 py-3 text-sm font-semibold text-zinc-100">Create User</div>
         <div class="p-4">
             <form id="create-user-form" class="grid grid-cols-1 gap-3 md:grid-cols-12">
-                <div class="md:col-span-4">
+                <div class="md:col-span-3">
                     <label for="new-username" class="mb-1.5 block text-sm font-medium text-zinc-300">Username</label>
                     <input id="new-username" name="username" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" required>
                 </div>
-                <div class="md:col-span-4">
+                <div class="md:col-span-3">
+                    <label for="new-display-name" class="mb-1.5 block text-sm font-medium text-zinc-300">Display Name</label>
+                    <input id="new-display-name" name="displayName" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. Bob Smith">
+                </div>
+                <div class="md:col-span-3">
                     <label for="new-password" class="mb-1.5 block text-sm font-medium text-zinc-300">Password</label>
                     <input id="new-password" name="password" type="password" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" minlength="8" required>
                 </div>
@@ -56,6 +60,7 @@
                     <thead>
                     <tr class="border-b border-zinc-800 text-xs uppercase tracking-wide text-zinc-400">
                         <th class="px-3 py-2">Username</th>
+                        <th class="px-3 py-2">Display Name</th>
                         <th class="px-3 py-2">Role</th>
                         <th class="px-3 py-2">Status</th>
                         <th class="px-3 py-2">Actions</th>
@@ -64,6 +69,7 @@
                     <tbody id="users-table-body">
                     <tr th:each="user : ${users}" th:attr="data-username=${user.username}" class="border-b border-zinc-800/80 last:border-0">
                         <td class="px-3 py-2 font-medium" th:text="${user.username}"></td>
+                        <td class="px-3 py-2 text-zinc-300" th:text="${user.displayName}"></td>
                         <td class="px-3 py-2">
                             <select class="user-role-select w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" th:attr="data-username=${user.username}">
                                 <option value="USER" th:selected="${user.role == 'USER'}">USER</option>

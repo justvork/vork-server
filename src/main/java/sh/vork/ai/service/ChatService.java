@@ -63,6 +63,7 @@ import sh.vork.ai.protocol.interaction.FormAction;
 import sh.vork.ai.protocol.interaction.FormField;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
 import sh.vork.ai.telegram.TelegramChatResumptionService;
+import sh.vork.attention.AttentionSignalService;
 import sh.vork.filesystem.FileArea;
 import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.orm.DatabaseRepository;
@@ -122,6 +123,9 @@ public class ChatService {
 
     @Autowired(required = false)
     private DatabaseRepository<Surface> surfaceRepository;
+
+    @Autowired(required = false)
+    private AttentionSignalService attentionSignalService;
 
     @Value("${vork.app.base-url:}")
     private String configuredRelayHost;
@@ -564,6 +568,7 @@ public class ChatService {
                     frozenSession.name(), frozenSession.createdAt(), frozenSession.currentRoundCount(), List.copyOf(updated),
                     frozenSession.environmentVariables(), AiSessionStatus.AWAITING_INPUT, frozenSession.activeAgentTemplateId(),
                     frozenSession.modelId(), frozenSession.skillStack(), frozenSession.sessionSkillUuids(), frozenSession.sessionToolIds()));
+                publishSessionSuspensionAlert(sessionUuid, frozenSession.username(), ex.getToolName(), justification);
 
                 if (provider == AiProvider.BACKGROUND_SCHEDULER) {
                 systemNotificationService.notifyOfflineOperator(ex.getToolName(), ex.getArguments(), sessionUuid, eventId);
@@ -737,6 +742,7 @@ public class ChatService {
                         frozenSession.skillStack(),
                         frozenSession.sessionSkillUuids(),
                         frozenSession.sessionToolIds()));
+                    publishSessionSuspensionAlert(sessionUuid, frozenSession.username(), ex.getToolName(), justification);
 
                 if (provider == AiProvider.BACKGROUND_SCHEDULER) {
                     systemNotificationService.notifyOfflineOperator(ex.getToolName(), ex.getArguments(), sessionUuid, eventId);
@@ -1690,6 +1696,9 @@ public class ChatService {
                 session.username(), session.name(), session.createdAt(), session.currentRoundCount(),
             session.messages(), session.environmentVariables(), nextStatus, agentTemplateId,
                 session.modelId(), session.skillStack(), session.sessionSkillUuids(), session.sessionToolIds()));
+        if (session.status() == AiSessionStatus.AWAITING_INPUT) {
+            resolveSessionSuspensionAlert(sessionUuid);
+        }
         UiEventFrame switchEvent = new UiEventFrame(UUID.randomUUID().toString(),
             "MANUAL_AGENT_SWITCH", "MANUAL_AGENT_SWITCH", agentTemplateId, null);
         messaging.convertAndSend("/topic/chat/" + sessionUuid, switchEvent);
@@ -2535,6 +2544,23 @@ public class ChatService {
             return null;
         }
         return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+    }
+
+    private void publishSessionSuspensionAlert(String sessionUuid,
+                                               String username,
+                                               String toolName,
+                                               String reason) {
+        if (attentionSignalService == null) {
+            return;
+        }
+        attentionSignalService.onSessionSuspended(sessionUuid, username, toolName, reason);
+    }
+
+    private void resolveSessionSuspensionAlert(String sessionUuid) {
+        if (attentionSignalService == null) {
+            return;
+        }
+        attentionSignalService.onSessionResumed(sessionUuid);
     }
 
     private static String resolveUsername() {

@@ -70,7 +70,7 @@ class SettingsUsersPageSecurityTest {
     @Test
     void usersPage_allowedWithUsersManage() throws Exception {
         when(userManagementService.listUsers()).thenReturn(List.of(
-                new UserManagementService.UserSummary("admin", "ADMIN", true, 1L, 1L)));
+            new UserManagementService.UserSummary("admin", "Administrator", "ADMIN", true, 1L, 1L)));
 
         mockMvc.perform(get("/settings/users")
                         .with(user("admin").authorities(() -> "ROLE_ADMIN", () -> "USERS_MANAGE")))

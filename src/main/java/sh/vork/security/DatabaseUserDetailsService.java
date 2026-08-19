@@ -63,6 +63,7 @@ public class DatabaseUserDetailsService implements UserDetailsService {
 
         VorkUser updated = new VorkUser(
             user.uuid(),
+            user.displayName(),
             passwordEncoder.encode(newPassword),
             user.role(),
             user.enabled(),

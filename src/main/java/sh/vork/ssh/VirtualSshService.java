@@ -968,7 +968,7 @@ public class VirtualSshService extends AbstractSshServer {
 			throw new IllegalStateException("No authenticated principal available for credential lookup");
 		}
 		if (userService == null) {
-			return new VorkUser(auth.getName(), "", "USER", true, 0L, 0L);
+			return new VorkUser(auth.getName(), auth.getName(), "", "USER", true, 0L, 0L);
 		}
 		return userService.getRequiredEnabledUser(auth.getName());
 	}

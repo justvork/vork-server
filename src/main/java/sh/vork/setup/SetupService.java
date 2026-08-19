@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import sh.vork.ai.AiProvider;
 import sh.vork.ai.provider.AiProviderConfigService;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.channel.ChannelService;
 
 import sh.vork.security.VorkUser;
 import sh.vork.security.UserRole;
@@ -108,11 +109,16 @@ public class SetupService {
      * @throws IllegalArgumentException if a user with that username already exists
      */
     public void createAdminUser(String username, String password) {
-        if (userRepo.get(username) != null) {
+        String normalized = ChannelService.normalize(username);
+        if (normalized.isBlank()) {
+            throw new IllegalArgumentException("Username is required.");
+        }
+        if (existsUsernameIgnoreCase(normalized)) {
             throw new IllegalArgumentException("Username already taken: " + username);
         }
         long now = System.currentTimeMillis();
         VorkUser admin = new VorkUser(
+                username,
                 username,
                 passwordEncoder.encode(password),
                 UserRole.ADMIN.name(),
@@ -121,5 +127,11 @@ public class SetupService {
                 now);
         userRepo.save(admin);
         log.info("Admin user created during setup: [username={}]", username);
+    }
+
+    private boolean existsUsernameIgnoreCase(String normalizedUsername) {
+        try (var users = userRepo.list(0, Integer.MAX_VALUE)) {
+            return users.anyMatch(user -> ChannelService.normalize(user.uuid()).equals(normalizedUsername));
+        }
     }
 }

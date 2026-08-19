@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import sh.vork.channel.ChannelService;
 import sh.vork.orm.DatabaseRepository;
 
 import java.util.Comparator;
@@ -16,11 +17,14 @@ public class UserManagementService {
 
     private final DatabaseRepository<VorkUser> userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final ChannelService channelService;
 
     public UserManagementService(DatabaseRepository<VorkUser> userRepository,
-                                 PasswordEncoder passwordEncoder) {
+                                 PasswordEncoder passwordEncoder,
+                                 ChannelService channelService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.channelService = channelService;
     }
 
     public List<UserSummary> listUsers() {
@@ -35,23 +39,23 @@ public class UserManagementService {
         }
     }
 
-    public VorkUser createUser(String username, String password, String roleValue) {
+    public VorkUser createUser(String username, String displayName, String password, String roleValue) {
         log.debug("ENTER createUser: username={}, role={}", username, roleValue);
         String trimmed = username == null ? "" : username.trim();
+        String trimmedDisplayName = displayName == null ? "" : displayName.trim();
         if (trimmed.isBlank()) {
             throw new IllegalArgumentException("Username is required.");
         }
         if (password == null || password.length() < 8) {
             throw new IllegalArgumentException("Password must be at least 8 characters.");
         }
-        if (userRepository.get(trimmed) != null) {
-            throw new IllegalArgumentException("Username already exists: " + trimmed);
-        }
+        channelService.assertChannelNameAvailable(trimmed);
 
         UserRole role = UserRole.fromStoredValue(roleValue);
         long now = System.currentTimeMillis();
         VorkUser created = new VorkUser(
                 trimmed,
+                trimmedDisplayName,
                 passwordEncoder.encode(password),
                 role.name(),
             true,
@@ -75,6 +79,7 @@ public class UserManagementService {
 
         VorkUser updated = new VorkUser(
                 existing.uuid(),
+                existing.displayName(),
                 existing.passwordHash(),
                 targetRole.name(),
             existing.isEnabled(),
@@ -97,6 +102,7 @@ public class UserManagementService {
 
         VorkUser updated = new VorkUser(
                 existing.uuid(),
+                existing.displayName(),
                 existing.passwordHash(),
                 existing.role(),
             enabled,
@@ -117,6 +123,7 @@ public class UserManagementService {
         VorkUser existing = requireUser(username);
         VorkUser updated = new VorkUser(
                 existing.uuid(),
+                existing.displayName(),
                 passwordEncoder.encode(newPassword),
                 existing.role(),
             existing.isEnabled(),
@@ -169,6 +176,7 @@ public class UserManagementService {
     private static UserSummary toSummary(VorkUser user) {
         return new UserSummary(
                 user.uuid(),
+                user.displayName(),
                 UserRole.fromStoredValue(user.role()).name(),
                 user.isEnabled(),
                 user.createdAt(),
@@ -176,5 +184,5 @@ public class UserManagementService {
         );
     }
 
-    public record UserSummary(String username, String role, boolean enabled, long createdAt, long updatedAt) {}
+    public record UserSummary(String username, String displayName, String role, boolean enabled, long createdAt, long updatedAt) {}
 }

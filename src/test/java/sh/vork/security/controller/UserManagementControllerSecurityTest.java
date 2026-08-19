@@ -57,13 +57,13 @@ class UserManagementControllerSecurityTest {
     @Test
     @WithMockUser(username = "admin", authorities = {"ROLE_ADMIN", "USERS_MANAGE"})
     void createUser_allowedForUsersManageAuthority() throws Exception {
-        org.mockito.Mockito.when(userManagementService.createUser("bob", "password123", "USER"))
-            .thenReturn(new VorkUser("bob", "hash", "USER", true, 1L, 1L));
+        org.mockito.Mockito.when(userManagementService.createUser("bob", "Bob", "password123", "USER"))
+            .thenReturn(new VorkUser("bob", "Bob", "hash", "USER", true, 1L, 1L));
 
         mockMvc.perform(post("/api/users")
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"bob\",\"password\":\"password123\",\"role\":\"USER\"}"))
+                        .content("{\"username\":\"bob\",\"displayName\":\"Bob\",\"password\":\"password123\",\"role\":\"USER\"}"))
                 .andExpect(status().isOk());
     }
 

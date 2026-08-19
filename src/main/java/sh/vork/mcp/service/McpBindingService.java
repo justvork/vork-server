@@ -4,9 +4,11 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import sh.vork.attention.AttentionSignalService;
 import sh.vork.mcp.client.McpClient;
 import sh.vork.mcp.client.McpClientConfig;
 import sh.vork.mcp.client.McpClientFactory;
@@ -53,6 +55,9 @@ public class McpBindingService {
     private final McpContractHashService contractHashService;
     private final McpContractDiffService contractDiffService;
     private final SecureCredentialStore secureCredentialStore;
+
+    @Autowired(required = false)
+    private AttentionSignalService attentionSignalService;
 
     public McpBindingService(DatabaseRepository<McpBinding> bindingRepository,
                              DatabaseRepository<McpBindingTool> toolRepository,
@@ -179,6 +184,7 @@ public class McpBindingService {
 
     public SyncResult sync(String bindingUuid) {
         McpBinding binding = requireBinding(bindingUuid);
+        McpBindingStatus previousStatus = binding.status();
         McpDiscoverResult persisted = buildPersistedSnapshot(bindingUuid);
         DiscoverySnapshot snapshot = discover(binding, currentUsername());
         var diff = contractDiffService.diff(persisted, snapshot.discoverResult());
@@ -203,6 +209,8 @@ public class McpBindingService {
                 System.currentTimeMillis());
 
         bindingRepository.save(updated);
+        publishMcpStatusChange(updated, previousStatus, nextStatus,
+                contractChanged ? "Contract changed during sync and requires review." : null);
         if (contractChanged) {
             replaceSnapshots(bindingUuid, snapshot.discoverResult());
         }
@@ -219,6 +227,7 @@ public class McpBindingService {
 
     public McpBinding refreshDriftStatus(String bindingUuid) {
         McpBinding binding = requireBinding(bindingUuid);
+        McpBindingStatus previousStatus = binding.status();
         try {
             DriftInspection inspection = inspectDrift(bindingUuid);
             McpBindingStatus nextStatus;
@@ -248,6 +257,8 @@ public class McpBindingService {
                     binding.createdAt(),
                     System.currentTimeMillis());
             bindingRepository.save(updated);
+            publishMcpStatusChange(updated, previousStatus, nextStatus,
+                    inspection.diff().drifted() ? "Discovered contract drift during rediscovery." : null);
             return updated;
         } catch (RuntimeException ex) {
             String failure = ex.getMessage() == null ? "rediscovery failed" : ex.getMessage();
@@ -268,6 +279,7 @@ public class McpBindingService {
                     binding.createdAt(),
                     System.currentTimeMillis());
             bindingRepository.save(updated);
+            publishMcpStatusChange(updated, previousStatus, McpBindingStatus.ERROR, failure);
             throw ex;
         }
     }
@@ -275,6 +287,7 @@ public class McpBindingService {
     public McpBinding activate(String bindingUuid) {
         log.debug("ENTER activate: bindingUuid={}", bindingUuid);
         McpBinding binding = requireBinding(bindingUuid);
+        McpBindingStatus previousStatus = binding.status();
 
         if (binding.status() == McpBindingStatus.DRIFTED) {
             throw new IllegalStateException("Binding is drifted and cannot be activated until synced and reviewed.");
@@ -300,6 +313,7 @@ public class McpBindingService {
                 binding.createdAt(),
                 System.currentTimeMillis());
         bindingRepository.save(updated);
+            publishMcpStatusChange(updated, previousStatus, updated.status(), null);
         log.debug("EXIT activate: bindingUuid={}, status={}", bindingUuid, updated.status());
         return updated;
     }
@@ -307,6 +321,7 @@ public class McpBindingService {
     public McpBinding deactivate(String bindingUuid) {
         log.debug("ENTER deactivate: bindingUuid={}", bindingUuid);
         McpBinding binding = requireBinding(bindingUuid);
+        McpBindingStatus previousStatus = binding.status();
         McpBinding updated = new McpBinding(
                 binding.uuid(),
                 binding.name(),
@@ -324,14 +339,19 @@ public class McpBindingService {
                 binding.createdAt(),
                 System.currentTimeMillis());
         bindingRepository.save(updated);
+            publishMcpStatusChange(updated, previousStatus, updated.status(), null);
         log.debug("EXIT deactivate: bindingUuid={}, status={}", bindingUuid, updated.status());
         return updated;
     }
 
     public void delete(String bindingUuid) {
-        requireBinding(bindingUuid);
+        McpBinding binding = requireBinding(bindingUuid);
         deleteSnapshots(bindingUuid);
         bindingRepository.delete(bindingUuid);
+        if (attentionSignalService != null) {
+            attentionSignalService.onMcpStatusChanged(binding.uuid(), binding.name(), binding.status(), McpBindingStatus.INACTIVE,
+                    "Binding deleted.");
+        }
     }
 
     public List<McpBindingTool> listTools(String bindingUuid) {
@@ -586,6 +606,16 @@ public class McpBindingService {
         String idPart = safe(toolId).isBlank() ? "_" : safe(toolId);
         String namePart = safe(toolName).isBlank() ? "_" : safe(toolName);
         return idPart + "|" + namePart;
+    }
+
+    private void publishMcpStatusChange(McpBinding binding,
+                                        McpBindingStatus previousStatus,
+                                        McpBindingStatus newStatus,
+                                        String details) {
+        if (attentionSignalService == null || binding == null) {
+            return;
+        }
+        attentionSignalService.onMcpStatusChanged(binding.uuid(), binding.name(), previousStatus, newStatus, details);
     }
 
     private void replaceResourceSnapshots(String bindingUuid, List<McpDiscoveredResource> discoverResources) {

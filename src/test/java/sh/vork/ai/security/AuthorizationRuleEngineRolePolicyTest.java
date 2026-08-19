@@ -19,8 +19,8 @@ class AuthorizationRuleEngineRolePolicyTest {
     void setUp() {
         userRepository = new MapDatabaseRepository<>(VorkUser.class);
         long now = System.currentTimeMillis();
-        userRepository.save(new VorkUser("admin", "hash", "ADMIN", true, now, now));
-        userRepository.save(new VorkUser("alice", "hash", "USER", true, now, now));
+        userRepository.save(new VorkUser("admin", "Admin", "hash", "ADMIN", true, now, now));
+        userRepository.save(new VorkUser("alice", "Alice", "hash", "USER", true, now, now));
     }
 
     @Test
