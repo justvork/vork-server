@@ -69,10 +69,10 @@ class SettingsMcpBindingsPageSecurityTest {
                 .andExpect(view().name("settings/mcp-bindings"))
                 .andExpect(content().string(containsString("name=\"_csrf\"")))
                 .andExpect(content().string(containsString("name=\"_csrf_header\"")))
-                .andExpect(content().string(containsString("id=\"mcp-catalog-tab-tools\"")))
-                .andExpect(content().string(containsString("id=\"mcp-catalog-tab-resources\"")))
-                .andExpect(content().string(containsString("id=\"mcp-catalog-tab-prompts\"")))
-                .andExpect(content().string(containsString("id=\"mcp-resources-empty\"")))
-                .andExpect(content().string(containsString("id=\"mcp-prompts-empty\"")));
+                .andExpect(content().string(containsString("id=\"mcp-bindings-body\"")))
+                .andExpect(content().string(containsString("id=\"mcp-empty-state\"")))
+                .andExpect(content().string(containsString("id=\"mcp-tool-name\"")))
+                .andExpect(content().string(containsString("id=\"mcp-tool-params\"")))
+                .andExpect(content().string(containsString("id=\"mcp-tool-params-empty\"")));
     }
 }

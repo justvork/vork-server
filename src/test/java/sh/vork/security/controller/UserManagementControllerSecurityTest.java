@@ -4,6 +4,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
@@ -74,6 +75,29 @@ class UserManagementControllerSecurityTest {
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"bob\",\"password\":\"password123\",\"role\":\"USER\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(username = "admin", authorities = {"ROLE_ADMIN", "USERS_MANAGE"})
+    void updateDisplayName_allowedForUsersManageAuthority() throws Exception {
+        org.mockito.Mockito.when(userManagementService.updateDisplayName("bob", "Bob Builder"))
+                .thenReturn(new VorkUser("bob", "Bob Builder", "hash", "USER", true, 1L, 2L));
+
+        mockMvc.perform(put("/api/users/bob/display-name")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayName\":\"Bob Builder\"}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @WithMockUser(username = "alice", authorities = {"ROLE_USER"})
+    void updateDisplayName_forbiddenWithoutUsersManageAuthority() throws Exception {
+        mockMvc.perform(put("/api/users/bob/display-name")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayName\":\"Bob Builder\"}"))
                 .andExpect(status().isForbidden());
     }
 }

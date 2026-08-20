@@ -42,6 +42,8 @@ import sh.vork.ai.registry.ToolDepends;
 import sh.vork.ai.session.SessionToolStore;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.reflection.Reflection;
+import sh.vork.security.UserService;
+import sh.vork.security.VorkUser;
 
 /**
  * Routes AI generation requests to the appropriate {@link ChatClient} at runtime.
@@ -193,6 +195,10 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         @org.springframework.beans.factory.annotation.Autowired
         @Lazy
         private sh.vork.mcp.runtime.McpRuntimeToolService mcpRuntimeToolService;
+
+        @org.springframework.beans.factory.annotation.Autowired(required = false)
+        @Lazy
+        private UserService userService;
 
         @org.springframework.beans.factory.annotation.Autowired
         public AiOrchestrationService(Map<AiProvider, ChatClient> chatClientRegistry,
@@ -733,6 +739,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         }
                 }
 
+                appendActiveUserIdentity(prompt, session);
                 appendEnvironmentVariables(prompt, sessionUuid);
                 appendSkillInputInferenceGuidance(prompt, session);
 
@@ -747,6 +754,41 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
 
                 String originLabel = session != null ? session.originMode().name() : "UNKNOWN";
                 return logAndReturn(prompt, sessionUuid, originLabel);
+        }
+
+        private void appendActiveUserIdentity(StringBuilder prompt, AiSession session) {
+                if (prompt == null || session == null) {
+                        return;
+                }
+
+                String username = session.username();
+                if (username == null || username.isBlank()) {
+                        return;
+                }
+
+                String displayName = null;
+                if (userService != null) {
+                        try {
+                                VorkUser user = userService.getRequiredUser(username);
+                                if (user != null && user.displayName() != null && !user.displayName().isBlank()) {
+                                        displayName = user.displayName().trim();
+                                }
+                        } catch (Exception ex) {
+                                log.debug("Unable to resolve display name for active session user [username={}, reason={}]",
+                                        username, ex.getMessage());
+                        }
+                }
+
+                prompt.append("\n\n### ACTIVE USER IDENTITY\n");
+                prompt.append("Use this identity context when addressing the current user in your responses and generated messages. ");
+                prompt.append("Prefer displayName when present; otherwise use username.\n");
+                prompt.append("username=").append(username).append("\n");
+                if (displayName != null && !displayName.isBlank()) {
+                        prompt.append("displayName=").append(displayName).append("\n");
+                        prompt.append("preferredAddressingName=").append(displayName).append("\n");
+                } else {
+                        prompt.append("preferredAddressingName=").append(username).append("\n");
+                }
         }
 
         private String logAndReturn(StringBuilder prompt, String sessionUuid, String originLabel) {

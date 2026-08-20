@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Controller;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -28,6 +29,7 @@ import sh.vork.ai.exception.ToolSuspensionException;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.protocol.interaction.FormField;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
+import sh.vork.ai.request.RequestInformationService;
 import sh.vork.notification.telegram.TelegramApiClient;
 import sh.vork.scheduling.service.AiSchedulerService;
 import sh.vork.scheduling.service.SystemBackgroundAuthentication;
@@ -68,6 +70,8 @@ public class InputFormController {
     private final AiSchedulerService            aiSchedulerService;
     private final Executor                      aiBackgroundExecutor;
     private final ObjectMapper                  objectMapper;
+    private final RequestInformationService     requestInformationService;
+    private final SimpMessagingTemplate         messaging;
 
     public InputFormController(InputFormTokenService formTokenService,
                                 TelegramChatResumptionService resumptionService,
@@ -75,7 +79,9 @@ public class InputFormController {
                                 TelegramApiClient telegramApiClient,
                                 AiSchedulerService aiSchedulerService,
                                 @Qualifier("aiBackgroundExecutor") Executor aiBackgroundExecutor,
-                                ObjectMapper objectMapper) {
+                                ObjectMapper objectMapper,
+                                RequestInformationService requestInformationService,
+                                SimpMessagingTemplate messaging) {
         this.formTokenService    = formTokenService;
         this.resumptionService   = resumptionService;
         this.sessionRepo         = sessionRepo;
@@ -83,6 +89,8 @@ public class InputFormController {
         this.aiSchedulerService  = aiSchedulerService;
         this.aiBackgroundExecutor = aiBackgroundExecutor;
         this.objectMapper        = objectMapper;
+        this.requestInformationService = requestInformationService;
+        this.messaging = messaging;
     }
 
     // ── GET — render form ─────────────────────────────────────────────────────
@@ -100,6 +108,12 @@ public class InputFormController {
             log.warn("Invalid or expired token for input form [session={}, event={}]",
                     sessionUuid, eventId);
             model.addAttribute("errorMessage", "This link is invalid or has expired.");
+            return "input-form-error";
+        }
+        if (!sessionUuid.equals(claims.sessionUuid()) || !eventId.equals(claims.eventId())) {
+            log.warn("Token/session mismatch for input form [pathSession={}, pathEvent={}, claimSession={}, claimEvent={}]",
+                sessionUuid, eventId, claims.sessionUuid(), claims.eventId());
+            model.addAttribute("errorMessage", "This link does not match the pending prompt.");
             return "input-form-error";
         }
 
@@ -155,9 +169,12 @@ public class InputFormController {
             model.addAttribute("errorMessage", "This link is invalid or has expired.");
             return "input-form-error";
         }
-
-        // Consume the token immediately to prevent replay
-        formTokenService.consumeToken(token);
+        if (!sessionUuid.equals(claims.sessionUuid()) || !eventId.equals(claims.eventId())) {
+            log.warn("Token/session mismatch on submit [pathSession={}, pathEvent={}, claimSession={}, claimEvent={}]",
+                    sessionUuid, eventId, claims.sessionUuid(), claims.eventId());
+            model.addAttribute("errorMessage", "This link does not match the pending prompt.");
+            return "input-form-error";
+        }
 
         AiSession session = sessionRepo.get(sessionUuid);
         if (session == null || session.status() != AiSessionStatus.AWAITING_INPUT) {
@@ -165,21 +182,74 @@ public class InputFormController {
             return "input-form-error";
         }
 
+        UiEventFrame promptEvent = findPromptEvent(session, eventId);
+        if (promptEvent == null) {
+            model.addAttribute("errorMessage", "Could not locate the pending prompt.");
+            return "input-form-error";
+        }
+
+        String validationError = validateRequiredFields(promptEvent.formSchema(), params);
+        if (validationError != null) {
+            prepareFormModel(model, sessionUuid, eventId, token, promptEvent, validationError, params);
+            return "input-form";
+        }
+
         // Extract the chosen action (submitted as a button's name/value)
-        String action = params.getOrDefault("_action", "ONCE");
+        String action = params.getOrDefault("action", params.getOrDefault("_action", "ONCE"));
 
         // Build field map — strip reserved params
         Map<String, String> fields = params.entrySet().stream()
-                .filter(e -> !e.getKey().startsWith("_") && !"token".equals(e.getKey()))
+            .filter(e -> !e.getKey().startsWith("_")
+                && !"token".equals(e.getKey())
+                && !"action".equals(e.getKey()))
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        fields.replaceAll((k, v) -> v == null ? "" : v.trim());
+
+        // Consume token only after validation so users can correct invalid input.
+        formTokenService.consumeToken(token);
+
+        String actingUsername = claims.username();
+
+        if (claims.requestCampaignUuid() != null && !claims.requestCampaignUuid().isBlank()) {
+            String responderChannel = claims.responderChannel() != null && !claims.responderChannel().isBlank()
+                    ? claims.responderChannel()
+                    : claims.username();
+
+            RequestInformationService.ResponseGateResult gate =
+                    requestInformationService.recordResponseAndEvaluate(
+                            claims.requestCampaignUuid(),
+                            responderChannel,
+                            action,
+                            fields);
+
+            if (!gate.accepted()) {
+                model.addAttribute("message", gate.userMessage());
+                return "input-form-done";
+            }
+
+            if (!gate.shouldResume()) {
+                model.addAttribute("message", gate.userMessage());
+                return "input-form-done";
+            }
+
+            if (!requestInformationService.markResumeStarted(claims.requestCampaignUuid())) {
+                model.addAttribute("message", "Thanks. Required responses were already received and processing has resumed.");
+                return "input-form-done";
+            }
+
+            fields = requestInformationService.buildResumeFields(claims.requestCampaignUuid());
+            action = "ONCE";
+            actingUsername = session.username();
+        }
 
         SessionOriginMode origin = session.originMode();
 
         try {
             if (origin == SessionOriginMode.BACKGROUND) {
-                return handleBackgroundSubmit(claims, sessionUuid, eventId, action, fields, model);
+                return handleBackgroundSubmit(claims, sessionUuid, eventId, action, fields, actingUsername, model);
             } else {
-                return handleInteractiveSubmit(claims, sessionUuid, eventId, action, fields, session, model);
+                return handleInteractiveSubmit(claims, sessionUuid, eventId, action, fields, actingUsername, session, model);
             }
         } catch (Exception ex) {
             log.warn("Error submitting input form [session={}]: {}", sessionUuid, ex.getMessage(), ex);
@@ -198,12 +268,13 @@ public class InputFormController {
     private String handleBackgroundSubmit(InputFormTokenService.TokenClaims claims,
                                            String sessionUuid, String eventId,
                                            String action, Map<String, String> fields,
+                                           String actingUsername,
                                            Model model) {
-        log.info("Background form submit [session={}, user={}]", sessionUuid, claims.username());
+        log.info("Background form submit [session={}, user={}]", sessionUuid, actingUsername);
         try {
             // Process fields + execute tool; saves session as RUNNING so the engine can pick up
             resumptionService.processAndActivate(
-                    claims.username(), sessionUuid, eventId, action, fields);
+                    actingUsername, sessionUuid, eventId, action, fields);
 
         } catch (ToolSuspensionException ex) {
             // Tool suspended immediately again — we still started the engine; it will handle it
@@ -211,7 +282,7 @@ public class InputFormController {
         }
 
         // Kick off the background engine on its isolated thread pool (mirrors ChatAuthorizationController)
-        String username = claims.username();
+        String username = actingUsername;
         aiBackgroundExecutor.execute(() -> {
             ToolExecutionContext.bindSessionUuid(sessionUuid);
             AiSession fresh = sessionRepo.get(sessionUuid);
@@ -243,10 +314,11 @@ public class InputFormController {
     private String handleInteractiveSubmit(InputFormTokenService.TokenClaims claims,
                                             String sessionUuid, String eventId,
                                             String action, Map<String, String> fields,
+                                            String actingUsername,
                                             AiSession session, Model model) {
         try {
             String result = resumptionService.resumeAndRun(
-                    claims.username(), sessionUuid, eventId, action, fields);
+                    actingUsername, sessionUuid, eventId, action, fields);
 
             if (session.originMode() == SessionOriginMode.TELEGRAM) {
                 String chatId   = session.environmentVariables().get("TELEGRAM_CHAT_ID");
@@ -256,16 +328,27 @@ public class InputFormController {
                 }
             }
 
+            if (result != null && !result.isBlank()) {
+                messaging.convertAndSend("/topic/chat/" + sessionUuid,
+                        new UiEventFrame(java.util.UUID.randomUUID().toString(), "TEXT_RESPONSE", "CHAT_OUTPUT",
+                                result, null));
+            }
+
             model.addAttribute("message", "Your response was submitted successfully. "
                     + (session.originMode() == SessionOriginMode.TELEGRAM
                             ? "Check Telegram for the reply."
                             : "The AI session has continued."));
             log.info("Input form submitted [session={}, user={}, origin={}]",
-                    sessionUuid, claims.username(), session.originMode());
+                    sessionUuid, actingUsername, session.originMode());
             return "input-form-done";
 
         } catch (ToolSuspensionException ex) {
-            // Another suspension — Telegram/web consumer will handle the next prompt
+            // Another suspension — push latest prompt to active web subscribers.
+            AiSession fresh = sessionRepo.get(sessionUuid);
+            UiEventFrame nextPrompt = fresh == null ? null : findPromptEvent(fresh, null);
+            if (nextPrompt != null) {
+                messaging.convertAndSend("/topic/chat/" + sessionUuid, nextPrompt);
+            }
             model.addAttribute("message", "Your response was submitted. "
                     + "Another confirmation may be required — please check for a new prompt.");
             return "input-form-done";
@@ -292,5 +375,68 @@ public class InputFormController {
         if (type == null) return false;
         String t = type.toUpperCase();
         return "HIDDEN".equals(t) || "MARKDOWN".equals(t);
+    }
+
+    private String validateRequiredFields(InteractionFormSchema schema, Map<String, String> params) {
+        if (schema == null || schema.fields() == null) {
+            return null;
+        }
+
+        for (FormField field : schema.fields()) {
+            if (field == null || !field.required() || isInvisibleType(field.type())) {
+                continue;
+            }
+            if ("READONLY".equalsIgnoreCase(field.type())) {
+                continue;
+            }
+
+            String value = params.get(field.name());
+            if (value == null || value.trim().isBlank()) {
+                String label = (field.label() == null || field.label().isBlank())
+                        ? field.name()
+                        : field.label();
+                return "Please provide a value for: " + label;
+            }
+        }
+
+        return null;
+    }
+
+    private void prepareFormModel(Model model,
+                                  String sessionUuid,
+                                  String eventId,
+                                  String token,
+                                  UiEventFrame promptEvent,
+                                  String errorMessage,
+                                  Map<String, String> submittedValues) {
+        InteractionFormSchema schema = promptEvent.formSchema();
+
+        List<FormField> visibleFields = schema == null || schema.fields() == null
+                ? List.of()
+                : schema.fields().stream()
+                        .filter(f -> f != null && !isInvisibleType(f.type()))
+                        .map(f -> {
+                            String submittedValue = submittedValues == null ? null : submittedValues.get(f.name());
+                            return new FormField(
+                                    f.name(),
+                                    f.type(),
+                                    f.label(),
+                                    f.placeholder(),
+                                    submittedValue != null ? submittedValue : f.value(),
+                                    f.required(),
+                                    f.source(),
+                                    f.options());
+                        })
+                        .collect(Collectors.toList());
+
+        model.addAttribute("sessionUuid", sessionUuid);
+        model.addAttribute("eventId", eventId);
+        model.addAttribute("token", token);
+        model.addAttribute("title", schema != null ? schema.title() : "Action required");
+        model.addAttribute("description", promptEvent.textResponse());
+        model.addAttribute("fields", visibleFields);
+        model.addAttribute("actions", schema != null && schema.actions() != null
+                ? schema.actions() : List.of());
+        model.addAttribute("errorMessage", errorMessage);
     }
 }

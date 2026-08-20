@@ -91,6 +91,25 @@ public class UserManagementService {
         return updated;
     }
 
+    public VorkUser updateDisplayName(String username, String displayName) {
+        log.debug("ENTER updateDisplayName: username={}", username);
+        VorkUser existing = requireUser(username);
+        String trimmedDisplayName = displayName == null ? "" : displayName.trim();
+
+        VorkUser updated = new VorkUser(
+                existing.uuid(),
+                trimmedDisplayName,
+                existing.passwordHash(),
+                existing.role(),
+                existing.isEnabled(),
+                existing.createdAt(),
+                System.currentTimeMillis()
+        );
+        userRepository.save(updated);
+        log.info("User display name updated: username={}", username);
+        return updated;
+    }
+
     public VorkUser setEnabled(String username, boolean enabled) {
         log.debug("ENTER setEnabled: username={}, enabled={}", username, enabled);
         VorkUser existing = requireUser(username);

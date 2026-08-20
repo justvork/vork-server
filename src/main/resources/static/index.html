@@ -28,11 +28,11 @@
     <aside id="chat-sidebar" class="chat-sidebar">
         <!-- Vertical icon-tab strip -->
         <div class="sidebar-tabs">
-            <button class="sidebar-tab-btn active" data-tab="chats" title="Chats">
-                <i class="fa-solid fa-comments"></i>
-            </button>
-            <button class="sidebar-tab-btn" data-tab="skills" title="Skills &amp; Tools">
+            <button class="sidebar-tab-btn active" data-tab="skills" title="Skills &amp; Tools">
                 <i class="fa-solid fa-puzzle-piece"></i>
+            </button>
+            <button class="sidebar-tab-btn" data-tab="chats" title="Chats">
+                <i class="fa-solid fa-comments"></i>
             </button>
             <div class="sidebar-tabs-spacer"></div>
             <button id="sidebar-toggle" class="sidebar-tab-btn" type="button" title="Collapse menu">
@@ -40,7 +40,7 @@
             </button>
         </div>
         <!-- Chats tab content -->
-        <div class="sidebar-tab-content" id="tab-chats">
+        <div class="sidebar-tab-content d-none" id="tab-chats">
             <div class="sidebar-top">
                 <button id="new-chat-btn" type="button" class="btn btn-outline-secondary btn-sm sidebar-action">
                     <i class="fa-solid fa-pen-to-square me-1"></i>
@@ -51,7 +51,7 @@
             <div id="chat-session-list" class="chat-session-list"></div>
         </div>
         <!-- Skills &amp; Tools tab content -->
-        <div class="sidebar-tab-content d-none" id="tab-skills">
+        <div class="sidebar-tab-content" id="tab-skills">
             <div class="skills-panel">
                 <!-- Agent skills (read-only) -->
                 <div class="sidebar-section-title">Agent Skills</div>

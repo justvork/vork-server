@@ -30,6 +30,7 @@ import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.registry.ToolRegistry;
+import sh.vork.ai.request.RequestInformationService;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
 import sh.vork.ai.terminal.TerminalStreamRouter;
@@ -72,6 +73,7 @@ public class ChatController {
     private final ReflectionService reflectionService;
     private final BindingCatalogService bindingCatalogService;
     private final McpBindingService mcpBindingService;
+    private final RequestInformationService requestInformationService;
 
 
 
@@ -83,7 +85,8 @@ public class ChatController {
                           SessionEnvironmentService sessionEnvironmentService,
                           ReflectionService reflectionService,
                           BindingCatalogService bindingCatalogService,
-                          McpBindingService mcpBindingService) {
+                          McpBindingService mcpBindingService,
+                          RequestInformationService requestInformationService) {
         this.chatService = chatService;
         this.messaging   = messaging;
         this.aiOrchestrationService = aiOrchestrationService;
@@ -94,6 +97,7 @@ public class ChatController {
         this.reflectionService = reflectionService;
         this.bindingCatalogService = bindingCatalogService;
         this.mcpBindingService = mcpBindingService;
+        this.requestInformationService = requestInformationService;
     }
 
     // ── HTTP ──────────────────────────────────────────────────────────────────
@@ -111,24 +115,29 @@ public class ChatController {
         persistRequestBaseUrl(session.uuid(), request);
         return new SessionResponse(session.uuid(), session.name(), session.provider(),
             session.activeAgentTemplateId(), session.messages(), session.modelId(), session.status(),
-            session.originMode() != null ? session.originMode().name() : null);
+            session.originMode() != null ? session.originMode().name() : null,
+            isChildCampaignSession(session));
     }
 
     @GetMapping("/session/new")
     public SessionResponse createSession(
             HttpServletRequest request,
             @RequestParam(defaultValue = "GEMINI") AiProvider provider,
-            @RequestParam(required = false) String modelId) {
-        AiSession session = chatService.createNewSession(provider, modelId);
+            @RequestParam(required = false) String modelId,
+            @RequestParam(required = false) String agentTemplateId) {
+        AiSession session = chatService.createNewSession(provider, modelId, agentTemplateId);
         persistRequestBaseUrl(session.uuid(), request);
         return new SessionResponse(session.uuid(), session.name(), session.provider(),
             session.activeAgentTemplateId(), session.messages(), session.modelId(), session.status(),
-            session.originMode() != null ? session.originMode().name() : null);
+            session.originMode() != null ? session.originMode().name() : null,
+            isChildCampaignSession(session));
     }
 
     @GetMapping("/sessions")
-    public List<SessionSummaryResponse> listSessions() {
-        return chatService.listSessionsForCurrentUser()
+    public List<SessionSummaryResponse> listSessions(@RequestParam(required = false) String agentTemplateId,
+                                                     @RequestParam(required = false) String search,
+                                                     @RequestParam(required = false) Integer limit) {
+        return chatService.listSessionsForCurrentUser(agentTemplateId, search, limit)
                 .stream()
                 .sorted(Comparator.comparingLong(AiSession::createdAt).reversed())
                 .map(session -> new SessionSummaryResponse(
@@ -137,8 +146,154 @@ public class ChatController {
                         session.provider(),
                         session.createdAt(),
                         session.messages() == null ? 0 : session.messages().size(),
-                        session.modelId()))
+                        session.modelId(),
+                        session.activeAgentTemplateId()))
                 .toList();
+    }
+
+    @GetMapping("/session/{sessionUuid}/request-campaign")
+    public ResponseEntity<?> getActiveRequestCampaign(@PathVariable String sessionUuid) {
+        try {
+            AiSession session = chatService.getSessionForCurrentUser(sessionUuid);
+            var campaign = requestInformationService.findOpenCampaignForSession(session.uuid());
+            if (campaign == null) {
+                var latest = requestInformationService.findLatestCampaignForSession(session.uuid());
+                if (latest == null) {
+                    return ResponseEntity.ok(Map.of("status", "NONE"));
+                }
+                java.util.Map<String, Object> latestResponse = new java.util.LinkedHashMap<>();
+                latestResponse.put("status", latest.status().name());
+                latestResponse.put("campaignUuid", latest.uuid());
+                if (latest.eventId() != null && !latest.eventId().isBlank()) {
+                    latestResponse.put("eventId", latest.eventId());
+                }
+                latestResponse.put("policy", latest.policy().name());
+                latestResponse.put("requiredResponses", latest.requiredResponses());
+                latestResponse.put("respondedCount", latest.respondedChannels() == null ? 0 : latest.respondedChannels().size());
+                latestResponse.put("targetChannels", latest.targetChannels() == null ? List.of() : latest.targetChannels());
+                latestResponse.put("promptText", latest.promptText() == null ? "" : latest.promptText());
+                latestResponse.put("routeMode", latest.responseRouteMode().name());
+                latestResponse.put("parentSessionUuid", latest.parentSessionUuid());
+                latestResponse.put("childSessionRoutingEnabled", latest.childSessionRoutingEnabled());
+                latestResponse.put("childSessionLinks", latest.childSessionUuidsByChannel());
+                latestResponse.put("childSessionCount", latest.childSessionUuidsByChannel() == null ? 0 : latest.childSessionUuidsByChannel().size());
+                return ResponseEntity.ok(latestResponse);
+            }
+            java.util.Map<String, Object> response = new java.util.LinkedHashMap<>();
+            response.put("status", "OPEN");
+            response.put("campaignUuid", campaign.uuid());
+            if (campaign.eventId() != null && !campaign.eventId().isBlank()) {
+                response.put("eventId", campaign.eventId());
+            }
+            response.put("policy", campaign.policy().name());
+            response.put("requiredResponses", campaign.requiredResponses());
+            response.put("respondedCount", campaign.respondedChannels() == null ? 0 : campaign.respondedChannels().size());
+            response.put("targetChannels", campaign.targetChannels() == null ? List.of() : campaign.targetChannels());
+            response.put("promptText", campaign.promptText() == null ? "" : campaign.promptText());
+            response.put("routeMode", campaign.responseRouteMode().name());
+            response.put("parentSessionUuid", campaign.parentSessionUuid());
+            response.put("childSessionRoutingEnabled", campaign.childSessionRoutingEnabled());
+            response.put("childSessionLinks", campaign.childSessionUuidsByChannel());
+            response.put("childSessionCount", campaign.childSessionUuidsByChannel() == null ? 0 : campaign.childSessionUuidsByChannel().size());
+            return ResponseEntity.ok(response);
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
+        }
+    }
+
+    @GetMapping("/session/{sessionUuid}/messages")
+    public ResponseEntity<?> pollSessionMessages(@PathVariable String sessionUuid,
+                                                 @RequestParam(required = false) String afterMessageUuid) {
+        try {
+            AiSession session = chatService.getSessionForCurrentUser(sessionUuid);
+            List<AiChatMessage> messages = session.messages() == null ? List.of() : session.messages();
+
+            if (afterMessageUuid != null && !afterMessageUuid.isBlank()) {
+                int startIndex = -1;
+                for (int i = 0; i < messages.size(); i++) {
+                    AiChatMessage msg = messages.get(i);
+                    if (msg != null && afterMessageUuid.equals(msg.uuid())) {
+                        startIndex = i + 1;
+                        break;
+                    }
+                }
+                messages = startIndex >= 0 ? messages.subList(startIndex, messages.size()) : messages;
+            }
+
+            return ResponseEntity.ok(new SessionMessagesResponse(
+                    session.uuid(),
+                    messages,
+                    session.status(),
+                    isChildCampaignSession(session)));
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
+        }
+    }
+
+    @PostMapping("/session/{sessionUuid}/request-campaign/{campaignUuid}/respond")
+    public ResponseEntity<?> submitChildCampaignResponse(@PathVariable String sessionUuid,
+                                                         @PathVariable String campaignUuid,
+                                                         @RequestBody CampaignResponseRequest request,
+                                                         java.security.Principal principal) {
+        try {
+            AiSession session = chatService.getSessionForCurrentUser(sessionUuid);
+            if (!isChildCampaignSession(session)) {
+                return ResponseEntity.status(400).body(Map.of("status", "ERROR", "message", "Session is not a child campaign session."));
+            }
+
+            String envCampaignId = session.environmentVariables() == null
+                    ? null
+                    : session.environmentVariables().get("REQUEST_CAMPAIGN_ID");
+            if (envCampaignId == null || envCampaignId.isBlank() || !envCampaignId.equals(campaignUuid)) {
+                return ResponseEntity.status(400).body(Map.of("status", "ERROR", "message", "Campaign does not match this child session."));
+            }
+
+            String content = request == null || request.message() == null ? "" : request.message().trim();
+            if (content.isBlank()) {
+                return ResponseEntity.status(400).body(Map.of("status", "ERROR", "message", "Response message is required."));
+            }
+
+            String username = (principal != null && principal.getName() != null) ? principal.getName() : session.username();
+            AiChatMessage response = chatService.sendMessageAsUser(username, sessionUuid, content, List.of(), null);
+            if (response != null) {
+                messaging.convertAndSend("/topic/chat/" + sessionUuid, response);
+            }
+
+            return ResponseEntity.ok(Map.of("status", "ok"));
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
+        }
+    }
+
+    @PostMapping("/session/{sessionUuid}/request-campaign/{campaignUuid}/cancel")
+    public ResponseEntity<?> cancelRequestCampaign(@PathVariable String sessionUuid,
+                                                   @PathVariable String campaignUuid) {
+        try {
+            AiSession session = chatService.getSessionForCurrentUser(sessionUuid);
+            var campaign = requestInformationService.getCampaign(campaignUuid);
+            if (!session.uuid().equals(campaign.sessionUuid())) {
+                return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", "Campaign does not belong to this session."));
+            }
+
+            boolean cancelled = requestInformationService.cancelCampaign(campaignUuid);
+            if (!cancelled) {
+                return ResponseEntity.ok(Map.of("status", "NOOP", "message", "Campaign was already closed."));
+            }
+
+            chatService.releaseAwaitingInputSession(sessionUuid,
+                    "External information request was cancelled. You can continue this session.");
+
+            messaging.convertAndSend("/topic/chat/" + sessionUuid,
+                    new UiEventFrame(UUID.randomUUID().toString(),
+                            "TEXT_RESPONSE",
+                            "CHAT_OUTPUT",
+                            "External information request was cancelled. You can continue this session.",
+                            null));
+
+            return ResponseEntity.ok(Map.of("status", "CANCELLED", "campaignUuid", campaignUuid));
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(403).body(Map.of("status", "ERROR", "message", ex.getMessage()));
+        }
     }
 
             @PostMapping("/session/{sessionUuid}/name")
@@ -613,16 +768,34 @@ public class ChatController {
                 || (normalized.contains("<") && normalized.contains(">"));
     }
 
+    private static boolean isChildCampaignSession(AiSession session) {
+        if (session == null || session.environmentVariables() == null) {
+            return false;
+        }
+        String campaignId = session.environmentVariables().get("REQUEST_CAMPAIGN_ID");
+        String routeMode = session.environmentVariables().get("REQUEST_CAMPAIGN_ROUTE_MODE");
+        return campaignId != null && !campaignId.isBlank()
+                && routeMode != null && "CHILD_SESSION".equalsIgnoreCase(routeMode);
+    }
+
     // ── DTOs ──────────────────────────────────────────────────────────────────
 
     record SessionResponse(String sessionUuid, String sessionName, String provider,
                             String activeAgentTemplateId, List<AiChatMessage> messages, String modelId,
-                            AiSessionStatus status, String originMode) {}
+                            AiSessionStatus status, String originMode, boolean requestCampaignChildSession) {}
+
+    record SessionMessagesResponse(String sessionUuid,
+                                   List<AiChatMessage> messages,
+                                   AiSessionStatus status,
+                                   boolean requestCampaignChildSession) {}
 
     record SessionSummaryResponse(String sessionUuid, String sessionName, String provider,
-                                  long createdAt, int messageCount, String modelId) {}
+                                  long createdAt, int messageCount, String modelId,
+                                  String activeAgentTemplateId) {}
 
     record RenameSessionRequest(String name) {}
+
+    record CampaignResponseRequest(String message) {}
 
     record ChatRequest(String sessionUuid, String content, String provider, List<String> attachmentUuids) {}
 

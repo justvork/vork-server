@@ -39,6 +39,7 @@ import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.security.AuthorizationRuleEngine;
+import sh.vork.ai.security.LoggedToolCallback;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
 import sh.vork.scheduling.service.SystemBackgroundAuthentication;
@@ -162,6 +163,11 @@ public class TelegramChatResumptionService {
                     case CONTEXT -> {
                         sessionEnvironmentService.setEnv(sessionUuid, key, value);
                         ToolExecutionContext.put(key, value);
+                        // Some suspension flows (requestInformation resume) require CONTEXT fields
+                        // to be replayed back into the resumed tool call arguments.
+                        if (shouldPropagateContextFieldToArguments(key)) {
+                            conversationFields.put(key, value);
+                        }
                     }
                     case CONVERSATION -> conversationFields.put(key, value);
                 }
@@ -174,9 +180,13 @@ public class TelegramChatResumptionService {
                     if ("HIDDEN".equalsIgnoreCase(field.type()) && field.source() == FieldSource.CONTEXT
                             && !conversationFields.containsKey(field.name())
                             && (fields == null || !fields.containsKey(field.name()))) {
-                        String value = field.placeholder() != null ? field.placeholder() : "";
+                        String value = field.value() != null ? field.value()
+                                : (field.placeholder() != null ? field.placeholder() : "");
                         sessionEnvironmentService.setEnv(sessionUuid, field.name(), value);
                         ToolExecutionContext.put(field.name(), value);
+                        if (shouldPropagateContextFieldToArguments(field.name())) {
+                            conversationFields.put(field.name(), value);
+                        }
                     }
                 }
             }
@@ -236,8 +246,8 @@ public class TelegramChatResumptionService {
                         : "The tool result is in the conversation history. Summarize it for the user.";
 
                 for (int iter = 0; iter < MAX_RESUME_ITERATIONS; iter++) {
-                    String rawResponse = aiService.generateWithHistory(
-                            history, continuationPrompt, resolveProvider(session.provider()));
+                    String rawResponse = safeGenerateWithHistory(
+                        history, continuationPrompt, resolveProvider(session.provider()));
                     StructuredAgentResponse structured = extractStructured(rawResponse);
 
                     if ("CONTINUE_TURN".equals(structured.status())) {
@@ -360,6 +370,9 @@ public class TelegramChatResumptionService {
                     case CONTEXT -> {
                         sessionEnvironmentService.setEnv(sessionUuid, key, value);
                         ToolExecutionContext.put(key, value);
+                        if (shouldPropagateContextFieldToArguments(key)) {
+                            conversationFields.put(key, value);
+                        }
                     }
                     case CONVERSATION -> conversationFields.put(key, value);
                 }
@@ -370,9 +383,13 @@ public class TelegramChatResumptionService {
                     if ("HIDDEN".equalsIgnoreCase(field.type()) && field.source() == FieldSource.CONTEXT
                             && !conversationFields.containsKey(field.name())
                             && (fields == null || !fields.containsKey(field.name()))) {
-                        String value = field.placeholder() != null ? field.placeholder() : "";
+                        String value = field.value() != null ? field.value()
+                                : (field.placeholder() != null ? field.placeholder() : "");
                         sessionEnvironmentService.setEnv(sessionUuid, field.name(), value);
                         ToolExecutionContext.put(field.name(), value);
+                        if (shouldPropagateContextFieldToArguments(field.name())) {
+                            conversationFields.put(field.name(), value);
+                        }
                     }
                 }
             }
@@ -480,6 +497,16 @@ public class TelegramChatResumptionService {
         }
     }
 
+    private boolean shouldPropagateContextFieldToArguments(String fieldName) {
+        if (fieldName == null || fieldName.isBlank()) {
+            return false;
+        }
+        return "requestCampaignId".equals(fieldName)
+                || "responsesJson".equals(fieldName)
+                || "responseCount".equals(fieldName)
+                || "requestCampaignExternal".equals(fieldName);
+    }
+
     private String toolResponseDataForAction(String action, Map<String, String> fields,
                                               String toolName, String argumentsJson) {
         return switch (action) {
@@ -510,8 +537,34 @@ public class TelegramChatResumptionService {
         } catch (RuntimeException ex) {
             ToolSuspensionException suspension = findCause(ex, ToolSuspensionException.class);
             if (suspension != null) throw suspension;
+            suspension = consumePendingToolSuspension();
+            if (suspension != null) throw suspension;
             throw ex;
         }
+    }
+
+    private String safeGenerateWithHistory(List<Message> history,
+                                           String prompt,
+                                           AiProvider provider) {
+        ToolExecutionContext.remove(LoggedToolCallback.PENDING_TOOL_SUSPENSION_CONTEXT_KEY);
+        try {
+            return aiService.generateWithHistory(history, prompt, provider);
+        } catch (RuntimeException ex) {
+            ToolSuspensionException pending = consumePendingToolSuspension();
+            if (pending != null) {
+                throw pending;
+            }
+            throw ex;
+        }
+    }
+
+    private ToolSuspensionException consumePendingToolSuspension() {
+        Object pending = ToolExecutionContext.get(LoggedToolCallback.PENDING_TOOL_SUSPENSION_CONTEXT_KEY);
+        if (pending instanceof ToolSuspensionException suspension) {
+            ToolExecutionContext.remove(LoggedToolCallback.PENDING_TOOL_SUSPENSION_CONTEXT_KEY);
+            return suspension;
+        }
+        return null;
     }
 
     private List<Message> hydrateHistory(List<AiChatMessage> messages) {
@@ -536,9 +589,17 @@ public class TelegramChatResumptionService {
             if (responsesRaw instanceof List<?> responses && !responses.isEmpty()
                     && responses.get(0) instanceof Map<?, ?> first) {
                 Object v = first.get("responseData");
-                if (v != null) responseData = String.valueOf(v);
+                if (v != null) {
+                    if (v instanceof String s) {
+                        responseData = s;
+                    } else {
+                        responseData = toJson(v);
+                    }
+                }
             }
         } catch (Exception ignored) { }
+
+        responseData = normalizeToolResponseData(responseData);
 
         return ToolResponseMessage.builder()
                 .responses(List.of(new ToolResponseMessage.ToolResponse(
@@ -547,6 +608,23 @@ public class TelegramChatResumptionService {
                         responseData)))
                 .metadata(Collections.emptyMap())
                 .build();
+    }
+
+    private String normalizeToolResponseData(String responseData) {
+        if (responseData == null || responseData.isBlank()) {
+            return toJson(Map.of("status", "EMPTY", "message", "No response data"));
+        }
+
+        String trimmed = responseData.trim();
+        try {
+            var node = objectMapper.readTree(trimmed);
+            if (node != null && node.isObject()) {
+                return trimmed;
+            }
+            return toJson(Map.of("status", "NON_OBJECT_JSON", "value", trimmed));
+        } catch (Exception ignored) {
+            return toJson(Map.of("status", "TEXT", "message", trimmed));
+        }
     }
 
     private StructuredAgentResponse extractStructured(String raw) {

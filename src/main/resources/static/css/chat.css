@@ -545,6 +545,49 @@ body.sidebar-collapsed .sidebar-tab-btn {
     line-height: 1.45;
 }
 
+.external-campaign-wait-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.5rem;
+}
+
+.external-campaign-wait-bubble {
+    border: 1px solid rgba(253, 170, 2, 0.4);
+    background: linear-gradient(180deg, rgba(253, 170, 2, 0.12), rgba(253, 170, 2, 0.04));
+}
+
+.external-campaign-title {
+    font-weight: 600;
+    color: #ffd269;
+    margin-bottom: 0.35rem;
+}
+
+.external-campaign-prompt {
+    color: var(--vork-text);
+    margin-bottom: 0.3rem;
+}
+
+.external-campaign-summary {
+    color: var(--vork-muted);
+    font-size: 0.84rem;
+}
+
+.external-campaign-phase {
+    color: #ffd269;
+    font-size: 0.8rem;
+    margin-top: 0.25rem;
+}
+
+.external-campaign-details {
+    color: var(--vork-muted);
+    font-size: 0.78rem;
+    margin-top: 0.25rem;
+}
+
+.external-campaign-actions {
+    margin-top: 0.55rem;
+}
+
 .prompt-title {
     font-weight: 600;
     margin-bottom: 0.3rem;

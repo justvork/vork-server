@@ -2,6 +2,7 @@ package sh.vork.ai.exception;
 
 import java.util.List;
 
+import sh.vork.ai.request.RequestResponsePolicy;
 import sh.vork.ai.protocol.interaction.FormAction;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
 
@@ -15,16 +16,26 @@ public class ToolSuspensionException extends RuntimeException {
     private final String arguments;
     private final String justification;
     private final InteractionFormSchema formSchema;
+    private final SuspensionCampaign suspensionCampaign;
 
     public ToolSuspensionException(String toolName,
                                    String arguments,
                                    String justification,
                                    InteractionFormSchema formSchema) {
+        this(toolName, arguments, justification, formSchema, null);
+    }
+
+    public ToolSuspensionException(String toolName,
+                                   String arguments,
+                                   String justification,
+                                   InteractionFormSchema formSchema,
+                                   SuspensionCampaign suspensionCampaign) {
         super("Tool execution suspended pending authorization: " + toolName);
         this.toolName = toolName;
         this.arguments = arguments;
         this.justification = justification;
         this.formSchema = formSchema;
+        this.suspensionCampaign = suspensionCampaign;
     }
 
     public ToolSuspensionException(String toolName, String arguments, String justification) {
@@ -60,5 +71,21 @@ public class ToolSuspensionException extends RuntimeException {
 
     public InteractionFormSchema getFormSchema() {
         return formSchema;
+    }
+
+    public SuspensionCampaign getSuspensionCampaign() {
+        return suspensionCampaign;
+    }
+
+    public record SuspensionCampaign(
+            List<String> channelNames,
+            RequestResponsePolicy responsePolicy,
+            Integer quorumCount,
+            Boolean sendNotifications,
+            String alertName,
+            String alertDescription,
+            String alertResolutionPolicy,
+            Long attentionAt
+    ) {
     }
 }

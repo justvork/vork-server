@@ -29,6 +29,8 @@ import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.memory.SessionEnvironmentService;
+import sh.vork.security.UserService;
+import sh.vork.security.VorkUser;
 import sh.vork.skill.SkillFrame;
 
 class AiOrchestrationServicePromptHydrationTest {
@@ -272,6 +274,118 @@ class AiOrchestrationServicePromptHydrationTest {
         assertFalse(names.contains("compileJavaType"));
     }
 
+        @Test
+        void composeSystemPrompt_whenSessionUserHasDisplayName_includesPreferredAddressingNameAsDisplayName() throws Exception {
+        SessionEnvironmentService envService = mock(SessionEnvironmentService.class);
+        when(envService.getEnv("session-user-1")).thenReturn(Map.of());
+
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<AiSession> sessionRepo = mock(DatabaseRepository.class);
+        AiSession session = new AiSession(
+            "session-user-1",
+            "GEMINI",
+            SessionOriginMode.WEB,
+            "lee",
+            "Session",
+            System.currentTimeMillis(),
+            0,
+            List.of(),
+            Map.of(),
+            AiSessionStatus.RUNNING,
+            null,
+            null,
+            List.of(),
+            List.of(),
+            List.of());
+        when(sessionRepo.get("session-user-1")).thenReturn(session);
+
+        UserService userService = mock(UserService.class);
+        when(userService.getRequiredUser("lee"))
+            .thenReturn(new VorkUser("lee", "Lee A", "hash", "USER", true, 1L, 1L));
+
+        @SuppressWarnings("unchecked")
+        AiOrchestrationService service = new AiOrchestrationService(
+            Map.of(AiProvider.GEMINI, mock(ChatClient.class)),
+            null,
+            envService,
+            sessionRepo,
+            mock(DatabaseRepository.class),
+            null,
+            Map.of(),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+        setPrivateField(service, "userService", userService);
+        ToolExecutionContext.bindSessionUuid("session-user-1");
+
+        String prompt = invokeComposeSystemPrompt(service);
+
+        assertTrue(prompt.contains("### ACTIVE USER IDENTITY"));
+        assertTrue(prompt.contains("username=lee"));
+        assertTrue(prompt.contains("displayName=Lee A"));
+        assertTrue(prompt.contains("preferredAddressingName=Lee A"));
+        }
+
+        @Test
+        void composeSystemPrompt_whenSessionUserHasNoDisplayName_fallsBackToUsernameForPreferredAddressingName() throws Exception {
+        SessionEnvironmentService envService = mock(SessionEnvironmentService.class);
+        when(envService.getEnv("session-user-2")).thenReturn(Map.of());
+
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<AiSession> sessionRepo = mock(DatabaseRepository.class);
+        AiSession session = new AiSession(
+            "session-user-2",
+            "GEMINI",
+            SessionOriginMode.WEB,
+            "lee",
+            "Session",
+            System.currentTimeMillis(),
+            0,
+            List.of(),
+            Map.of(),
+            AiSessionStatus.RUNNING,
+            null,
+            null,
+            List.of(),
+            List.of(),
+            List.of());
+        when(sessionRepo.get("session-user-2")).thenReturn(session);
+
+        UserService userService = mock(UserService.class);
+        when(userService.getRequiredUser("lee"))
+            .thenReturn(new VorkUser("lee", "", "hash", "USER", true, 1L, 1L));
+
+        @SuppressWarnings("unchecked")
+        AiOrchestrationService service = new AiOrchestrationService(
+            Map.of(AiProvider.GEMINI, mock(ChatClient.class)),
+            null,
+            envService,
+            sessionRepo,
+            mock(DatabaseRepository.class),
+            null,
+            Map.of(),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+        setPrivateField(service, "userService", userService);
+        ToolExecutionContext.bindSessionUuid("session-user-2");
+
+        String prompt = invokeComposeSystemPrompt(service);
+
+        assertTrue(prompt.contains("### ACTIVE USER IDENTITY"));
+        assertTrue(prompt.contains("username=lee"));
+        assertFalse(prompt.contains("displayName="));
+        assertTrue(prompt.contains("preferredAddressingName=lee"));
+        }
+
     private static String invokeComposeSystemPrompt(AiOrchestrationService service) throws Exception {
         Method compose = AiOrchestrationService.class.getDeclaredMethod("composeSystemPrompt");
         compose.setAccessible(true);
@@ -290,5 +404,11 @@ class AiOrchestrationServicePromptHydrationTest {
         when(definition.name()).thenReturn(name);
         when(callback.getToolDefinition()).thenReturn(definition);
         return callback;
+    }
+
+    private static void setPrivateField(Object target, String fieldName, Object value) throws Exception {
+        java.lang.reflect.Field field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(target, value);
     }
 }

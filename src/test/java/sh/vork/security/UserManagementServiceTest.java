@@ -65,4 +65,15 @@ class UserManagementServiceTest {
 
         assertEquals("USER", updated.role());
     }
+
+    @Test
+    void updateDisplayNamePersistsNewValue() {
+        userManagementService.createUser("alice", "Alice", "password123", "USER");
+
+        VorkUser updated = userManagementService.updateDisplayName("alice", "Alice Cooper");
+
+        assertEquals("Alice Cooper", updated.displayName());
+        VorkUser loaded = userRepository.get("alice");
+        assertEquals("Alice Cooper", loaded.displayName());
+    }
 }

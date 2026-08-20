@@ -1,6 +1,7 @@
 package sh.vork.ai.security;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
@@ -12,11 +13,15 @@ import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.metadata.ToolMetadata;
 
 import sh.vork.ai.context.ToolExecutionContext;
+import sh.vork.ai.exception.ToolSuspensionException;
 
 /**
  * Global tool-call logger that provides consistent observability for all tools.
  */
 public class LoggedToolCallback implements ToolCallback {
+
+    public static final String PENDING_TOOL_SUSPENSION_CONTEXT_KEY = "__pending_tool_suspension__";
+    private static final String SUSPENSION_MESSAGE_PREFIX = "Tool execution suspended pending authorization:";
 
     private static final Logger log = LoggerFactory.getLogger(LoggedToolCallback.class);
 
@@ -53,7 +58,8 @@ public class LoggedToolCallback implements ToolCallback {
     private String invoke(String arguments, ToolContext toolContext) {
         String toolName = delegate.getToolDefinition().name();
         String sessionUuid = resolveSessionUuid();
-        String effectiveArguments = sanitizeForLog(resolveArguments(arguments, toolContext));
+        String rawArguments = resolveArguments(arguments, toolContext);
+        String effectiveArguments = sanitizeForLog(rawArguments);
         long startedAt = System.nanoTime();
 
         log.debug("ENTER tool call: [tool={}, session={}, args={}]", toolName, sessionUuid, effectiveArguments);
@@ -65,6 +71,13 @@ public class LoggedToolCallback implements ToolCallback {
                     toolName, sessionUuid, durationMs, sanitizeForLog(result));
             return result;
         } catch (Exception ex) {
+            ToolSuspensionException suspension = findToolSuspension(ex);
+            if (suspension == null && isSuspensionMessage(ex)) {
+                suspension = new ToolSuspensionException(toolName, rawArguments);
+            }
+            if (suspension != null) {
+                ToolExecutionContext.put(PENDING_TOOL_SUSPENSION_CONTEXT_KEY, suspension);
+            }
             long durationMs = (System.nanoTime() - startedAt) / 1_000_000;
             log.warn("EXIT tool call: [tool={}, session={}, success=false, durationMs={}, errorType={}, error={}]",
                     toolName,
@@ -74,6 +87,29 @@ public class LoggedToolCallback implements ToolCallback {
                     truncate(ex.getMessage()));
             throw ex;
         }
+    }
+
+    private static ToolSuspensionException findToolSuspension(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof ToolSuspensionException suspension) {
+                return suspension;
+            }
+            current = current.getCause();
+        }
+        return null;
+    }
+
+    private static boolean isSuspensionMessage(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && message.startsWith(SUSPENSION_MESSAGE_PREFIX)) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private static String resolveSessionUuid() {
@@ -176,6 +212,6 @@ public class LoggedToolCallback implements ToolCallback {
     }
 
     private static String truncate(String text) {
-        return text == null ? "null" : text;
+        return Objects.toString(text, "null");
     }
 }

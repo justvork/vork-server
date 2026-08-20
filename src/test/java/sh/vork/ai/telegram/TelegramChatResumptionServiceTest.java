@@ -34,8 +34,10 @@ import sh.vork.ai.protocol.interaction.FormAction;
 import sh.vork.ai.protocol.interaction.FormField;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
 import sh.vork.ai.security.AuthorizationRuleEngine;
+import sh.vork.ai.security.LoggedToolCallback;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
+import sh.vork.ai.exception.ToolSuspensionException;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.mock.MapDatabaseRepository;
 import sh.vork.security.SecureCredentialStore;
@@ -163,5 +165,125 @@ class TelegramChatResumptionServiceTest {
         assertEquals("done", result);
         assertNotNull(capturedArgs.get());
         assertEquals("user-confirmed", String.valueOf(capturedArgs.get().get("query")));
+    }
+
+    @Test
+    void resumeAndRun_whenAiContinuationSuspendsAgain_viaPendingContext_rethrowsToolSuspension() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+        DatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+
+        String sessionUuid = "session-resuspend";
+        String eventId = "event-resuspend";
+        String toolCallId = "pending-resuspend";
+
+        UiEventFrame promptFrame = new UiEventFrame(
+                eventId,
+                "PROMPT_REQUIRED",
+                "COLLECT_SKILL_INPUT",
+                "Need more info",
+                new InteractionFormSchema(
+                        "COLLECT_SKILL_INPUT",
+                        "Skill Input",
+                        "Confirm field values",
+                        List.of(new FormField("query", "text", "Query", "", true,
+                                FieldSource.CONVERSATION, List.of())),
+                        List.of(new FormAction("SAVE", "Save & Continue", "primary"))));
+
+        AiChatMessage promptMessage = new AiChatMessage(
+                "msg-prompt",
+                "PROMPT_REQUIRED",
+                objectMapper.writeValueAsString(promptFrame),
+                System.currentTimeMillis(),
+                null,
+                List.of(new AiChatMessage.ToolCallRef(toolCallId, "FUNCTION", "skillTool",
+                        "{\"query\":\"ai-default\"}")),
+                toolCallId,
+                "skillTool");
+
+        AiSession session = new AiSession(
+                sessionUuid,
+                AiProvider.GEMINI.name(),
+                SessionOriginMode.TELEGRAM,
+                "alice",
+                "Untitled",
+                System.currentTimeMillis(),
+                0,
+                List.of(promptMessage),
+                AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.AWAITING_INPUT,
+                null,
+                null,
+                null,
+                null,
+                null);
+        sessionRepo.save(session);
+
+        SessionEnvironmentService sessionEnvironmentService = mock(SessionEnvironmentService.class);
+        SecureCredentialStore secureCredentialStore = mock(SecureCredentialStore.class);
+        AuthorizationRuleEngine authorizationRuleEngine = new AuthorizationRuleEngine(java.util.Set.of());
+        AiOrchestrationService aiService = mock(AiOrchestrationService.class);
+        ChatService chatService = mock(ChatService.class);
+        UserService userService = mock(UserService.class);
+
+        when(userService.getRequiredEnabledUser("alice"))
+                .thenReturn(new VorkUser("alice", "Alice", "hash", "USER", true, 0L, 0L));
+
+        when(aiService.generateWithHistory(anyList(), anyString(), any())).thenAnswer(invocation -> {
+            ToolExecutionContext.put(
+                    LoggedToolCallback.PENDING_TOOL_SUSPENSION_CONTEXT_KEY,
+                    new ToolSuspensionException(
+                            "requestInformation",
+                            "{\"promptText\":\"follow-up\",\"channelNames\":[\"lee\"],\"requesterMessage\":\"need follow-up\",\"recipientMessage\":\"need follow-up\"}"
+                    ));
+            throw new RuntimeException("Failed to parse JSON: Tool execution suspended pending authorization: requestInformation");
+        });
+
+        ToolCallback tool = new ToolCallback() {
+            private final ToolDefinition definition = DefaultToolDefinition.builder()
+                    .name("skillTool")
+                    .description("skill tool")
+                    .inputSchema("{\"type\":\"object\"}")
+                    .build();
+
+            @Override
+            public ToolDefinition getToolDefinition() {
+                return definition;
+            }
+
+            @Override
+            public String call(String toolInput) {
+                return "{\"status\":\"ok\"}";
+            }
+
+            @Override
+            public String call(String toolInput, ToolContext toolContext) {
+                return "{\"status\":\"ok\"}";
+            }
+        };
+
+        TelegramChatResumptionService service = new TelegramChatResumptionService(
+                sessionRepo,
+                sessionEnvironmentService,
+                secureCredentialStore,
+                authorizationRuleEngine,
+                aiService,
+                chatService,
+                userService,
+                objectMapper,
+                List.of(tool));
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                ToolSuspensionException.class,
+                () -> service.resumeAndRun(
+                        "alice",
+                        sessionUuid,
+                        eventId,
+                        "SAVE",
+                        Map.of("query", "user-confirmed")));
+
+        AiSession saved = sessionRepo.get(sessionUuid);
+        assertNotNull(saved);
+        assertEquals(AiSessionStatus.AWAITING_INPUT, saved.status());
+        assertEquals("PROMPT_REQUIRED", saved.messages().get(saved.messages().size() - 1).role());
     }
 }

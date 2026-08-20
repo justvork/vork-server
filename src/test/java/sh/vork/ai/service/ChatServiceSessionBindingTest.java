@@ -179,4 +179,104 @@ class ChatServiceSessionBindingTest {
         assertEquals(1, listed.size());
         assertEquals("session-normal", listed.getFirst().uuid());
     }
+
+    @Test
+    void listSessionsForCurrentUser_filtersByAgentSearchAndLimit() {
+        SecurityContextHolder.getContext().setAuthentication(
+                new TestingAuthenticationToken("alice", "pw"));
+
+        MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+
+        sessionRepo.save(new AiSession(
+                "session-concierge-1",
+                AiProvider.GEMINI.name(),
+                SessionOriginMode.WEB,
+                "alice",
+                "Concierge Alpha",
+                System.currentTimeMillis() - 5000,
+                0,
+                List.of(),
+                AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.RUNNING,
+                "agent-tpl-concierge-001",
+                null,
+                null,
+                null,
+                List.of("toggleInputRelay")));
+
+        sessionRepo.save(new AiSession(
+                "session-marketing-1",
+                AiProvider.GEMINI.name(),
+                SessionOriginMode.WEB,
+                "alice",
+                "Marketing Campaign",
+                System.currentTimeMillis() - 4000,
+                0,
+                List.of(),
+                AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.RUNNING,
+                "agent-marketing-001",
+                null,
+                null,
+                null,
+                List.of("toggleInputRelay")));
+
+        sessionRepo.save(new AiSession(
+                "session-marketing-2",
+                AiProvider.GEMINI.name(),
+                SessionOriginMode.WEB,
+                "alice",
+                "Marketing Follow-up",
+                System.currentTimeMillis() - 3000,
+                0,
+                List.of(),
+                AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.RUNNING,
+                "agent-marketing-001",
+                null,
+                null,
+                null,
+                List.of("toggleInputRelay")));
+
+        sessionRepo.save(new AiSession(
+                "session-other-user",
+                AiProvider.GEMINI.name(),
+                SessionOriginMode.WEB,
+                "bob",
+                "Bob Session",
+                System.currentTimeMillis() - 2000,
+                0,
+                List.of(),
+                AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.RUNNING,
+                "agent-marketing-001",
+                null,
+                null,
+                null,
+                List.of("toggleInputRelay")));
+
+        ChatService chatService = new ChatService(
+                sessionRepo,
+                null,
+                mock(AiOrchestrationService.class),
+                mock(SimpMessagingTemplate.class),
+                new ObjectMapper().findAndRegisterModules(),
+                List.of(),
+                mock(SystemNotificationService.class),
+                Runnable::run,
+                mock(RelayEncryptionService.class),
+                mock(RelayHttpClient.class),
+                mock(SystemSettingsService.class),
+                null);
+
+        List<AiSession> marketingOnly = chatService.listSessionsForCurrentUser("agent-marketing-001", null, 200);
+        assertEquals(2, marketingOnly.size());
+
+        List<AiSession> searched = chatService.listSessionsForCurrentUser("agent-marketing-001", "follow", 200);
+        assertEquals(1, searched.size());
+        assertEquals("session-marketing-2", searched.getFirst().uuid());
+
+        List<AiSession> limited = chatService.listSessionsForCurrentUser("agent-marketing-001", null, 1);
+        assertEquals(1, limited.size());
+    }
 }

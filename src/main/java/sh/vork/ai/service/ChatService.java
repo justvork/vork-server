@@ -54,6 +54,7 @@ import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.exception.ToolSuspensionException;
+import sh.vork.ai.function.RequestInformationToolRequest;
 import sh.vork.ai.lifecycle.AgentTemplateSeeder;
 import sh.vork.ai.provider.AiModelService;
 import sh.vork.ai.protocol.StructuredAgentResponse;
@@ -62,6 +63,10 @@ import sh.vork.ai.protocol.interaction.FieldSource;
 import sh.vork.ai.protocol.interaction.FormAction;
 import sh.vork.ai.protocol.interaction.FormField;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
+import sh.vork.ai.request.RequestInformationService;
+import sh.vork.ai.request.RequestInformationCampaign;
+import sh.vork.ai.request.RequestResponsePolicy;
+import sh.vork.ai.security.LoggedToolCallback;
 import sh.vork.ai.telegram.TelegramChatResumptionService;
 import sh.vork.attention.AttentionSignalService;
 import sh.vork.filesystem.FileArea;
@@ -99,6 +104,11 @@ public class ChatService {
     private static final String SESSION_MCP_BINDING_UUIDS_ENV = "SESSION_MCP_BINDING_UUIDS";
     private static final String TOGGLE_INPUT_RELAY_TOOL = "toggleInputRelay";
     private static final String GENERATED_ATTACHMENTS_CONTEXT_KEY = "generated.session.attachments";
+    private static final String REQUEST_CAMPAIGN_ID_ENV = "REQUEST_CAMPAIGN_ID";
+    private static final String REQUEST_CAMPAIGN_PARENT_SESSION_UUID_ENV = "REQUEST_CAMPAIGN_PARENT_SESSION_UUID";
+    private static final String REQUEST_CAMPAIGN_RECIPIENT_CHANNEL_ENV = "REQUEST_CAMPAIGN_RECIPIENT_CHANNEL";
+    private static final String REQUEST_CAMPAIGN_ROUTE_MODE_ENV = "REQUEST_CAMPAIGN_ROUTE_MODE";
+    private static final String REQUEST_CAMPAIGN_ROUTE_MODE_CHILD_SESSION = "CHILD_SESSION";
     private static final Pattern SESSION_FILE_DOWNLOAD_URL_PATTERN =
             Pattern.compile("(/api/session-files/download\\?[^\\s\"'<>]+)");
 
@@ -126,6 +136,9 @@ public class ChatService {
 
     @Autowired(required = false)
     private AttentionSignalService attentionSignalService;
+
+    @Autowired(required = false)
+    private RequestInformationService requestInformationService;
 
     @Value("${vork.app.base-url:}")
     private String configuredRelayHost;
@@ -293,19 +306,24 @@ public class ChatService {
     }
 
     public AiSession createNewSession(AiProvider provider, String modelId) {
+        return createNewSession(provider, modelId, null);
+    }
+
+    public AiSession createNewSession(AiProvider provider, String modelId, String requestedAgentTemplateId) {
         String username = resolveUsername();
+        String activeAgentTemplateId = resolveRequestedSessionAgentTemplateId(requestedAgentTemplateId, username);
         String uuid = UUID.randomUUID().toString();
         AiSession session = new AiSession(uuid, provider.name(), SessionOriginMode.WEB,
             username, DEFAULT_SESSION_NAME, System.currentTimeMillis(), 0, List.of(),
             AiSession.defaultEnvironmentVariables(), AiSessionStatus.RUNNING,
-            AgentTemplateSeeder.UUID_CONCIERGE, modelId, null, null, defaultWebSessionToolIds());
+            activeAgentTemplateId, modelId, null, null, defaultWebSessionToolIds());
         sessionRepo.save(session);
         log.info("Created AI session [id={}, provider={}, model={}, user={}]", uuid, provider, modelId, username);
         return session;
     }
 
     public AiSession createNewSession(AiProvider provider) {
-        return createNewSession(provider, null);
+        return createNewSession(provider, null, null);
     }
 
     /**
@@ -365,7 +383,17 @@ public class ChatService {
     }
 
     public List<AiSession> listSessionsForCurrentUser() {
+        return listSessionsForCurrentUser(null, null, null);
+    }
+
+    public List<AiSession> listSessionsForCurrentUser(String agentTemplateId,
+                                                      String search,
+                                                      Integer limit) {
         String username = resolveUsername();
+        String normalizedAgentId = normalizeAgentFilter(agentTemplateId);
+        String normalizedSearch = normalizeSessionSearch(search);
+        int effectiveLimit = normalizeSessionListLimit(limit);
+
         Set<String> surfaceSessionUuids = new HashSet<>();
         if (surfaceRepository != null) {
             try (var surfaces = surfaceRepository.list(0, Integer.MAX_VALUE)) {
@@ -375,14 +403,114 @@ public class ChatService {
                         .forEach(surfaceSessionUuids::add);
             }
         }
-        try (var stream = sessionRepo.search(0, 200, "createdAt", SortOrder.DESC,
+        try (var stream = sessionRepo.search(0, 1000, "createdAt", SortOrder.DESC,
                 SearchQuery.eq("username", username),
                 SearchQuery.eq("originMode", SessionOriginMode.WEB.name()))) {
             return stream
                     .filter(session -> !surfaceSessionUuids.contains(session.uuid()))
+                    .filter(session -> matchesAgentFilter(session, normalizedAgentId))
+                    .filter(session -> matchesSearchFilter(session, normalizedSearch))
+                    .limit(effectiveLimit)
                     .collect(Collectors.toList());
         }
     }
+
+    private String resolveRequestedSessionAgentTemplateId(String requestedAgentTemplateId, String username) {
+        if (requestedAgentTemplateId == null || requestedAgentTemplateId.isBlank()) {
+            return AgentTemplateSeeder.UUID_CONCIERGE;
+        }
+        AgentTemplate template = agentTemplateRepo.get(requestedAgentTemplateId);
+        if (template == null) {
+            throw new IllegalArgumentException("Agent template not found: " + requestedAgentTemplateId);
+        }
+        if (template.agentType() != AgentType.INTERACTIVE) {
+            throw new IllegalArgumentException("Agent template is not interactive: " + requestedAgentTemplateId);
+        }
+        if (!isAssignedToUser(template, username)) {
+            throw new IllegalStateException("Agent is not assigned to current user: " + template.name());
+        }
+        return template.uuid();
+    }
+
+    private String normalizeAgentFilter(String agentTemplateId) {
+        if (agentTemplateId == null || agentTemplateId.isBlank()) {
+            return null;
+        }
+        return agentTemplateId.trim();
+    }
+
+    private String normalizeSessionSearch(String search) {
+        if (search == null || search.isBlank()) {
+            return null;
+        }
+        return search.trim().toLowerCase();
+    }
+
+    private int normalizeSessionListLimit(Integer limit) {
+        if (limit == null || limit <= 0) {
+            return 200;
+        }
+        return Math.min(limit, 500);
+    }
+
+    private boolean matchesAgentFilter(AiSession session, String agentTemplateId) {
+        if (agentTemplateId == null || agentTemplateId.isBlank()) {
+            return true;
+        }
+        String activeId = session.activeAgentTemplateId();
+        if (AgentTemplateSeeder.UUID_CONCIERGE.equals(agentTemplateId)) {
+            return activeId == null
+                    || activeId.isBlank()
+                    || AgentTemplateSeeder.UUID_CONCIERGE.equals(activeId);
+        }
+        return agentTemplateId.equals(activeId);
+    }
+
+    private boolean matchesSearchFilter(AiSession session, String normalizedSearch) {
+        if (normalizedSearch == null || normalizedSearch.isBlank()) {
+            return true;
+        }
+        String sessionName = session.name() == null ? "" : session.name();
+        return sessionName.toLowerCase().contains(normalizedSearch);
+    }
+
+        public AiSession releaseAwaitingInputSession(String sessionUuid, String reasonMessage) {
+            AiSession session = getSessionForCurrentUser(sessionUuid);
+            if (session.status() != AiSessionStatus.AWAITING_INPUT) {
+                return session;
+            }
+
+            List<AiChatMessage> updated = new ArrayList<>(session.messages());
+            String content = reasonMessage == null || reasonMessage.isBlank()
+                    ? "Request cancelled. Session resumed."
+                    : reasonMessage;
+            updated.add(new AiChatMessage(
+                    UUID.randomUUID().toString(),
+                    "ASSISTANT",
+                    content,
+                    System.currentTimeMillis(),
+                    null));
+
+            AiSession resumed = new AiSession(
+                    session.uuid(),
+                    session.provider(),
+                    session.originMode(),
+                    session.username(),
+                    session.name(),
+                    session.createdAt(),
+                    session.currentRoundCount(),
+                    List.copyOf(updated),
+                    session.environmentVariables(),
+                    AiSessionStatus.RUNNING,
+                    session.activeAgentTemplateId(),
+                    session.modelId(),
+                    session.skillStack(),
+                    session.sessionSkillUuids(),
+                    session.sessionToolIds());
+            sessionRepo.save(resumed);
+
+            return resumed;
+        }
 
     public AiSession renameSessionForCurrentUser(String sessionUuid, String requestedName) {
         AiSession session = getSessionForCurrentUser(sessionUuid);
@@ -492,6 +620,11 @@ public class ChatService {
         AiChatMessage userMsg = new AiChatMessage(UUID.randomUUID().toString(), "USER",
                 content == null ? "" : content, now, userRefs);
 
+        AiChatMessage childCampaignResponse = handleChildSessionCampaignResponse(session, userMsg, persistUserMessage);
+        if (childCampaignResponse != null) {
+            return childCampaignResponse;
+        }
+
         if (log.isDebugEnabled()) {
             log.debug("AI call prompt [session={}]: {}", sessionUuid,
                     effectiveContent.length() > 500 ? effectiveContent.substring(0, 500) + "…" : effectiveContent);
@@ -522,12 +655,20 @@ public class ChatService {
             }
 
             String eventId = UUID.randomUUID().toString();
+                ToolSuspensionException.SuspensionCampaign suspensionCampaign = resolveSuspensionCampaign(ex);
+                String campaignUuid = materializeSuspensionCampaign(session, eventId, ex, justification, suspensionCampaign);
+            InteractionFormSchema promptSchema = enrichPromptSchemaWithCampaign(
+                    ex.getFormSchema(),
+                    campaignUuid,
+                    suspensionCampaign != null);
             UiEventFrame promptEvent = new UiEventFrame(
                 eventId,
                 "PROMPT_REQUIRED",
-                resolvePromptIntent(ex.getFormSchema()),
+                resolvePromptIntent(promptSchema),
                 justification,
-                ex.getFormSchema());
+                promptSchema);
+            UiEventFrame requesterHoldEvent = promptEvent;
+            boolean suppressPromptBroadcast = shouldSuppressPromptBroadcast(ex.getToolName(), promptSchema);
             promptEvent = maybeRelayWrapPromptEvent(session, promptEvent);
 
             String promptJson;
@@ -574,7 +715,13 @@ public class ChatService {
                 systemNotificationService.notifyOfflineOperator(ex.getToolName(), ex.getArguments(), sessionUuid, eventId);
                 }
 
-                messaging.convertAndSend("/topic/chat/" + sessionUuid, promptEvent);
+                if (suppressPromptBroadcast) {
+                    log.debug("Suppressing requester-side prompt broadcast for external request campaign [session={}, event={}, tool={}]",
+                            sessionUuid, eventId, ex.getToolName());
+                    messaging.convertAndSend("/topic/chat/" + sessionUuid, requesterHoldEvent);
+                } else {
+                    messaging.convertAndSend("/topic/chat/" + sessionUuid, promptEvent);
+                }
 
             log.info("Tool suspension caught for tool: {}. Frozen session state [session={}]",
                     ex.getToolName(), sessionUuid);
@@ -672,6 +819,11 @@ public class ChatService {
             AiChatMessage userMsg = new AiChatMessage(UUID.randomUUID().toString(), "USER",
                     content == null ? "" : content, now, userRefs);
 
+            AiChatMessage childCampaignResponse = handleChildSessionCampaignResponse(session, userMsg, true);
+            if (childCampaignResponse != null) {
+                return childCampaignResponse;
+            }
+
             try {
                 return executeAgentLoop(session, history, effectiveContent, media, resolvedProvider, userMsg, refs,
                     true);
@@ -686,12 +838,20 @@ public class ChatService {
                 }
 
                 String eventId = UUID.randomUUID().toString();
+                ToolSuspensionException.SuspensionCampaign suspensionCampaign = resolveSuspensionCampaign(ex);
+                String campaignUuid = materializeSuspensionCampaign(session, eventId, ex, justification, suspensionCampaign);
+                InteractionFormSchema promptSchema = enrichPromptSchemaWithCampaign(
+                        ex.getFormSchema(),
+                        campaignUuid,
+                    suspensionCampaign != null);
                 UiEventFrame promptEvent = new UiEventFrame(
                         eventId,
                         "PROMPT_REQUIRED",
-                    resolvePromptIntent(ex.getFormSchema()),
+                    resolvePromptIntent(promptSchema),
                         justification,
-                        ex.getFormSchema());
+                        promptSchema);
+                UiEventFrame requesterHoldEvent = promptEvent;
+                boolean suppressPromptBroadcast = shouldSuppressPromptBroadcast(ex.getToolName(), promptSchema);
                 promptEvent = maybeRelayWrapPromptEvent(session, promptEvent);
 
                 String promptJson;
@@ -748,7 +908,13 @@ public class ChatService {
                     systemNotificationService.notifyOfflineOperator(ex.getToolName(), ex.getArguments(), sessionUuid, eventId);
                 }
 
-                messaging.convertAndSend("/topic/chat/" + sessionUuid, promptEvent);
+                if (suppressPromptBroadcast) {
+                    log.debug("Suppressing requester-side prompt broadcast for external request campaign [session={}, event={}, tool={}]",
+                            sessionUuid, eventId, ex.getToolName());
+                    messaging.convertAndSend("/topic/chat/" + sessionUuid, requesterHoldEvent);
+                } else {
+                    messaging.convertAndSend("/topic/chat/" + sessionUuid, promptEvent);
+                }
 
                 log.info("Tool suspension caught for tool: {}. Frozen session state [session={}]",
                         ex.getToolName(), sessionUuid);
@@ -757,6 +923,207 @@ public class ChatService {
         } finally {
             ToolExecutionContext.remove(GENERATED_ATTACHMENTS_CONTEXT_KEY);
             ToolExecutionContext.clear();
+        }
+    }
+
+    private AiChatMessage handleChildSessionCampaignResponse(AiSession session,
+                                                             AiChatMessage userMsg,
+                                                             boolean persistUserMessage) {
+        if (requestInformationService == null || session == null || session.environmentVariables() == null) {
+            return null;
+        }
+
+        String campaignId = session.environmentVariables().get(REQUEST_CAMPAIGN_ID_ENV);
+        String routeMode = session.environmentVariables().get(REQUEST_CAMPAIGN_ROUTE_MODE_ENV);
+        if (campaignId == null || campaignId.isBlank()) {
+            return null;
+        }
+        if (routeMode == null || !REQUEST_CAMPAIGN_ROUTE_MODE_CHILD_SESSION.equalsIgnoreCase(routeMode.trim())) {
+            return null;
+        }
+
+        RequestInformationCampaign campaign;
+        try {
+            campaign = requestInformationService.getCampaign(campaignId);
+        } catch (Exception ex) {
+            log.warn("Child campaign response skipped because campaign lookup failed [session={}, campaign={}, error={}]",
+                    session.uuid(), campaignId, ex.getMessage());
+            return null;
+        }
+
+        String responderChannel = session.environmentVariables().get(REQUEST_CAMPAIGN_RECIPIENT_CHANNEL_ENV);
+        if (responderChannel == null || responderChannel.isBlank()) {
+            responderChannel = session.username();
+        }
+
+        Map<String, String> responseFields = new HashMap<>();
+        responseFields.put("message", userMsg.content() == null ? "" : userMsg.content());
+
+        RequestInformationService.ResponseGateResult gate = requestInformationService.recordResponseAndEvaluate(
+                campaign.uuid(),
+                responderChannel,
+                "ONCE",
+                responseFields);
+
+        String childAckText = gate.userMessage() == null || gate.userMessage().isBlank()
+                ? "Response recorded."
+                : gate.userMessage();
+
+        AiChatMessage childAck = new AiChatMessage(
+                UUID.randomUUID().toString(),
+                "ASSISTANT",
+                childAckText,
+                System.currentTimeMillis(),
+                null);
+
+        AiSession latest = sessionRepo.get(session.uuid());
+        if (latest == null) {
+            latest = session;
+        }
+        List<AiChatMessage> updated = new ArrayList<>(latest.messages());
+        if (persistUserMessage) {
+            updated.add(userMsg);
+        }
+        updated.add(childAck);
+        sessionRepo.save(new AiSession(
+                latest.uuid(), latest.provider(), latest.originMode(), latest.username(),
+                latest.name(), latest.createdAt(), latest.currentRoundCount(), List.copyOf(updated),
+                latest.environmentVariables(), latest.status(), latest.activeAgentTemplateId(),
+                latest.modelId(), latest.skillStack(), latest.sessionSkillUuids(), latest.sessionToolIds()));
+
+        log.info("Child campaign response recorded [campaign={}, childSession={}, responder={}, accepted={}, shouldResume={}, count={}/{}]",
+                campaign.uuid(), latest.uuid(), responderChannel,
+                gate.accepted(), gate.shouldResume(), gate.responseCount(), gate.requiredResponses());
+
+        if (gate.shouldResume()) {
+            boolean shouldResumeNow = requestInformationService.markResumeStarted(campaign.uuid());
+            if (shouldResumeNow) {
+                resumeParentSessionFromChildCampaign(campaign, latest);
+            } else {
+                log.debug("Parent resume already triggered for campaign [campaign={}]", campaign.uuid());
+            }
+        }
+
+        return childAck;
+    }
+
+    private void resumeParentSessionFromChildCampaign(RequestInformationCampaign campaign, AiSession childSession) {
+        if (campaign == null || telegramChatResumptionService == null || requestInformationService == null) {
+            return;
+        }
+
+        String parentSessionUuid = null;
+        if (childSession != null && childSession.environmentVariables() != null) {
+            parentSessionUuid = childSession.environmentVariables().get(REQUEST_CAMPAIGN_PARENT_SESSION_UUID_ENV);
+        }
+        if (parentSessionUuid == null || parentSessionUuid.isBlank()) {
+            parentSessionUuid = campaign.parentSessionUuid();
+        }
+        if (parentSessionUuid == null || parentSessionUuid.isBlank()) {
+            parentSessionUuid = campaign.sessionUuid();
+        }
+        if (parentSessionUuid == null || parentSessionUuid.isBlank()) {
+            log.warn("Cannot resume parent session: campaign has no parent/session UUID [campaign={}]", campaign.uuid());
+            return;
+        }
+
+        AiSession parentSession = sessionRepo.get(parentSessionUuid);
+        if (parentSession == null) {
+            log.warn("Cannot resume parent session: parent session not found [campaign={}, parentSession={}]",
+                    campaign.uuid(), parentSessionUuid);
+            return;
+        }
+
+        try {
+            Map<String, String> resumeFields = requestInformationService.buildResumeFields(campaign.uuid());
+            String parentText = telegramChatResumptionService.resumeAndRun(
+                    parentSession.username(),
+                    parentSessionUuid,
+                    campaign.eventId(),
+                    "ONCE",
+                    resumeFields);
+
+            resolveSessionSuspensionAlert(parentSessionUuid);
+
+            AiSession refreshedParent = sessionRepo.get(parentSessionUuid);
+            AiChatMessage latestResponse = null;
+            if (refreshedParent != null && refreshedParent.messages() != null && !refreshedParent.messages().isEmpty()) {
+                for (int i = refreshedParent.messages().size() - 1; i >= 0; i--) {
+                    AiChatMessage candidate = refreshedParent.messages().get(i);
+                    if (candidate != null && (
+                            "TEXT_RESPONSE".equals(candidate.role())
+                                    || "ASSISTANT".equals(candidate.role()))) {
+                        latestResponse = candidate;
+                        break;
+                    }
+                }
+            }
+
+            if (latestResponse != null) {
+                messaging.convertAndSend("/topic/chat/" + parentSessionUuid, latestResponse);
+            } else {
+                // Fallback for unexpected persistence gaps; preserves previous behavior.
+                UiEventFrame parentResponseEvent = new UiEventFrame(
+                        UUID.randomUUID().toString(),
+                        "TEXT_RESPONSE",
+                        "CHAT_OUTPUT",
+                        parentText,
+                        null);
+                messaging.convertAndSend("/topic/chat/" + parentSessionUuid, parentResponseEvent);
+            }
+            log.info("Parent session resumed from child campaign response [campaign={}, parentSession={}]",
+                    campaign.uuid(), parentSessionUuid);
+        } catch (ToolSuspensionException ex) {
+            log.info("Parent session re-suspended during child campaign resume [campaign={}, parentSession={}, tool={}]",
+                    campaign.uuid(), parentSessionUuid, ex.getToolName());
+
+            boolean shouldPublishRequesterPrompt = true;
+            if ("requestInformation".equals(ex.getToolName())) {
+                String chainedEventId = UUID.randomUUID().toString();
+                ToolSuspensionException.SuspensionCampaign suspensionCampaign = resolveSuspensionCampaign(ex);
+                String chainedCampaignUuid = materializeSuspensionCampaign(
+                        parentSession,
+                        chainedEventId,
+                        ex,
+                        ex.getJustification(),
+                        suspensionCampaign);
+
+                if (chainedCampaignUuid != null && !chainedCampaignUuid.isBlank()) {
+                    shouldPublishRequesterPrompt = false;
+                    log.debug("Suppressed requester-side prompt broadcast for chained request campaign re-suspension [campaign={}, parentSession={}, chainedCampaign={}]",
+                            campaign.uuid(), parentSessionUuid, chainedCampaignUuid);
+                }
+            }
+
+            if (shouldPublishRequesterPrompt) {
+                publishLatestPromptEvent(parentSessionUuid);
+            }
+        } catch (Exception ex) {
+            log.warn("Failed to resume parent session from child campaign response [campaign={}, parentSession={}, error={}]",
+                    campaign.uuid(), parentSessionUuid, ex.getMessage());
+        }
+    }
+
+    private void publishLatestPromptEvent(String sessionUuid) {
+        AiSession session = sessionRepo.get(sessionUuid);
+        if (session == null || session.messages() == null || session.messages().isEmpty()) {
+            return;
+        }
+
+        for (int i = session.messages().size() - 1; i >= 0; i--) {
+            AiChatMessage msg = session.messages().get(i);
+            if (msg == null || !"PROMPT_REQUIRED".equals(msg.role()) || msg.content() == null || msg.content().isBlank()) {
+                continue;
+            }
+            try {
+                UiEventFrame frame = objectMapper.readValue(msg.content(), UiEventFrame.class);
+                messaging.convertAndSend("/topic/chat/" + sessionUuid, frame);
+                return;
+            } catch (Exception ex) {
+                log.debug("Unable to parse prompt event JSON while publishing latest prompt [session={}, error={}]",
+                        sessionUuid, ex.getMessage());
+                return;
+            }
         }
     }
 
@@ -2211,6 +2578,7 @@ public class ChatService {
                                            String effectiveContent,
                                            AiProvider provider,
                                            String modelId) {
+        ToolExecutionContext.remove(LoggedToolCallback.PENDING_TOOL_SUSPENSION_CONTEXT_KEY);
         try {
             return aiService.generateWithHistory(history, effectiveContent, provider, modelId);
         } catch (NoSuchElementException ex) {
@@ -2222,6 +2590,12 @@ public class ChatService {
                 log.error("Model returned no candidate for simplified prompt path [provider={}]", provider);
                 return modelUnavailableMessage();
             }
+        } catch (RuntimeException ex) {
+            ToolSuspensionException pendingSuspension = consumePendingToolSuspension();
+            if (pendingSuspension != null) {
+                throw pendingSuspension;
+            }
+            throw ex;
         }
     }
 
@@ -2230,6 +2604,7 @@ public class ChatService {
                                                    List<Media> media,
                                                    AiProvider provider,
                                                    String modelId) {
+        ToolExecutionContext.remove(LoggedToolCallback.PENDING_TOOL_SUSPENSION_CONTEXT_KEY);
         try {
             return aiService.generateWithHistoryAndMedia(history, effectiveContent, media, provider, modelId);
         } catch (NoSuchElementException ex) {
@@ -2240,11 +2615,26 @@ public class ChatService {
                 log.error("Model returned no candidate for text-only fallback after media call [provider={}]", provider);
                 return modelUnavailableMessage();
             }
+        } catch (RuntimeException ex) {
+            ToolSuspensionException pendingSuspension = consumePendingToolSuspension();
+            if (pendingSuspension != null) {
+                throw pendingSuspension;
+            }
+            throw ex;
         }
     }
 
     private static String modelUnavailableMessage() {
         return "I couldn't produce a model response right now due to a transient provider issue. Please try again.";
+    }
+
+    private ToolSuspensionException consumePendingToolSuspension() {
+        Object pending = ToolExecutionContext.get(LoggedToolCallback.PENDING_TOOL_SUSPENSION_CONTEXT_KEY);
+        if (pending instanceof ToolSuspensionException suspension) {
+            ToolExecutionContext.remove(LoggedToolCallback.PENDING_TOOL_SUSPENSION_CONTEXT_KEY);
+            return suspension;
+        }
+        return null;
     }
 
     private static String defaultAuthorizationReason(String toolName) {
@@ -2554,6 +2944,198 @@ public class ChatService {
             return;
         }
         attentionSignalService.onSessionSuspended(sessionUuid, username, toolName, reason);
+    }
+
+    private String materializeSuspensionCampaign(AiSession session,
+                                                 String eventId,
+                                                 ToolSuspensionException suspension,
+                                                 String reason,
+                                                 ToolSuspensionException.SuspensionCampaign suspensionCampaign) {
+        if (requestInformationService == null || session == null || eventId == null || eventId.isBlank()) {
+            return null;
+        }
+        try {
+            String effectivePromptText = reason;
+            if ("requestInformation".equals(suspension.getToolName())) {
+                String rawArguments = suspension.getArguments();
+                if (rawArguments != null && !rawArguments.isBlank() && !"{}".equals(rawArguments.trim())) {
+                    try {
+                        RequestInformationToolRequest req = objectMapper.readValue(rawArguments, RequestInformationToolRequest.class);
+                        if (req.promptText() != null && !req.promptText().isBlank()) {
+                            effectivePromptText = req.promptText().trim();
+                        }
+                    } catch (Exception ex) {
+                        log.debug("Could not recover promptText from requestInformation arguments; using suspension reason [session={}, event={}, error={}]",
+                                session.uuid(), eventId, ex.getMessage());
+                    }
+                }
+            }
+            return requestInformationService.ensureCampaignForSuspension(
+                    session.uuid(),
+                    eventId,
+                    session.username(),
+                    suspension.getToolName(),
+                    effectivePromptText,
+                    suspensionCampaign);
+        } catch (Exception ex) {
+            log.warn("Failed to materialize suspension campaign [session={}, event={}, tool={}, error={}]",
+                    session.uuid(), eventId, suspension.getToolName(), ex.getMessage());
+            return null;
+        }
+    }
+
+    private ToolSuspensionException.SuspensionCampaign resolveSuspensionCampaign(ToolSuspensionException suspension) {
+        if (suspension == null) {
+            return null;
+        }
+
+        if (suspension.getSuspensionCampaign() != null) {
+            return suspension.getSuspensionCampaign();
+        }
+
+        if (!"requestInformation".equals(suspension.getToolName())) {
+            return null;
+        }
+
+        String rawArguments = suspension.getArguments();
+        if (rawArguments == null || rawArguments.isBlank() || "{}".equals(rawArguments.trim())) {
+            return null;
+        }
+
+        try {
+            RequestInformationToolRequest req = objectMapper.readValue(rawArguments, RequestInformationToolRequest.class);
+            if (req.channelNames() == null || req.channelNames().isEmpty()) {
+                return null;
+            }
+            RequestResponsePolicy responsePolicy = RequestResponsePolicy.AUTO;
+            if (req.responsePolicy() != null && !req.responsePolicy().isBlank()) {
+                try {
+                    responsePolicy = RequestResponsePolicy.valueOf(req.responsePolicy().trim().toUpperCase());
+                } catch (IllegalArgumentException ignored) {
+                    responsePolicy = RequestResponsePolicy.AUTO;
+                }
+            }
+
+            ToolSuspensionException.SuspensionCampaign recovered = new ToolSuspensionException.SuspensionCampaign(
+                    req.channelNames(),
+                    responsePolicy,
+                    req.quorumCount(),
+                    req.sendNotifications(),
+                    req.alertName(),
+                    req.recipientMessage(),
+                    req.alertResolutionPolicy(),
+                    req.attentionAt());
+            log.debug("Recovered suspension campaign metadata from requestInformation arguments [channels={}, policy={}]",
+                    req.channelNames().size(), responsePolicy);
+            return recovered;
+        } catch (Exception ex) {
+            log.warn("Unable to recover suspension campaign metadata from requestInformation arguments [error={}]",
+                    ex.getMessage());
+            return null;
+        }
+    }
+
+    private InteractionFormSchema enrichPromptSchemaWithCampaign(InteractionFormSchema schema,
+                                                                  String campaignUuid,
+                                                                  boolean externalRecipientCampaign) {
+        if (schema == null || campaignUuid == null || campaignUuid.isBlank()) {
+            return schema;
+        }
+
+        String campaignRouteMode = "EXTERNAL_FORM";
+        String campaignParentSessionUuid = null;
+        String campaignChildRoutingEnabled = "false";
+        if (requestInformationService != null) {
+            try {
+                var campaign = requestInformationService.getCampaign(campaignUuid);
+                if (campaign != null) {
+                    campaignRouteMode = campaign.responseRouteMode().name();
+                    campaignParentSessionUuid = campaign.parentSessionUuid();
+                    campaignChildRoutingEnabled = String.valueOf(campaign.childSessionRoutingEnabled());
+                }
+            } catch (Exception ex) {
+                log.debug("Unable to enrich prompt schema with campaign route metadata [campaign={}, error={}]",
+                        campaignUuid, ex.getMessage());
+            }
+        }
+
+        List<FormField> fields = new ArrayList<>(schema.fields() == null ? List.of() : schema.fields());
+        fields.removeIf(f -> f != null && (
+                "requestCampaignId".equals(f.name())
+                        || "requestCampaignExternal".equals(f.name())
+                        || "requestCampaignRouteMode".equals(f.name())
+                        || "requestCampaignParentSessionUuid".equals(f.name())
+                        || "requestCampaignChildRoutingEnabled".equals(f.name())));
+        fields.add(new FormField(
+                "requestCampaignId",
+                "HIDDEN",
+                "",
+                "",
+                campaignUuid,
+                false,
+                FieldSource.CONTEXT,
+                null));
+        fields.add(new FormField(
+                "requestCampaignExternal",
+                "HIDDEN",
+                "",
+                "",
+                externalRecipientCampaign ? "true" : "false",
+                false,
+                FieldSource.CONTEXT,
+                null));
+            fields.add(new FormField(
+                "requestCampaignRouteMode",
+                "HIDDEN",
+                "",
+                "",
+                campaignRouteMode,
+                false,
+                FieldSource.CONTEXT,
+                null));
+            fields.add(new FormField(
+                "requestCampaignParentSessionUuid",
+                "HIDDEN",
+                "",
+                "",
+                campaignParentSessionUuid,
+                false,
+                FieldSource.CONTEXT,
+                null));
+            fields.add(new FormField(
+                "requestCampaignChildRoutingEnabled",
+                "HIDDEN",
+                "",
+                "",
+                campaignChildRoutingEnabled,
+                false,
+                FieldSource.CONTEXT,
+                null));
+
+        return new InteractionFormSchema(
+                schema.intent(),
+                schema.title(),
+                schema.description(),
+                List.copyOf(fields),
+                schema.actions());
+    }
+
+    private boolean shouldSuppressPromptBroadcast(String toolName, InteractionFormSchema promptSchema) {
+        if (!"requestInformation".equals(toolName) || promptSchema == null || promptSchema.fields() == null) {
+            return false;
+        }
+
+        for (FormField field : promptSchema.fields()) {
+            if (field == null || field.name() == null) {
+                continue;
+            }
+            if (!"requestCampaignExternal".equals(field.name())) {
+                continue;
+            }
+            String value = field.value();
+            return value != null && Boolean.parseBoolean(value.trim());
+        }
+        return false;
     }
 
     private void resolveSessionSuspensionAlert(String sessionUuid) {

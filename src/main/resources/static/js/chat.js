@@ -30,6 +30,15 @@ let sessions    = [];
 let editingSessionUuid = null;
 let awaitingPostTerminalResponse = false;
 let thinkingEnabled = true;
+let externalCampaignLock = null;
+let externalCampaignPollTimer = null;
+let currentSessionIsCampaignChild = false;
+let sessionMessagePollTimer = null;
+let renderedMessageUuids = new Set();
+let lastRenderedMessageUuid = null;
+let currentAgentTemplateId = null;
+
+const SESSION_MESSAGE_POLL_MS = 2000;
 
 const THINKING_TOGGLE_STORAGE_KEY = 'vork.thinking.enabled';
 
@@ -92,9 +101,109 @@ function showTyping(on) {
 }
 
 function setInputEnabled(on) {
-    messageInput.disabled = !on;
-    sendBtn.disabled = !on;
-    waiting = !on;
+    const blockedByExternalCampaign = !!(externalCampaignLock && externalCampaignLock.active);
+    const blockedByCampaignChild = !!currentSessionIsCampaignChild;
+    const effectiveOn = !!on && !blockedByExternalCampaign && !blockedByCampaignChild;
+    messageInput.disabled = !effectiveOn;
+    messageInput.readOnly = !effectiveOn;
+    sendBtn.disabled = !effectiveOn;
+    if (uploadFilesBtn) {
+        uploadFilesBtn.disabled = !effectiveOn;
+    }
+    if (fileInput) {
+        fileInput.disabled = !effectiveOn;
+    }
+    waiting = !effectiveOn;
+}
+
+function setCampaignChildSessionLock(on) {
+    currentSessionIsCampaignChild = !!on;
+    if (chatForm) {
+        chatForm.classList.toggle('hidden', currentSessionIsCampaignChild);
+    }
+    if (currentSessionIsCampaignChild) {
+        startSessionMessagePolling();
+    } else {
+        stopSessionMessagePolling();
+    }
+    if (currentSessionIsCampaignChild) {
+        setInputEnabled(false);
+    } else if (!externalCampaignLock && !awaitingPostTerminalResponse && !hasLiveTerminal()) {
+        setInputEnabled(true);
+    }
+}
+
+function rememberRenderedMessage(msg) {
+    if (!msg || !msg.uuid) {
+        return;
+    }
+    renderedMessageUuids.add(msg.uuid);
+    lastRenderedMessageUuid = msg.uuid;
+}
+
+function hasRenderedMessage(msg) {
+    return !!(msg && msg.uuid && renderedMessageUuids.has(msg.uuid));
+}
+
+async function renderNewPersistedMessage(msg) {
+    if (!msg || hasRenderedMessage(msg)) {
+        return;
+    }
+    await renderSessionRecord(msg, 0, [msg], 0);
+    rememberRenderedMessage(msg);
+}
+
+function stopSessionMessagePolling() {
+    if (sessionMessagePollTimer) {
+        window.clearInterval(sessionMessagePollTimer);
+        sessionMessagePollTimer = null;
+    }
+}
+
+async function pollSessionMessagesNow() {
+    if (!sessionUuid) {
+        return;
+    }
+
+    let url = '/api/chat/session/' + encodeURIComponent(sessionUuid) + '/messages';
+    if (lastRenderedMessageUuid) {
+        url += '?afterMessageUuid=' + encodeURIComponent(lastRenderedMessageUuid);
+    }
+
+    try {
+        const resp = await fetch(url);
+        if (!resp.ok) {
+            return;
+        }
+        const payload = await resp.json();
+        if (!payload || typeof payload !== 'object') {
+            return;
+        }
+
+        if (typeof payload.requestCampaignChildSession === 'boolean') {
+            setCampaignChildSessionLock(payload.requestCampaignChildSession);
+        }
+
+        const messages = Array.isArray(payload.messages) ? payload.messages : [];
+        for (const msg of messages) {
+            await renderNewPersistedMessage(msg);
+        }
+    } catch (_) {
+        // Ignore transient polling failures.
+    }
+}
+
+function startSessionMessagePolling() {
+    if (!currentSessionIsCampaignChild) {
+        stopSessionMessagePolling();
+        return;
+    }
+    if (sessionMessagePollTimer) {
+        return;
+    }
+    sessionMessagePollTimer = window.setInterval(function () {
+        pollSessionMessagesNow();
+    }, SESSION_MESSAGE_POLL_MS);
 }
 
 function setAwaitingPostTerminalResponse(on) {
@@ -270,6 +379,8 @@ function resetTerminalState() {
 
 function clearConversationUi() {
     resetTerminalState();
+    renderedMessageUuids.clear();
+    lastRenderedMessageUuid = null;
     messagesArea.querySelectorAll('.message-row').forEach(function (row) {
         if (row !== typingEl) {
             row.remove();
@@ -438,6 +549,235 @@ function renderThinkingEvent(text) {
 
     messagesArea.insertBefore(row, typingEl);
     scrollBottom();
+}
+
+function getSchemaFieldValue(schema, fieldName) {
+    if (!schema || !Array.isArray(schema.fields)) return '';
+    const field = schema.fields.find(function (f) {
+        return f && typeof f.name === 'string' && f.name === fieldName;
+    });
+    if (!field) return '';
+    if (typeof field.value === 'string') return field.value;
+    if (field.value == null) return '';
+    return String(field.value);
+}
+
+function isTrueLike(value) {
+    return String(value || '').trim().toLowerCase() === 'true';
+}
+
+function removeExternalCampaignWaitRows() {
+    messagesArea.querySelectorAll('.external-campaign-wait-row').forEach(function (el) {
+        el.remove();
+    });
+}
+
+function stopExternalCampaignPolling() {
+    if (externalCampaignPollTimer) {
+        window.clearInterval(externalCampaignPollTimer);
+        externalCampaignPollTimer = null;
+    }
+}
+
+function startExternalCampaignPolling() {
+    if (externalCampaignPollTimer || !sessionUuid) return;
+    externalCampaignPollTimer = window.setInterval(function () {
+        if (!externalCampaignLock || !externalCampaignLock.active) {
+            stopExternalCampaignPolling();
+            return;
+        }
+        fetch('/api/chat/session/' + encodeURIComponent(sessionUuid) + '/request-campaign')
+            .then(function (resp) { return resp.ok ? resp.json() : null; })
+            .then(function (data) {
+                if (!data || typeof data !== 'object') {
+                    // Keep lock on transient/unauthorized poll failures.
+                    return;
+                }
+
+                const status = String(data.status || '').toUpperCase();
+                if (status === 'OPEN') {
+                    // Refresh lock details (including campaign switch when backend rotates IDs).
+                    activateExternalCampaignLock(data);
+                    showTyping(false);
+                    return;
+                }
+
+                // Keep the requester waiting card visible after SATISFIED until the
+                // final AI answer is actually delivered in chat.
+                if (status === 'SATISFIED') {
+                    if (externalCampaignLock && externalCampaignLock.active) {
+                        externalCampaignLock.respondedCount = Number(data.respondedCount || externalCampaignLock.respondedCount || 0);
+                        externalCampaignLock.requiredResponses = Number(data.requiredResponses || externalCampaignLock.requiredResponses || 0);
+                        if (typeof data.promptText === 'string' && data.promptText.trim()) {
+                            externalCampaignLock.promptText = data.promptText.trim();
+                        }
+                        externalCampaignLock.awaitingFinalAnswer = true;
+                        renderExternalCampaignWaitRow(externalCampaignLock);
+                    }
+                    // Required responses are in; now we are waiting for the model's answer.
+                    showTyping(true);
+                    return;
+                }
+
+                // Unlock only when campaign is explicitly terminal without an AI follow-up.
+                if (status === 'CANCELLED' || status === 'EXPIRED') {
+                    unlockExternalCampaignLock();
+                    return;
+                }
+
+                // Keep lock for NONE/unknown statuses until backend gives an explicit terminal state
+                // or a chat TEXT_RESPONSE arrives.
+            })
+            .catch(function () {
+                // Keep current lock state on transient poll failures.
+            });
+    }, 4000);
+}
+
+function buildExternalCampaignSummary(campaign) {
+    const required = Number(campaign.requiredResponses || 0);
+    const responded = Number(campaign.respondedCount || 0);
+    const channels = Array.isArray(campaign.targetChannels) ? campaign.targetChannels : [];
+    if (required > 0) {
+        const remaining = Math.max(required - responded, 0);
+        if (responded > 0) {
+            return 'Waiting for ' + remaining + ' of ' + required + ' responses.';
+        }
+        return remaining === 1 ? 'Waiting for 1 response.' : ('Waiting for ' + remaining + ' responses.');
+    }
+    if (channels.length === 1) {
+        return 'Waiting for input from ' + channels[0] + '.';
+    }
+    if (channels.length > 1) {
+        return 'Waiting for input from ' + channels.length + ' recipients.';
+    }
+    return 'Waiting for external input.';
+}
+
+function buildExternalCampaignPhase(campaign) {
+    if (!campaign || !campaign.awaitingFinalAnswer) {
+        return '';
+    }
+    return 'All responses received. Generating final answer...';
+}
+
+function renderExternalCampaignWaitRow(campaign) {
+    removeExternalCampaignWaitRows();
+    const row = document.createElement('div');
+    row.className = 'external-campaign-wait-row';
+    const promptText = (campaign && typeof campaign.promptText === 'string' && campaign.promptText.trim())
+        ? campaign.promptText.trim()
+        : 'External information request in progress.';
+    const summary = buildExternalCampaignSummary(campaign || {});
+    const phase = buildExternalCampaignPhase(campaign || {});
+
+    const details = (campaign && Array.isArray(campaign.targetChannels) && campaign.targetChannels.length > 0)
+        ? ('Recipients: ' + campaign.targetChannels.map(escapeHtml).join(', '))
+        : '';
+
+    row.innerHTML =
+        '<div class="avatar assistant"><i class="fa-solid fa-user-clock"></i></div>' +
+        '<div class="bubble assistant external-campaign-wait-bubble">' +
+        '  <div class="external-campaign-title">Waiting For External Input</div>' +
+        '  <div class="external-campaign-prompt">' + escapeHtml(promptText) + '</div>' +
+        '  <div class="external-campaign-summary">' + escapeHtml(summary) + '</div>' +
+        (phase ? ('  <div class="external-campaign-phase">' + escapeHtml(phase) + '</div>') : '') +
+        (details ? ('  <div class="external-campaign-details">' + details + '</div>') : '') +
+        '  <div class="external-campaign-actions">' +
+        '    <button type="button" class="btn btn-sm btn-outline-warning external-campaign-cancel-btn">Cancel Request</button>' +
+        '  </div>' +
+        '</div>';
+
+    const cancelBtn = row.querySelector('.external-campaign-cancel-btn');
+    cancelBtn.addEventListener('click', function () {
+        if (!sessionUuid || !externalCampaignLock || !externalCampaignLock.campaignUuid) {
+            return;
+        }
+        cancelBtn.disabled = true;
+        fetch('/api/chat/session/' + encodeURIComponent(sessionUuid)
+            + '/request-campaign/' + encodeURIComponent(externalCampaignLock.campaignUuid)
+            + '/cancel',
+            { method: 'POST' })
+            .then(function (resp) { return resp.ok ? resp.json() : Promise.reject(new Error('HTTP ' + resp.status)); })
+            .then(function () {
+                unlockExternalCampaignLock();
+                renderMessage({ role: 'ASSISTANT', content: 'External request cancelled. Session unlocked.' });
+                setInputEnabled(true);
+                focusMessageInput();
+            })
+            .catch(function (err) {
+                cancelBtn.disabled = false;
+                renderMessage({ role: 'ERROR', content: 'Failed to cancel external request: ' + err.message });
+            });
+    });
+
+    messagesArea.insertBefore(row, typingEl);
+    scrollBottom();
+}
+
+function activateExternalCampaignLock(campaign) {
+    if (!campaign || !campaign.campaignUuid) return;
+    const keepExistingPrompt = !!(externalCampaignLock
+        && externalCampaignLock.active
+        && externalCampaignLock.campaignUuid === campaign.campaignUuid
+        && typeof externalCampaignLock.promptText === 'string'
+        && externalCampaignLock.promptText.trim());
+    const promptText = keepExistingPrompt
+        ? externalCampaignLock.promptText
+        : (campaign.promptText || '');
+    externalCampaignLock = {
+        active: true,
+        campaignUuid: campaign.campaignUuid,
+        eventId: campaign.eventId || null,
+        promptText: promptText,
+        targetChannels: Array.isArray(campaign.targetChannels) ? campaign.targetChannels : [],
+        requiredResponses: Number(campaign.requiredResponses || 0),
+        respondedCount: Number(campaign.respondedCount || 0),
+        awaitingFinalAnswer: false
+    };
+    renderExternalCampaignWaitRow(externalCampaignLock);
+    setInputEnabled(false);
+    showTyping(false);
+    startExternalCampaignPolling();
+}
+
+function unlockExternalCampaignLock() {
+    externalCampaignLock = null;
+    stopExternalCampaignPolling();
+    removeExternalCampaignWaitRows();
+    showTyping(false);
+    if (!hasLiveTerminal() && !awaitingPostTerminalResponse) {
+        setInputEnabled(true);
+    }
+}
+
+function maybeActivateExternalCampaignLockFromFrame(frame) {
+    const schema = frame && frame.formSchema ? frame.formSchema : null;
+    const campaignUuid = getSchemaFieldValue(schema, 'requestCampaignId').trim();
+    const externalFlag = isTrueLike(getSchemaFieldValue(schema, 'requestCampaignExternal'));
+    if (!campaignUuid || !externalFlag) {
+        return false;
+    }
+    activateExternalCampaignLock({
+        campaignUuid: campaignUuid,
+        eventId: frame.eventId || null,
+        promptText: frame.textResponse || (schema && schema.description) || '',
+        targetChannels: [],
+        requiredResponses: 0,
+        respondedCount: 0
+    });
+    fetch('/api/chat/session/' + encodeURIComponent(sessionUuid) + '/request-campaign')
+        .then(function (resp) { return resp.ok ? resp.json() : null; })
+        .then(function (data) {
+            if (!data || data.status !== 'OPEN') return;
+            if (data.campaignUuid === campaignUuid) {
+                activateExternalCampaignLock(data);
+            }
+        })
+        .catch(function () {
+            // Ignore; optimistic lock state is already active.
+        });
+    return true;
 }
 
 function renderModelSwitch(text) {
@@ -1145,6 +1485,10 @@ function findLastUnansweredPromptIndex(messages) {
 }
 
 function renderPromptRequiredFrame(frame) {
+    if (maybeActivateExternalCampaignLockFromFrame(frame)) {
+        return;
+    }
+
     const payload = frame.payload || {};
     const schema = frame.formSchema || {};
     const schemaTitle = (typeof schema.title === 'string' && schema.title.trim())
@@ -1376,6 +1720,17 @@ function renderPromptRequiredFrame(frame) {
             const outboundIntent = (frame && frame.formSchema && typeof frame.formSchema.intent === 'string' && frame.formSchema.intent.trim())
                 ? frame.formSchema.intent
                 : frame.intent;
+
+            if (outboundIntent === 'REQUEST_CAMPAIGN_RESPONSE') {
+                const responseText = String(fieldValues.message || '').trim();
+                if (!responseText) {
+                    return;
+                }
+                row.querySelectorAll('.prompt-action-btn').forEach(function (b) { b.disabled = true; });
+                submitCampaignPromptResponse(frame, responseText, row);
+                return;
+            }
+
             sendAuthorizationAction(frame.eventId, outboundIntent, action, fieldValues);
             row.querySelectorAll('.prompt-action-btn').forEach(function (b) { b.disabled = true; });
         });
@@ -1414,6 +1769,9 @@ function handleIncomingUiFrame(frame) {
             return;
 
         case 'TEXT_RESPONSE':
+            if (externalCampaignLock && externalCampaignLock.active) {
+                unlockExternalCampaignLock();
+            }
             setAwaitingPostTerminalResponse(false);
             if (frame.payload && frame.payload.message && typeof frame.payload.message === 'object') {
                 renderMessage(frame.payload.message);
@@ -1491,6 +1849,9 @@ async function renderSessionRecord(msg, index, messages, lastPromptIndex) {
     }
 
     if (msg.role === 'TEXT_RESPONSE') {
+        if (externalCampaignLock && externalCampaignLock.active) {
+            unlockExternalCampaignLock();
+        }
         const frame = tryParseJson(msg.content);
         if (frame && typeof frame.textResponse === 'string') {
             renderMessage({ role: 'ASSISTANT', content: frame.textResponse });
@@ -1515,6 +1876,10 @@ async function renderSessionRecord(msg, index, messages, lastPromptIndex) {
     if (msg.role === 'SKILL_TRANSITION') {
         renderSkillEvent(msg.content || '');
         return;
+    }
+
+    if (externalCampaignLock && externalCampaignLock.active && msg.role === 'ASSISTANT') {
+        unlockExternalCampaignLock();
     }
 
     renderMessage(msg);
@@ -1553,6 +1918,46 @@ function sendAuthorizationAction(eventId, intent, action, fields) {
             showTyping(false);
             setInputEnabled(true);
             renderMessage({ role: 'ERROR', content: 'Failed to submit authorization response: ' + err.message });
+        });
+}
+
+function submitCampaignPromptResponse(frame, responseText, row) {
+    if (!sessionUuid) {
+        return;
+    }
+
+    const schema = frame && frame.formSchema ? frame.formSchema : null;
+    const campaignId = getSchemaFieldValue(schema, 'requestCampaignId').trim();
+    if (!campaignId) {
+        renderMessage({ role: 'ERROR', content: 'Unable to submit response: campaign id is missing.' });
+        row.querySelectorAll('.prompt-action-btn').forEach(function (b) { b.disabled = false; });
+        return;
+    }
+
+    showTyping(true);
+    fetch('/api/chat/session/' + encodeURIComponent(sessionUuid)
+        + '/request-campaign/' + encodeURIComponent(campaignId)
+        + '/respond', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: responseText })
+    })
+        .then(function (resp) {
+            if (!resp.ok) {
+                return resp.text().then(function (body) {
+                    throw new Error(body || ('HTTP ' + resp.status));
+                });
+            }
+            return resp.json();
+        })
+        .then(function () {
+            showTyping(false);
+            pollSessionMessagesNow();
+        })
+        .catch(function (err) {
+            showTyping(false);
+            row.querySelectorAll('.prompt-action-btn').forEach(function (b) { b.disabled = false; });
+            renderMessage({ role: 'ERROR', content: 'Failed to submit campaign response: ' + err.message });
         });
 }
 
@@ -1685,16 +2090,26 @@ function markChipError(chip, filename) {
 
 uploadFilesBtn.addEventListener('click', function (e) {
     e.preventDefault();
+    if (externalCampaignLock && externalCampaignLock.active) {
+        return;
+    }
     fileInput.value = '';          // reset so the same file can be re-selected
     fileInput.click();
 });
 
 fileInput.addEventListener('change', function () {
+    if (externalCampaignLock && externalCampaignLock.active) {
+        fileInput.value = '';
+        return;
+    }
     const files = Array.from(fileInput.files || []);
     files.forEach(uploadFile);
 });
 
 function uploadFile(file) {
+    if (externalCampaignLock && externalCampaignLock.active) {
+        return;
+    }
     const tempId = 'tmp-' + Math.random().toString(36).slice(2);
     const chip   = createChip(tempId, file.name);
 
@@ -2275,6 +2690,10 @@ function subscribeToCurrentSession() {
     chatSubscription = stomp.subscribe('/topic/chat/' + sessionUuid, function (frame) {
         const msg = JSON.parse(frame.body);
 
+        if (hasRenderedMessage(msg)) {
+            return;
+        }
+
         function shouldReleaseInputForMessage(incoming) {
             if (!incoming || typeof incoming !== 'object') {
                 return false;
@@ -2326,11 +2745,16 @@ function subscribeToCurrentSession() {
         if (isUiEventFrame(msg)) {
             handleIncomingUiFrame(msg);
         } else {
+            if (externalCampaignLock && externalCampaignLock.active
+                && (msg.role === 'ASSISTANT' || msg.role === 'TEXT_RESPONSE')) {
+                unlockExternalCampaignLock();
+            }
             if (isTerminalToolMessage(msg)) {
                 renderLiveToolMessage(msg);
             } else {
                 renderMessage(msg);
             }
+            rememberRenderedMessage(msg);
         }
 
         if (!hasLiveTerminal() && !awaitingPostTerminalResponse) {
@@ -2468,7 +2892,12 @@ function submitSessionRename(targetSessionUuid, nextName) {
 }
 
 function loadSessionList() {
-    return fetch('/api/chat/sessions')
+    const activeAgentId = currentAgentTemplateId || (agentSel && agentSel.value ? agentSel.value : CONCIERGE_AGENT_ID);
+    let url = '/api/chat/sessions?limit=200';
+    if (activeAgentId) {
+        url += '&agentTemplateId=' + encodeURIComponent(activeAgentId);
+    }
+    return fetch(url)
         .then(function (resp) {
             if (!resp.ok) { throw new Error('HTTP ' + resp.status + ' — ' + resp.statusText); }
             return resp.json();
@@ -2500,6 +2929,7 @@ function loadAgents(activeAgentTemplateId) {
                 : activeAgentTemplateId;
             const hasTarget = Array.from(agentSel.options).some(function (o) { return o.value === targetValue; });
             agentSel.value = hasTarget ? targetValue : CONCIERGE_AGENT_ID;
+            currentAgentTemplateId = agentSel.value || CONCIERGE_AGENT_ID;
         })
         .catch(function () { /* non-critical */ });
 }
@@ -2521,6 +2951,8 @@ agentSel.addEventListener('change', function () {
                 // Revert dropdown to avoid misleading state
                 loadAgents(null);
             } else {
+                currentAgentTemplateId = agentTemplateId || CONCIERGE_AGENT_ID;
+                loadSessionList();
                 renderAgentTransition('Changed to ' + agentDisplayName);
             }
         })
@@ -2532,6 +2964,8 @@ function loadSession(targetSessionUuid) {
     if (targetSessionUuid) {
         url += '&sessionUuid=' + encodeURIComponent(targetSessionUuid);
     }
+    stopSessionMessagePolling();
+    const hasDeepLinkedSessionParam = new URLSearchParams(window.location.search || '').has('sessionUuid');
 
     return fetch(url)
         .then(function (resp) {
@@ -2539,7 +2973,10 @@ function loadSession(targetSessionUuid) {
             return resp.json();
         })
         .then(async function (data) {
+            unlockExternalCampaignLock();
             sessionUuid = data.sessionUuid;
+            currentAgentTemplateId = data.activeAgentTemplateId || CONCIERGE_AGENT_ID;
+            setCampaignChildSessionLock(!!data.requestCampaignChildSession);
             sessionDisplay.textContent = (data.sessionName || 'Untitled') + ' · ' + sessionUuid.substring(0, 8) + '…';
             loadAgents(data.activeAgentTemplateId);
             loadSkillsPanel(sessionUuid);
@@ -2548,6 +2985,7 @@ function loadSession(targetSessionUuid) {
             const lastPromptIndex = findLastUnansweredPromptIndex(messages);
             for (let i = 0; i < messages.length; i++) {
                 await renderSessionRecord(messages[i], i, messages, lastPromptIndex);
+                rememberRenderedMessage(messages[i]);
             }
 
             if (!stomp) {
@@ -2559,9 +2997,30 @@ function loadSession(targetSessionUuid) {
             loadSessionList();
             focusMessageInput();
             checkPendingSessions();
+            if (currentSessionIsCampaignChild) {
+                startSessionMessagePolling();
+            } else {
+                stopSessionMessagePolling();
+            }
 
-            // Show a welcome message for new (empty) sessions
-            if (messages.length === 0) {
+            if (String(data.status || '').toUpperCase() === 'AWAITING_INPUT') {
+                fetch('/api/chat/session/' + encodeURIComponent(sessionUuid) + '/request-campaign')
+                    .then(function (resp) { return resp.ok ? resp.json() : null; })
+                    .then(function (campaign) {
+                        if (campaign && campaign.status === 'OPEN') {
+                            activateExternalCampaignLock(campaign);
+                        }
+                    })
+                    .catch(function () {
+                        // No campaign details available; keep default prompt rendering.
+                    });
+            }
+
+            // Show a welcome message only for genuinely new normal sessions.
+            // Request-campaign child sessions should never auto-generate concierge chatter.
+            const isChildCampaignSession = !!data.requestCampaignChildSession;
+            const shouldSuppressWelcome = isChildCampaignSession || (hasDeepLinkedSessionParam && !!targetSessionUuid);
+            if (messages.length === 0 && !shouldSuppressWelcome) {
                 showTyping(true);
                 setInputEnabled(false);
                 fetch('/api/chat/welcome?provider=' + encodeURIComponent(defaultProvider))
@@ -2581,6 +3040,10 @@ function loadSession(targetSessionUuid) {
                 // Existing session — dismiss splash immediately
                 welcomeSignal.resolve();
             }
+
+            if (currentSessionIsCampaignChild) {
+                pollSessionMessagesNow();
+            }
         })
         .catch(function (err) {
             renderMessage({ role: 'ERROR', content: '**Failed to load session:** ' + err.message });
@@ -2592,6 +3055,10 @@ function loadSession(targetSessionUuid) {
 
 function createNewChat() {
     let url = '/api/chat/session/new?provider=' + encodeURIComponent(defaultProvider);
+    const activeAgentId = currentAgentTemplateId || (agentSel && agentSel.value ? agentSel.value : CONCIERGE_AGENT_ID);
+    if (activeAgentId) {
+        url += '&agentTemplateId=' + encodeURIComponent(activeAgentId);
+    }
     fetch(url)
         .then(function (resp) {
             if (!resp.ok) { throw new Error('HTTP ' + resp.status + ' — ' + resp.statusText); }
@@ -2606,9 +3073,12 @@ function createNewChat() {
 }
 
 function initSession() {
-    // Always bootstrap against /api/chat/session with no explicit session UUID
-    // so backend can bind the active chat to the current HTTP session.
-    loadSession()
+    const params = new URLSearchParams(window.location.search || '');
+    const targetSessionUuid = params.get('sessionUuid');
+
+    // Default bootstrap binds to the caller's current HTTP session.
+    // A query-provided sessionUuid enables deep-links (e.g. child campaign sessions).
+    loadSession(targetSessionUuid)
         .catch(function (err) {
             renderMessage({ role: 'ERROR', content: '**Failed to initialise session:** ' + err.message });
             setStatus('disconnected');
@@ -2620,6 +3090,19 @@ function initSession() {
 
 chatForm.addEventListener('submit', function (e) {
     e.preventDefault();
+
+    if (currentSessionIsCampaignChild) {
+        setInputEnabled(false);
+        showTyping(false);
+        return;
+    }
+
+    if (externalCampaignLock && externalCampaignLock.active) {
+        setInputEnabled(false);
+        showTyping(false);
+        return;
+    }
+
     const content = messageInput.value.trim();
     const hasAttachments = stagedAttachments.length > 0;
 

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Home - Vork</title>
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="/css/home.css" th:href="@{/css/home.css}">
+</head>
+<body class="bg-zinc-950 text-zinc-100">
+<div th:replace="~{fragments/header :: header}"></div>
+
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
+        <div>
+            <h2 class="flex items-center gap-2 text-2xl font-bold text-zinc-100"><i class="fa-solid fa-house text-[#fdaa02]"></i>Home</h2>
+            <p class="vork-page-subtitle">Choose an agent to start or continue work.</p>
+        </div>
+    </div>
+
+    <div class="vork-content-stack">
+        <div id="home-status" class="text-sm text-zinc-400">Loading your agents...</div>
+        <div id="agent-app-grid" class="agent-app-grid hidden"></div>
+        <div id="home-empty" class="vork-empty-state-card hidden">
+            <i class="fa-solid fa-robot vork-empty-icon"></i>
+            <p class="vork-empty-title">No agents assigned</p>
+            <p class="vork-empty-hint">Contact an administrator to assign interactive agents.</p>
+        </div>
+    </div>
+</div>
+
+<script src="/js/home.js" th:src="@{/js/home.js}"></script>
+</body>
+</html>

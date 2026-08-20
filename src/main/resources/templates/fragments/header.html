@@ -9,9 +9,9 @@
         <span th:if="${isChatPage}" id="status-dot" class="status-dot connecting ml-1" title="Connecting&hellip;"></span>
     </div>
     <nav class="flex items-center gap-2">
-        <a th:unless="${isChatPage}" href="/index.html" th:href="@{/index.html}" title="Back to chat"
+        <a href="/" th:href="@{/}" title="Home"
            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800">
-            <i class="fa-solid fa-comments"></i>
+            <i class="fa-solid fa-house"></i>
         </a>
 
         <button th:if="${isChatPage}" id="thinking-toggle" type="button" class="rounded-lg border border-zinc-700 px-2.5 py-1 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800" title="Toggle reasoning visibility">
@@ -45,7 +45,7 @@
            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800">
             <i class="fa-solid fa-clock-rotate-left"></i>
         </a>
-        <a href="/attention" th:href="@{/attention}" title="Needs Attention"
+        <a th:if="${!navAdminView}" href="/attention" th:href="@{/attention}" title="Needs Attention"
            id="needs-attention-link"
            class="relative inline-flex h-8 items-center justify-center gap-1 rounded-lg border border-zinc-700 px-2.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800">
             <i class="fa-solid fa-circle-exclamation"></i>
@@ -57,11 +57,7 @@
            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800">
             <i class="fa-solid fa-gear"></i>
         </a>
-        <a th:if="${canManageUsers and navAdminView}" href="/ui/layout/user" th:href="@{/ui/layout/user}" title="My Account"
-           class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800">
-            <i class="fa-solid fa-user"></i>
-        </a>
-        <a th:if="${canManageUsers and !navAdminView}" href="/ui/layout/admin" th:href="@{/ui/layout/admin}" title="Administration"
+        <a th:if="${canManageUsers and !navAdminView}" href="/ui/layout/admin?redirect=/agents" th:href="@{/ui/layout/admin(redirect='/agents')}" title="Administration"
            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800">
             <i class="fa-solid fa-shield-halved"></i>
         </a>

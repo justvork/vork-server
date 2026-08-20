@@ -330,6 +330,30 @@ public class BackgroundNotificationService implements SystemNotificationService 
         return List.copyOf(users);
     }
 
+    /**
+     * Sends per-user out-of-band notifications where each recipient can receive a distinct URL.
+     * Best-effort delivery: failures are logged and do not throw.
+     */
+    public void notifyUsersWithUrls(Map<String, String> userToUrl,
+                                    String subject,
+                                    String toolName) {
+        if (userToUrl == null || userToUrl.isEmpty()) {
+            return;
+        }
+
+        for (Map.Entry<String, String> entry : userToUrl.entrySet()) {
+            String username = entry.getKey();
+            String url = entry.getValue();
+            if (username == null || username.isBlank() || url == null || url.isBlank()) {
+                continue;
+            }
+            dispatchOobNotifications(List.of(username),
+                    subject == null || subject.isBlank() ? "Request Information" : subject,
+                    url);
+            log.debug("Custom OOB request notification dispatched [user={}, toolName={}]", username, toolName);
+        }
+    }
+
     // ── Private: relay poll + background resumption ───────────────────────────
 
     private void pollAndResumeBackground(String relayBaseUrl, String relaySessionId,

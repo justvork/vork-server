@@ -70,6 +70,25 @@ public class UserManagementController {
         }
     }
 
+    @PutMapping("/api/users/{username}/display-name")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> updateDisplayName(@PathVariable String username,
+                                               @RequestBody UpdateDisplayNameRequest request) {
+        log.debug("ENTER updateDisplayName: username={}", username);
+        try {
+            VorkUser updated = userManagementService.updateDisplayName(username, request.displayName());
+            return ResponseEntity.ok(Map.of(
+                    "status", "ok",
+                    "username", updated.uuid(),
+                    "displayName", updated.displayName(),
+                    "role", updated.role(),
+                    "enabled", updated.isEnabled()));
+        } catch (IllegalArgumentException ex) {
+            log.warn("updateDisplayName rejected: {}", ex.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "message", ex.getMessage()));
+        }
+    }
+
     @PutMapping("/api/users/{username}/enabled")
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
     public ResponseEntity<?> setEnabled(@PathVariable String username, @RequestBody SetEnabledRequest request) {
@@ -115,6 +134,7 @@ public class UserManagementController {
 
     record CreateUserRequest(String username, String displayName, String password, String role) {}
     record UpdateRoleRequest(String role) {}
+    record UpdateDisplayNameRequest(String displayName) {}
     record SetEnabledRequest(boolean enabled) {}
     record ResetPasswordRequest(String newPassword) {}
 }

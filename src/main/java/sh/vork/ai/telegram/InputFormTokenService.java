@@ -1,14 +1,18 @@
 package sh.vork.ai.telegram;
 
 import java.time.Instant;
-import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+
+import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.RepositoryFactory;
+import sh.vork.orm.SortOrder;
 
 /**
  * Issues and validates short-lived tokens for the generic input-form redirect flow.
@@ -22,12 +26,20 @@ public class InputFormTokenService {
 
     private static final Logger log = LoggerFactory.getLogger(InputFormTokenService.class);
     private static final int    TTL_MINUTES = 15;
+    private static final Pattern TOKEN_PATTERN = Pattern.compile("[0-9a-fA-F]{32}");
 
-    public record TokenClaims(String sessionUuid, String eventId, String username) {}
+    public record TokenClaims(String sessionUuid,
+                              String eventId,
+                              String username,
+                              String requestCampaignUuid,
+                              String responderChannel) {
+    }
 
-    private final Map<String, TokenEntry> store = new ConcurrentHashMap<>();
+    private final DatabaseRepository<InputFormTokenRecord> tokenRepository;
 
-    private record TokenEntry(TokenClaims claims, Instant expiresAt) {}
+    public InputFormTokenService(RepositoryFactory repositoryFactory) {
+        this.tokenRepository = repositoryFactory.create(InputFormTokenRecord.class);
+    }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -37,9 +49,28 @@ public class InputFormTokenService {
      * @return an opaque 32-hex-char token string
      */
     public String generateToken(String sessionUuid, String eventId, String username) {
+        return generateToken(sessionUuid, eventId, username, null, null);
+    }
+
+    public String generateToken(String sessionUuid,
+                                String eventId,
+                                String username,
+                                String requestCampaignUuid,
+                                String responderChannel) {
         String token = UUID.randomUUID().toString().replace("-", "");
         Instant expiresAt = Instant.now().plusSeconds(TTL_MINUTES * 60L);
-        store.put(token, new TokenEntry(new TokenClaims(sessionUuid, eventId, username), expiresAt));
+        long now = System.currentTimeMillis();
+        tokenRepository.save(new InputFormTokenRecord(
+            token,
+                sessionUuid,
+                eventId,
+                username,
+                requestCampaignUuid,
+            responderChannel,
+            expiresAt.toEpochMilli(),
+            false,
+            now,
+            null));
         log.debug("Form token issued [session={}, event={}, expiresAt={}]", sessionUuid, eventId, expiresAt);
         return token;
     }
@@ -50,21 +81,87 @@ public class InputFormTokenService {
      * @return claims, or {@code null} if the token is unknown or expired
      */
     public TokenClaims validateToken(String token) {
-        if (token == null || token.isBlank()) return null;
-        TokenEntry entry = store.get(token);
-        if (entry == null) return null;
-        if (Instant.now().isAfter(entry.expiresAt())) {
-            store.remove(token);
+        if (token == null || token.isBlank()) {
+            log.warn("Input-form token rejected: missing token");
             return null;
         }
-        return entry.claims();
+
+        String normalizedToken = normalizeToken(token);
+        if (!normalizedToken.equals(token)) {
+            log.debug("Input-form token normalized [rawLen={}, normalizedLen={}]",
+                    token.length(), normalizedToken.length());
+        }
+
+        InputFormTokenRecord record = tokenRepository.get(normalizedToken);
+        if (record == null) {
+            log.warn("Input-form token rejected: not found [tokenPrefix={}]",
+                    tokenPrefix(normalizedToken));
+            return null;
+        }
+        if (record.consumed()) {
+            log.warn("Input-form token rejected: already consumed [session={}, event={}, consumedAt={}]",
+                    record.sessionUuid(), record.eventId(), record.consumedAt());
+            return null;
+        }
+        long now = Instant.now().toEpochMilli();
+        if (now > record.expiresAt()) {
+            log.warn("Input-form token rejected: expired [session={}, event={}, expiresAt={}, now={}]",
+                    record.sessionUuid(), record.eventId(), record.expiresAt(), now);
+            tokenRepository.delete(normalizedToken);
+            return null;
+        }
+        return new TokenClaims(
+                record.sessionUuid(),
+                record.eventId(),
+                record.username(),
+                record.requestCampaignUuid(),
+                record.responderChannel());
+    }
+
+    private String normalizeToken(String rawToken) {
+        String trimmed = rawToken == null ? "" : rawToken.trim();
+        if (trimmed.isEmpty()) {
+            return trimmed;
+        }
+
+        // Accept copied links where wrappers/punctuation were included.
+        trimmed = trimmed
+            .replaceAll("^[\\\"'(<\\[]+", "")
+            .replaceAll("[\\\"')>\\].,;:!?]+$", "");
+
+        Matcher matcher = TOKEN_PATTERN.matcher(trimmed);
+        if (matcher.find()) {
+            return matcher.group();
+        }
+        return trimmed;
+    }
+
+    private String tokenPrefix(String token) {
+        if (token == null || token.isBlank()) {
+            return "<empty>";
+        }
+        return token.length() <= 8 ? token : token.substring(0, 8);
     }
 
     /**
      * Consumes (removes) a token after use so it cannot be replayed.
      */
     public void consumeToken(String token) {
-        store.remove(token);
+        InputFormTokenRecord record = tokenRepository.get(token);
+        if (record == null || record.consumed()) {
+            return;
+        }
+        tokenRepository.save(new InputFormTokenRecord(
+                record.uuid(),
+                record.sessionUuid(),
+                record.eventId(),
+                record.username(),
+                record.requestCampaignUuid(),
+                record.responderChannel(),
+                record.expiresAt(),
+                true,
+                record.createdAt(),
+                System.currentTimeMillis()));
     }
 
     // ── Maintenance ───────────────────────────────────────────────────────────
@@ -72,16 +169,22 @@ public class InputFormTokenService {
     /** Removes expired tokens every 5 minutes. */
     @Scheduled(fixedDelay = 300_000)
     public void purgeExpired() {
-        Instant now = Instant.now();
+        long now = System.currentTimeMillis();
         int removed = 0;
-        for (Map.Entry<String, TokenEntry> e : store.entrySet()) {
-            if (now.isAfter(e.getValue().expiresAt())) {
-                store.remove(e.getKey());
-                removed++;
+        try (var stream = tokenRepository.search(0, Integer.MAX_VALUE, "createdAt", SortOrder.ASC)) {
+            for (InputFormTokenRecord record : stream.toList()) {
+                boolean expired = now > record.expiresAt();
+                boolean consumedLongAgo = record.consumed()
+                        && record.consumedAt() != null
+                        && (now - record.consumedAt()) > (TTL_MINUTES * 60_000L);
+                if (expired || consumedLongAgo) {
+                    tokenRepository.delete(record.uuid());
+                    removed++;
+                }
             }
         }
         if (removed > 0) {
-            log.debug("Purged {} expired Telegram form tokens", removed);
+            log.debug("Purged {} expired/consumed input-form tokens", removed);
         }
     }
 }

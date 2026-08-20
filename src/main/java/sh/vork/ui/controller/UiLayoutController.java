@@ -9,6 +9,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import sh.vork.security.Permission;
 
@@ -20,6 +21,7 @@ public class UiLayoutController {
 
     @GetMapping("/ui/layout/{mode}")
     public String switchLayout(@PathVariable String mode,
+                               @RequestParam(name = "redirect", required = false) String redirect,
                                HttpServletRequest request,
                                HttpSession session) {
         boolean canManageUsers = SecurityContextHolder.getContext().getAuthentication() != null
@@ -34,8 +36,11 @@ public class UiLayoutController {
             }
         }
 
-        String referer = request.getHeader("Referer");
-        String safeRedirect = extractSafeLocalRedirect(referer);
+        String safeRedirect = extractSafeLocalRedirect(redirect);
+        if (safeRedirect == null || safeRedirect.isBlank() || safeRedirect.startsWith("/ui/layout/")) {
+            String referer = request.getHeader("Referer");
+            safeRedirect = extractSafeLocalRedirect(referer);
+        }
         if (safeRedirect == null || safeRedirect.isBlank() || safeRedirect.startsWith("/ui/layout/")) {
             safeRedirect = "/";
         }

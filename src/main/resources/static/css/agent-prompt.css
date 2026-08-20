@@ -1,0 +1,59 @@
+.agent-prompt-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.agent-prompt-search {
+    flex: 1 1 280px;
+    min-width: 220px;
+    border-radius: 0.6rem;
+    border: 1px solid rgba(63, 63, 70, 0.85);
+    background: rgba(9, 9, 11, 0.95);
+    padding: 0.55rem 0.75rem;
+    color: #f4f4f5;
+    font-size: 0.9rem;
+}
+
+.agent-prompt-search:focus {
+    border-color: rgba(253, 170, 2, 0.8);
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(253, 170, 2, 0.25);
+}
+
+.agent-session-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.agent-session-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    border: 1px solid rgba(63, 63, 70, 0.8);
+    border-radius: 0.75rem;
+    background: rgba(24, 24, 27, 0.92);
+    padding: 0.7rem 0.85rem;
+    cursor: pointer;
+    transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.agent-session-item:hover {
+    border-color: rgba(253, 170, 2, 0.6);
+    background: rgba(39, 39, 42, 0.92);
+}
+
+.agent-session-name {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #f4f4f5;
+}
+
+.agent-session-meta {
+    font-size: 0.78rem;
+    color: #a1a1aa;
+    white-space: nowrap;
+}

@@ -70,6 +70,27 @@
         });
     });
 
+    document.querySelectorAll(".edit-display-name-btn").forEach((button) => {
+        button.addEventListener("click", async () => {
+            const username = button.dataset.username;
+            const currentDisplayName = button.dataset.displayName || "";
+            const nextDisplayName = window.prompt(`Enter display name for ${username}:`, currentDisplayName);
+            if (nextDisplayName == null) {
+                return;
+            }
+            try {
+                await jsonRequest(`/api/users/${encodeURIComponent(username)}/display-name`, {
+                    method: "PUT",
+                    body: JSON.stringify({ displayName: nextDisplayName }),
+                });
+                notify(`Display name updated for ${username}.`);
+                window.location.reload();
+            } catch (error) {
+                notify(error.message);
+            }
+        });
+    });
+
     document.querySelectorAll(".toggle-enabled-btn").forEach((button) => {
         button.addEventListener("click", async () => {
             const username = button.dataset.username;

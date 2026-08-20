@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Prompt - Vork</title>
+    <link rel="icon" type="image/png" href="/images/Vork-Faviconx128.png" th:href="@{/images/Vork-Faviconx128.png}">
+    <link rel="stylesheet" href="/css/tailwind.css" th:href="@{/css/tailwind.css}">
+    <link rel="stylesheet" href="/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css" th:href="@{/packages/npm.fortawesome/fontawesome-free/current/css/all.min.css}">
+    <link rel="stylesheet" href="/css/vork.css" th:href="@{/css/vork.css}">
+    <link rel="stylesheet" href="/css/agent-prompt.css" th:href="@{/css/agent-prompt.css}">
+</head>
+<body class="bg-zinc-950 text-zinc-100" th:attr="data-agent-template-id=${agentTemplateId}">
+<div th:replace="~{fragments/header :: header}"></div>
+
+<div class="vork-page-shell py-4">
+    <div class="vork-page-header">
+        <div>
+            <h2 class="flex items-center gap-2 text-2xl font-bold text-zinc-100"><i class="fa-solid fa-comments text-[#fdaa02]"></i><span id="agent-title">Agent</span></h2>
+            <p class="vork-page-subtitle">Start a new conversation or open an existing chat session.</p>
+        </div>
+    </div>
+
+    <div class="vork-content-stack">
+        <div class="agent-prompt-toolbar rounded-xl border border-zinc-800 bg-zinc-900 p-3">
+            <button id="start-new-btn" type="button" class="rounded-lg bg-[#fdaa02] px-3 py-2 text-sm font-semibold text-black transition-colors hover:bg-[#e89a02]">
+                <i class="fa-solid fa-pen-to-square mr-2"></i>Start New
+            </button>
+            <input id="session-search" type="text" class="agent-prompt-search" placeholder="Search this agent's sessions..." autocomplete="off">
+        </div>
+
+        <div id="agent-prompt-status" class="text-sm text-zinc-400">Loading sessions...</div>
+        <div id="agent-session-list" class="agent-session-list hidden"></div>
+        <div id="agent-session-empty" class="vork-empty-state-card hidden">
+            <i class="fa-solid fa-inbox vork-empty-icon"></i>
+            <p class="vork-empty-title">No sessions found</p>
+            <p id="agent-session-empty-hint" class="vork-empty-hint">Start a new chat with this agent.</p>
+        </div>
+    </div>
+</div>
+
+<script src="/js/agent-prompt.js" th:src="@{/js/agent-prompt.js}"></script>
+</body>
+</html>

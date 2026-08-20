@@ -31,11 +31,13 @@ import sh.vork.ai.controller.AgentController;
 import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.ai.provider.AiModelService;
 import sh.vork.ai.registry.ToolRegistry;
+import sh.vork.ai.request.RequestInformationService;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.AgentAssignmentService;
 import sh.vork.ai.service.ChatService;
 import sh.vork.ai.terminal.TerminalStreamRouter;
 import sh.vork.binding.BindingCatalogService;
+import sh.vork.mcp.service.McpBindingService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.reflection.ReflectionAuthenticationMode;
 import sh.vork.reflection.ReflectionBinding;
@@ -128,6 +130,12 @@ class ProtectedWriteEndpointsSecurityTest {
 
         @MockitoBean
         private BindingCatalogService bindingCatalogService;
+
+        @MockitoBean
+        private McpBindingService mcpBindingService;
+
+        @MockitoBean
+        private RequestInformationService requestInformationService;
 
     @Test
     void postAgents_forbiddenWithoutAgentsWrite() throws Exception {

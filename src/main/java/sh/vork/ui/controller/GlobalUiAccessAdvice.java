@@ -4,6 +4,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ModelAttribute;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 
 import sh.vork.security.Permission;
@@ -22,8 +23,11 @@ public class GlobalUiAccessAdvice {
     }
 
     @ModelAttribute("navAdminView")
-    public boolean navAdminView(HttpSession session) {
+    public boolean navAdminView(HttpServletRequest request, HttpSession session) {
         if (!hasManageUsersPermission()) {
+            return false;
+        }
+        if (request != null && "/".equals(request.getRequestURI())) {
             return false;
         }
         Object mode = session == null ? null : session.getAttribute(NAV_LAYOUT_SESSION_KEY);

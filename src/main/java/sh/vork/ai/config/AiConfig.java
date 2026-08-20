@@ -104,6 +104,7 @@ import sh.vork.ai.function.ListTypeInstancesRequest;
 import sh.vork.ai.function.LogInfoRequest;
 import sh.vork.ai.function.ReadFileRequest;
 import sh.vork.ai.function.ReadProcessRequest;
+import sh.vork.ai.function.RequestInformationToolRequest;
 import sh.vork.ai.function.ResolveArchitectureRequest;
 import sh.vork.ai.function.SaveTypeInstanceRequest;
 import sh.vork.ai.function.SearchMongoDbDocumentsRequest;
@@ -139,6 +140,9 @@ import sh.vork.ai.security.Restricted;
 import sh.vork.ai.security.SecuredToolCallback;
 import sh.vork.ai.security.VisualizableToolCallback;
 import sh.vork.ai.service.AgentAssignmentService;
+import sh.vork.ai.request.RequestInformationService;
+import sh.vork.ai.request.RequestCampaignStatus;
+import sh.vork.ai.request.RequestResponsePolicy;
 import sh.vork.ai.skill.SkillAuthoringService;
 import sh.vork.attention.AttentionAlert;
 import sh.vork.attention.AttentionAlertService;
@@ -3141,6 +3145,135 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
                     + " Never use FIRST_ACK or ALL_ACK."
                     + " If a channel query is ambiguous, this tool suspends and asks the user to choose the intended channel.")
                 .inputType(CreateAttentionAlertToolRequest.class)
+                .build();
+    }
+
+    @Bean
+    @ToolCategory("Attention")
+    public ToolCallback requestInformation(RequestInformationService requestInformationService,
+                                           DatabaseRepository<AiSession> sessionRepository) {
+        return FunctionToolCallback
+                .builder("requestInformation", (RequestInformationToolRequest req) -> {
+                    if (req == null) {
+                        return "{\"status\":\"error\",\"message\":\"request is required\"}";
+                    }
+
+                    if (req.requestCampaignId() != null && !req.requestCampaignId().isBlank()) {
+                        boolean hasAggregatedResponses = req.responseCount() != null
+                                && req.responseCount() > 0
+                                && req.responsesJson() != null
+                                && !req.responsesJson().isBlank()
+                                && !"{}".equals(req.responsesJson().trim())
+                                && !"[]".equals(req.responsesJson().trim());
+                        if (hasAggregatedResponses) {
+                            try {
+                                var campaign = requestInformationService.getCampaign(req.requestCampaignId());
+                                if (campaign.status() == RequestCampaignStatus.SATISFIED) {
+                                    try {
+                                        return objectMapper.writeValueAsString(Map.of(
+                                                "status", "ok",
+                                                "campaignId", req.requestCampaignId(),
+                                                "responseCount", req.responseCount() == null ? 0 : req.responseCount(),
+                                                "responsesJson", req.responsesJson() == null ? "[]" : req.responsesJson()));
+                                    } catch (Exception ex) {
+                                        String msg = ex.getMessage() == null ? "Failed to encode campaign response payload"
+                                                : ex.getMessage().replace("\"", "'");
+                                        return "{\"status\":\"error\",\"message\":\"" + msg + "\"}";
+                                    }
+                                }
+                            } catch (Exception ex) {
+                                log.debug("requestInformation resume shortcut ignored: campaign not resolvable [campaignId={}]",
+                                        req.requestCampaignId());
+                            }
+                        } else {
+                            log.debug("requestInformation ignored internal resume fields without aggregated responses [campaignId={}]",
+                                    req.requestCampaignId());
+                        }
+                    }
+
+                    if (req.channelNames() == null || req.channelNames().isEmpty()) {
+                        return "{\"status\":\"error\",\"message\":\"channelNames is required\"}";
+                    }
+                    if (req.promptText() == null || req.promptText().isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"promptText is required\"}";
+                    }
+                    if (req.requesterMessage() == null || req.requesterMessage().isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"requesterMessage is required\"}";
+                    }
+                    if (req.recipientMessage() == null || req.recipientMessage().isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"recipientMessage is required\"}";
+                    }
+
+                    String sessionUuid = ToolExecutionContext.getSessionUuid();
+                    if (sessionUuid == null || sessionUuid.isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"requestInformation must run inside a bound AI session\"}";
+                    }
+
+                    AiSession session = sessionRepository.get(sessionUuid);
+                    if (session == null) {
+                        return "{\"status\":\"error\",\"message\":\"AI session not found: "
+                                + sessionUuid.replace("\"", "'") + "\"}";
+                    }
+
+                    RequestResponsePolicy requestedPolicy;
+                    try {
+                        requestedPolicy = req.responsePolicy() == null || req.responsePolicy().isBlank()
+                                ? RequestResponsePolicy.AUTO
+                                : RequestResponsePolicy.valueOf(req.responsePolicy().trim().toUpperCase(Locale.ROOT));
+                    } catch (IllegalArgumentException ex) {
+                        return "{\"status\":\"error\",\"message\":\"Invalid responsePolicy: "
+                                + req.responsePolicy().replace("\"", "'")
+                                + ". Valid values: AUTO, FIRST, ALL, QUORUM\"}";
+                    }
+
+                    if (req.alertResolutionPolicy() != null && !req.alertResolutionPolicy().isBlank()) {
+                        try {
+                            AttentionResolutionPolicy.valueOf(req.alertResolutionPolicy().trim().toUpperCase(Locale.ROOT));
+                        } catch (IllegalArgumentException ex) {
+                            return "{\"status\":\"error\",\"message\":\"Invalid alertResolutionPolicy: "
+                                    + req.alertResolutionPolicy().replace("\"", "'")
+                                    + ". Valid values: ACTION_REQUIRED, DISMISSABLE\"}";
+                        }
+                    }
+
+                            InteractionFormSchema schema = new InteractionFormSchema(
+                                "REQUEST_INFORMATION",
+                                req.alertName() == null || req.alertName().isBlank() ? "Request Information" : req.alertName().trim(),
+                                req.promptText().trim(),
+                                List.of(new FormField(
+                                    "response",
+                                    "TEXTAREA",
+                                    "Response",
+                                    "",
+                                    "Provide the requested information.",
+                                    true,
+                                    FieldSource.CONVERSATION,
+                                    null)),
+                                List.of(new FormAction("SUBMIT", "Submit", "primary")));
+
+                            ToolSuspensionException.SuspensionCampaign campaign =
+                                new ToolSuspensionException.SuspensionCampaign(
+                                    req.channelNames(),
+                                    requestedPolicy,
+                                    req.quorumCount(),
+                                    req.sendNotifications(),
+                                    req.alertName(),
+                                        req.recipientMessage(),
+                                    req.alertResolutionPolicy(),
+                                    req.attentionAt());
+
+                    throw new ToolSuspensionException(
+                            "requestInformation",
+                            safeJson(req),
+                                    req.requesterMessage().trim(),
+                                schema,
+                                campaign);
+                })
+                .description("Request information from one or more channels by generating per-recipient input links, creating attention alerts, and optionally sending out-of-band notifications."
+                                + " requesterMessage and recipientMessage are required and must be explicitly authored for each call."
+                        + " Response policy can be AUTO, FIRST, ALL, or QUORUM."
+                        + " The tool suspends the current session until the response threshold is met.")
+                .inputType(RequestInformationToolRequest.class)
                 .build();
     }
 
