@@ -1333,26 +1333,32 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
 
                 LinkedHashMap<String, LinkedHashSet<String>> assignmentMap = new LinkedHashMap<>();
                 List<Reflection> allReflections = reflectionService.listReflections();
+                List<sh.vork.reflection.ReflectionBinding> allBindings = listAllReflectionBindings();
 
                 // Session-level binding attachments apply to all reflections in the binding's group.
                 List<String> sessionBindingUuids = parseSessionReflectionBindingUuids(session);
                 if (!sessionBindingUuids.isEmpty()) {
-                        mergeBindingUuids(assignmentMap, allReflections, sessionBindingUuids);
+                        mergeBindingUuids(assignmentMap, allReflections, allBindings, sessionBindingUuids);
                 }
+                int templateBindingCount = 0;
 
                 AgentTemplate template = null;
                 if (session.getActiveAgentTemplateId() != null && !session.getActiveAgentTemplateId().isBlank()) {
                         template = agentTemplateRepo.get(session.getActiveAgentTemplateId());
                 }
                 if (template != null) {
-                        mergeBindingUuids(assignmentMap, allReflections, template.bindingUuids());
+                        templateBindingCount = template.bindingUuids() == null ? 0 : template.bindingUuids().size();
+                        mergeBindingUuids(assignmentMap, allReflections, allBindings, template.bindingUuids());
                 }
+
+                int skillBindingCount = 0;
 
                 if (inSkillFrame && session.skillStack() != null && !session.skillStack().isEmpty()) {
                         sh.vork.skill.SkillFrame top = session.skillStack().getLast();
                         sh.vork.skill.Skill activeSkill = skillRepo.get(top.skillUuid());
                         if (activeSkill != null) {
-                                mergeBindingUuids(assignmentMap, allReflections, activeSkill.bindingUuids());
+                                skillBindingCount += activeSkill.bindingUuids() == null ? 0 : activeSkill.bindingUuids().size();
+                                mergeBindingUuids(assignmentMap, allReflections, allBindings, activeSkill.bindingUuids());
                         }
                 } else {
                         LinkedHashSet<String> rootSkillUuids = new LinkedHashSet<>();
@@ -1363,8 +1369,22 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 rootSkillUuids.addAll(session.sessionSkillUuids());
                         }
                         for (sh.vork.skill.Skill skill : expandRootSkillsWithEffectiveSubs(List.copyOf(rootSkillUuids))) {
-                                mergeBindingUuids(assignmentMap, allReflections, skill.bindingUuids());
+                                skillBindingCount += skill.bindingUuids() == null ? 0 : skill.bindingUuids().size();
+                                mergeBindingUuids(assignmentMap, allReflections, allBindings, skill.bindingUuids());
                         }
+                }
+
+                if (log.isDebugEnabled()) {
+                        int assignmentCount = assignmentMap.values().stream().mapToInt(java.util.Set::size).sum();
+                        log.debug("Reflection binding assignment sources [session={}, sessionBindings={}, templateBindings={}, skillBindings={}, reflections={}, groups={}, bindings={}, assignments={}]",
+                                session.uuid(),
+                                sessionBindingUuids.size(),
+                                templateBindingCount,
+                                skillBindingCount,
+                                allReflections.size(),
+                                reflectionService.listGroups().size(),
+                                allBindings.size(),
+                                assignmentCount);
                 }
 
                 if (assignmentMap.isEmpty()) {
@@ -1387,9 +1407,9 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                                 reflection.id(), bindingUuid);
                                         continue;
                                 }
-                                if (!reflection.groupUuid().equals(binding.groupUuid())) {
+                                if (!isBindingCompatibleWithReflection(binding, reflection)) {
                                         log.warn("Skipping reflection assignment: binding group mismatch [reflectionId={}, bindingUuid={}, bindingGroup={}, reflectionGroup={}]",
-                                                reflection.id(), binding.uuid(), binding.groupUuid(), reflection.groupUuid());
+                                                reflection.id(), binding.uuid(), bindingGroupUuid(binding), reflection.groupUuid());
                                         continue;
                                 }
                                 bindingsByUuid.put(binding.uuid(), binding);
@@ -1403,6 +1423,34 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 return resolved;
         }
 
+        private boolean isBindingCompatibleWithReflection(sh.vork.reflection.ReflectionBinding binding,
+                                                          Reflection reflection) {
+                if (binding == null || reflection == null) {
+                        return false;
+                }
+                String bindingGroupUuid = bindingGroupUuid(binding);
+                if (reflection.groupUuid() != null && reflection.groupUuid().equals(bindingGroupUuid)) {
+                        return true;
+                }
+
+                sh.vork.reflection.ReflectionGroup bindingGroup = resolveBindingGroup(binding);
+                sh.vork.reflection.ReflectionGroup reflectionGroup = reflectionService.getGroup(reflection.groupUuid());
+
+                if (bindingGroup == null || reflectionGroup == null) {
+                        return false;
+                }
+
+                return bindingGroup.groupId() != null
+                                && reflectionGroup.groupId() != null
+                                && bindingGroup.artifactId() != null
+                                && reflectionGroup.artifactId() != null
+                                && bindingGroup.groupId().equals(reflectionGroup.groupId())
+                                && bindingGroup.artifactId().equals(reflectionGroup.artifactId())
+                        || (bindingGroup.toolId() != null
+                                && reflectionGroup.toolId() != null
+                                && bindingGroup.toolId().equals(reflectionGroup.toolId()));
+        }
+
         private List<String> parseSessionReflectionBindingUuids(AiSession session) {
                 if (session == null || session.environmentVariables() == null) {
                         return List.of();
@@ -1412,7 +1460,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         return List.of();
                 }
                 LinkedHashSet<String> parsed = new LinkedHashSet<>();
-                for (String token : raw.split(",")) {
+                for (String token : raw.split("[,;\\n\\r\\t ]+")) {
                         if (token == null) {
                                 continue;
                         }
@@ -1479,8 +1527,56 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 return List.copyOf(parsed);
         }
 
+        private List<sh.vork.reflection.ReflectionBinding> listAllReflectionBindings() {
+                if (reflectionService == null) {
+                        return List.of();
+                }
+                List<sh.vork.reflection.ReflectionBinding> all = new ArrayList<>();
+                for (sh.vork.reflection.ReflectionGroup group : reflectionService.listGroups()) {
+                        if (group == null || group.uuid() == null || group.uuid().isBlank()) {
+                                continue;
+                        }
+                        all.addAll(reflectionService.bindingsForGroup(group.uuid()));
+                }
+                return List.copyOf(all);
+        }
+
+        private sh.vork.reflection.ReflectionBinding resolveReflectionBindingReference(
+                        String bindingReference,
+                        List<sh.vork.reflection.ReflectionBinding> allBindings) {
+                if (bindingReference == null || bindingReference.isBlank()) {
+                        return null;
+                }
+
+                // Primary path: canonical UUID reference.
+                sh.vork.reflection.ReflectionBinding byUuid = reflectionService.getBindingByUuid(bindingReference);
+                if (byUuid != null) {
+                        return byUuid;
+                }
+
+                // Backward-compatibility path: older persisted assignments may store binding names.
+                List<sh.vork.reflection.ReflectionBinding> byName = allBindings.stream()
+                                .filter(binding -> binding != null
+                                                && binding.name() != null
+                                                && binding.name().equalsIgnoreCase(bindingReference))
+                                .toList();
+
+                if (byName.size() == 1) {
+                        return byName.getFirst();
+                }
+
+                if (byName.size() > 1) {
+                        log.warn("Ambiguous reflection binding assignment by name; use UUID instead [bindingReference={}, matches={}]",
+                                        bindingReference,
+                                        byName.stream().map(sh.vork.reflection.ReflectionBinding::uuid).toList());
+                }
+
+                return null;
+        }
+
         private void mergeBindingUuids(LinkedHashMap<String, LinkedHashSet<String>> target,
                                        List<Reflection> allReflections,
+                                       List<sh.vork.reflection.ReflectionBinding> allBindings,
                                        List<String> bindingUuids) {
                 if (bindingUuids == null || bindingUuids.isEmpty()) {
                         return;
@@ -1490,18 +1586,137 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 continue;
                         }
                         String normalized = bindingUuid.trim();
-                        sh.vork.reflection.ReflectionBinding binding = reflectionService.getBindingByUuid(normalized);
+                        sh.vork.reflection.ReflectionBinding binding = resolveReflectionBindingReference(normalized, allBindings);
                         if (binding == null) {
+                                log.debug("Unresolved reflection binding assignment [reference={}]", normalized);
                                 continue;
                         }
-                        for (Reflection reflection : allReflections) {
-                                if (reflection != null && reflection.groupUuid().equals(binding.groupUuid())) {
-                                        target
-                                                .computeIfAbsent(reflection.id(), ignored -> new LinkedHashSet<>())
-                                                .add(binding.uuid());
+
+                        List<Reflection> targetReflections = resolveReflectionsForBinding(binding, allReflections);
+                        if (targetReflections.isEmpty()) {
+                                log.warn("Reflection binding resolved but no matching reflections found [bindingUuid={}, bindingName={}, groupUuid={}]",
+                                                binding.uuid(), binding.name(), bindingGroupUuid(binding));
+                                continue;
+                        }
+
+                        for (Reflection reflection : targetReflections) {
+                                if (reflection == null || reflection.id() == null || reflection.id().isBlank()) {
+                                        continue;
                                 }
+                                target
+                                        .computeIfAbsent(reflection.id(), ignored -> new LinkedHashSet<>())
+                                        .add(binding.uuid());
                         }
                 }
+        }
+
+        private List<Reflection> resolveReflectionsForBinding(sh.vork.reflection.ReflectionBinding binding,
+                                                              List<Reflection> allReflections) {
+                if (binding == null) {
+                        return List.of();
+                }
+
+                List<Reflection> exact = allReflections.stream()
+                                .filter(reflection -> reflection != null
+                                                && reflection.groupUuid() != null
+                                                && reflection.groupUuid().equals(bindingGroupUuid(binding)))
+                                .toList();
+                if (!exact.isEmpty()) {
+                        return exact;
+                }
+
+                // Fallback for versioned group lineage: if a binding points to an older/newer
+                // group UUID with no reflections, try sibling groups sharing groupId/artifactId.
+                sh.vork.reflection.ReflectionGroup bindingGroup = resolveBindingGroup(binding);
+                if (bindingGroup == null
+                                || bindingGroup.groupId() == null || bindingGroup.groupId().isBlank()
+                                || bindingGroup.artifactId() == null || bindingGroup.artifactId().isBlank()) {
+                        return List.of();
+                }
+
+                List<String> siblingGroupUuids = reflectionService.listGroups().stream()
+                                .filter(group -> group != null)
+                                .filter(group -> !group.uuid().equals(bindingGroup.uuid()))
+                                .filter(group -> bindingGroup.groupId().equals(group.groupId()))
+                                .filter(group -> bindingGroup.artifactId().equals(group.artifactId()))
+                                .map(sh.vork.reflection.ReflectionGroup::uuid)
+                                .toList();
+
+                if (siblingGroupUuids.isEmpty()) {
+                        return List.of();
+                }
+
+                List<Reflection> siblingReflections = allReflections.stream()
+                                .filter(reflection -> reflection != null
+                                                && reflection.groupUuid() != null
+                                                && siblingGroupUuids.contains(reflection.groupUuid()))
+                                .toList();
+
+                if (!siblingReflections.isEmpty()) {
+                        log.warn("Resolved reflection binding through group lineage fallback [bindingUuid={}, bindingGroupUuid={}, siblingGroups={}, reflections={}]",
+                                        binding.uuid(),
+                                        bindingGroupUuid(binding),
+                                        siblingGroupUuids.size(),
+                                        siblingReflections.size());
+                        return siblingReflections;
+                }
+
+                // Final fallback: same toolId, newest group with reflections.
+                if (bindingGroup.toolId() == null || bindingGroup.toolId().isBlank()) {
+                        return List.of();
+                }
+
+                List<sh.vork.reflection.ReflectionGroup> sameToolGroups = reflectionService.listGroups().stream()
+                                .filter(group -> group != null)
+                                .filter(group -> group.toolId() != null)
+                                .filter(group -> bindingGroup.toolId().equals(group.toolId()))
+                                .sorted(java.util.Comparator.comparingLong(sh.vork.reflection.ReflectionGroup::updatedAt).reversed())
+                                .toList();
+
+                for (sh.vork.reflection.ReflectionGroup group : sameToolGroups) {
+                        List<Reflection> toolFallbackReflections = allReflections.stream()
+                                        .filter(reflection -> reflection != null
+                                                        && reflection.groupUuid() != null
+                                                        && reflection.groupUuid().equals(group.uuid()))
+                                        .toList();
+                        if (!toolFallbackReflections.isEmpty()) {
+                                log.warn("Resolved reflection binding through toolId fallback [bindingUuid={}, bindingGroupUuid={}, toolId={}, mappedGroupUuid={}, reflections={}]",
+                                                binding.uuid(),
+                                                bindingGroupUuid(binding),
+                                                bindingGroup.toolId(),
+                                                group.uuid(),
+                                                toolFallbackReflections.size());
+                                return toolFallbackReflections;
+                        }
+                }
+
+                return List.of();
+        }
+
+        private String bindingGroupUuid(sh.vork.reflection.ReflectionBinding binding) {
+                if (binding == null) {
+                        return "";
+                }
+                sh.vork.reflection.ReflectionGroup group = resolveBindingGroup(binding);
+                return group == null || group.uuid() == null ? "" : group.uuid();
+        }
+
+        private sh.vork.reflection.ReflectionGroup resolveBindingGroup(sh.vork.reflection.ReflectionBinding binding) {
+                if (binding == null || binding.reflectionUuid() == null || binding.reflectionUuid().isBlank()) {
+                        return null;
+                }
+
+                // Primary path: reflectionUuid points to a Reflection entity.
+                sh.vork.reflection.Reflection bindingReflection = reflectionService.getReflection(binding.reflectionUuid());
+                if (bindingReflection != null
+                                && bindingReflection.groupUuid() != null
+                                && !bindingReflection.groupUuid().isBlank()) {
+                        return reflectionService.getGroup(bindingReflection.groupUuid());
+                }
+
+                // Transitional fallback: legacy persisted rows may still have group UUID values
+                // in this slot after schema migration.
+                return reflectionService.getGroup(binding.reflectionUuid());
         }
 
         private record ResolvedReflectionBindings(
@@ -1728,8 +1943,21 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         }
                 }
 
-                // MCP runtime tools are attached dynamically from effective binding UUIDs.
                 boolean inSkillFrame = session.skillStack() != null && !session.skillStack().isEmpty();
+
+                // Reflection tools are injected dynamically from effective binding assignments.
+                List<ResolvedReflectionBindings> effectiveReflectionBindings =
+                        resolveEffectiveReflectionBindings(session, inSkillFrame);
+                for (ResolvedReflectionBindings resolved : effectiveReflectionBindings) {
+                        ToolCallback callback = reflectionToolCallbackFactory.create(
+                                resolved.reflection(),
+                                resolved.bindings());
+                        if (toolName.equals(callback.getToolDefinition().name())) {
+                                return callback;
+                        }
+                }
+
+                // MCP runtime tools are attached dynamically from effective binding UUIDs.
                 if (mcpRuntimeToolService != null) {
                         List<String> effectiveMcpBindingUuids = resolveEffectiveMcpBindingUuids(session, inSkillFrame);
                         if (!effectiveMcpBindingUuids.isEmpty()) {

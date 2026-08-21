@@ -7,6 +7,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -19,8 +20,6 @@ import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.multipart.MultipartFile;
 import sh.vork.ai.entity.AiSession;
-import sh.vork.ai.entity.AiSessionStatus;
-import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.service.ChatService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.reflection.Reflection;
@@ -50,6 +49,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.regex.Pattern;
 
 /**
@@ -75,7 +75,6 @@ public class SurfaceController {
 
     private final SurfaceService surfaceService;
     private final DatabaseRepository<Surface> surfaceRepository;
-    private final DatabaseRepository<AiSession> sessionRepository;
     private final SessionFileSystem sessionFileSystem;
     private final SurfaceReflectionContractService surfaceReflectionContractService;
     private final ReflectionService reflectionService;
@@ -85,7 +84,6 @@ public class SurfaceController {
 
     public SurfaceController(SurfaceService surfaceService,
                              DatabaseRepository<Surface> surfaceRepository,
-                             DatabaseRepository<AiSession> sessionRepository,
                              SessionFileSystem sessionFileSystem,
                              SurfaceReflectionContractService surfaceReflectionContractService,
                              ReflectionService reflectionService,
@@ -94,7 +92,6 @@ public class SurfaceController {
                              ObjectMapper objectMapper) {
         this.surfaceService = surfaceService;
         this.surfaceRepository = surfaceRepository;
-        this.sessionRepository = sessionRepository;
         this.sessionFileSystem = sessionFileSystem;
         this.surfaceReflectionContractService = surfaceReflectionContractService;
         this.reflectionService = reflectionService;
@@ -207,6 +204,22 @@ public class SurfaceController {
         }
         try {
             Surface created = surfaceService.create(req.name(), req.description(), principal.getName(), groupId, artifactId);
+            if (req.published() != null
+                    || req.logoDataUrl() != null
+                    || req.assignedUserUuids() != null
+                    || req.accessPolicy() != null) {
+                created = surfaceService.update(
+                        created.uuid(),
+                        created.name(),
+                        created.description(),
+                        created.skillUuids(),
+                        created.reflectionBindingUuids(),
+                        created.jobUuids(),
+                        req.published(),
+                        req.logoDataUrl(),
+                        req.assignedUserUuids(),
+                        req.toAccessPolicy());
+            }
             return ResponseEntity.ok(created);
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
@@ -223,17 +236,35 @@ public class SurfaceController {
         if (existing == null) {
             return ResponseEntity.notFound().build();
         }
-        if (!existing.isSnapshotMutable()) {
-            return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT surfaces can be edited."));
-        }
         try {
-            Surface updated = surfaceService.update(
-                    existing.uuid(),
-                    req == null ? null : req.name(),
-                    req == null ? null : req.description(),
-                    req == null ? null : req.skillUuids(),
-                    req == null ? null : req.reflectionBindingUuids(),
-                    req == null ? null : req.jobUuids());
+            Surface updated;
+            if (existing.isSnapshotMutable()) {
+                updated = surfaceService.update(
+                        existing.uuid(),
+                        req == null ? null : req.name(),
+                        req == null ? null : req.description(),
+                        req == null ? null : req.skillUuids(),
+                        req == null ? null : req.reflectionBindingUuids(),
+                        req == null ? null : req.jobUuids(),
+                        req == null ? null : req.published(),
+                        req == null ? null : req.logoDataUrl(),
+                        req == null ? null : req.assignedUserUuids(),
+                        req == null ? null : req.toAccessPolicy());
+            } else {
+                if (req == null) {
+                    return ResponseEntity.badRequest().body(Map.of("error", "Request body is required."));
+                }
+                if (hasImmutableSurfaceFieldChanges(existing, req)) {
+                    return ResponseEntity.status(403).body(Map.of(
+                            "error",
+                            "Immutable surface versions only allow updates to published, assigned users, and access policy routes."));
+                }
+                updated = surfaceService.updatePublicationSettings(
+                        existing.uuid(),
+                        req.published(),
+                        req.assignedUserUuids(),
+                        req.toAccessPolicy());
+            }
             if (updated == null) {
                 return ResponseEntity.notFound().build();
             }
@@ -241,6 +272,104 @@ public class SurfaceController {
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
         }
+    }
+
+    @GetMapping("/api/surfaces/my-apps")
+    @ResponseBody
+    public ResponseEntity<?> mySurfaceApps(Principal principal) {
+        if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Access denied"));
+        }
+        return ResponseEntity.ok(surfaceService.listPublishedHomeAppsForUser(principal.getName()));
+    }
+
+    @GetMapping("/apps/published/{uuid}")
+    @ResponseBody
+    public ResponseEntity<?> publishedSurfaceIndex(@PathVariable("uuid") String uuid,
+                                                   Principal principal) {
+        return publishedSurfaceFile(uuid, "index.html", principal);
+    }
+
+    @GetMapping("/apps/published/{uuid}/{*assetPath}")
+    @ResponseBody
+    public ResponseEntity<?> publishedSurfaceFile(@PathVariable("uuid") String uuid,
+                                                  @PathVariable("assetPath") String assetPath,
+                                                  Principal principal) {
+        if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Access denied");
+        }
+        Surface surface = surfaceService.get(uuid);
+        if (surface == null || !surface.published()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Surface not found");
+        }
+        boolean assigned = surfaceService.isUserAssigned(surface, principal.getName());
+        if (!assigned && !hasManageUsersPermission()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Access denied");
+        }
+        return servePublishedSurfaceFile(surface, assetPath, principal.getName());
+    }
+
+    @GetMapping("/apps/published/{assetPath:.+}")
+    @ResponseBody
+    public ResponseEntity<?> publishedSurfaceRootAssetFallback(@PathVariable("assetPath") String assetPath,
+                                                               Principal principal) {
+        if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Access denied");
+        }
+        List<Surface> candidates = surfaceService.listPublishedHomeAppsForUser(principal.getName()).stream()
+                .map(link -> surfaceService.get(link.uuid()))
+                .filter(surface -> surface != null)
+                .toList();
+        for (Surface surface : candidates) {
+            ResponseEntity<?> response = servePublishedSurfaceFile(surface, assetPath, principal.getName());
+            if (response.getStatusCode() == HttpStatus.OK) {
+                return response;
+            }
+        }
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Surface file not found");
+    }
+
+    @GetMapping("/apps/private/{path}")
+    @ResponseBody
+    public ResponseEntity<?> privateSurfaceIndex(@PathVariable("path") String path,
+                                                 Principal principal) {
+        return privateSurfaceFile(path, "index.html", principal);
+    }
+
+    @GetMapping("/apps/private/{path}/{*assetPath}")
+    @ResponseBody
+    public ResponseEntity<?> privateSurfaceFile(@PathVariable("path") String path,
+                                                @PathVariable("assetPath") String assetPath,
+                                                Principal principal) {
+        if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Access denied");
+        }
+        Surface surface = surfaceService.findPublishedByPrivatePath(path);
+        if (surface == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Surface not found");
+        }
+        boolean assigned = surfaceService.isUserAssigned(surface, principal.getName());
+        if (!assigned && !hasManageUsersPermission()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Access denied");
+        }
+        return servePublishedSurfaceFile(surface, assetPath, principal.getName());
+    }
+
+    @GetMapping("/apps/public/{path}")
+    @ResponseBody
+    public ResponseEntity<?> publicSurfaceIndex(@PathVariable("path") String path) {
+        return publicSurfaceFile(path, "index.html");
+    }
+
+    @GetMapping("/apps/public/{path}/{*assetPath}")
+    @ResponseBody
+    public ResponseEntity<?> publicSurfaceFile(@PathVariable("path") String path,
+                                               @PathVariable("assetPath") String assetPath) {
+        Surface surface = surfaceService.findPublishedByPublicPath(path);
+        if (surface == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Surface not found");
+        }
+        return servePublishedSurfaceFile(surface, assetPath, null);
     }
 
     @DeleteMapping("/api/surfaces/{uuid}")
@@ -275,21 +404,27 @@ public class SurfaceController {
             return ResponseEntity.notFound().build();
         }
 
-        SurfaceArtifact artifact = new SurfaceArtifact(
-                surface.uuid(),
-                surface.name(),
-                surface.description(),
-                surface.skillUuids(),
-                surface.reflectionBindingUuids(),
-                surface.jobUuids(),
-                surface.groupId(),
-                surface.artifactId(),
-                surface.version(),
-                surface.artifactStatus());
-        SurfaceExportPackage pkg = new SurfaceExportPackage("1.0", artifact);
         byte[] archive;
         try {
             Map<String, byte[]> entries = new LinkedHashMap<>();
+            Map<String, Object> artifact = new LinkedHashMap<>();
+            artifact.put("uuid", surface.uuid());
+            artifact.put("name", surface.name());
+            artifact.put("description", surface.description());
+            artifact.put("skillUuids", surface.skillUuids());
+            artifact.put("reflectionBindingUuids", surface.reflectionBindingUuids());
+            artifact.put("jobUuids", surface.jobUuids());
+            artifact.put("logoDataUrl", surface.logoDataUrl());
+            artifact.put("accessPolicy", surface.accessPolicy());
+            artifact.put("groupId", surface.groupId());
+            artifact.put("artifactId", surface.artifactId());
+            artifact.put("version", surface.version());
+            artifact.put("artifactStatus", surface.artifactStatus());
+
+            Map<String, Object> pkg = new LinkedHashMap<>();
+            pkg.put("vorkSurfaceExport", "1.0");
+            pkg.put("surface", artifact);
+
             entries.put(SURFACE_EXPORT_ENTRY, objectMapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(pkg));
             if (surface.sessionUuid() != null && !surface.sessionUuid().isBlank()) {
                 collectSessionEntries(entries, surface.sessionUuid(), EDITOR_FILES_ZIP_DIR);
@@ -388,7 +523,11 @@ public class SurfaceController {
                 incoming.description(),
                 incoming.skillUuids(),
                 incoming.reflectionBindingUuids(),
-                incoming.jobUuids());
+            incoming.jobUuids(),
+            null,
+            incoming.logoDataUrl(),
+            null,
+            incoming.accessPolicy());
         Surface target = updated == null ? surfaceRepository.get(targetSurface.uuid()) : updated;
         if (target == null) {
             return ResponseEntity.internalServerError().body(new SurfaceImportResult("error", null, "Failed to create imported surface."));
@@ -475,7 +614,7 @@ public class SurfaceController {
                 }
 
                 try {
-                        surfaceService.ensureSession(uuid, principal.getName());
+                    surfaceService.ensureExecutionSession(uuid, principal.getName());
                         Surface surface = surfaceService.get(uuid);
                         if (surface == null) {
                                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
@@ -491,7 +630,7 @@ public class SurfaceController {
                                     if (attachedBinding == null) {
                                         continue;
                                     }
-                                    ReflectionGroup attachedGroup = reflectionService.getGroup(attachedBinding.groupUuid());
+                                    ReflectionGroup attachedGroup = reflectionService.getBindingGroup(attachedBinding);
                                     if (attachedGroup == null || attachedGroup.toolId() == null || attachedGroup.toolId().isBlank()) {
                                         continue;
                                     }
@@ -734,6 +873,233 @@ public class SurfaceController {
         }
     }
 
+    @GetMapping("/api/apps/published/{uuid}/reflection-contracts")
+    @ResponseBody
+    public ResponseEntity<?> getPublishedSurfaceReflectionContracts(@PathVariable String uuid,
+                                                                    @RequestParam(name = "bindingGroupToolId", required = false) String bindingGroupToolId,
+                                                                    @RequestParam(name = "bindingProfileName", required = false) String bindingProfileName,
+                                                                    Principal principal) {
+        ResponseEntity<?> access = ensurePublishedSurfaceAccess(uuid, principal);
+        if (access != null) {
+            return access;
+        }
+        return getSurfaceReflectionContracts(uuid, bindingGroupToolId, bindingProfileName, principal);
+    }
+
+    @PostMapping("/api/apps/published/{uuid}/reflections/invoke")
+    @ResponseBody
+    public ResponseEntity<?> invokePublishedSurfaceReflection(@PathVariable String uuid,
+                                                              @RequestBody SurfaceReflectionInvokeRequest req,
+                                                              Principal principal) {
+        ResponseEntity<?> access = ensurePublishedSurfaceAccess(uuid, principal);
+        if (access != null) {
+            return access;
+        }
+        try {
+            // Prime execution context for published users before invoking reflection.
+            surfaceService.ensureExecutionSession(uuid, principal.getName());
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("status", "error", "message", ex.getMessage()));
+        }
+        return invokeSurfaceReflection(uuid, req, principal);
+    }
+
+    @GetMapping("/api/apps/published/{uuid}/skill-contracts")
+    @ResponseBody
+    public ResponseEntity<?> getPublishedSurfaceSkillContracts(@PathVariable String uuid,
+                                                               Principal principal) {
+        ResponseEntity<?> access = ensurePublishedSurfaceAccess(uuid, principal);
+        if (access != null) {
+            return access;
+        }
+        return getSurfaceSkillContracts(uuid, principal);
+    }
+
+    @PostMapping("/api/apps/published/{uuid}/skills/invoke")
+    @ResponseBody
+    public ResponseEntity<?> startPublishedSurfaceSkillExecution(@PathVariable String uuid,
+                                                                 @RequestBody SurfaceSkillInvokeRequest req,
+                                                                 Principal principal) {
+        ResponseEntity<?> access = ensurePublishedSurfaceAccess(uuid, principal);
+        if (access != null) {
+            return access;
+        }
+        return startSurfaceSkillExecution(uuid, req, principal);
+    }
+
+    @GetMapping("/api/apps/published/{uuid}/skills/executions/{executionId}")
+    @ResponseBody
+    public ResponseEntity<?> pollPublishedSurfaceSkillExecution(@PathVariable String uuid,
+                                                                @PathVariable String executionId,
+                                                                @RequestParam(name = "waitMs", defaultValue = "15000") long waitMs,
+                                                                Principal principal) {
+        ResponseEntity<?> access = ensurePublishedSurfaceAccess(uuid, principal);
+        if (access != null) {
+            return access;
+        }
+        return pollSurfaceSkillExecution(uuid, executionId, waitMs, principal);
+    }
+
+    @GetMapping("/apps/runtime/v1/reflections.js")
+    @ResponseBody
+    public ResponseEntity<String> publishedReflectionRuntimeHelper() {
+        String script = """
+(function () {
+    'use strict';
+
+    function detectSurfaceUuid() {
+        if (window.__VORK_SURFACE_UUID__ && typeof window.__VORK_SURFACE_UUID__ === 'string') {
+            return window.__VORK_SURFACE_UUID__;
+        }
+        var match = window.location.pathname.match(/^\\/apps\\/published\\/([^\\/]+)(?:\\/|$)/);
+        return match ? decodeURIComponent(match[1]) : null;
+    }
+
+    async function invoke(options) {
+        options = options || {};
+        var surfaceUuid = options.surfaceUuid || detectSurfaceUuid();
+        if (!surfaceUuid) throw new Error('Cannot resolve surfaceUuid for reflection invocation.');
+        if (!options.reflectionId) throw new Error('reflectionId is required.');
+        if (!options.bindingGroupToolId) throw new Error('bindingGroupToolId is required.');
+        if (!options.bindingProfileName) throw new Error('bindingProfileName is required.');
+
+        var response = await fetch('/api/apps/published/' + encodeURIComponent(surfaceUuid) + '/reflections/invoke', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                reflectionId: options.reflectionId,
+                args: options.args || {},
+                bindingGroupToolId: options.bindingGroupToolId,
+                bindingProfileName: options.bindingProfileName
+            })
+        });
+
+        var contentType = response.headers.get('content-type') || '';
+        var isJson = contentType.indexOf('application/json') >= 0;
+        var payload = isJson ? await response.json() : await response.text();
+        if (!response.ok) {
+            var message = isJson && payload && typeof payload === 'object'
+                ? (payload.message || payload.error || JSON.stringify(payload))
+                : (payload || ('Reflection invoke failed with HTTP ' + response.status));
+            throw new Error(message);
+        }
+        return payload;
+    }
+
+    async function getContracts(options) {
+        options = options || {};
+        var surfaceUuid = options.surfaceUuid || detectSurfaceUuid();
+        if (!surfaceUuid) throw new Error('Cannot resolve surfaceUuid for contract lookup.');
+
+        var queryParams = [];
+        if (options.bindingGroupToolId) {
+            queryParams.push('bindingGroupToolId=' + encodeURIComponent(options.bindingGroupToolId));
+        }
+        if (options.bindingProfileName) {
+            queryParams.push('bindingProfileName=' + encodeURIComponent(options.bindingProfileName));
+        }
+        var query = queryParams.length > 0 ? ('?' + queryParams.join('&')) : '';
+        var response = await fetch('/api/apps/published/' + encodeURIComponent(surfaceUuid) + '/reflection-contracts' + query);
+        var payload = await response.json();
+        if (!response.ok) {
+            throw new Error((payload && (payload.message || payload.error)) || ('Contract lookup failed with HTTP ' + response.status));
+        }
+        return payload;
+    }
+
+    window.vork = window.vork || {};
+    window.vork.reflections = { invoke: invoke, getContracts: getContracts };
+})();
+""";
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/javascript"))
+                .body(script);
+    }
+
+    @GetMapping("/apps/runtime/v1/skills.js")
+    @ResponseBody
+    public ResponseEntity<String> publishedSkillRuntimeHelper() {
+        String script = """
+(function () {
+    'use strict';
+
+    function detectSurfaceUuid() {
+        if (window.__VORK_SURFACE_UUID__ && typeof window.__VORK_SURFACE_UUID__ === 'string') {
+            return window.__VORK_SURFACE_UUID__;
+        }
+        var match = window.location.pathname.match(/^\\/apps\\/published\\/([^\\/]+)(?:\\/|$)/);
+        return match ? decodeURIComponent(match[1]) : null;
+    }
+
+    async function invoke(options) {
+        options = options || {};
+        var surfaceUuid = options.surfaceUuid || detectSurfaceUuid();
+        if (!surfaceUuid) throw new Error('Cannot resolve surfaceUuid for skill invocation.');
+        if (!options.groupId) throw new Error('groupId is required.');
+        if (!options.skillId) throw new Error('skillId is required.');
+
+        var startRes = await fetch('/api/apps/published/' + encodeURIComponent(surfaceUuid) + '/skills/invoke', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                groupId: options.groupId,
+                skillId: options.skillId,
+                args: options.args || {}
+            })
+        });
+        var startPayload = await startRes.json();
+        if (!startRes.ok) {
+            throw new Error(startPayload.message || startPayload.error || ('Skill invoke failed with HTTP ' + startRes.status));
+        }
+
+        var executionId = startPayload.executionId;
+        if (!executionId) throw new Error('Skill execution did not return an executionId.');
+
+        var waitMs = typeof options.waitMs === 'number' ? options.waitMs : 15000;
+        while (true) {
+            var pollRes = await fetch('/api/apps/published/' + encodeURIComponent(surfaceUuid)
+                + '/skills/executions/' + encodeURIComponent(executionId)
+                + '?waitMs=' + encodeURIComponent(waitMs));
+            var pollPayload = await pollRes.json();
+            if (!pollRes.ok) {
+                throw new Error(pollPayload.message || pollPayload.error || ('Skill poll failed with HTTP ' + pollRes.status));
+            }
+
+            var state = String(pollPayload.state || '').toUpperCase();
+            if (state === 'COMPLETED') {
+                return {
+                    executionId: executionId,
+                    outputContentType: pollPayload.outputContentType || 'application/json',
+                    result: pollPayload.result
+                };
+            }
+            if (state === 'FAILED') {
+                throw new Error(pollPayload.error || 'Skill execution failed.');
+            }
+        }
+    }
+
+    async function getContracts(options) {
+        options = options || {};
+        var surfaceUuid = options.surfaceUuid || detectSurfaceUuid();
+        if (!surfaceUuid) throw new Error('Cannot resolve surfaceUuid for skill contract lookup.');
+        var response = await fetch('/api/apps/published/' + encodeURIComponent(surfaceUuid) + '/skill-contracts');
+        var payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.message || payload.error || ('Skill contract lookup failed with HTTP ' + response.status));
+        }
+        return payload;
+    }
+
+    window.vork = window.vork || {};
+    window.vork.skills = { invoke: invoke, getContracts: getContracts };
+})();
+""";
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/javascript"))
+                .body(script);
+    }
+
         @GetMapping("/surface/runtime/v1/reflections.js")
         @ResponseBody
         @PreAuthorize("hasAuthority('USERS_MANAGE')")
@@ -974,13 +1340,58 @@ public class SurfaceController {
                                        String description,
                                        List<String> skillUuids,
                                        List<String> reflectionBindingUuids,
-                                       List<String> jobUuids) {
+                                       List<String> jobUuids,
+                                       Boolean published,
+                                       String logoDataUrl,
+                                       List<String> assignedUserUuids,
+                                       AccessPolicyRequest accessPolicy) {
+
+        public Surface.AccessPolicy toAccessPolicy() {
+            if (accessPolicy == null) {
+                return null;
+            }
+            return new Surface.AccessPolicy(
+                    accessPolicy.homeScreenEnabled(),
+                    accessPolicy.navButtonEnabled(),
+                    accessPolicy.navButtonIcon(),
+                    accessPolicy.privateUrlEnabled(),
+                    accessPolicy.privateUrlPath(),
+                    accessPolicy.publicUrlEnabled(),
+                    accessPolicy.publicUrlPath());
+        }
+    }
+
+    public record AccessPolicyRequest(boolean homeScreenEnabled,
+                                      boolean navButtonEnabled,
+                                      String navButtonIcon,
+                                      boolean privateUrlEnabled,
+                                      String privateUrlPath,
+                                      boolean publicUrlEnabled,
+                                      String publicUrlPath) {
     }
 
     public record CreateSurfaceRequest(String name,
                                        String description,
                                        String groupId,
-                                       String artifactId) {
+                                       String artifactId,
+                                       Boolean published,
+                                       String logoDataUrl,
+                                       List<String> assignedUserUuids,
+                                       AccessPolicyRequest accessPolicy) {
+
+        public Surface.AccessPolicy toAccessPolicy() {
+            if (accessPolicy == null) {
+                return null;
+            }
+            return new Surface.AccessPolicy(
+                    accessPolicy.homeScreenEnabled(),
+                    accessPolicy.navButtonEnabled(),
+                    accessPolicy.navButtonIcon(),
+                    accessPolicy.privateUrlEnabled(),
+                    accessPolicy.privateUrlPath(),
+                    accessPolicy.publicUrlEnabled(),
+                    accessPolicy.publicUrlPath());
+        }
     }
 
     public record SurfaceReflectionInvokeRequest(String reflectionId,
@@ -1009,6 +1420,10 @@ public class SurfaceController {
                 List<String> skillUuids,
                 List<String> reflectionBindingUuids,
                 List<String> jobUuids,
+                boolean published,
+                String logoDataUrl,
+                List<String> assignedUserUuids,
+                Surface.AccessPolicy accessPolicy,
                 String groupId,
                 String artifactId,
                 String version,
@@ -1021,6 +1436,29 @@ public class SurfaceController {
             String surfaceUuid,
             String message
     ) {
+    }
+
+    private static boolean hasImmutableSurfaceFieldChanges(Surface existing, UpdateSurfaceRequest req) {
+        if (req == null) {
+            return false;
+        }
+
+        if (req.name() != null && !req.name().isBlank() && !Objects.equals(req.name(), existing.name())) {
+            return true;
+        }
+        if (req.description() != null && !Objects.equals(req.description(), existing.description())) {
+            return true;
+        }
+        if (req.skillUuids() != null && !Objects.equals(req.skillUuids(), existing.skillUuids())) {
+            return true;
+        }
+        if (req.reflectionBindingUuids() != null && !Objects.equals(req.reflectionBindingUuids(), existing.reflectionBindingUuids())) {
+            return true;
+        }
+        if (req.jobUuids() != null && !Objects.equals(req.jobUuids(), existing.jobUuids())) {
+            return true;
+        }
+        return req.logoDataUrl() != null && !Objects.equals(req.logoDataUrl(), existing.logoDataUrl());
     }
 
     private static String validateArtifactIdentity(String groupId, String artifactId, String version) {
@@ -1130,7 +1568,7 @@ public class SurfaceController {
         String lower = filename == null ? "" : filename.toLowerCase(Locale.ROOT);
         if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
         if (lower.endsWith(".css")) return "text/css";
-        if (lower.endsWith(".js")) return "application/javascript";
+        if (lower.endsWith(".js") || lower.endsWith(".mjs")) return "text/javascript";
         if (lower.endsWith(".json")) return "application/json";
         if (lower.endsWith(".png")) return "image/png";
         if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
@@ -1164,5 +1602,130 @@ public class SurfaceController {
             return html.substring(0, bodyClose) + injection + html.substring(bodyClose);
         }
         return html + injection;
+    }
+
+    private static String injectPublishedRuntime(String html) {
+        if (html == null || html.isBlank()) {
+            return html;
+        }
+
+        // Published runtime should never load preview-only helpers.
+        html = html.replace("/surface/runtime/v1/reflections.js", "/apps/runtime/v1/reflections.js");
+        html = html.replace("/surface/runtime/v1/skills.js", "/apps/runtime/v1/skills.js");
+        html = html.replace("/js/surface-preview-console.js", "");
+
+        String injection = """
+    <script src="/apps/runtime/v1/compat.js"></script>
+<script src="/apps/runtime/v1/reflections.js"></script>
+<script src="/apps/runtime/v1/skills.js"></script>
+""";
+
+        if (html.contains("/apps/runtime/v1/compat.js")
+            && html.contains("/apps/runtime/v1/reflections.js")
+            && html.contains("/apps/runtime/v1/skills.js")) {
+            return html;
+        }
+
+        int bodyClose = html.toLowerCase(Locale.ROOT).lastIndexOf("</body>");
+        if (bodyClose >= 0) {
+            return html.substring(0, bodyClose) + injection + html.substring(bodyClose);
+        }
+        return html + injection;
+    }
+
+    private ResponseEntity<?> ensurePublishedSurfaceAccess(String uuid, Principal principal) {
+        if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("status", "error", "message", "Access denied"));
+        }
+        Surface surface = surfaceService.get(uuid);
+        if (surface == null || !surface.published()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("status", "error", "message", "Surface not found"));
+        }
+        boolean assigned = surfaceService.isUserAssigned(surface, principal.getName());
+        if (!assigned && !hasManageUsersPermission()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("status", "error", "message", "Access denied"));
+        }
+        return null;
+    }
+
+    private ResponseEntity<?> servePublishedSurfaceFile(Surface surface,
+                                                        String assetPath,
+                                                        String username) {
+        if (surface == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Surface not found");
+        }
+
+        String sessionUuid = surface.sessionUuid();
+        if (sessionUuid == null || sessionUuid.isBlank()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Surface not found");
+        }
+
+        String relativePath = normalizePublishedAssetPath(assetPath);
+        try (InputStream in = sessionFileSystem.read(FileArea.SESSION, sessionUuid, relativePath)) {
+            byte[] bytes = in.readAllBytes();
+            String mime = probeMimeType(relativePath);
+            if (mime.startsWith("text/html")) {
+                String html = new String(bytes, StandardCharsets.UTF_8);
+                html = injectPublishedRuntime(html);
+                html = rewritePublishedRuntimePaths(html);
+                bytes = html.getBytes(StandardCharsets.UTF_8);
+            } else if (mime.equals("text/javascript") || mime.equals("application/javascript") || mime.equals("application/json")) {
+                String content = new String(bytes, StandardCharsets.UTF_8);
+                content = rewritePublishedRuntimePaths(content);
+                bytes = content.getBytes(StandardCharsets.UTF_8);
+            }
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(mime))
+                    .header(HttpHeaders.CONTENT_DISPOSITION,
+                            "inline; filename=\"" + escapeHeaderValue(fileName(relativePath)) + "\"")
+                    .body(bytes);
+        } catch (Exception ex) {
+            log.warn("Published surface file read failed [surfaceUuid={}, path={}, user={}, reason={}]",
+                    surface.uuid(), relativePath, username, ex.getMessage());
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Surface file not found");
+        }
+    }
+
+    private static String normalizePublishedAssetPath(String assetPath) {
+        if (assetPath == null) {
+            return "index.html";
+        }
+        String normalized = assetPath.trim();
+        while (normalized.startsWith("/")) {
+            normalized = normalized.substring(1);
+        }
+        if (normalized.isBlank()) {
+            return "index.html";
+        }
+        if (normalized.endsWith("/")) {
+            return normalized + "index.html";
+        }
+        return normalized;
+    }
+
+    private static String rewritePublishedRuntimePaths(String content) {
+        if (content == null || content.isBlank()) {
+            return content;
+        }
+        String rewritten = content;
+
+        // Normalize runtime helper script paths for published surfaces.
+        rewritten = rewritten.replace("/surface/runtime/v1/reflections.js", "/apps/runtime/v1/reflections.js");
+        rewritten = rewritten.replace("surface/runtime/v1/reflections.js", "/apps/runtime/v1/reflections.js");
+        rewritten = rewritten.replace("/surface/runtime/v1/skills.js", "/apps/runtime/v1/skills.js");
+        rewritten = rewritten.replace("surface/runtime/v1/skills.js", "/apps/runtime/v1/skills.js");
+
+        // Normalize reflection and skill API paths for published execution context.
+        rewritten = rewritten.replace("/api/surfaces/", "/api/apps/published/");
+
+        return rewritten;
+    }
+
+    private static boolean hasManageUsersPermission() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getAuthorities() == null) {
+            return false;
+        }
+        return auth.getAuthorities().stream().anyMatch(a -> "USERS_MANAGE".equals(a.getAuthority()));
     }
 }

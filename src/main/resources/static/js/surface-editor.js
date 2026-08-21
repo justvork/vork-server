@@ -1,5 +1,5 @@
 /* surface-editor.js — Surface Editor: chat, file tree, code viewer, config sidebar */
-/* global StompJs, SockJS, marked, Prism */
+/* global StompJs, SockJS, marked, Prism, monaco, require */
 
 'use strict';
 
@@ -19,6 +19,8 @@ const newFolderBtn = document.getElementById('new-folder-btn');
 const viewerPre = document.getElementById('viewer-pre');
 const viewerCode = document.getElementById('viewer-code');
 const viewerEmpty = document.getElementById('viewer-empty');
+const monacoHost = document.getElementById('monaco-editor');
+const viewerEditor = document.getElementById('viewer-editor');
 const viewerFilename = document.getElementById('viewer-filename');
 const viewerMeta = document.getElementById('viewer-meta');
 
@@ -38,6 +40,16 @@ let skillGroupNameByUuid = new Map();
 let lookupsReady = false;
 
 let loadedDirs = new Map(); // path -> element
+let loadedFileText = '';
+let loadedFileEditable = false;
+let fileDirty = false;
+let saveInFlight = false;
+let monacoLoadPromise = null;
+let monacoEditor = null;
+let monacoModeActive = false;
+let suppressModelChange = false;
+let postResponseRefreshInFlight = false;
+let postResponseRefreshQueued = false;
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 
@@ -63,6 +75,16 @@ document.addEventListener('DOMContentLoaded', function () {
             chatForm.requestSubmit();
         }
     });
+
+    if (viewerEditor) {
+        viewerEditor.addEventListener('input', function () {
+            fileDirty = loadedFileEditable && selectedPath != null && viewerEditor.value !== loadedFileText;
+            refreshViewerMeta();
+        });
+        viewerEditor.addEventListener('blur', function () {
+            persistCurrentFile('blur');
+        });
+    }
 });
 
 // ── Surface + session loading ────────────────────────────────────────────────
@@ -196,6 +218,7 @@ function connectStomp() {
             if (msg.role === 'ASSISTANT' || msg.role === 'ERROR' || msg.role === 'PROMPT_REQUIRED') {
                 hideWorkingIndicator();
                 setInputEnabled(true);
+                requestPostResponseRefresh();
             }
         });
     }, function () {
@@ -215,12 +238,17 @@ function setChatStatus(state) {
     chatStatus.className = 'text-xs ' + (state === 'connected' ? 'text-emerald-400' : 'text-zinc-500');
 }
 
-function handleSend(e) {
+async function handleSend(e) {
     e.preventDefault();
     if (waiting) return;
 
     const content = messageInput.value.trim();
     if (!content) return;
+
+    if (!(await persistCurrentFile('send'))) {
+        renderMessage({ role: 'ERROR', content: 'Could not save file changes. Please fix the issue and try again.' });
+        return;
+    }
 
     messageInput.value = '';
     messageInput.style.height = 'auto';
@@ -255,6 +283,19 @@ function setInputEnabled(on) {
     messageInput.disabled = !on;
     sendBtn.disabled = !on;
     waiting = !on;
+    setEditorsLocked(!on);
+}
+
+function setEditorsLocked(locked) {
+    if (rootEl) {
+        rootEl.classList.toggle('editors-locked', locked);
+    }
+    if (monacoEditor && monacoModeActive) {
+        monacoEditor.updateOptions({ readOnly: locked });
+    }
+    if (viewerEditor && loadedFileEditable && !monacoModeActive) {
+        viewerEditor.disabled = locked;
+    }
 }
 
 function isUiEventFrame(obj) {
@@ -296,16 +337,24 @@ function handleIncomingUiFrame(frame) {
             hideWorkingIndicator();
             if (frame.payload && frame.payload.message && typeof frame.payload.message === 'object') {
                 renderMessage(frame.payload.message);
+                setInputEnabled(true);
+                requestPostResponseRefresh();
                 return;
             }
             if (typeof frame.textResponse === 'string' && frame.textResponse) {
                 renderMessage({ role: 'ASSISTANT', content: frame.textResponse });
+                setInputEnabled(true);
+                requestPostResponseRefresh();
                 return;
             }
             if (frame.payload && typeof frame.payload.content === 'string' && frame.payload.content) {
                 renderMessage({ role: 'ASSISTANT', content: frame.payload.content });
+                setInputEnabled(true);
+                requestPostResponseRefresh();
                 return;
             }
+            setInputEnabled(true);
+            requestPostResponseRefresh();
             return;
 
         case 'AGENT_TRANSITION':
@@ -327,6 +376,7 @@ function handleIncomingUiFrame(frame) {
                     : 'This action requires your approval.'
             });
             setInputEnabled(true);
+            requestPostResponseRefresh();
             return;
 
         case 'ERROR':
@@ -338,6 +388,7 @@ function handleIncomingUiFrame(frame) {
                     : ((frame.payload && frame.payload.message) ? String(frame.payload.message) : 'Unknown error')
             });
             setInputEnabled(true);
+            requestPostResponseRefresh();
             return;
 
         default:
@@ -442,6 +493,33 @@ function showError(message) {
     messagesArea.innerHTML = '<div class="p-4 text-rose-300">' + escapeHtml(message) + '</div>';
 }
 
+function requestPostResponseRefresh() {
+    if (postResponseRefreshInFlight) {
+        postResponseRefreshQueued = true;
+        return;
+    }
+    void refreshAfterAiResponse();
+}
+
+async function refreshAfterAiResponse() {
+    postResponseRefreshInFlight = true;
+    try {
+        await loadFileTree();
+
+        if (selectedPath && !fileDirty) {
+            await loadFile(selectedPath);
+        }
+    } catch (e) {
+        console.warn('Post-response refresh failed:', e && e.message ? e.message : e);
+    } finally {
+        postResponseRefreshInFlight = false;
+        if (postResponseRefreshQueued) {
+            postResponseRefreshQueued = false;
+            void refreshAfterAiResponse();
+        }
+    }
+}
+
 // ── File tree ────────────────────────────────────────────────────────────────
 
 async function loadFileTree() {
@@ -506,7 +584,6 @@ function renderTree(items, container, parentPath) {
             node.appendChild(childrenContainer);
         } else {
             itemEl.addEventListener('click', function () {
-                selectedPath = fullPath;
                 loadFile(fullPath);
                 document.querySelectorAll('.tree-item.selected').forEach(function (el) { el.classList.remove('selected'); });
                 itemEl.classList.add('selected');
@@ -531,27 +608,239 @@ async function loadDirectory(dir, container) {
 
 async function loadFile(path) {
     if (!sessionUuid || !path) return;
+    if (!(await persistCurrentFile('switch'))) {
+        return;
+    }
     try {
         const res = await fetch('/api/session-files/download?area=SESSION&sessionUuid=' + encodeURIComponent(sessionUuid) + '&path=' + encodeURIComponent(path));
         if (!res.ok) {
             viewerEmpty.innerHTML = '<div class="text-rose-300">Failed to load file.</div>';
             viewerEmpty.classList.remove('hidden');
             viewerPre.classList.add('hidden');
+            if (monacoHost) monacoHost.classList.add('hidden');
+            if (viewerEditor) viewerEditor.classList.add('hidden');
             return;
         }
         const text = await res.text();
+        const contentType = (res.headers.get('content-type') || '').toLowerCase();
+        const editable = isEditableFile(path, contentType);
         const language = detectLanguage(path);
-        viewerCode.className = 'language-' + language;
-        viewerCode.textContent = text;
+
+        selectedPath = path;
+        loadedFileText = text;
+        loadedFileEditable = editable;
+        fileDirty = false;
+
         viewerFilename.innerHTML = '<i class="fa-solid fa-file-code mr-2 text-[#fdaa02]"></i>' + escapeHtml(path);
-        viewerMeta.textContent = text.length + ' chars';
-        viewerEmpty.classList.add('hidden');
-        viewerPre.classList.remove('hidden');
-        Prism.highlightElement(viewerCode);
+        if (editable) {
+            const monacoReady = await ensureMonacoEditor();
+            if (monacoReady && monacoEditor && typeof monaco !== 'undefined') {
+                const normalizedPath = path.replace(/^\/+/, '');
+                const modelUri = monaco.Uri.parse('file:///' + normalizedPath);
+                const currentModel = monacoEditor.getModel();
+                if (currentModel) {
+                    currentModel.dispose();
+                }
+                const model = monaco.editor.createModel(text, toMonacoLanguage(language), modelUri);
+                suppressModelChange = true;
+                monacoEditor.setModel(model);
+                suppressModelChange = false;
+                monacoEditor.updateOptions({ readOnly: waiting });
+                monacoModeActive = true;
+
+                if (monacoHost) monacoHost.classList.remove('hidden');
+                if (viewerEditor) viewerEditor.classList.add('hidden');
+                viewerPre.classList.add('hidden');
+                viewerEmpty.classList.add('hidden');
+            } else if (viewerEditor) {
+                monacoModeActive = false;
+                viewerEditor.value = text;
+                viewerEditor.disabled = waiting;
+                viewerEditor.classList.remove('hidden');
+                if (monacoHost) monacoHost.classList.add('hidden');
+                viewerPre.classList.add('hidden');
+                viewerEmpty.classList.add('hidden');
+            }
+        } else {
+            monacoModeActive = false;
+            viewerCode.className = 'language-' + language;
+            viewerCode.textContent = text;
+            viewerPre.classList.remove('hidden');
+            if (monacoHost) monacoHost.classList.add('hidden');
+            if (viewerEditor) viewerEditor.classList.add('hidden');
+            viewerEmpty.classList.add('hidden');
+            Prism.highlightElement(viewerCode);
+        }
+
+        refreshViewerMeta();
+        if (!editable) {
+            viewerMeta.textContent += ' • read-only';
+        }
     } catch (e) {
+        monacoModeActive = false;
         viewerEmpty.innerHTML = '<div class="text-rose-300">' + escapeHtml(e.message) + '</div>';
         viewerEmpty.classList.remove('hidden');
         viewerPre.classList.add('hidden');
+        if (monacoHost) monacoHost.classList.add('hidden');
+        if (viewerEditor) viewerEditor.classList.add('hidden');
+    }
+}
+
+function isEditableFile(path, contentType) {
+    if (!path) return false;
+    const lower = path.toLowerCase();
+    const editableByExtension = [
+        '.html', '.htm', '.css', '.js', '.mjs', '.json', '.md', '.txt',
+        '.java', '.xml', '.yaml', '.yml', '.sql', '.properties'
+    ];
+    if (editableByExtension.some(function (ext) { return lower.endsWith(ext); })) {
+        return true;
+    }
+    return contentType.startsWith('text/') || contentType.includes('json') || contentType.includes('xml');
+}
+
+function refreshViewerMeta() {
+    const currentText = getCurrentEditorText();
+    const charCount = currentText.length;
+    let meta = charCount + ' chars';
+    if (fileDirty) {
+        meta += ' • unsaved';
+    } else if (loadedFileEditable && selectedPath) {
+        meta += ' • saved';
+    }
+    viewerMeta.textContent = meta;
+}
+
+async function persistCurrentFile(reason) {
+    if (!selectedPath || !loadedFileEditable || !fileDirty || saveInFlight || !sessionUuid) {
+        return true;
+    }
+
+    const nextText = getCurrentEditorText();
+    saveInFlight = true;
+    try {
+        const formData = new FormData();
+        formData.append('file', new Blob([nextText], { type: 'text/plain' }), fileNameFromPath(selectedPath));
+
+        const uploadUrl = '/api/session-files/upload?area=SESSION&sessionUuid=' + encodeURIComponent(sessionUuid)
+            + '&path=' + encodeURIComponent(selectedPath);
+
+        const res = await fetch(uploadUrl, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!res.ok) {
+            const data = await res.json().catch(function () { return {}; });
+            viewerMeta.textContent = 'save failed';
+            console.warn('Autosave failed [' + reason + ']:', data && data.message ? data.message : res.status);
+            return false;
+        }
+
+        loadedFileText = nextText;
+        fileDirty = false;
+        refreshViewerMeta();
+        return true;
+    } catch (err) {
+        viewerMeta.textContent = 'save failed';
+        console.warn('Autosave failed [' + reason + ']:', err && err.message ? err.message : err);
+        return false;
+    } finally {
+        saveInFlight = false;
+    }
+}
+
+function fileNameFromPath(path) {
+    if (!path) return 'file.txt';
+    const idx = path.lastIndexOf('/');
+    return idx >= 0 ? path.substring(idx + 1) : path;
+}
+
+function getCurrentEditorText() {
+    if (loadedFileEditable && monacoModeActive && monacoEditor) {
+        return monacoEditor.getValue() || '';
+    }
+    if (loadedFileEditable && viewerEditor) {
+        return viewerEditor.value || '';
+    }
+    return loadedFileText || '';
+}
+
+async function ensureMonacoEditor() {
+    if (!monacoHost) {
+        return false;
+    }
+    if (monacoEditor) {
+        return true;
+    }
+    if (typeof require === 'undefined') {
+        return false;
+    }
+    if (monacoLoadPromise) {
+        return monacoLoadPromise;
+    }
+
+    monacoLoadPromise = new Promise(function (resolve) {
+        try {
+            require.config({ paths: { vs: '/packages/npm/monaco-editor/current/min/vs' } });
+            require(['vs/editor/editor.main'], function () {
+                if (typeof monaco === 'undefined') {
+                    resolve(false);
+                    return;
+                }
+
+                monaco.editor.defineTheme('vork-dark', {
+                    base: 'vs-dark',
+                    inherit: true,
+                    rules: [],
+                    colors: {
+                        'editor.background': '#09090b'
+                    }
+                });
+
+                monacoEditor = monaco.editor.create(monacoHost, {
+                    value: '',
+                    language: 'plaintext',
+                    theme: 'vork-dark',
+                    automaticLayout: true,
+                    fontSize: 13,
+                    minimap: { enabled: false },
+                    scrollBeyondLastLine: false,
+                    readOnly: waiting
+                });
+
+                monacoEditor.onDidChangeModelContent(function () {
+                    if (suppressModelChange || !loadedFileEditable || selectedPath == null) {
+                        return;
+                    }
+                    fileDirty = monacoEditor.getValue() !== loadedFileText;
+                    refreshViewerMeta();
+                });
+
+                resolve(true);
+            }, function () {
+                resolve(false);
+            });
+        } catch (_) {
+            resolve(false);
+        }
+    });
+
+    return monacoLoadPromise;
+}
+
+function toMonacoLanguage(language) {
+    switch (language) {
+        case 'html': return 'html';
+        case 'css': return 'css';
+        case 'javascript': return 'javascript';
+        case 'java': return 'java';
+        case 'json': return 'json';
+        case 'markdown': return 'markdown';
+        case 'yaml': return 'yaml';
+        case 'xml': return 'xml';
+        case 'sql': return 'sql';
+        default: return 'plaintext';
     }
 }
 

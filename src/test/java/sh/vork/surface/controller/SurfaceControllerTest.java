@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.io.ByteArrayInputStream;
@@ -46,19 +45,17 @@ import sh.vork.util.ZipArchiveUtil;
  */
 class SurfaceControllerTest {
 
-    @SuppressWarnings("unchecked")
     private static SurfaceController createController(SurfaceService surfaceService,
                                                       SessionFileSystem sessionFileSystem,
                                                       SurfaceReflectionContractService contractService,
                                                       ReflectionService reflectionService,
                                                       ChatService chatService,
                                                       SurfaceSkillExecutionService executionService) {
+        @SuppressWarnings("unchecked")
         DatabaseRepository<Surface> surfaceRepository = mock(DatabaseRepository.class);
-        DatabaseRepository<AiSession> sessionRepository = mock(DatabaseRepository.class);
         return new SurfaceController(
                 surfaceService,
                 surfaceRepository,
-                sessionRepository,
                 sessionFileSystem,
                 contractService,
                 reflectionService,
@@ -87,6 +84,10 @@ class SurfaceControllerTest {
             List.of(),
             List.of(),
             List.of(),
+            false,
+            "",
+            List.of(),
+            Surface.AccessPolicy.defaultPolicy(),
             "vork",
             "surface1",
             "SNAPSHOT",
@@ -96,6 +97,10 @@ class SurfaceControllerTest {
 
         when(surfaceService.update(
             ArgumentMatchers.eq("vork-surface1-SNAPSHOT"),
+                ArgumentMatchers.any(),
+                ArgumentMatchers.any(),
+                ArgumentMatchers.any(),
+                ArgumentMatchers.any(),
                 ArgumentMatchers.any(),
                 ArgumentMatchers.any(),
                 ArgumentMatchers.any(),
@@ -110,12 +115,151 @@ class SurfaceControllerTest {
                         "desc",
                         List.of("skill-1"),
                         List.of(),
-                        List.of()));
+                    List.of(),
+                    null,
+                    null,
+                    null,
+                    null));
 
         assertEquals(400, response.getStatusCode().value());
         Map<?, ?> body = assertInstanceOf(Map.class, response.getBody());
         assertEquals("Skill output schema required", body.get("error"));
     }
+
+        @Test
+        void updateSurface_allowsPublicationSettingsUpdate_whenSurfaceIsImmutable() {
+        SurfaceService surfaceService = mock(SurfaceService.class);
+        SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+        SurfaceReflectionContractService contractService = mock(SurfaceReflectionContractService.class);
+        ReflectionService reflectionService = mock(ReflectionService.class);
+        ChatService chatService = mock(ChatService.class);
+        SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
+
+        Surface existing = new Surface(
+            "vork-surface1-1.0",
+            "surface1",
+            "My Surface",
+            "desc",
+            "session-1",
+            "",
+            List.of("skill-1"),
+            List.of(),
+            List.of(),
+            false,
+            "",
+            List.of(),
+            Surface.AccessPolicy.defaultPolicy(),
+            "vork",
+            "surface1",
+            "1.0",
+            ArtifactStatus.SUBMITTED,
+            1L,
+            1L);
+
+        Surface updated = new Surface(
+            existing.uuid(),
+            existing.toolId(),
+            existing.name(),
+            existing.description(),
+            existing.sessionUuid(),
+            existing.executionSessionUuid(),
+            existing.skillUuids(),
+            existing.reflectionBindingUuids(),
+            existing.jobUuids(),
+            true,
+            existing.logoDataUrl(),
+            List.of("admin"),
+            new Surface.AccessPolicy(true, false, "", false, "", false, ""),
+            existing.groupId(),
+            existing.artifactId(),
+            existing.version(),
+            existing.artifactStatus(),
+            existing.createdAt(),
+            2L);
+
+        when(surfaceService.get("surface-1")).thenReturn(existing);
+        when(surfaceService.updatePublicationSettings(
+            ArgumentMatchers.eq(existing.uuid()),
+            ArgumentMatchers.eq(Boolean.TRUE),
+            ArgumentMatchers.eq(List.of("admin")),
+            ArgumentMatchers.any()))
+            .thenReturn(updated);
+
+        ResponseEntity<?> response = controller.updateSurface(
+            "surface-1",
+            new SurfaceController.UpdateSurfaceRequest(
+                "My Surface",
+                "desc",
+                null,
+                null,
+                null,
+                true,
+                null,
+                List.of("admin"),
+                new SurfaceController.AccessPolicyRequest(true, false, "", false, "", false, "")));
+
+        assertEquals(200, response.getStatusCode().value());
+        verify(surfaceService).updatePublicationSettings(
+            ArgumentMatchers.eq(existing.uuid()),
+            ArgumentMatchers.eq(Boolean.TRUE),
+            ArgumentMatchers.eq(List.of("admin")),
+            ArgumentMatchers.any());
+        }
+
+        @Test
+        void updateSurface_rejectsImmutableFieldChanges_whenSurfaceIsImmutable() {
+        SurfaceService surfaceService = mock(SurfaceService.class);
+        SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+        SurfaceReflectionContractService contractService = mock(SurfaceReflectionContractService.class);
+        ReflectionService reflectionService = mock(ReflectionService.class);
+        ChatService chatService = mock(ChatService.class);
+        SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
+        SurfaceController controller = createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService, executionService);
+
+        Surface existing = new Surface(
+            "vork-surface1-1.0",
+            "surface1",
+            "My Surface",
+            "desc",
+            "session-1",
+            "",
+            List.of("skill-1"),
+            List.of(),
+            List.of(),
+            false,
+            "",
+            List.of(),
+            Surface.AccessPolicy.defaultPolicy(),
+            "vork",
+            "surface1",
+            "1.0",
+            ArtifactStatus.SUBMITTED,
+            1L,
+            1L);
+
+        when(surfaceService.get("surface-1")).thenReturn(existing);
+
+        ResponseEntity<?> response = controller.updateSurface(
+            "surface-1",
+            new SurfaceController.UpdateSurfaceRequest(
+                "My Surface Renamed",
+                "desc",
+                null,
+                null,
+                null,
+                true,
+                null,
+                List.of("admin"),
+                new SurfaceController.AccessPolicyRequest(true, false, "", false, "", false, "")));
+
+        assertEquals(403, response.getStatusCode().value());
+        verify(surfaceService, never()).updatePublicationSettings(
+            ArgumentMatchers.any(),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.any());
+        }
 
     @Test
     void deleteSurface_allowsSubmittedSurface() {
@@ -137,6 +281,10 @@ class SurfaceControllerTest {
             List.of(),
             List.of(),
             List.of(),
+            false,
+            "",
+            List.of(),
+            Surface.AccessPolicy.defaultPolicy(),
             "vork",
             "surface1",
             "1.0",
@@ -173,6 +321,10 @@ class SurfaceControllerTest {
             List.of(),
             List.of(),
             List.of(),
+            false,
+            "",
+            List.of(),
+            Surface.AccessPolicy.defaultPolicy(),
             "vork",
             "surface1",
             "1.1",
@@ -374,6 +526,8 @@ class SurfaceControllerTest {
         String surfaceJson = new String(entries.get("surface.json"));
         assertTrue(!surfaceJson.contains("\"sessionUuid\""));
         assertTrue(!surfaceJson.contains("\"executionSessionUuid\""));
+        assertTrue(!surfaceJson.contains("\"published\""));
+        assertTrue(!surfaceJson.contains("\"assignedUserUuids\""));
         verify(sessionFileSystem).list(FileArea.SESSION, "editor-session-1", "");
         verify(sessionFileSystem).read(FileArea.SESSION, "editor-session-1", "index.html");
     }
@@ -386,14 +540,13 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
+        @SuppressWarnings("unchecked")
         DatabaseRepository<Surface> surfaceRepository = mock(DatabaseRepository.class);
-        DatabaseRepository<AiSession> sessionRepository = mock(DatabaseRepository.class);
         ObjectMapper objectMapper = new ObjectMapper();
 
         SurfaceController controller = new SurfaceController(
             surfaceService,
             surfaceRepository,
-            sessionRepository,
             sessionFileSystem,
             contractService,
             reflectionService,
@@ -408,6 +561,10 @@ class SurfaceControllerTest {
             List.of(),
             List.of(),
             List.of(),
+            false,
+            "",
+            List.of(),
+            Surface.AccessPolicy.defaultPolicy(),
             "vork",
             "importedsurface",
             "SNAPSHOT",
@@ -430,6 +587,10 @@ class SurfaceControllerTest {
             List.of(),
             List.of(),
             List.of(),
+            false,
+            "",
+            List.of(),
+            Surface.AccessPolicy.defaultPolicy(),
             "vork",
             "importedsurface",
             "SNAPSHOT",
@@ -441,6 +602,10 @@ class SurfaceControllerTest {
             ArgumentMatchers.eq("created-surface-1"),
             ArgumentMatchers.eq("Imported Surface"),
             ArgumentMatchers.eq("desc"),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.any(),
             ArgumentMatchers.any(),
             ArgumentMatchers.any(),
             ArgumentMatchers.any()))

@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.oauth.OAuthTemplateEntity;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.reflection.Reflection;
 import sh.vork.reflection.ReflectionBinding;
 import sh.vork.reflection.ReflectionGroup;
 import sh.vork.scheduling.domain.ScheduledJob;
@@ -36,6 +37,7 @@ public class ContributionDependencyValidator {
     private final DatabaseRepository<SkillGroup> skillGroupRepository;
     private final DatabaseRepository<Skill> skillRepository;
     private final DatabaseRepository<ReflectionGroup> reflectionGroupRepository;
+    private final DatabaseRepository<Reflection> reflectionRepository;
     private final DatabaseRepository<ReflectionBinding> reflectionBindingRepository;
     private final DatabaseRepository<OAuthTemplateEntity> oauthTemplateRepository;
 
@@ -45,6 +47,7 @@ public class ContributionDependencyValidator {
                                            DatabaseRepository<SkillGroup> skillGroupRepository,
                                            DatabaseRepository<Skill> skillRepository,
                                            DatabaseRepository<ReflectionGroup> reflectionGroupRepository,
+                                           DatabaseRepository<Reflection> reflectionRepository,
                                            DatabaseRepository<ReflectionBinding> reflectionBindingRepository,
                                            DatabaseRepository<OAuthTemplateEntity> oauthTemplateRepository) {
         this.agentRepository = agentRepository;
@@ -53,6 +56,7 @@ public class ContributionDependencyValidator {
         this.skillGroupRepository = skillGroupRepository;
         this.skillRepository = skillRepository;
         this.reflectionGroupRepository = reflectionGroupRepository;
+        this.reflectionRepository = reflectionRepository;
         this.reflectionBindingRepository = reflectionBindingRepository;
         this.oauthTemplateRepository = oauthTemplateRepository;
     }
@@ -265,9 +269,10 @@ public class ContributionDependencyValidator {
             return;
         }
         try {
-            String groupUuid = trimToNull(binding.groupUuid());
+            Reflection reflection = reflectionRepository.get(binding.reflectionUuid());
+            String groupUuid = reflection == null ? null : trimToNull(reflection.groupUuid());
             if (groupUuid == null) {
-                ctx.fail("reflection-group", "", "", "MISSING", pathFor(ctx, "reflection-binding", binding.uuid()), "Reflection binding has no groupUuid.");
+                ctx.fail("reflection-group", "", "", "MISSING", pathFor(ctx, "reflection-binding", binding.uuid()), "Reflection binding has no owning reflection/group.");
                 return;
             }
             ReflectionGroup group = reflectionGroupRepository.get(groupUuid);

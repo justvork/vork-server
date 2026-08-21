@@ -110,24 +110,30 @@ public class BackgroundNotificationService implements SystemNotificationService 
         log.debug("ENTER notifyOfflineOperator: tool={}, session={}, event={}", toolName, sessionUuid, eventId);
 
         String username = resolveUsername(sessionUuid);
-
-        // Use request-origin context for self-hosted links when available.
-        String requestBaseUrl = resolveRequestBaseUrl(sessionUuid);
-        if (requestBaseUrl != null) {
-            notifySelfHosted(toolName, arguments, sessionUuid, eventId, username, requestBaseUrl);
-        } else {
-            notifyViaRelay(toolName, arguments, sessionUuid, eventId, username);
+        String baseUrl = resolveRequestBaseUrl(sessionUuid);
+        if (baseUrl == null || baseUrl.isBlank()) {
+            baseUrl = "";
         }
+        String chatUrl = baseUrl + "/chat?sessionUuid=" + sessionUuid;
+
+        log.warn("[BACKGROUND AUTHORIZATION REQUIRED] tool='{}' session={} event={}",
+                toolName, sessionUuid, eventId);
+        log.warn("[BACKGROUND AUTHORIZATION REQUIRED] Continue in chat session: {}", chatUrl);
+        log.warn("[BACKGROUND AUTHORIZATION REQUIRED] Restricted tool args snapshot: {}",
+                arguments == null ? "{}" : arguments);
+
+        dispatchOobNotifications(resolveNotificationUsers(sessionUuid, username),
+                toolName == null || toolName.isBlank() ? "Background Authorization" : toolName,
+                chatUrl);
+
+        log.debug("EXIT notifyOfflineOperator: chat-session notification dispatched [session={}]", sessionUuid);
     }
 
     /** Self-hosted path: log a token URL pointing to this app's {@code /input-form} endpoint. */
     private void notifySelfHosted(String toolName, String arguments,
                                    String sessionUuid, String eventId,
                                    String username, String baseUrl) {
-        String token = formTokenService.generateToken(sessionUuid, eventId, username);
-        String url = baseUrl + "/input-form/" + sessionUuid + "/"
-                + (eventId == null ? "latest" : eventId)
-                + "?token=" + token;
+        String url = baseUrl + "/chat?sessionUuid=" + sessionUuid;
         log.warn("[BACKGROUND AUTHORIZATION REQUIRED] tool='{}' session={} event={}",
                 toolName, sessionUuid, eventId);
         log.warn("[BACKGROUND AUTHORIZATION REQUIRED] Open this URL to review and approve/deny: {}", url);
@@ -139,64 +145,21 @@ public class BackgroundNotificationService implements SystemNotificationService 
     /** Zero-knowledge relay path: encrypt, upload, log relay URL, long-poll for response. */
     private void notifyViaRelay(String toolName, String arguments,
                                  String sessionUuid, String eventId, String username) {
-        String relayBaseUrl   = resolveRelayBaseUrl();
-        String relaySessionId = eventId != null ? eventId : sessionUuid;
-
-        // ── Resolve OOB timeout ──────────────────────────────────────────────
-        int oobTimeoutMins = resolveOobTimeoutMins(sessionUuid);
-
-        // ── Load the form schema from the session ────────────────────────────
-        InteractionFormSchema schema = loadFormSchema(sessionUuid, relaySessionId);
-        if (schema == null) {
-            log.warn("[BACKGROUND AUTHORIZATION REQUIRED] tool='{}' session={} event={} " +
-                    "— could not load form schema; falling back to log-only notification",
-                    toolName, sessionUuid, eventId);
-            log.warn("[BACKGROUND AUTHORIZATION REQUIRED] Restricted tool args snapshot: {}",
-                    arguments == null ? "{}" : arguments);
-            return;
+        String baseUrl = resolveRequestBaseUrl(sessionUuid);
+        if (baseUrl == null || baseUrl.isBlank()) {
+            baseUrl = "";
         }
+        String chatUrl = baseUrl + "/chat?sessionUuid=" + sessionUuid;
 
-        // ── Encrypt the schema ──────────────────────────────────────────────
-        RelayEncryptionService.EncryptionResult enc;
-        try {
-            String schemaJson = objectMapper.writeValueAsString(schema);
-            enc = relayEncryption.encrypt(schemaJson);
-        } catch (Exception e) {
-            log.error("[BACKGROUND AUTHORIZATION REQUIRED] Encryption failed [session={}, event={}]: {}",
-                    sessionUuid, eventId, e.getMessage(), e);
-            return;
-        }
-
-        // ── Upload to relay ─────────────────────────────────────────────────
-        try {
-            relayHttpClient.upload(relayBaseUrl, relaySessionId,
-                    enc.ciphertext(), enc.nonce(), enc.authTag(), oobTimeoutMins);
-        } catch (Exception e) {
-            log.error("[BACKGROUND AUTHORIZATION REQUIRED] Relay upload failed [session={}, event={}]: {}",
-                    sessionUuid, eventId, e.getMessage(), e);
-            return;
-        }
-
-        // ── Log the secure relay URL ────────────────────────────────────────
-        String authUrl = relayBaseUrl + "/auth/" + relaySessionId + "#k=" + enc.keyBase64Url();
         log.warn("[BACKGROUND AUTHORIZATION REQUIRED] tool='{}' session={} event={}",
                 toolName, sessionUuid, eventId);
         log.warn("[BACKGROUND AUTHORIZATION REQUIRED] Open this URL to review and approve/deny: {}",
-                authUrl);
+            chatUrl);
         log.warn("[BACKGROUND AUTHORIZATION REQUIRED] Restricted tool args snapshot: {}",
                 arguments == null ? "{}" : arguments);
 
-        // ── Dispatch out-of-band notification to user's addresses ───────────
-        dispatchOobNotifications(resolveNotificationUsers(sessionUuid, username), toolName, authUrl);
-
-        // ── Long-poll on a virtual thread; resume session on response ────────
-        final javax.crypto.SecretKey sessionKey = enc.key();
-        final int capturedTimeout = oobTimeoutMins;
-        Thread.ofVirtual().name("relay-bg-poll-" + relaySessionId).start(() ->
-                pollAndResumeBackground(relayBaseUrl, relaySessionId, sessionKey,
-                                        username, sessionUuid, capturedTimeout));
-
-        log.debug("EXIT notifyOfflineOperator: relay dispatched [event={}]", relaySessionId);
+        dispatchOobNotifications(resolveNotificationUsers(sessionUuid, username), toolName, chatUrl);
+        log.debug("EXIT notifyOfflineOperator: chat-session notification dispatched [session={}]", sessionUuid);
     }
 
     // ── Private: OOB timeout resolution ──────────────────────────────────────

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<\!DOCTYPE html>
 <html lang="en" xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="UTF-8">
@@ -56,6 +56,7 @@
                             <th class="px-3 py-2 font-semibold">Description</th>
                             <th class="px-3 py-2 font-semibold">Version</th>
                             <th class="px-3 py-2 font-semibold">Artifact Status</th>
+                            <th class="px-3 py-2 font-semibold">Published</th>
                             <th class="px-3 py-2 font-semibold">Updated</th>
                             <th class="px-3 py-2 text-right font-semibold">Actions</th>
                         </tr>
@@ -67,9 +68,8 @@
     </div>
 </div>
 
-<!-- Create / Edit Modal -->
 <div class="modal" id="surface-modal" tabindex="-1" aria-labelledby="surface-modal-label" aria-hidden="true">
-    <div class="modal-dialog">
+    <div class="modal-dialog surface-config-modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="surface-modal-label">New Surface</h5>
@@ -78,24 +78,149 @@
             <div class="modal-body">
                 <input type="hidden" id="surface-uuid">
                 <div id="surface-modal-alert" class="mb-3"></div>
+
                 <div class="mb-3">
                     <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-name">Name <span class="text-rose-400">*</span></label>
                     <input type="text" id="surface-name" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. Project Dashboard">
                 </div>
-                <div class="mb-3">
-                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-group-id">Group ID <span class="text-rose-400">*</span></label>
-                    <input type="text" id="surface-group-id" minlength="3" maxlength="64" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. vork">
-                    <div id="surface-group-id-error" class="mt-1 text-xs text-rose-300"></div>
+
+                <div class="surface-modal-tabs mb-3" role="tablist" aria-label="Surface configuration sections">
+                    <button type="button" id="surface-tab-btn-details" class="surface-modal-tab-btn is-active" data-surface-tab-btn="details" role="tab" aria-selected="true" aria-controls="surface-tab-panel-details">Details</button>
+                    <button type="button" id="surface-tab-btn-publication" class="surface-modal-tab-btn" data-surface-tab-btn="publication" role="tab" aria-selected="false" aria-controls="surface-tab-panel-publication">Publication</button>
+                    <button type="button" id="surface-tab-btn-routes" class="surface-modal-tab-btn" data-surface-tab-btn="routes" role="tab" aria-selected="false" aria-controls="surface-tab-panel-routes">Routes</button>
                 </div>
-                <div class="mb-3">
-                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-artifact-id">Artifact ID <span class="text-rose-400">*</span></label>
-                    <input type="text" id="surface-artifact-id" minlength="3" maxlength="64" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. projectDashboard">
-                    <div id="surface-artifact-id-error" class="mt-1 text-xs text-rose-300"></div>
-                </div>
-                <div class="mb-3">
-                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-description">Description</label>
-                    <input type="text" id="surface-description" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="Brief description of what this surface does">
-                </div>
+
+                <section id="surface-tab-panel-details" class="surface-modal-tab-panel" data-surface-tab-panel="details" role="tabpanel" aria-labelledby="surface-tab-btn-details">
+                    <div class="mb-3">
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-group-id">Group ID <span class="text-rose-400">*</span></label>
+                        <input type="text" id="surface-group-id" minlength="3" maxlength="64" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. vork">
+                        <div id="surface-group-id-error" class="mt-1 text-xs text-rose-300"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-artifact-id">Artifact ID <span class="text-rose-400">*</span></label>
+                        <input type="text" id="surface-artifact-id" minlength="3" maxlength="64" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. projectDashboard">
+                        <div id="surface-artifact-id-error" class="mt-1 text-xs text-rose-300"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-description">Description</label>
+                        <input type="text" id="surface-description" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="Brief description of what this surface does">
+                    </div>
+                </section>
+
+                <section id="surface-tab-panel-publication" class="surface-modal-tab-panel hidden" data-surface-tab-panel="publication" role="tabpanel" aria-labelledby="surface-tab-btn-publication">
+                    <div class="surface-publish-config rounded-lg border border-zinc-800 bg-zinc-900/70 p-3">
+                        <div class="mb-3 flex items-center justify-between">
+                            <div>
+                                <p class="text-sm font-semibold text-zinc-100">Published</p>
+                                <p class="text-xs text-zinc-400">Enable published routes for this surface.</p>
+                            </div>
+                            <label class="form-switch surface-switch-inline" for="surface-published-toggle" aria-label="Published">
+                                <input type="checkbox" id="surface-published-toggle" class="form-check-input">
+                            </label>
+                        </div>
+                        <div class="mb-3">
+                            <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-logo-file">Logo</label>
+                            <div class="flex items-center gap-3">
+                                <input type="file" id="surface-logo-file" accept="image/png,image/jpeg,image/webp" class="block w-full text-xs text-zinc-300">
+                                <img id="surface-logo-preview" alt="Logo preview" class="surface-logo-preview hidden" />
+                            </div>
+                            <p class="mt-1 text-xs text-zinc-500">Max 1 MB. Non-square logos are auto-cropped to square and saved as PNG.</p>
+                        </div>
+                        <div class="mb-3">
+                            <label class="mb-1 block text-sm font-medium text-zinc-300" for="surface-assigned-user-search">Assigned Users</label>
+                            <div id="surface-assigned-user-pills" class="surface-assigned-user-pills"></div>
+                            <input type="text" id="surface-assigned-user-search" class="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="Search users to assign..." autocomplete="off">
+                            <div id="surface-assigned-user-dropdown" class="surface-assigned-user-dropdown hidden"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="surface-tab-panel-routes" class="surface-modal-tab-panel hidden" data-surface-tab-panel="routes" role="tabpanel" aria-labelledby="surface-tab-btn-routes">
+                    <div class="surface-policy-grid">
+                        <div class="surface-policy-panel">
+                            <div class="surface-policy-header">
+                                <span>Home Screen</span>
+                                <label class="form-switch surface-switch-inline" for="surface-policy-home-toggle" aria-label="Home screen enabled">
+                                    <input type="checkbox" id="surface-policy-home-toggle" class="form-check-input">
+                                </label>
+                            </div>
+                            <p class="surface-policy-help">Shows under My Apps for assigned users.</p>
+                        </div>
+                        <div class="surface-policy-panel">
+                            <div class="surface-policy-header">
+                                <span>Nav Button</span>
+                                <label class="form-switch surface-switch-inline" for="surface-policy-nav-toggle" aria-label="Nav button enabled">
+                                    <input type="checkbox" id="surface-policy-nav-toggle" class="form-check-input">
+                                </label>
+                            </div>
+                            <p class="surface-policy-help">Adds a persistent top-nav shortcut for assigned users.</p>
+                            <label class="mb-1 mt-2 block text-xs text-zinc-400" for="surface-policy-nav-icon">Icon</label>
+                            <div class="surface-nav-icon-row">
+                                <select id="surface-policy-nav-icon" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-100">
+                                    <option value="">Select icon...</option>
+                                    <option value="fa-solid fa-layer-group">Layer Group</option>
+                                    <option value="fa-solid fa-chart-line">Chart</option>
+                                    <option value="fa-solid fa-table">Table</option>
+                                    <option value="fa-solid fa-clipboard-list">Checklist</option>
+                                    <option value="fa-solid fa-users">Users</option>
+                                    <option value="fa-solid fa-file-lines">Document</option>
+                                    <option value="fa-solid fa-house">Home</option>
+                                    <option value="fa-solid fa-gauge-high">Dashboard</option>
+                                    <option value="fa-solid fa-chart-pie">Analytics</option>
+                                    <option value="fa-solid fa-chart-column">Reports</option>
+                                    <option value="fa-solid fa-folder-tree">Explorer</option>
+                                    <option value="fa-solid fa-list-check">Tasks</option>
+                                    <option value="fa-solid fa-calendar-days">Calendar</option>
+                                    <option value="fa-solid fa-comments">Chat</option>
+                                    <option value="fa-solid fa-bolt">Automation</option>
+                                    <option value="fa-solid fa-rocket">Launch</option>
+                                    <option value="fa-solid fa-briefcase">Workspace</option>
+                                    <option value="fa-solid fa-code">Developer</option>
+                                    <option value="fa-solid fa-shield-halved">Security</option>
+                                    <option value="fa-solid fa-clipboard-check">Approvals</option>
+                                    <option value="fa-solid fa-address-book">Directory</option>
+                                    <option value="fa-solid fa-inbox">Inbox</option>
+                                    <option value="fa-solid fa-store">Portal</option>
+                                    <option value="fa-solid fa-wand-magic-sparkles">Builder</option>
+                                    <option value="fa-solid fa-graduation-cap">Learning</option>
+                                    <option value="fa-solid fa-circle-nodes">Workflow</option>
+                                </select>
+                                <span id="surface-policy-nav-icon-preview" class="surface-nav-icon-preview" title="Selected icon preview">
+                                    <i id="surface-policy-nav-icon-preview-icon" class="fa-solid fa-layer-group"></i>
+                                </span>
+                            </div>
+                            <div id="surface-policy-nav-icon-class" class="surface-nav-icon-class">fa-solid fa-layer-group</div>
+                        </div>
+                        <div class="surface-policy-panel">
+                            <div class="surface-policy-header">
+                                <span>Private URL</span>
+                                <label class="form-switch surface-switch-inline" for="surface-policy-private-toggle" aria-label="Private URL enabled">
+                                    <input type="checkbox" id="surface-policy-private-toggle" class="form-check-input">
+                                </label>
+                            </div>
+                            <p class="surface-policy-help">Authenticated and authorized route.</p>
+                            <label class="mb-1 mt-2 block text-xs text-zinc-400" for="surface-policy-private-path">Path</label>
+                            <div class="surface-path-row">
+                                <span>/apps/private/</span>
+                                <input type="text" id="surface-policy-private-path" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-100" placeholder="example-form">
+                            </div>
+                        </div>
+                        <div class="surface-policy-panel">
+                            <div class="surface-policy-header">
+                                <span>Public URL</span>
+                                <label class="form-switch surface-switch-inline" for="surface-policy-public-toggle" aria-label="Public URL enabled">
+                                    <input type="checkbox" id="surface-policy-public-toggle" class="form-check-input">
+                                </label>
+                            </div>
+                            <p class="surface-policy-help">No Vork login required.</p>
+                            <label class="mb-1 mt-2 block text-xs text-zinc-400" for="surface-policy-public-path">Path</label>
+                            <div class="surface-path-row">
+                                <span>/apps/public/</span>
+                                <input type="text" id="surface-policy-public-path" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-100" placeholder="public-form">
+                            </div>
+                        </div>
+                    </div>
+                </section>
             </div>
             <div class="modal-footer">
                 <button type="button" class="rounded-lg border border-zinc-600 px-3 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800" data-bs-dismiss="modal">Cancel</button>
@@ -105,7 +230,6 @@
     </div>
 </div>
 
-<!-- Publish Draft Modal -->
 <div class="modal" id="surface-publish-modal" tabindex="-1" aria-labelledby="surface-publish-modal-label" aria-hidden="true">
     <div class="modal-dialog surface-publish-modal-dialog">
         <div class="modal-content">
@@ -124,10 +248,12 @@
                         <input type="text" id="surface-publish-version" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/25" placeholder="e.g. 1.0">
                     </div>
                     <div class="flex items-end">
-                        <label class="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-200">
-                            <input type="checkbox" id="surface-publish-breaking-change" class="h-4 w-4 rounded border-zinc-600 bg-zinc-950 text-cyan-400 focus:ring-cyan-500/40">
-                            Breaking change
-                        </label>
+                        <div class="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-200">
+                            <span>Breaking change</span>
+                            <label class="form-switch surface-switch-inline" for="surface-publish-breaking-change-toggle" aria-label="Breaking change">
+                                <input type="checkbox" id="surface-publish-breaking-change-toggle" class="form-check-input">
+                            </label>
+                        </div>
                     </div>
                 </div>
 
@@ -173,6 +299,7 @@
 <script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
 <script src="/js/github-device-flow-ui.js?v=20260813.2" th:src="@{/js/github-device-flow-ui.js(v='20260813.2')}"></script>
 <script src="/js/contribution-dependency-precheck.js?v=20260813.3" th:src="@{/js/contribution-dependency-precheck.js(v='20260813.3')}"></script>
+<script src="/js/toggle-utils.js" th:src="@{/js/toggle-utils.js}"></script>
 <script src="/js/surfaces-page.js?v=20260813.12" th:src="@{/js/surfaces-page.js(v='20260813.12')}"></script>
 </body>
 </html>

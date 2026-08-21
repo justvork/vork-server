@@ -9,6 +9,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -128,6 +132,38 @@ class EncryptionServiceTest {
                 () -> service.decrypt("!!SFT!!whatever"));
 
         assertTrue(ex.getMessage().contains("Detected likely key change"));
+    }
+
+    @Test
+    void encryptDecrypt_roundTrip_withLegacyCustomKeyPaths() throws Exception {
+        TestProvider provider = new TestProvider("!!SFT!!", 100);
+        EncryptionService service = initializedService(Map.of("software", provider));
+
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        KeyPair keyPair = generator.generateKeyPair();
+
+        Path privateKeyFile = Files.createTempFile("legacy-encrypt", ".prv");
+        Path publicKeyFile = Files.createTempFile("legacy-encrypt", ".pub");
+        Files.write(privateKeyFile, keyPair.getPrivate().getEncoded());
+        Files.write(publicKeyFile, keyPair.getPublic().getEncoded());
+
+        String plain = "legacy-db-secret";
+        String encrypted = service.encrypt(plain, privateKeyFile.toString(), publicKeyFile.toString());
+
+        assertTrue(encrypted.startsWith("!!ENC!!"));
+        assertEquals(plain, service.decrypt(encrypted, privateKeyFile.toString(), publicKeyFile.toString()));
+    }
+
+    @Test
+    void encrypt_withOnlyOneLegacyKeyPath_throwsValidationError() {
+        TestProvider provider = new TestProvider("!!SFT!!", 100);
+        EncryptionService service = initializedService(Map.of("software", provider));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.encrypt("plain", "/tmp/private.key", null));
+
+        assertTrue(ex.getMessage().contains("must both be provided"));
     }
 
     private EncryptionService initializedService(Map<String, EncryptionProvider> providers) {

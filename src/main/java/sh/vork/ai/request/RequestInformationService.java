@@ -18,7 +18,6 @@ import sh.vork.ai.protocol.interaction.FieldSource;
 import sh.vork.ai.protocol.interaction.FormAction;
 import sh.vork.ai.protocol.interaction.FormField;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
-import sh.vork.ai.telegram.InputFormTokenService;
 import sh.vork.attention.AttentionAlertService;
 import sh.vork.attention.AttentionResolutionPolicy;
 import sh.vork.attention.AttentionSourceType;
@@ -58,7 +57,6 @@ public class RequestInformationService {
     private final DatabaseRepository<AiSession> sessionRepository;
     private final ChannelService channelService;
     private final AttentionAlertService attentionAlertService;
-    private final InputFormTokenService inputFormTokenService;
     private final BackgroundNotificationService backgroundNotificationService;
     private final SystemSettingsService systemSettingsService;
     private final ObjectMapper objectMapper;
@@ -70,7 +68,6 @@ public class RequestInformationService {
     public RequestInformationService(RepositoryFactory repositoryFactory,
                                      ChannelService channelService,
                                      AttentionAlertService attentionAlertService,
-                                     InputFormTokenService inputFormTokenService,
                                      BackgroundNotificationService backgroundNotificationService,
                                      SystemSettingsService systemSettingsService,
                                      ObjectMapper objectMapper,
@@ -80,7 +77,6 @@ public class RequestInformationService {
         this.sessionRepository = repositoryFactory.create(AiSession.class);
         this.channelService = channelService;
         this.attentionAlertService = attentionAlertService;
-        this.inputFormTokenService = inputFormTokenService;
         this.backgroundNotificationService = backgroundNotificationService;
         this.systemSettingsService = systemSettingsService;
         this.objectMapper = objectMapper;
@@ -139,7 +135,7 @@ public class RequestInformationService {
 
         String baseUrl = resolveRequestBaseUrl(command.sessionUuid());
         if (baseUrl == null || baseUrl.isBlank()) {
-            log.warn("Request base URL unavailable; using relative input-form links [session={}]",
+            log.warn("Request base URL unavailable; using relative chat links [session={}]",
                     command.sessionUuid());
             baseUrl = "";
         }
@@ -147,25 +143,13 @@ public class RequestInformationService {
         Map<String, String> channelUrls = new LinkedHashMap<>();
         List<String> alertUuids = new ArrayList<>();
         for (String channel : channels) {
-            String url;
             String childSessionUuid = findChildSessionUuidForChannel(campaign.childSessionUuidsByChannel(), channel);
-            if (campaign.responseRouteMode() == RequestResponseRouteMode.CHILD_SESSION
-                    && childSessionUuid != null
-                    && !childSessionUuid.isBlank()) {
-                url = buildChildSessionChatUrl(baseUrl, childSessionUuid);
-            } else {
-                if (campaign.responseRouteMode() == RequestResponseRouteMode.CHILD_SESSION) {
-                    log.warn("Child-session route selected but child session link missing; falling back to input-form URL [campaign={}, channel={}]",
-                            campaign.uuid(), channel);
-                }
-                String token = inputFormTokenService.generateToken(
-                        command.sessionUuid(),
-                        command.eventId(),
-                        command.createdBy(),
-                        campaignUuid,
-                        channel);
-                url = buildInputFormUrl(baseUrl, command.sessionUuid(), command.eventId(), token);
+            if (campaign.responseRouteMode() != RequestResponseRouteMode.CHILD_SESSION
+                    || childSessionUuid == null
+                    || childSessionUuid.isBlank()) {
+                throw new IllegalStateException("Request campaign requires child-session routing with a valid child session link");
             }
+            String url = buildChildSessionChatUrl(baseUrl, childSessionUuid);
             channelUrls.put(channel, url);
 
             AttentionAlertService.CreateAttentionAlertCommand alertCommand =
@@ -358,7 +342,7 @@ public class RequestInformationService {
                 campaign.resumeTriggered(),
                 campaign.createdAt(),
                 now,
-                satisfied ? now : campaign.satisfiedAt(),
+                satisfied ? Long.valueOf(now) : campaign.satisfiedAt(),
                 campaign.parentSessionUuid(),
                 campaign.childSessionUuidsByChannel(),
                 campaign.responseRouteMode(),
@@ -378,36 +362,38 @@ public class RequestInformationService {
     }
 
     public boolean markResumeStarted(String campaignUuid) {
-        RequestInformationCampaign campaign = requireCampaign(campaignUuid);
-        if (campaign.resumeTriggered()) {
-            return false;
-        }
-        if (campaign.status() != RequestCampaignStatus.SATISFIED) {
-            return false;
-        }
+        synchronized (this) {
+            RequestInformationCampaign campaign = requireCampaign(campaignUuid);
+            if (campaign.resumeTriggered()) {
+                return false;
+            }
+            if (campaign.status() != RequestCampaignStatus.SATISFIED) {
+                return false;
+            }
 
-        RequestInformationCampaign updated = new RequestInformationCampaign(
-                campaign.uuid(),
-                campaign.sessionUuid(),
-                campaign.eventId(),
-                campaign.createdBy(),
-                campaign.promptText(),
-                campaign.targetChannels(),
-                campaign.policy(),
-                campaign.requiredResponses(),
-                campaign.respondedChannels(),
-                campaign.status(),
-                true,
-                campaign.createdAt(),
-                System.currentTimeMillis(),
-                campaign.satisfiedAt(),
-                campaign.parentSessionUuid(),
-                campaign.childSessionUuidsByChannel(),
-                campaign.responseRouteMode(),
-                campaign.childSessionRoutingEnabled());
+            RequestInformationCampaign updated = new RequestInformationCampaign(
+                    campaign.uuid(),
+                    campaign.sessionUuid(),
+                    campaign.eventId(),
+                    campaign.createdBy(),
+                    campaign.promptText(),
+                    campaign.targetChannels(),
+                    campaign.policy(),
+                    campaign.requiredResponses(),
+                    campaign.respondedChannels(),
+                    campaign.status(),
+                    true,
+                    campaign.createdAt(),
+                    System.currentTimeMillis(),
+                    campaign.satisfiedAt(),
+                    campaign.parentSessionUuid(),
+                    campaign.childSessionUuidsByChannel(),
+                    campaign.responseRouteMode(),
+                    campaign.childSessionRoutingEnabled());
 
-        campaignRepository.save(updated);
-        return true;
+            campaignRepository.save(updated);
+            return true;
+        }
     }
 
     public Map<String, String> buildResumeFields(String campaignUuid) {
@@ -522,14 +508,13 @@ public class RequestInformationService {
             return null;
         }
         if (!childSessionRoutingEnabled) {
-            return campaign;
+            throw new IllegalStateException("Request campaign requires child-session routing; out-of-chat form routing is disabled");
         }
 
         Map<String, String> childLinks = createChildSessionsForCampaign(campaign, responderIntroOverride);
         if (childLinks.isEmpty()) {
-            log.warn("Child-session routing enabled but no child sessions were created; falling back to external form flow [campaign={}, session={}]",
-                    campaign.uuid(), campaign.sessionUuid());
-            return campaign;
+            throw new IllegalStateException("Child-session routing enabled but no child sessions were created for request campaign "
+                    + campaign.uuid());
         }
 
         RequestInformationCampaign updated = new RequestInformationCampaign(
@@ -862,19 +847,9 @@ public class RequestInformationService {
         return null;
     }
 
-    private static String buildInputFormUrl(String baseUrl, String sessionUuid, String eventId, String token) {
-        return safe(baseUrl)
-                + "/input-form/"
-                + URLEncoder.encode(sessionUuid, StandardCharsets.UTF_8)
-                + "/"
-                + URLEncoder.encode(eventId, StandardCharsets.UTF_8)
-                + "?token="
-                + URLEncoder.encode(token, StandardCharsets.UTF_8);
-    }
-
     private static String buildChildSessionChatUrl(String baseUrl, String childSessionUuid) {
         return safe(baseUrl)
-                + "/?sessionUuid="
+                + "/chat?sessionUuid="
                 + URLEncoder.encode(childSessionUuid, StandardCharsets.UTF_8);
     }
 
@@ -937,7 +912,7 @@ public class RequestInformationService {
                                           Long attentionAt) {
         String baseUrl = resolveRequestBaseUrl(campaign.sessionUuid());
         if (baseUrl == null || baseUrl.isBlank()) {
-            log.warn("Request base URL unavailable; using relative input-form links [session={}, campaign={}]",
+            log.warn("Request base URL unavailable; using relative chat links [session={}, campaign={}]",
                 campaign.sessionUuid(), campaign.uuid());
             baseUrl = "";
         }
@@ -952,25 +927,13 @@ public class RequestInformationService {
         for (String channel : campaign.targetChannels()) {
             log.debug("Dispatching request campaign alert [campaign={}, session={}, event={}, channel={}]",
                 campaign.uuid(), campaign.sessionUuid(), campaign.eventId(), channel);
-            String url;
             String childSessionUuid = findChildSessionUuidForChannel(campaign.childSessionUuidsByChannel(), channel);
-            if (campaign.responseRouteMode() == RequestResponseRouteMode.CHILD_SESSION
-                    && childSessionUuid != null
-                    && !childSessionUuid.isBlank()) {
-                url = buildChildSessionChatUrl(baseUrl, childSessionUuid);
-            } else {
-                if (campaign.responseRouteMode() == RequestResponseRouteMode.CHILD_SESSION) {
-                    log.warn("Child-session route selected but child session link missing; falling back to input-form URL [campaign={}, channel={}]",
-                            campaign.uuid(), channel);
-                }
-                String token = inputFormTokenService.generateToken(
-                        campaign.sessionUuid(),
-                        campaign.eventId(),
-                        campaign.createdBy(),
-                        campaign.uuid(),
-                        channel);
-                url = buildInputFormUrl(baseUrl, campaign.sessionUuid(), campaign.eventId(), token);
+            if (campaign.responseRouteMode() != RequestResponseRouteMode.CHILD_SESSION
+                    || childSessionUuid == null
+                    || childSessionUuid.isBlank()) {
+                throw new IllegalStateException("Request campaign requires child-session routing with a valid child session link");
             }
+            String url = buildChildSessionChatUrl(baseUrl, childSessionUuid);
             channelUrls.put(channel, url);
 
             AttentionAlertService.CreateAttentionAlertCommand alertCommand =

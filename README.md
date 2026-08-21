@@ -169,6 +169,7 @@ The README introduces the philosophy behind Vork. The detailed documentation bel
 ## Core Concepts
 
 - [Skills & Behaviours](SKILLS.md)
+- [Notification Tools](NOTIFICATIONS.md)
 - [Security Model](SECURITY.md)
 - [Vork Relay](RELAY.md)
 

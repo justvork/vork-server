@@ -33,12 +33,12 @@ public class SecurityConfig {
                 .requestMatchers("/packages/**").permitAll()
                 .requestMatchers("/ws/**").permitAll()
                 .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
-                .requestMatchers("/input-form/**").permitAll()
                 // Relay: security is via AES-256-GCM, not session auth
                 .requestMatchers("/auth/**").permitAll()
                 .requestMatchers("/api/v1/relay/**").permitAll()
                 // Relay static assets under /relay/ namespace
                 .requestMatchers("/relay/**").permitAll()
+                .requestMatchers("/apps/public/**").permitAll()
                 // ACME HTTP-01 challenge — must be publicly accessible on plain HTTP
                 .requestMatchers("/.well-known/acme-challenge/**").permitAll()
                 .anyRequest().authenticated()
@@ -69,7 +69,7 @@ public class SecurityConfig {
                         "/api/notifications/**", "/api/user/**", "/api/types/**",
                     "/api/transcription/**", "/api/ssl/**", "/api/skills/**", "/api/skill-groups/**",
                         "/api/jobs/**",
-                        "/api/session-files/**",                        "/api/surfaces/**",                        "/api/v1/relay/**")
+                        "/api/session-files/**",                        "/api/surfaces/**",                        "/api/apps/published/**",                        "/api/v1/relay/**")
             )
             .sessionManagement(session -> session
                 .sessionConcurrency(concurrency -> concurrency

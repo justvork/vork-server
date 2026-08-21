@@ -23,7 +23,6 @@ import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.exception.ToolSuspensionException;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.protocol.interaction.FormField;
-import sh.vork.ai.telegram.InputFormTokenService;
 import sh.vork.attention.AttentionAlert;
 import sh.vork.attention.AttentionAlertService;
 import sh.vork.channel.ChannelRef;
@@ -36,6 +35,79 @@ import sh.vork.setup.SystemSettingsService;
 import sh.vork.web.RequestOriginContext;
 
 class RequestInformationServiceTest {
+
+    @Test
+    void recordResponseAndEvaluate_firstOfMultipleResponses_keepsCampaignOpenWithoutNpe() {
+        MapDatabaseRepository<RequestInformationCampaign> campaignRepo =
+                new MapDatabaseRepository<>(RequestInformationCampaign.class);
+        MapDatabaseRepository<RequestInformationResponse> responseRepo =
+                new MapDatabaseRepository<>(RequestInformationResponse.class);
+        MapDatabaseRepository<AiSession> sessionRepo =
+                new MapDatabaseRepository<>(AiSession.class);
+
+        RepositoryFactory repositoryFactory = mock(RepositoryFactory.class);
+        when(repositoryFactory.create(RequestInformationCampaign.class)).thenReturn(campaignRepo);
+        when(repositoryFactory.create(RequestInformationResponse.class)).thenReturn(responseRepo);
+        when(repositoryFactory.create(AiSession.class)).thenReturn(sessionRepo);
+
+        ChannelService channelService = mock(ChannelService.class);
+        when(channelService.resolveByChannelName("alice"))
+                .thenReturn(Optional.of(new ChannelRef("alice", "Alice", "local")));
+        when(channelService.resolveByChannelName("bob"))
+                .thenReturn(Optional.of(new ChannelRef("bob", "Bob", "local")));
+
+        AttentionAlertService attentionAlertService = mock(AttentionAlertService.class);
+        BackgroundNotificationService backgroundNotificationService = mock(BackgroundNotificationService.class);
+        SystemSettingsService systemSettingsService = mock(SystemSettingsService.class);
+        when(systemSettingsService.getGlobal())
+                .thenReturn(new SystemSettings("global", "GEMINI", "gemini-2.5-flash", null, 15));
+
+        RequestInformationService service = new RequestInformationService(
+                repositoryFactory,
+                channelService,
+                attentionAlertService,
+                backgroundNotificationService,
+                systemSettingsService,
+                new ObjectMapper().findAndRegisterModules(),
+                "");
+
+        RequestInformationCampaign campaign = new RequestInformationCampaign(
+                "campaign-1",
+                "session-1",
+                "event-1",
+                "admin",
+                "Need both responses",
+                List.of("alice", "bob"),
+                RequestResponsePolicy.ALL,
+                2,
+                List.of(),
+                RequestCampaignStatus.OPEN,
+                false,
+                System.currentTimeMillis(),
+                System.currentTimeMillis(),
+                null,
+                "session-1",
+                java.util.Map.of(),
+                RequestResponseRouteMode.EXTERNAL_FORM,
+                false);
+        campaignRepo.save(campaign);
+
+        RequestInformationService.ResponseGateResult result = service.recordResponseAndEvaluate(
+                "campaign-1",
+                "alice",
+                "ONCE",
+                java.util.Map.of("answer", "ready"));
+
+        assertTrue(result.accepted());
+        assertTrue(!result.shouldResume());
+        assertEquals(1, result.responseCount());
+        assertEquals(2, result.requiredResponses());
+
+        RequestInformationCampaign saved = service.getCampaign("campaign-1");
+        assertEquals(RequestCampaignStatus.OPEN, saved.status());
+        assertEquals(List.of("alice"), saved.respondedChannels());
+        assertEquals(null, saved.satisfiedAt());
+    }
 
     @Test
         void ensureCampaignForSuspension_whenRequestContextAvailable_usesRequestThreadLocalBaseUrl() throws Exception {
@@ -72,9 +144,6 @@ class RequestInformationServiceTest {
                     System.currentTimeMillis());
         });
 
-        InputFormTokenService tokenService = mock(InputFormTokenService.class);
-        when(tokenService.generateToken(any(), any(), any(), any(), any())).thenReturn("tok-1");
-
         BackgroundNotificationService backgroundNotificationService = mock(BackgroundNotificationService.class);
 
         SystemSettingsService systemSettingsService = mock(SystemSettingsService.class);
@@ -85,13 +154,29 @@ class RequestInformationServiceTest {
                 repositoryFactory,
                 channelService,
                 attentionAlertService,
-                tokenService,
                 backgroundNotificationService,
                 systemSettingsService,
                 new ObjectMapper().findAndRegisterModules(),
                 "https://relay.vork.sh");
 
-        setChildSessionRoutingEnabled(service, false);
+        setChildSessionRoutingEnabled(service, true);
+
+        sessionRepo.save(new AiSession(
+                "session-1",
+                "GEMINI",
+                SessionOriginMode.WEB,
+                "admin",
+                "Parent Session",
+                System.currentTimeMillis(),
+                0,
+                List.of(),
+                AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.AWAITING_INPUT,
+                null,
+                null,
+                null,
+                null,
+                null));
 
         HttpServletRequest request = mock(HttpServletRequest.class);
         when(request.getHeader("X-Forwarded-Proto")).thenReturn("https");
@@ -129,11 +214,11 @@ class RequestInformationServiceTest {
         ArgumentCaptor<AttentionAlertService.CreateAttentionAlertCommand> alertCaptor =
                 ArgumentCaptor.forClass(AttentionAlertService.CreateAttentionAlertCommand.class);
         verify(attentionAlertService).create(alertCaptor.capture());
-        assertTrue(alertCaptor.getValue().actionUrl().startsWith("https://local.vork.dev/input-form/"));
+        assertTrue(alertCaptor.getValue().actionUrl().startsWith("https://local.vork.dev/chat?sessionUuid="));
     }
 
     @Test
-                void ensureCampaignForSuspension_whenNoBaseUrl_usesRelativeInputFormLinks() throws Exception {
+                void ensureCampaignForSuspension_whenNoBaseUrl_usesRelativeChatLinks() throws Exception {
         MapDatabaseRepository<RequestInformationCampaign> campaignRepo =
                 new MapDatabaseRepository<>(RequestInformationCampaign.class);
         MapDatabaseRepository<RequestInformationResponse> responseRepo =
@@ -167,9 +252,6 @@ class RequestInformationServiceTest {
                     System.currentTimeMillis());
         });
 
-        InputFormTokenService tokenService = mock(InputFormTokenService.class);
-        when(tokenService.generateToken(any(), any(), any(), any(), any())).thenReturn("tok-1");
-
         BackgroundNotificationService backgroundNotificationService = mock(BackgroundNotificationService.class);
 
         SystemSettingsService systemSettingsService = mock(SystemSettingsService.class);
@@ -180,13 +262,29 @@ class RequestInformationServiceTest {
                 repositoryFactory,
                 channelService,
                 attentionAlertService,
-                tokenService,
                 backgroundNotificationService,
                 systemSettingsService,
                 new ObjectMapper().findAndRegisterModules(),
                 "");
 
-        setChildSessionRoutingEnabled(service, false);
+        setChildSessionRoutingEnabled(service, true);
+
+        sessionRepo.save(new AiSession(
+                "session-1",
+                "GEMINI",
+                SessionOriginMode.WEB,
+                "admin",
+                "Parent Session",
+                System.currentTimeMillis(),
+                0,
+                List.of(),
+                AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.AWAITING_INPUT,
+                null,
+                null,
+                null,
+                null,
+                null));
 
         ToolSuspensionException.SuspensionCampaign requestedCampaign =
                 new ToolSuspensionException.SuspensionCampaign(
@@ -213,14 +311,14 @@ class RequestInformationServiceTest {
         assertEquals(RequestCampaignStatus.OPEN, saved.status());
         assertEquals(List.of("lee"), saved.targetChannels());
         assertEquals("session-1", saved.parentSessionUuid());
-        assertEquals(RequestResponseRouteMode.EXTERNAL_FORM, saved.responseRouteMode());
-        assertEquals(false, saved.childSessionRoutingEnabled());
-        assertTrue(saved.childSessionUuidsByChannel().isEmpty());
+        assertEquals(RequestResponseRouteMode.CHILD_SESSION, saved.responseRouteMode());
+        assertEquals(true, saved.childSessionRoutingEnabled());
+        assertTrue(saved.childSessionUuidsByChannel().containsKey("lee"));
 
         ArgumentCaptor<AttentionAlertService.CreateAttentionAlertCommand> alertCaptor =
                 ArgumentCaptor.forClass(AttentionAlertService.CreateAttentionAlertCommand.class);
         verify(attentionAlertService).create(alertCaptor.capture());
-        assertTrue(alertCaptor.getValue().actionUrl().startsWith("/input-form/"));
+        assertTrue(alertCaptor.getValue().actionUrl().startsWith("/chat?sessionUuid="));
 
         try (var stream = campaignRepo.list(0, 10)) {
             assertTrue(stream.findFirst().isPresent());
@@ -262,9 +360,6 @@ class RequestInformationServiceTest {
                     System.currentTimeMillis());
         });
 
-        InputFormTokenService tokenService = mock(InputFormTokenService.class);
-        when(tokenService.generateToken(any(), any(), any(), any(), any())).thenReturn("tok-1");
-
         BackgroundNotificationService backgroundNotificationService = mock(BackgroundNotificationService.class);
 
         SystemSettingsService systemSettingsService = mock(SystemSettingsService.class);
@@ -275,7 +370,6 @@ class RequestInformationServiceTest {
                 repositoryFactory,
                 channelService,
                 attentionAlertService,
-                tokenService,
                 backgroundNotificationService,
                 systemSettingsService,
                 new ObjectMapper().findAndRegisterModules(),
@@ -358,7 +452,7 @@ class RequestInformationServiceTest {
         ArgumentCaptor<AttentionAlertService.CreateAttentionAlertCommand> alertCaptor =
                 ArgumentCaptor.forClass(AttentionAlertService.CreateAttentionAlertCommand.class);
         verify(attentionAlertService).create(alertCaptor.capture());
-        assertTrue(alertCaptor.getValue().actionUrl().startsWith("/?sessionUuid="));
+        assertTrue(alertCaptor.getValue().actionUrl().startsWith("/chat?sessionUuid="));
         assertTrue(alertCaptor.getValue().actionUrl().contains(childSessionUuid));
     }
 
@@ -397,9 +491,6 @@ class RequestInformationServiceTest {
                     System.currentTimeMillis());
         });
 
-        InputFormTokenService tokenService = mock(InputFormTokenService.class);
-        when(tokenService.generateToken(any(), any(), any(), any(), any())).thenReturn("tok-1");
-
         BackgroundNotificationService backgroundNotificationService = mock(BackgroundNotificationService.class);
 
         SystemSettingsService systemSettingsService = mock(SystemSettingsService.class);
@@ -410,7 +501,6 @@ class RequestInformationServiceTest {
                 repositoryFactory,
                 channelService,
                 attentionAlertService,
-                tokenService,
                 backgroundNotificationService,
                 systemSettingsService,
                 new ObjectMapper().findAndRegisterModules(),

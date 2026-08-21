@@ -172,10 +172,28 @@ public class TelegramSuspensionRenderer {
     private void renderWebForm(String chatId, String botToken, AiSession session,
                                 UiEventFrame promptEvent, String title, String description) {
         String codeContent = extractCodeContent(promptEvent.formSchema());
-        log.debug("Rendering Telegram WEB_FORM via relay [session={}, event={}]",
-            session.uuid(), promptEvent.eventId());
-        renderWebFormRelay(chatId, botToken, session, promptEvent,
-            title, description, codeContent);
+        String baseUrl = resolveAppBaseUrlForChat();
+        String chatUrl = baseUrl + "/chat?sessionUuid=" + session.uuid();
+        String urlEscaped = escapeMarkdownV2(chatUrl);
+        String text = buildPromptTextMarkdownV2(
+                title,
+                description,
+                codeContent,
+                "\nPlease continue this request in chat: " + urlEscaped);
+        telegramApiClient.sendTextMarkdownV2(botToken, chatId, text);
+        log.info("Telegram WEB_FORM redirected to in-chat continuation [session={}, event={}]",
+                session.uuid(), promptEvent.eventId());
+    }
+
+    private String resolveAppBaseUrlForChat() {
+        sh.vork.setup.SystemSettings settings = systemSettingsService.getGlobal();
+        if (settings != null && settings.appBaseUrl() != null && !settings.appBaseUrl().isBlank()) {
+            return trimTrailingSlash(settings.appBaseUrl());
+        }
+        if (configuredRelayHost != null && !configuredRelayHost.isBlank()) {
+            return trimTrailingSlash(configuredRelayHost);
+        }
+        return "";
     }
 
     /** Self-hosted path: generates a token URL pointing to this app's {@code /input-form} endpoint. */
@@ -183,10 +201,7 @@ public class TelegramSuspensionRenderer {
     private void renderWebFormSelfHosted(String chatId, String botToken, AiSession session,
                                           UiEventFrame promptEvent, String title, String description,
                                           String codeContent, String baseUrl) {
-        String token = formTokenService.generateToken(
-                session.uuid(), promptEvent.eventId(), session.username());
-        String url = baseUrl + "/input-form/" + session.uuid() + "/" + promptEvent.eventId()
-                + "?token=" + token;
+        String url = baseUrl + "/chat?sessionUuid=" + session.uuid();
         String urlEscaped = escapeMarkdownV2(url);
         String text = buildPromptTextMarkdownV2(title, description, codeContent,
                 "\n\ud83d\udd17 Please complete the form: " + urlEscaped);
@@ -199,56 +214,14 @@ public class TelegramSuspensionRenderer {
     private void renderWebFormRelay(String chatId, String botToken, AiSession session,
                                      UiEventFrame promptEvent, String title, String description,
                                      String codeContent) {
-        String relayBaseUrl   = resolveRelayBaseUrl();
-        String relaySessionId = promptEvent.eventId();
-        log.debug("Rendering Telegram WEB_FORM via relay (channel complex-form policy) [session={}, event={}]",
-            session.uuid(), relaySessionId);
-
-        // ── 1. Encrypt form schema ─────────────────────────────────────────
-        InteractionFormSchema schema = promptEvent.formSchema();
-        RelayEncryptionService.EncryptionResult enc;
-        try {
-            String schemaJson = objectMapper.writeValueAsString(schema);
-            enc = relayEncryption.encrypt(schemaJson);
-        } catch (Exception e) {
-            log.error("Failed to encrypt form schema for relay [session={}, event={}]: {}",
-                session.uuid(), relaySessionId, e.getMessage(), e);
-            String text = buildPromptTextMarkdownV2(title, description, codeContent,
-                "\n\u26a0\ufe0f Form preparation failed\\. Please try again or use the Vork web app\\.");
-            telegramApiClient.sendTextMarkdownV2(botToken, chatId, text);
-            return;
-        }
-
-        // ── 2. Upload ciphertext to relay ──────────────────────────────────
-        int oobTimeoutMins = systemSettingsService.getDefaultOobTimeoutMinutes();
-        try {
-            relayHttpClient.upload(relayBaseUrl, relaySessionId,
-                enc.ciphertext(), enc.nonce(), enc.authTag(), oobTimeoutMins);
-        } catch (Exception e) {
-            log.error("Relay upload failed [session={}, event={}]: {}",
-                session.uuid(), relaySessionId, e.getMessage(), e);
-            String text = buildPromptTextMarkdownV2(title, description, codeContent,
-                "\n\u26a0\ufe0f Could not reach the relay server\\. Please try again later\\.");
-            telegramApiClient.sendTextMarkdownV2(botToken, chatId, text);
-            return;
-        }
-
-        // ── 3. Send relay auth URL to Telegram ─────────────────────────────
-        String authUrl     = relayBaseUrl + "/auth/" + relaySessionId + "#k=" + enc.keyBase64Url();
-        String urlEscaped  = escapeMarkdownV2(authUrl);
+        String baseUrl = resolveAppBaseUrlForChat();
+        String chatUrl = baseUrl + "/chat?sessionUuid=" + session.uuid();
+        String urlEscaped = escapeMarkdownV2(chatUrl);
         String text = buildPromptTextMarkdownV2(title, description, codeContent,
-            "\n\ud83d\udd12 Please complete the secure form: " + urlEscaped);
+                "\nPlease continue in chat: " + urlEscaped);
         telegramApiClient.sendTextMarkdownV2(botToken, chatId, text);
-        log.info("Relay form dispatched [session={}, event={}, relay={}]",
-            session.uuid(), relaySessionId, relayBaseUrl);
-
-        // ── 4. Long-poll on a virtual thread; resume session on response ───
-        final javax.crypto.SecretKey sessionKey = enc.key();
-        final String sessionUuid  = session.uuid();
-        final String username     = session.username();
-        Thread.ofVirtual().name("relay-poll-" + relaySessionId).start(() ->
-            pollAndResume(relayBaseUrl, relaySessionId, sessionKey,
-                      username, sessionUuid, chatId, botToken));
+        log.info("Telegram WEB_FORM relay path redirected to chat continuation [session={}, event={}]",
+                session.uuid(), promptEvent.eventId());
     }
 
     /**

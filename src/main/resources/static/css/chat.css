@@ -131,6 +131,90 @@ body {
     padding: 0 0.2rem;
 }
 
+.sandbox-file-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.35rem;
+}
+
+.sidebar-file-btn {
+    border: 1px solid var(--vork-border);
+    border-radius: 0.5rem;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--vork-text);
+    font-size: 0.72rem;
+    padding: 0.3rem 0.25rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.sidebar-file-btn:hover {
+    background: rgba(253, 170, 2, 0.1);
+    border-color: rgba(253, 170, 2, 0.35);
+    color: var(--vork-primary);
+}
+
+.sandbox-file-status {
+    font-size: 0.72rem;
+    color: var(--vork-muted);
+    padding: 0 0.1rem;
+}
+
+.sandbox-file-target {
+    font-size: 0.72rem;
+    color: var(--vork-text);
+    padding: 0 0.1rem;
+    opacity: 0.85;
+}
+
+.sandbox-file-status.error {
+    color: var(--vork-danger);
+}
+
+.sandbox-file-tree {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    border: 1px solid var(--vork-border);
+    border-radius: 0.55rem;
+    background: rgba(0, 0, 0, 0.18);
+    padding: 0.35rem;
+}
+
+.sandbox-node {
+    margin-left: 0.45rem;
+}
+
+.sandbox-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    border-radius: 0.4rem;
+    padding: 0.18rem 0.35rem;
+    color: var(--vork-text);
+    cursor: pointer;
+    user-select: none;
+}
+
+.sandbox-item:hover {
+    background: rgba(253, 170, 2, 0.1);
+}
+
+.sandbox-item.selected {
+    background: rgba(253, 170, 2, 0.17);
+    border: 1px solid rgba(253, 170, 2, 0.3);
+}
+
+.sandbox-children {
+    margin-left: 0.9rem;
+    padding-left: 0.25rem;
+    border-left: 1px dashed rgba(255, 255, 255, 0.12);
+}
+
 .chat-session-list {
     flex: 1;
     min-height: 0;

@@ -441,21 +441,20 @@ class ReflectionServiceTest {
         reflectionService.createBinding("alice", group.uuid(),
                 new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
 
-        when(secureCredentialStore.getSecretForUser(
-                eq("alice"),
+        when(secureCredentialStore.getGlobalSecret(
                 eq("REFLECTION_BINDING:" + group.uuid() + ":default:API_KEY")))
                 .thenReturn("copied-secret-value");
 
         reflectionService.createBinding("alice", group.uuid(),
                 new ReflectionService.ReflectionBindingRequest(
                         "sandbox",
+                        null,
                         "",
                         Map.of(),
                         Map.of(),
                         "default"));
 
-        verify(secureCredentialStore).saveSecretForUser(
-                eq("alice"),
+        verify(secureCredentialStore).saveGlobalSecret(
                 eq("REFLECTION_BINDING:" + group.uuid() + ":sandbox:API_KEY"),
                 eq("copied-secret-value"));
     }
@@ -473,21 +472,20 @@ class ReflectionServiceTest {
         reflectionService.createBinding("alice", group.uuid(),
                 new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
 
-        when(secureCredentialStore.getSecretForUser(
-                eq("alice"),
+        when(secureCredentialStore.getGlobalSecret(
                 eq("REFLECTION_BINDING:" + group.uuid() + ":default:API_KEY")))
                 .thenReturn("copied-secret-value");
 
         reflectionService.createBinding("alice", group.uuid(),
                 new ReflectionService.ReflectionBindingRequest(
                         "sandbox",
+                        null,
                         "",
                         Map.of(),
                         Map.of(),
                         "default"));
 
-        verify(secureCredentialStore).saveSecretForUser(
-                eq("alice"),
+        verify(secureCredentialStore).saveGlobalSecret(
                 eq("REFLECTION_BINDING:" + group.uuid() + ":sandbox:API_KEY"),
                 eq("copied-secret-value"));
     }
@@ -688,6 +686,47 @@ class ReflectionServiceTest {
 
     @Test
     @SuppressWarnings({"unchecked", "rawtypes"})
+    void executeRestReflectionDropsEmptyOptionalUrlTemplateParameter() throws Exception {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group", "desc", "REST", "", List.of(), List.of()));
+
+        reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                "getCalendarEvents",
+                "Get Calendar Events",
+                "desc",
+                group.uuid(),
+                List.of(new ReflectionInputParameter("maxResults", "int", "Maximum results", false)),
+                "GET",
+                "https://www.googleapis.com/calendar/v3/calendars/primary/events?orderBy=startTime&maxResults={{maxResults}}&singleEvents=true",
+                Map.of(),
+                Map.of(),
+                "",
+                "application/json",
+                "application/json",
+                ""));
+
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("{\"ok\":true}");
+        when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (a, b) -> true));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn((HttpResponse) response);
+
+        String result = reflectionService.executeRestReflection("getCalendarEvents", Map.of(), null, "alice");
+
+        assertTrue(result.contains("\"status\":\"ok\""));
+
+        var requestCaptor = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
+        org.mockito.Mockito.verify(httpClient).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        String calledUrl = requestCaptor.getValue().uri().toString();
+        assertTrue(!calledUrl.contains("maxResults="));
+        assertTrue(!calledUrl.contains("{{"));
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
     void executeRestReflectionGeneratesFormEncodedBodyWhenTemplateMissing() throws Exception {
         ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
                 "REST Group", "desc", "REST", "", List.of(), List.of()));
@@ -813,6 +852,92 @@ class ReflectionServiceTest {
                 assertEquals("application/json",
                                 requestCaptor.getValue().headers().firstValue("Content-Type").orElse(""));
         }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+        void executeRestReflectionOmitsMissingOptionalJsonTemplateFieldsAndArrayObjects() throws Exception {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group", "desc", "REST", "", List.of(), List.of()));
+
+        reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                "createCalendarEvent",
+                "Create Calendar Event",
+                "desc",
+                group.uuid(),
+                List.of(
+                        new ReflectionInputParameter("summary", "string", "Summary", true),
+                        new ReflectionInputParameter("location", "string", "Location", false),
+                        new ReflectionInputParameter("attendeeEmail", "string", "Attendee email", false)),
+                "POST",
+                "https://example.com/calendar/events",
+                Map.of(),
+                Map.of(),
+                "{\"summary\":\"{{summary}}\",\"location\":\"{{location}}\",\"attendees\":[{\"email\":\"{{attendeeEmail}}\"}]}",
+                "application/json",
+                "application/json",
+                ""));
+
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("ok");
+        when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (a, b) -> true));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn((HttpResponse) response);
+
+        reflectionService.executeRestReflection("createCalendarEvent", Map.of("summary", "Meeting with Lee and Bob"), null, "alice");
+
+        var requestCaptor = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
+        org.mockito.Mockito.verify(httpClient).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+
+        String requestBody = readBody(requestCaptor.getValue());
+        assertTrue(!requestBody.contains("{{"));
+        assertTrue(!requestBody.contains("\"location\""));
+        assertTrue(requestBody.contains("\"attendees\":[]"));
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void executeRestReflectionReplacesMissingOptionalArrayTemplateParameterWithEmptyArray() throws Exception {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group", "desc", "REST", "", List.of(), List.of()));
+
+        reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                "createCalendarEventWithTags",
+                "Create Calendar Event With Tags",
+                "desc",
+                group.uuid(),
+                List.of(
+                        new ReflectionInputParameter("summary", "string", "Summary", true),
+                        new ReflectionInputParameter("tags", "string", "Tags", false, true)),
+                "POST",
+                "https://example.com/calendar/events",
+                Map.of(),
+                Map.of(),
+                "{\"summary\":\"{{summary}}\",\"tags\":\"{{tags}}\"}",
+                "application/json",
+                "application/json",
+                ""));
+
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("ok");
+        when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (a, b) -> true));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn((HttpResponse) response);
+
+        reflectionService.executeRestReflection("createCalendarEventWithTags", Map.of("summary", "Meeting with Lee and Bob"), null, "alice");
+
+        var requestCaptor = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
+        org.mockito.Mockito.verify(httpClient).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+
+        String requestBody = readBody(requestCaptor.getValue());
+        assertTrue(!requestBody.contains("{{"));
+        assertTrue(requestBody.contains("\"tags\":[]"));
+    }
 
         private static String readBody(HttpRequest request) throws Exception {
                 var publisherOpt = request.bodyPublisher();

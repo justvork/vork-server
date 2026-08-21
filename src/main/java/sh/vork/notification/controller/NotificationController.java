@@ -19,12 +19,16 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.SearchQuery;
+import sh.vork.orm.SortOrder;
 
 import org.springframework.lang.Nullable;
 
+import sh.vork.notification.NotificationLedgerEntry;
 import sh.vork.notification.NotificationMediaType;
 import sh.vork.notification.NotificationProvider;
 import sh.vork.notification.NotificationProviderConfig;
@@ -62,14 +66,17 @@ public class NotificationController {
 
     private final ApplicationContext applicationContext;
     private final DatabaseRepository<NotificationProviderConfig> configRepository;
+    private final DatabaseRepository<NotificationLedgerEntry> ledgerRepository;
 
     @Nullable
     private TelegramPollingService telegramPollingService;
 
     public NotificationController(ApplicationContext applicationContext,
-                                  DatabaseRepository<NotificationProviderConfig> configRepository) {
+                                  DatabaseRepository<NotificationProviderConfig> configRepository,
+                                  DatabaseRepository<NotificationLedgerEntry> ledgerRepository) {
         this.applicationContext = applicationContext;
         this.configRepository   = configRepository;
+        this.ledgerRepository = ledgerRepository;
     }
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -106,6 +113,49 @@ public class NotificationController {
             return stream
                     .map(c -> toView(c, discoverProviders().get(c.providerKey())))
                     .collect(Collectors.toList());
+        }
+    }
+
+    /**
+     * Returns notification ledger entries for operational troubleshooting.
+     *
+     * <p>Supports lightweight filtering by finalState, idempotencyKey, destination,
+     * and providerConfigId.
+     */
+    @GetMapping("/api/notifications/ledger")
+    @ResponseBody
+    public List<NotificationLedgerEntry> listLedger(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int pageSize,
+            @RequestParam(required = false) String finalState,
+            @RequestParam(required = false) String idempotencyKey,
+            @RequestParam(required = false) String destination,
+            @RequestParam(required = false) String providerConfigId
+    ) {
+        log.debug("ENTER listLedger: [page={}, pageSize={}, finalState={}, idempotencyKey={}, destination={}, providerConfigId={}]",
+                page, pageSize, finalState, idempotencyKey, destination, providerConfigId);
+
+        List<SearchQuery> filters = new java.util.ArrayList<>();
+        if (finalState != null && !finalState.isBlank()) {
+            filters.add(SearchQuery.eq("finalState", finalState.trim().toUpperCase()));
+        }
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            filters.add(SearchQuery.eq("idempotencyKey", idempotencyKey.trim()));
+        }
+        if (destination != null && !destination.isBlank()) {
+            filters.add(SearchQuery.eq("destination", destination.trim()));
+        }
+        if (providerConfigId != null && !providerConfigId.isBlank()) {
+            filters.add(SearchQuery.eq("providerConfigId", providerConfigId.trim()));
+        }
+
+        try (var stream = ledgerRepository.search(
+                Math.max(0, page),
+                Math.max(1, pageSize),
+                "createdAt",
+                SortOrder.DESC,
+                filters.toArray(SearchQuery[]::new))) {
+            return stream.collect(Collectors.toList());
         }
     }
 

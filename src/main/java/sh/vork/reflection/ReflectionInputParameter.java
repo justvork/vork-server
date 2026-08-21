@@ -7,7 +7,8 @@ public record ReflectionInputParameter(
         String name,
         String type,
         String description,
-        boolean required
+    boolean required,
+    boolean array
 ) {
 
     public ReflectionInputParameter {
@@ -20,5 +21,12 @@ public record ReflectionInputParameter(
         if (description == null) {
             description = "";
         }
+    }
+
+    public ReflectionInputParameter(String name,
+                                    String type,
+                                    String description,
+                                    boolean required) {
+        this(name, type, description, required, false);
     }
 }

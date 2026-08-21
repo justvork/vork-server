@@ -2,6 +2,7 @@ package sh.vork.github.contribution;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -352,6 +353,10 @@ class ContributionControllerTest {
                 List.of(),
                 List.of(),
                 List.of(),
+                false,
+                "",
+                List.of(),
+                Surface.AccessPolicy.defaultPolicy(),
                 "ux",
                 "shell",
                 "SNAPSHOT",
@@ -415,6 +420,16 @@ class ContributionControllerTest {
         ArgumentCaptor<ContributionSubmitRequest> reqCaptor = ArgumentCaptor.forClass(ContributionSubmitRequest.class);
         verify(contributionService).submitContribution(reqCaptor.capture());
         assertEquals(3, reqCaptor.getValue().files().size());
+
+        ContributionFile surfaceJsonFile = reqCaptor.getValue().files().stream()
+                .filter(file -> file.path().endsWith("/surface.json"))
+                .findFirst()
+                .orElseThrow();
+        String surfaceJson = surfaceJsonFile.content();
+        assertTrue(!surfaceJson.contains("\"published\""));
+        assertTrue(!surfaceJson.contains("\"assignedUserUuids\""));
+        assertTrue(surfaceJson.contains("\"accessPolicy\""));
+
         verify(sessionFileSystem).read(eq(FileArea.SESSION), eq("session-1"), eq("index.html"));
         verify(sessionFileSystem).read(eq(FileArea.SESSION), eq("session-1"), eq("script.js"));
         verify(surfaceRepository).save(any(Surface.class));
@@ -508,6 +523,10 @@ class ContributionControllerTest {
                                 List.of(),
                                 List.of(),
                                 List.of(),
+                                false,
+                                "",
+                                List.of(),
+                                Surface.AccessPolicy.defaultPolicy(),
                                 "ux",
                                 "shell",
                                 "2.0",

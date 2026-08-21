@@ -541,6 +541,41 @@
     position: relative;
 }
 
+.monaco-editor-host {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+}
+
+.viewer-editor {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    width: 100%;
+    height: 100%;
+    border: none;
+    outline: none;
+    resize: none;
+    padding: 0.9rem;
+    background-color: #09090b;
+    color: #e4e4e7;
+    caret-color: #e4e4e7;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    white-space: pre;
+    overflow: auto;
+}
+
+.viewer-editor:disabled {
+    caret-color: #a1a1aa;
+    cursor: not-allowed;
+}
+
+.surface-editor-root.editors-locked .viewer-editor {
+    background-color: #111115;
+}
+
 .viewer-empty {
     position: absolute;
     inset: 0;
@@ -552,10 +587,14 @@
 }
 
 #viewer-pre {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
     margin: 0;
     height: 100%;
     border-radius: 0;
     background-color: #09090b !important;
+    overflow: auto;
 }
 
 #viewer-pre code {

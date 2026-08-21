@@ -84,7 +84,7 @@ public class SurfaceReflectionContractService {
             if (binding == null) {
                 continue;
             }
-            ReflectionGroup group = reflectionService.getGroup(binding.groupUuid());
+            ReflectionGroup group = reflectionService.getBindingGroup(binding);
             if (group == null) {
                 continue;
             }

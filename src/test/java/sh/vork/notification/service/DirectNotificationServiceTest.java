@@ -22,6 +22,8 @@ import org.springframework.context.ApplicationContext;
 import sh.vork.orm.mock.MapDatabaseRepository;
 
 import sh.vork.notification.Notification;
+import sh.vork.notification.NotificationDeliveryState;
+import sh.vork.notification.NotificationLedgerEntry;
 import sh.vork.notification.NotificationException;
 import sh.vork.notification.NotificationMediaType;
 import sh.vork.notification.NotificationProvider;
@@ -71,6 +73,7 @@ class DirectNotificationServiceTest {
             var twilio   = smsProvider("twilio-sms");
 
             var repo = new MapDatabaseRepository<>(NotificationProviderConfig.class);
+            var ledgerRepo = new MapDatabaseRepository<>(NotificationLedgerEntry.class);
             String sgId  = UUID.randomUUID().toString();
             String twId  = UUID.randomUUID().toString();
             repo.save(config(sgId, "sendgrid", "SendGrid Email"));
@@ -80,7 +83,7 @@ class DirectNotificationServiceTest {
             when(ctx.getBeansOfType(NotificationProvider.class))
                     .thenReturn(Map.of("sendgrid", sendgrid, "twilio-sms", twilio));
 
-            var service = new DirectNotificationService(repo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
             List<ProviderSummary> result = service.listAvailable();
 
             assertEquals(2, result.size());
@@ -95,13 +98,14 @@ class DirectNotificationServiceTest {
             var telegram = telegramProvider();
 
             var repo = new MapDatabaseRepository<>(NotificationProviderConfig.class);
+            var ledgerRepo = new MapDatabaseRepository<>(NotificationLedgerEntry.class);
             repo.save(config(UUID.randomUUID().toString(), "telegram", "Telegram"));
 
             ApplicationContext ctx = mock(ApplicationContext.class);
             when(ctx.getBeansOfType(NotificationProvider.class))
                     .thenReturn(Map.of("telegram", telegram));
 
-            var service = new DirectNotificationService(repo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
             List<ProviderSummary> result = service.listAvailable();
 
             assertTrue(result.isEmpty(), "Telegram should be excluded from direct-address list");
@@ -113,12 +117,13 @@ class DirectNotificationServiceTest {
             // No config saved for sendgrid
 
             var repo = new MapDatabaseRepository<>(NotificationProviderConfig.class);
+            var ledgerRepo = new MapDatabaseRepository<>(NotificationLedgerEntry.class);
 
             ApplicationContext ctx = mock(ApplicationContext.class);
             when(ctx.getBeansOfType(NotificationProvider.class))
                     .thenReturn(Map.of("sendgrid", sendgrid));
 
-            var service = new DirectNotificationService(repo, ctx);
+                var service = new DirectNotificationService(repo, ledgerRepo, ctx);
             assertTrue(service.listAvailable().isEmpty(),
                     "Provider without saved config should not appear in list");
         }
@@ -126,10 +131,11 @@ class DirectNotificationServiceTest {
         @Test
         void returnsEmptyWhenNoProvidersRegistered() {
             var repo = new MapDatabaseRepository<>(NotificationProviderConfig.class);
+            var ledgerRepo = new MapDatabaseRepository<>(NotificationLedgerEntry.class);
             ApplicationContext ctx = mock(ApplicationContext.class);
             when(ctx.getBeansOfType(NotificationProvider.class)).thenReturn(Map.of());
 
-            var service = new DirectNotificationService(repo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
             assertTrue(service.listAvailable().isEmpty());
         }
     }
@@ -140,6 +146,7 @@ class DirectNotificationServiceTest {
     class SendTests {
 
         private MapDatabaseRepository<NotificationProviderConfig> repo;
+        private MapDatabaseRepository<NotificationLedgerEntry> ledgerRepo;
         private NotificationProvider sendgrid;
         private NotificationProvider twilio;
         private ApplicationContext ctx;
@@ -150,6 +157,7 @@ class DirectNotificationServiceTest {
             sendgrid = emailProvider("sendgrid", true);
             twilio   = smsProvider("twilio-sms");
             repo     = new MapDatabaseRepository<>(NotificationProviderConfig.class);
+            ledgerRepo = new MapDatabaseRepository<>(NotificationLedgerEntry.class);
 
             sgConfigId = UUID.randomUUID().toString();
             repo.save(config(sgConfigId, "sendgrid", "SendGrid Email"));
@@ -161,17 +169,17 @@ class DirectNotificationServiceTest {
 
         @Test
         void sendsViaCorrectProvider() throws Exception {
-            var service = new DirectNotificationService(repo, ctx);
-            String result = service.send(sgConfigId, "Hello", "World", "user@example.com");
+            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var result = service.send(sgConfigId, "Hello", "World", "user@example.com");
 
-            assertEquals("ok", result);
+            assertEquals("ok", result.status());
             verify(sendgrid).send(any(Notification.class), eq(Map.of("key", "value")));
             verify(twilio, never()).send(any(), any());
         }
 
         @Test
         void passesCorrectRecipientAndContent() throws Exception {
-            var service = new DirectNotificationService(repo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
             service.send(sgConfigId, "My Title", "My Body", "target@test.com");
 
             var captor = org.mockito.ArgumentCaptor.forClass(Notification.class);
@@ -185,7 +193,7 @@ class DirectNotificationServiceTest {
 
         @Test
         void passesRequestedHtmlBodyContentType() throws Exception {
-            var service = new DirectNotificationService(repo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
             service.send(sgConfigId, "My Title", "<h1>My Body</h1>", Notification.CONTENT_TYPE_HTML, "target@test.com");
 
             var captor = org.mockito.ArgumentCaptor.forClass(Notification.class);
@@ -197,10 +205,10 @@ class DirectNotificationServiceTest {
 
         @Test
         void returnsErrorForUnknownConfigId() throws Exception {
-            var service = new DirectNotificationService(repo, ctx);
-            String result = service.send("non-existent-uuid", "Hi", "Body", "x@y.com");
+            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var result = service.send("non-existent-uuid", "Hi", "Body", "x@y.com");
 
-            assertTrue(result.startsWith("error:"), "Expected error string, got: " + result);
+            assertEquals("error", result.status());
             verify(sendgrid, never()).send(any(), any());
         }
 
@@ -208,10 +216,10 @@ class DirectNotificationServiceTest {
         void returnsErrorWhenProviderThrows() throws Exception {
             org.mockito.Mockito.doThrow(new NotificationException("API down")).when(sendgrid).send(any(), any());
 
-            var service = new DirectNotificationService(repo, ctx);
-            String result = service.send(sgConfigId, "Hi", "Body", "x@y.com");
+            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var result = service.send(sgConfigId, "Hi", "Body", "x@y.com");
 
-            assertTrue(result.startsWith("error:"), "Expected error string, got: " + result);
+            assertEquals("error", result.status());
         }
 
         @Test
@@ -220,10 +228,10 @@ class DirectNotificationServiceTest {
             String orphanId = UUID.randomUUID().toString();
             repo.save(config(orphanId, "unknown-provider", "Ghost"));
 
-            var service = new DirectNotificationService(repo, ctx);
-            String result = service.send(orphanId, "Hi", "Body", "x@y.com");
+            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var result = service.send(orphanId, "Hi", "Body", "x@y.com");
 
-            assertTrue(result.startsWith("error:"), "Expected error for missing provider bean");
+            assertEquals("error", result.status(), "Expected error for missing provider bean");
         }
 
         @Test
@@ -235,10 +243,108 @@ class DirectNotificationServiceTest {
             when(ctx.getBeansOfType(NotificationProvider.class))
                     .thenReturn(Map.of("sendgrid", sendgrid, "telegram", telegram));
 
-            var service = new DirectNotificationService(repo, ctx);
-            String result = service.send(tgId, "Hi", "Body", "@someuser");
+            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var result = service.send(tgId, "Hi", "Body", "@someuser");
 
-            assertTrue(result.startsWith("error:"), "Expected error for non-direct provider");
+            assertEquals("error", result.status(), "Expected error for non-direct provider");
+        }
+
+        @Test
+        void suppressesDuplicateSuccessfulSendWhenIdempotencyGroupProvided() throws Exception {
+            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+
+            var first = service.send(
+                    sgConfigId,
+                    "Hello",
+                    "World",
+                    Notification.CONTENT_TYPE_TEXT,
+                    "sales-campaign-28-08-2026",
+                    "Concierge",
+                    "marketing-skill",
+                    "user@example.com");
+
+            var second = service.send(
+                    sgConfigId,
+                    "Hello",
+                    "World",
+                    Notification.CONTENT_TYPE_TEXT,
+                    "sales-campaign-28-08-2026",
+                    "Concierge",
+                    "marketing-skill",
+                    "user@example.com");
+
+            assertEquals("ok", first.status());
+            assertEquals("already sent", second.status());
+            verify(sendgrid).send(any(Notification.class), eq(Map.of("key", "value")));
+
+            long sentCount = ledgerRepo.searchCount(
+                    sh.vork.orm.SearchQuery.eq("finalState", NotificationDeliveryState.SENT.name()));
+            long alreadySentCount = ledgerRepo.searchCount(
+                    sh.vork.orm.SearchQuery.eq("finalState", NotificationDeliveryState.ALREADY_SENT.name()));
+            assertEquals(1L, sentCount);
+            assertEquals(1L, alreadySentCount);
+        }
+
+        @Test
+        void failedSendDoesNotBlockFutureAttemptWithSameIdempotencyKey() throws Exception {
+            org.mockito.Mockito.doThrow(new NotificationException("temporary outage"))
+                    .doNothing()
+                    .when(sendgrid)
+                    .send(any(), any());
+
+            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+
+            var first = service.send(
+                    sgConfigId,
+                    "Retry",
+                    "Body",
+                    Notification.CONTENT_TYPE_TEXT,
+                    "sales-campaign-28-08-2026",
+                    "Concierge",
+                    "marketing-skill",
+                    "user@example.com");
+
+            var second = service.send(
+                    sgConfigId,
+                    "Retry",
+                    "Body",
+                    Notification.CONTENT_TYPE_TEXT,
+                    "sales-campaign-28-08-2026",
+                    "Concierge",
+                    "marketing-skill",
+                    "user@example.com");
+
+            assertEquals("error", first.status());
+            assertEquals("ok", second.status());
+
+            verify(sendgrid, org.mockito.Mockito.times(2)).send(any(Notification.class), eq(Map.of("key", "value")));
+
+            long failedCount = ledgerRepo.searchCount(
+                    sh.vork.orm.SearchQuery.eq("finalState", NotificationDeliveryState.FAILED.name()));
+            long sentCount = ledgerRepo.searchCount(
+                    sh.vork.orm.SearchQuery.eq("finalState", NotificationDeliveryState.SENT.name()));
+            assertEquals(1L, failedCount);
+            assertEquals(1L, sentCount);
+        }
+
+        @Test
+        void writesIdempotencyKeyToLedgerWhenGroupProvided() {
+            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+
+            service.send(
+                    sgConfigId,
+                    "Hello",
+                    "World",
+                    Notification.CONTENT_TYPE_TEXT,
+                    "sales-campaign-28-08-2026",
+                    "Concierge",
+                    "marketing-skill",
+                    "USER@Example.com");
+
+            try (var stream = ledgerRepo.list(0, 10)) {
+                NotificationLedgerEntry entry = stream.findFirst().orElseThrow();
+                assertEquals("sales-campaign-28-08-2026:email_address:user@example.com", entry.idempotencyKey());
+            }
         }
     }
 }

@@ -27,6 +27,10 @@ public record Surface(
         List<String> skillUuids,
         List<String> reflectionBindingUuids,
         List<String> jobUuids,
+    boolean published,
+    String logoDataUrl,
+    List<String> assignedUserUuids,
+    AccessPolicy accessPolicy,
         String groupId,
         String artifactId,
         String version,
@@ -64,6 +68,15 @@ public record Surface(
         if (jobUuids == null) {
             jobUuids = List.of();
         }
+        if (logoDataUrl == null) {
+            logoDataUrl = "";
+        }
+        if (assignedUserUuids == null) {
+            assignedUserUuids = List.of();
+        }
+        if (accessPolicy == null) {
+            accessPolicy = AccessPolicy.defaultPolicy();
+        }
 
         groupId = normalizeIdentifier(groupId);
         artifactId = normalizeIdentifier(artifactId);
@@ -84,8 +97,37 @@ public record Surface(
                    long updatedAt) {
         this(uuid, toolId, name, description, sessionUuid, executionSessionUuid,
                 skillUuids, reflectionBindingUuids, jobUuids,
+                false, "", List.of(), AccessPolicy.defaultPolicy(),
                 null, null, null, ArtifactStatus.SNAPSHOT,
                 createdAt, updatedAt);
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record AccessPolicy(
+            boolean homeScreenEnabled,
+            boolean navButtonEnabled,
+            String navButtonIcon,
+            boolean privateUrlEnabled,
+            String privateUrlPath,
+            boolean publicUrlEnabled,
+            String publicUrlPath
+    ) {
+
+        public AccessPolicy {
+            if (navButtonIcon == null) {
+                navButtonIcon = "";
+            }
+            if (privateUrlPath == null) {
+                privateUrlPath = "";
+            }
+            if (publicUrlPath == null) {
+                publicUrlPath = "";
+            }
+        }
+
+        public static AccessPolicy defaultPolicy() {
+            return new AccessPolicy(false, false, "", false, "", false, "");
+        }
     }
 
     private static String normalizeIdentifier(String raw) {

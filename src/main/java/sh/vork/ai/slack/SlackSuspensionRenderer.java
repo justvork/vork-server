@@ -184,54 +184,39 @@ public class SlackSuspensionRenderer {
 
     private void renderWebForm(String channelId, String botToken, AiSession session,
                                 UiEventFrame promptEvent, String title, String description) {
-        log.debug("Rendering Slack WEB_FORM via relay (channel complex-form policy) [session={}, event={}]",
+        String baseUrl = resolveAppBaseUrlForChat();
+        String chatUrl = baseUrl + "/chat?sessionUuid=" + session.uuid();
+        StringBuilder sb = new StringBuilder();
+        if (!title.isBlank()) sb.append("*").append(title).append("*\n");
+        if (!description.isBlank()) sb.append(description).append("\n");
+        sb.append("\nPlease continue this request in chat: ").append(chatUrl);
+        slackApiClient.sendMessage(botToken, channelId, sb.toString().trim());
+        log.info("Slack WEB_FORM redirected to in-chat continuation [session={}, event={}]",
                 session.uuid(), promptEvent.eventId());
-        renderWebFormRelay(channelId, botToken, session, promptEvent, title, description);
+    }
+
+    private String resolveAppBaseUrlForChat() {
+        sh.vork.setup.SystemSettings settings = systemSettingsService.getGlobal();
+        if (settings != null && settings.appBaseUrl() != null && !settings.appBaseUrl().isBlank()) {
+            return trimTrailingSlash(settings.appBaseUrl());
+        }
+        if (configuredRelayHost != null && !configuredRelayHost.isBlank()) {
+            return trimTrailingSlash(configuredRelayHost);
+        }
+        return "";
     }
 
     private void renderWebFormRelay(String channelId, String botToken, AiSession session,
                                      UiEventFrame promptEvent, String title, String description) {
-        String relayBaseUrl   = resolveRelayBaseUrl();
-        String relaySessionId = promptEvent.eventId();
-
-        InteractionFormSchema schema = promptEvent.formSchema();
-        RelayEncryptionService.EncryptionResult enc;
-        try {
-            String schemaJson = objectMapper.writeValueAsString(schema);
-            enc = relayEncryption.encrypt(schemaJson);
-        } catch (Exception e) {
-            log.error("Failed to encrypt form schema for relay [session={}, event={}]: {}",
-                    session.uuid(), relaySessionId, e.getMessage(), e);
-            slackApiClient.sendMessage(botToken, channelId,
-                    "⚠️ Form preparation failed. Please try again or use the Vork web app.");
-            return;
-        }
-
-        int oobTimeoutMins = systemSettingsService.getDefaultOobTimeoutMinutes();
-        try {
-            relayHttpClient.upload(relayBaseUrl, relaySessionId,
-                    enc.ciphertext(), enc.nonce(), enc.authTag(), oobTimeoutMins);
-        } catch (Exception e) {
-            log.error("Relay upload failed [session={}, event={}]: {}",
-                    session.uuid(), relaySessionId, e.getMessage(), e);
-            slackApiClient.sendMessage(botToken, channelId,
-                    "⚠️ Could not reach the relay server. Please try again later.");
-            return;
-        }
-
-        String authUrl = relayBaseUrl + "/auth/" + relaySessionId + "#k=" + enc.keyBase64Url();
+        String baseUrl = resolveAppBaseUrlForChat();
+        String authUrl = baseUrl + "/chat?sessionUuid=" + session.uuid();
         StringBuilder sb = new StringBuilder();
         if (!title.isBlank()) sb.append("*").append(title).append("*\n");
         if (!description.isBlank()) sb.append(description).append("\n");
-        sb.append("\n🔒 Please complete the secure form: ").append(authUrl);
+        sb.append("\nPlease continue in chat: ").append(authUrl);
         slackApiClient.sendMessage(botToken, channelId, sb.toString().trim());
-        log.info("Relay form dispatched to Slack [session={}, event={}]",
-                session.uuid(), relaySessionId);
-
-        final javax.crypto.SecretKey sessionKey = enc.key();
-        Thread.ofVirtual().name("slack-relay-poll-" + relaySessionId).start(() ->
-                pollAndResume(relayBaseUrl, relaySessionId, sessionKey,
-                              session.username(), session.uuid(), channelId, botToken));
+        log.info("Slack WEB_FORM relay path redirected to chat continuation [session={}, event={}]",
+            session.uuid(), promptEvent.eventId());
     }
 
     private void pollAndResume(String relayBaseUrl, String relaySessionId,

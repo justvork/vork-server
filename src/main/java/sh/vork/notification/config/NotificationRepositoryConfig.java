@@ -7,6 +7,7 @@ import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.RepositoryFactory;
 
 import sh.vork.notification.GlobalAddress;
+import sh.vork.notification.NotificationLedgerEntry;
 import sh.vork.notification.NotificationProviderConfig;
 import sh.vork.notification.user.UserNotificationMedia;
 
@@ -28,5 +29,10 @@ public class NotificationRepositoryConfig {
     @Bean
     public DatabaseRepository<GlobalAddress> globalAddressRepository(RepositoryFactory factory) {
         return factory.create(GlobalAddress.class);
+    }
+
+    @Bean
+    public DatabaseRepository<NotificationLedgerEntry> notificationLedgerRepository(RepositoryFactory factory) {
+        return factory.create(NotificationLedgerEntry.class);
     }
 }

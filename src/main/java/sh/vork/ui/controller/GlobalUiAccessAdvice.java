@@ -8,6 +8,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 
 import sh.vork.security.Permission;
+import sh.vork.surface.service.SurfaceService;
+
+import java.util.List;
 
 /**
  * Exposes common UI authorization flags to all Thymeleaf views.
@@ -16,6 +19,11 @@ import sh.vork.security.Permission;
 public class GlobalUiAccessAdvice {
 
     private static final String NAV_LAYOUT_SESSION_KEY = "VORK_NAV_LAYOUT";
+    private final SurfaceService surfaceService;
+
+    public GlobalUiAccessAdvice(SurfaceService surfaceService) {
+        this.surfaceService = surfaceService;
+    }
 
     @ModelAttribute("canManageUsers")
     public boolean canManageUsers() {
@@ -32,6 +40,18 @@ public class GlobalUiAccessAdvice {
         }
         Object mode = session == null ? null : session.getAttribute(NAV_LAYOUT_SESSION_KEY);
         return mode == null || !"USER".equalsIgnoreCase(String.valueOf(mode));
+    }
+
+    @ModelAttribute("navSurfaceApps")
+    public List<SurfaceService.SurfaceAppLink> navSurfaceApps(HttpServletRequest request) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getName() == null || auth.getName().isBlank()) {
+            return List.of();
+        }
+        if (hasManageUsersPermission() && request != null && !"/".equals(request.getRequestURI())) {
+            return List.of();
+        }
+        return surfaceService.listPublishedNavAppsForUser(auth.getName());
     }
 
     private static boolean hasManageUsersPermission() {

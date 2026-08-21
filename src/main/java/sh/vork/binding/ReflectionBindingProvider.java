@@ -65,9 +65,10 @@ public class ReflectionBindingProvider implements BindingProvider {
             throw new IllegalArgumentException("Unknown profile for binding: " + profile);
         }
 
-        ReflectionGroup group = reflectionService.getGroup(binding.groupUuid());
+        ReflectionGroup group = reflectionService.getBindingGroup(binding);
         List<BindingOperationContract> contracts = new ArrayList<>();
-        for (Reflection reflection : reflectionService.reflectionsForGroup(binding.groupUuid())) {
+        if (group != null) {
+            for (Reflection reflection : reflectionService.reflectionsForGroup(group.uuid())) {
             contracts.add(new BindingOperationContract(
                     reflection.id(),
                     reflection.name(),
@@ -75,6 +76,7 @@ public class ReflectionBindingProvider implements BindingProvider {
                     buildReflectionInputSchema(reflection.inputParameters()),
                     parseOutputSchema(reflection.outputSchema()),
                     reflection.responseContentType()));
+            }
         }
         if (group != null) {
             contracts.sort((a, b) -> {

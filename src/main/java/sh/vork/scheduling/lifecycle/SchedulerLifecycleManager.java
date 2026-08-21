@@ -36,8 +36,7 @@ public class SchedulerLifecycleManager {
         int reset = 0;
         try (var stream = jobRepository.list(0, Integer.MAX_VALUE)) {
             for (ScheduledJob job : stream.toList()) {
-                if (job.status() == ScheduledJobStatus.ACTIVE
-                        || job.status() == ScheduledJobStatus.AWAITING_INPUT) {
+                if (job.status() == ScheduledJobStatus.ACTIVE) {
                     // Job was in-flight when the app stopped — reset to WAITING so it
                     // can be re-scheduled safely without skipping.
                     jobRepository.save(new ScheduledJob(
@@ -52,9 +51,13 @@ public class SchedulerLifecycleManager {
                             job.id(), job.status());
                     reset++;
                 }
+                if (job.status() == ScheduledJobStatus.AWAITING_INPUT) {
+                    log.info("Preserving suspended job awaiting input on startup [id={}]", job.id());
+                    continue;
+                }
                 if (job.status() == ScheduledJobStatus.WAITING
                         || job.status() == ScheduledJobStatus.ACTIVE
-                        || job.status() == ScheduledJobStatus.AWAITING_INPUT) {
+                    ) {
                     // Re-schedule: compute next fire time to avoid re-running missed intervals
                     Instant effectiveStart = aiSchedulerService.computeEffectiveStart(job);
                     ScheduledJob adjusted = new ScheduledJob(

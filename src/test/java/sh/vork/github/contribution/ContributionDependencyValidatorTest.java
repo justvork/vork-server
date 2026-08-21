@@ -8,6 +8,7 @@ import sh.vork.ai.agent.AgentType;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.oauth.OAuthTemplateEntity;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.reflection.Reflection;
 import sh.vork.reflection.ReflectionBinding;
 import sh.vork.reflection.ReflectionGroup;
 import sh.vork.reflection.ReflectionType;
@@ -46,6 +47,9 @@ class ContributionDependencyValidatorTest {
     @Mock
     private DatabaseRepository<ReflectionGroup> reflectionGroupRepository;
 
+        @Mock
+        private DatabaseRepository<Reflection> reflectionRepository;
+
     @Mock
     private DatabaseRepository<ReflectionBinding> reflectionBindingRepository;
 
@@ -61,6 +65,7 @@ class ContributionDependencyValidatorTest {
                 skillGroupRepository,
                 skillRepository,
                 reflectionGroupRepository,
+                reflectionRepository,
                 reflectionBindingRepository,
                 oauthTemplateRepository);
 
@@ -117,6 +122,7 @@ class ContributionDependencyValidatorTest {
                 skillGroupRepository,
                 skillRepository,
                 reflectionGroupRepository,
+                reflectionRepository,
                 reflectionBindingRepository,
                 oauthTemplateRepository);
 
@@ -193,6 +199,7 @@ class ContributionDependencyValidatorTest {
                 skillGroupRepository,
                 skillRepository,
                 reflectionGroupRepository,
+                reflectionRepository,
                 reflectionBindingRepository,
                 oauthTemplateRepository);
 

@@ -232,8 +232,15 @@ public class ReflectionToolCallbackFactory {
             if (!first) {
                 properties.append(',');
             }
-            properties.append('"').append(parameter.name()).append('"').append(":{")
-                    .append("\"type\":\"").append(mapType(parameter.type())).append("\"");
+            String schemaType = mapType(parameter.type());
+            properties.append('"').append(parameter.name()).append('"').append(":{");
+            if (parameter.array()) {
+                properties.append("\"type\":\"array\",\"items\":{\"type\":\"")
+                        .append(schemaType)
+                        .append("\"}");
+            } else {
+                properties.append("\"type\":\"").append(schemaType).append("\"");
+            }
             if (parameter.description() != null && !parameter.description().isBlank()) {
                 String escaped = parameter.description()
                         .replace("\\", "\\\\")

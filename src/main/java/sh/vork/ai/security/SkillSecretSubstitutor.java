@@ -64,7 +64,7 @@ public class SkillSecretSubstitutor {
         StringBuilder sb = new StringBuilder();
         while (matcher.find()) {
             String key = matcher.group(1);
-            String value = secretStore.getSecretForUser(username, key);
+            String value = resolveSecretValue(username, key);
             if (value != null) {
                 log.debug("Secret token substituted in tool arguments [key={}, user={}]", key, username);
                 matcher.appendReplacement(sb, Matcher.quoteReplacement(value));
@@ -79,6 +79,34 @@ public class SkillSecretSubstitutor {
         }
         matcher.appendTail(sb);
         return sb.toString();
+    }
+
+    private String resolveSecretValue(String username, String key) {
+        if (username == null || username.isBlank() || key == null || key.isBlank()) {
+            return null;
+        }
+
+        // Primary exact lookup.
+        String value = secretStore.getSecretForUserWithGlobalFallback(username, key);
+        if (value != null) {
+            return value;
+        }
+
+        // Backward/UX compatibility: accept stored keys copied with braces.
+        value = secretStore.getSecretForUserWithGlobalFallback(username, "{{" + key + "}}");
+        if (value != null) {
+            log.debug("Resolved secret using wrapped key fallback [key={}, user={}]", key, username);
+            return value;
+        }
+
+        // Case-variant fallback in case the secret was saved lowercase.
+        value = secretStore.getSecretForUserWithGlobalFallback(username, key.toLowerCase(java.util.Locale.ROOT));
+        if (value != null) {
+            log.debug("Resolved secret using lowercase key fallback [key={}, user={}]", key, username);
+            return value;
+        }
+
+        return null;
     }
 
     private static boolean isOAuthPlaceholderKey(String key) {

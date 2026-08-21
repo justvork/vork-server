@@ -83,7 +83,7 @@ function bindEvents() {
         renderKeyValueRows('query-params-list', modalQueryParameters, 'query');
     });
     document.getElementById('add-param-btn').addEventListener('click', function () {
-        modalParameters.push({ name: '', type: 'string', description: '', required: false });
+        modalParameters.push({ name: '', type: 'string', description: '', required: false, array: false });
         renderParameters();
     });
 
@@ -1424,7 +1424,8 @@ function populateReflectionModalFromReflection(reflection, asCopy) {
             name: parameter.name || '',
             type: parameter.type || 'string',
             description: parameter.description || '',
-            required: !!parameter.required
+            required: !!parameter.required,
+            array: !!parameter.array
         };
     });
     populateGroupSelect(reflection.groupUuid || '');
@@ -1596,7 +1597,8 @@ function renderParameters() {
     header.innerHTML = ''
         + '<div class="col-span-3">Name</div>'
         + '<div class="col-span-2">Type</div>'
-        + '<div class="col-span-4">Description</div>'
+        + '<div class="col-span-3">Description</div>'
+        + '<div class="col-span-1">Array</div>'
         + '<div class="col-span-2">Required</div>'
         + '<div class="col-span-1"></div>';
     container.appendChild(header);
@@ -1612,7 +1614,8 @@ function renderParameters() {
             + '  <option value="double">double</option>'
             + '  <option value="boolean">boolean</option>'
             + '</select>'
-            + '<input class="col-span-4 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 param-description" data-index="' + index + '" value="' + escapeHtml(parameter.description || '') + '" placeholder="parameter purpose">'
+            + '<input class="col-span-3 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 param-description" data-index="' + index + '" value="' + escapeHtml(parameter.description || '') + '" placeholder="parameter purpose">'
+            + '<label class="col-span-1 inline-flex items-center justify-center text-xs text-zinc-300"><input type="checkbox" class="param-array" data-index="' + index + '" ' + (parameter.array ? 'checked' : '') + '></label>'
             + '<label class="col-span-2 inline-flex items-center gap-1 text-xs text-zinc-300"><input type="checkbox" class="param-required" data-index="' + index + '" ' + (parameter.required ? 'checked' : '') + '>Required</label>'
             + '<button type="button" class="col-span-1 rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 remove-param" data-index="' + index + '" title="Remove"><i class="fa-solid fa-xmark"></i></button>';
         container.appendChild(row);
@@ -1641,6 +1644,12 @@ function renderParameters() {
             modalParameters[index].description = input.value;
         });
     });
+    container.querySelectorAll('.param-array').forEach(function (input) {
+        input.addEventListener('change', function () {
+            const index = Number(input.getAttribute('data-index'));
+            modalParameters[index].array = input.checked;
+        });
+    });
     container.querySelectorAll('.param-required').forEach(function (input) {
         input.addEventListener('change', function () {
             const index = Number(input.getAttribute('data-index'));
@@ -1664,7 +1673,8 @@ function sanitizeParameters(parameters) {
                 name: parameter.name.trim(),
                 type: (parameter.type || 'string').trim(),
                 description: (parameter.description || '').trim(),
-                required: !!parameter.required
+                required: !!parameter.required,
+                array: !!parameter.array
             };
         });
 }

@@ -28,6 +28,9 @@ import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.NullNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import sh.vork.ai.security.SkillSecretSubstitutor;
 import sh.vork.ai.function.OAuthConnectRequest;
@@ -65,6 +68,7 @@ public class ReflectionService {
             "boolean",
             "hidden");
     private static final long PENDING_OAUTH_BINDING_TTL_MS = 15 * 60 * 1000L;
+    private static final boolean DEV_UNREDACTED_LOGS = resolveDevUnredactedLogsFlag();
 
     private final DatabaseRepository<Reflection> reflectionRepository;
     private final DatabaseRepository<ReflectionGroup> reflectionGroupRepository;
@@ -139,6 +143,9 @@ public class ReflectionService {
         this.secureCredentialStore = secureCredentialStore;
         this.objectMapper = objectMapper;
         this.httpClient = httpClient;
+        if (DEV_UNREDACTED_LOGS) {
+            log.warn("Developer unredacted logging mode is ENABLED for ReflectionService. Sensitive values (headers, tokens, body fields) may be written to logs.");
+        }
     }
 
     public List<ReflectionGroup> listGroups() {
@@ -273,7 +280,10 @@ public class ReflectionService {
         }
         try (var stream = reflectionBindingRepository.list(0, Integer.MAX_VALUE)) {
             return stream
-                    .filter(binding -> groupUuid.equals(binding.groupUuid()))
+                    .filter(binding -> {
+                        Reflection reflection = getBindingReflection(binding);
+                        return reflection != null && groupUuid.equals(reflection.groupUuid());
+                    })
                     .sorted(Comparator.comparing(
                             binding -> binding.name() == null ? "" : binding.name(),
                             String.CASE_INSENSITIVE_ORDER))
@@ -296,6 +306,25 @@ public class ReflectionService {
             return null;
         }
         return reflectionBindingRepository.get(bindingUuid);
+    }
+
+    public Reflection getBindingReflection(ReflectionBinding binding) {
+        if (binding == null || binding.reflectionUuid() == null || binding.reflectionUuid().isBlank()) {
+            return null;
+        }
+        return reflectionRepository.get(binding.reflectionUuid());
+    }
+
+    public ReflectionGroup getBindingGroup(ReflectionBinding binding) {
+        Reflection reflection = getBindingReflection(binding);
+        if (reflection == null || reflection.groupUuid() == null || reflection.groupUuid().isBlank()) {
+            if (binding == null || binding.reflectionUuid() == null || binding.reflectionUuid().isBlank()) {
+                return null;
+            }
+            // Transitional fallback for pre-migration data that stored a group UUID here.
+            return reflectionGroupRepository.get(binding.reflectionUuid());
+        }
+        return reflectionGroupRepository.get(reflection.groupUuid());
     }
 
     public ReflectionBinding createBinding(String username, String groupUuid, ReflectionBindingRequest request) {
@@ -454,6 +483,7 @@ public class ReflectionService {
         try {
             ReflectionBindingRequest request = new ReflectionBindingRequest(
                     pending.bindingName(),
+                    null,
                     pending.baseUrl(),
                     pending.parameterValues(),
                     pending.secretValues(),
@@ -759,8 +789,11 @@ public class ReflectionService {
             String method = normalizeMethod(reflection.method());
             String requestContentType = normalizeRequestContentType(reflection.requestContentType());
             Map<String, String> stringInputs = toStringMap(mergedInputs);
+            Set<String> optionalTemplateTokens = optionalTemplateTokens(reflection.inputParameters());
+            Set<String> optionalArrayTemplateTokens = optionalArrayTemplateTokens(reflection.inputParameters());
 
-            String rawUrl = applyTemplate(reflection.url(), stringInputs);
+            String rawUrl = applyTemplate(reflection.url(), stringInputs, optionalTemplateTokens);
+            rawUrl = stripEmptyQueryParameters(rawUrl);
             List<String> unresolvedUrlTokens = findUnresolvedTemplateTokens(rawUrl);
             if (!unresolvedUrlTokens.isEmpty()) {
                 return jsonError("Unresolved URL template parameter(s): "
@@ -769,14 +802,14 @@ public class ReflectionService {
             }
             rawUrl = resolveRequestUrl(rawUrl, group, resolvedBinding);
             rawUrl = substituteSecrets(rawUrl, username, bindingSecretValues);
-            URI requestUri = buildUri(rawUrl, reflection.queryParameters(), stringInputs, username, bindingSecretValues);
+            URI requestUri = buildUri(rawUrl, reflection.queryParameters(), stringInputs, username, bindingSecretValues, optionalTemplateTokens);
 
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(requestUri)
                     .timeout(Duration.ofSeconds(30))
                     .header("User-Agent", "vork-reflection/1.0");
 
                 Map<String, String> resolvedHeaders = resolveHeaders(
-                    reflection.headers(), stringInputs, username, bindingSecretValues);
+                    reflection.headers(), stringInputs, username, bindingSecretValues, optionalTemplateTokens);
 
                 applyGroupAuthentication(resolvedHeaders, group, resolvedBinding, username);
 
@@ -787,7 +820,9 @@ public class ReflectionService {
                     mergedInputs,
                     username,
                     bindingSecretValues,
-                    requestContentType);
+                    requestContentType,
+                    optionalTemplateTokens,
+                    optionalArrayTemplateTokens);
 
             log.debug("Step executeRestReflection.requestPrepared: [reflectionId={}, method={}, uri={}, headers={}, contentType={}, bodyPreview={}]",
                     reflection.id(),
@@ -962,7 +997,8 @@ public class ReflectionService {
                     parameter.name().trim(),
                     type,
                     parameter.description() == null ? "" : parameter.description().trim(),
-                    parameter.required()));
+                    parameter.required(),
+                    parameter.array()));
         }
         return List.copyOf(normalized);
     }
@@ -1080,13 +1116,14 @@ public class ReflectionService {
     private Map<String, String> resolveHeaders(Map<String, String> headerTemplates,
                                                Map<String, String> inputValues,
                                                String username,
-                                               Map<String, String> bindingSecretValues) {
+                                               Map<String, String> bindingSecretValues,
+                                               Set<String> optionalTemplateTokens) {
         Map<String, String> resolved = new LinkedHashMap<>();
         if (headerTemplates == null || headerTemplates.isEmpty()) {
             return resolved;
         }
         for (Map.Entry<String, String> entry : headerTemplates.entrySet()) {
-            String value = applyTemplate(entry.getValue(), inputValues);
+            String value = applyTemplate(entry.getValue(), inputValues, optionalTemplateTokens);
             value = substituteSecrets(value, username, bindingSecretValues);
             value = oauthClientService.resolveHeaderValue(username, value);
             resolved.put(entry.getKey(), value);
@@ -1165,15 +1202,19 @@ public class ReflectionService {
                          Map<String, String> baseQueryParams,
                          Map<String, String> inputValues,
                          String username,
-                         Map<String, String> bindingSecretValues) {
+                         Map<String, String> bindingSecretValues,
+                         Set<String> optionalTemplateTokens) {
         StringBuilder url = new StringBuilder(rawUrl == null ? "" : rawUrl.trim());
         boolean hasQuery = url.indexOf("?") >= 0;
 
         Map<String, String> merged = new LinkedHashMap<>();
         if (baseQueryParams != null) {
             for (Map.Entry<String, String> entry : baseQueryParams.entrySet()) {
-                String resolvedValue = applyTemplate(entry.getValue(), inputValues);
+                String resolvedValue = applyTemplate(entry.getValue(), inputValues, optionalTemplateTokens);
                 resolvedValue = substituteSecrets(resolvedValue, username, bindingSecretValues);
+                if (resolvedValue == null || resolvedValue.isBlank()) {
+                    continue;
+                }
                 merged.put(entry.getKey(), resolvedValue);
             }
         }
@@ -1193,7 +1234,7 @@ public class ReflectionService {
                     .append('=')
                     .append(URLEncoder.encode(value, StandardCharsets.UTF_8));
         }
-        return toUriWithSpaceEncoding(url.toString());
+        return toUriWithSpaceEncoding(stripEmptyQueryParameters(url.toString()));
     }
 
     private String resolveBody(Reflection reflection,
@@ -1202,14 +1243,23 @@ public class ReflectionService {
                                Map<String, Object> rawInputs,
                                String username,
                                Map<String, String> bindingSecretValues,
-                               String requestContentType) throws Exception {
+                               String requestContentType,
+                               Set<String> optionalTemplateTokens,
+                               Set<String> optionalArrayTemplateTokens) throws Exception {
         if (METHODS_WITHOUT_BODY.contains(method)) {
             return null;
         }
 
         String bodyTemplate = reflection.bodyTemplate();
         if (bodyTemplate != null && !bodyTemplate.isBlank()) {
-            String body = applyBodyTemplate(bodyTemplate, stringInputs, requestContentType);
+            String body = applyBodyTemplate(bodyTemplate,
+                    stringInputs,
+                    requestContentType,
+                    optionalTemplateTokens,
+                    optionalArrayTemplateTokens);
+            if (CONTENT_TYPE_JSON.equals(requestContentType)) {
+                body = pruneEmptyOptionalJsonArtifacts(body);
+            }
             return substituteSecrets(body, username, bindingSecretValues);
         }
 
@@ -1255,7 +1305,7 @@ public class ReflectionService {
                 if (!rawInputs.containsKey(name)) {
                     continue;
                 }
-                generated.put(name, coerceByType(rawInputs.get(name), parameter.type()));
+                generated.put(name, coerceByType(rawInputs.get(name), parameter.type(), parameter.array()));
             }
         }
 
@@ -1270,6 +1320,21 @@ public class ReflectionService {
     }
 
     private static Object coerceByType(Object value, String type) {
+        return coerceByType(value, type, false);
+    }
+
+    private static Object coerceByType(Object value, String type, boolean isArray) {
+        if (value == null) {
+            return null;
+        }
+        if (isArray) {
+            return coerceToArray(value, type);
+        }
+
+        return coerceScalar(value, type);
+    }
+
+    private static Object coerceScalar(Object value, String type) {
         if (value == null) {
             return null;
         }
@@ -1287,20 +1352,116 @@ public class ReflectionService {
         }
     }
 
+    private static List<Object> coerceToArray(Object value, String type) {
+        if (value == null) {
+            return List.of();
+        }
+
+        if (value instanceof List<?> list) {
+            List<Object> coerced = new ArrayList<>();
+            for (Object item : list) {
+                coerced.add(coerceScalar(item, type));
+            }
+            return List.copyOf(coerced);
+        }
+
+        if (value instanceof Object[] array) {
+            List<Object> coerced = new ArrayList<>();
+            for (Object item : array) {
+                coerced.add(coerceScalar(item, type));
+            }
+            return List.copyOf(coerced);
+        }
+
+        if (value instanceof String rawString) {
+            String trimmed = rawString.trim();
+            if (trimmed.isBlank()) {
+                return List.of();
+            }
+            String[] parts = trimmed.split(",");
+            List<Object> coerced = new ArrayList<>();
+            for (String part : parts) {
+                String token = part == null ? "" : part.trim();
+                if (token.isBlank()) {
+                    continue;
+                }
+                coerced.add(coerceScalar(token, type));
+            }
+            return List.copyOf(coerced);
+        }
+
+        return List.of(coerceScalar(value, type));
+    }
+
     private static String applyBodyTemplate(String template,
                                             Map<String, String> params,
-                                            String requestContentType) {
-        if (template == null || template.isBlank() || params == null || params.isEmpty()) {
+                                            String requestContentType,
+                                            Set<String> optionalTemplateTokens,
+                                            Set<String> optionalArrayTemplateTokens) {
+        if (template == null || template.isBlank()) {
             return template == null ? "" : template;
         }
 
-        String resolved = template;
-        for (Map.Entry<String, String> entry : params.entrySet()) {
-            String value = entry.getValue() == null ? "" : entry.getValue();
-            String encoded = encodeTemplateValue(value, requestContentType);
-            resolved = resolved.replace("{{" + entry.getKey() + "}}", encoded);
+        Map<String, String> caseInsensitive = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        if (params != null && !params.isEmpty()) {
+            caseInsensitive.putAll(params);
         }
-        return resolved;
+
+        String workingTemplate = template;
+        Set<String> missingOptionalTokens = new LinkedHashSet<>();
+        if (optionalTemplateTokens != null && !optionalTemplateTokens.isEmpty()) {
+            for (String tokenName : optionalTemplateTokens) {
+                if (tokenName == null || tokenName.isBlank()) {
+                    continue;
+                }
+                if (!containsTokenIgnoreCase(caseInsensitive.keySet(), tokenName)) {
+                    missingOptionalTokens.add(tokenName);
+                }
+            }
+        }
+
+        if (CONTENT_TYPE_JSON.equals(requestContentType)
+                && !missingOptionalTokens.isEmpty()) {
+            for (String tokenName : missingOptionalTokens) {
+                if (tokenName == null || tokenName.isBlank()) {
+                    continue;
+                }
+                Pattern quotedTokenPattern = Pattern.compile("\"\\s*\\{\\{\\s*"
+                        + Pattern.quote(tokenName)
+                        + "\\s*\\}\\}\\s*\"", Pattern.CASE_INSENSITIVE);
+                workingTemplate = quotedTokenPattern.matcher(workingTemplate)
+                        .replaceAll("{{" + tokenName + "}}");
+            }
+        }
+
+        Matcher matcher = TEMPLATE_TOKEN_PATTERN.matcher(workingTemplate);
+        StringBuffer out = new StringBuffer();
+        while (matcher.find()) {
+            String token = matcher.group(1);
+            if (!caseInsensitive.containsKey(token) && !containsTokenIgnoreCase(optionalTemplateTokens, token)) {
+                continue;
+            }
+            boolean missingOptionalArray = !caseInsensitive.containsKey(token)
+                    && containsTokenIgnoreCase(optionalArrayTemplateTokens, token)
+                    && CONTENT_TYPE_JSON.equals(requestContentType);
+            boolean missingOptionalScalar = !caseInsensitive.containsKey(token)
+                    && containsTokenIgnoreCase(optionalTemplateTokens, token)
+                    && CONTENT_TYPE_JSON.equals(requestContentType)
+                    && !containsTokenIgnoreCase(optionalArrayTemplateTokens, token);
+
+            String encoded;
+            if (missingOptionalArray) {
+                encoded = "[]";
+            } else if (missingOptionalScalar) {
+                encoded = "null";
+            } else {
+                String rawValue = caseInsensitive.containsKey(token) ? caseInsensitive.get(token) : "";
+                encoded = encodeTemplateValue(rawValue == null ? "" : rawValue, requestContentType);
+            }
+            matcher.appendReplacement(out, Matcher.quoteReplacement(encoded));
+        }
+        matcher.appendTail(out);
+        return out.toString();
     }
 
     private static String encodeTemplateValue(String value, String requestContentType) {
@@ -1454,11 +1615,12 @@ public class ReflectionService {
         }
 
         Map<String, String> parameterValues = normalizeAndValidateBindingValues(group.bindingParameters(), request.parameterValues());
+        String reflectionUuid = resolveBindingReflectionUuid(existing, group, request);
         long now = System.currentTimeMillis();
         if (existing == null) {
             return new ReflectionBinding(
                     UUID.randomUUID().toString(),
-                    group.uuid(),
+                reflectionUuid,
                     name,
                     isUrlOverrideEnabled(group) && request.baseUrl() != null ? request.baseUrl().trim() : "",
                     parameterValues,
@@ -1469,13 +1631,42 @@ public class ReflectionService {
 
         return new ReflectionBinding(
                 existing.uuid(),
-                group.uuid(),
+                reflectionUuid,
                 name,
                 isUrlOverrideEnabled(group) && request.baseUrl() != null ? request.baseUrl().trim() : "",
                 parameterValues,
                 existing.version() + 1,
                 existing.createdAt(),
                 now);
+    }
+
+    private String resolveBindingReflectionUuid(ReflectionBinding existing,
+                                                ReflectionGroup group,
+                                                ReflectionBindingRequest request) {
+        String requestedReflectionUuid = request.reflectionUuid() == null ? "" : request.reflectionUuid().trim();
+        if (!requestedReflectionUuid.isBlank()) {
+            Reflection requested = reflectionRepository.get(requestedReflectionUuid);
+            if (requested == null) {
+                throw new IllegalArgumentException("Reflection not found for reflectionUuid.");
+            }
+            if (!group.uuid().equals(requested.groupUuid())) {
+                throw new IllegalArgumentException("reflectionUuid must belong to the selected group.");
+            }
+            return requested.uuid();
+        }
+
+        if (existing != null && existing.reflectionUuid() != null && !existing.reflectionUuid().isBlank()) {
+            Reflection prior = reflectionRepository.get(existing.reflectionUuid());
+            if (prior != null && group.uuid().equals(prior.groupUuid())) {
+                return existing.reflectionUuid();
+            }
+        }
+
+        List<Reflection> groupReflections = reflectionsForGroup(group.uuid());
+        if (groupReflections.isEmpty()) {
+            throw new IllegalArgumentException("Cannot create binding: group has no reflections.");
+        }
+        return groupReflections.getFirst().uuid();
     }
 
     private static boolean isUrlOverrideEnabled(ReflectionGroup group) {
@@ -1536,7 +1727,7 @@ public class ReflectionService {
             if (!allowed.contains(key)) {
                 throw new IllegalArgumentException("Unknown binding secret: " + entry.getKey());
             }
-            secureCredentialStore.saveSecretForUser(username, bindingSecretStorageKey(binding, key), entry.getValue());
+            secureCredentialStore.saveGlobalSecret(bindingSecretStorageKey(binding, key), entry.getValue());
         }
     }
 
@@ -1564,9 +1755,13 @@ public class ReflectionService {
                 continue;
             }
 
-            String sourceValue = secureCredentialStore.getSecretForUser(
-                    username,
-                    bindingSecretStorageKey(source, secretName));
+            String sourceValue = secureCredentialStore.getGlobalSecret(bindingSecretStorageKey(source, secretName));
+            if (sourceValue == null || sourceValue.isBlank()) {
+                // Backward compatibility for existing per-user stored binding secrets.
+                sourceValue = secureCredentialStore.getSecretForUser(
+                        username,
+                        bindingSecretStorageKey(source, secretName));
+            }
             if (sourceValue != null && !sourceValue.isBlank()) {
                 merged.put(secretName, sourceValue);
             }
@@ -1582,7 +1777,7 @@ public class ReflectionService {
 
     private static String bindingSecretStorageKey(ReflectionBinding binding, String secretName) {
         String normalizedSecretName = secretName == null ? "" : secretName.toUpperCase(Locale.ROOT);
-        return "REFLECTION_BINDING:" + binding.groupUuid() + ":" + binding.name() + ":" + normalizedSecretName;
+        return "REFLECTION_BINDING:" + binding.reflectionUuid() + ":" + binding.name() + ":" + normalizedSecretName;
     }
 
     private ReflectionBinding resolveBindingForExecution(ReflectionGroup group, String bindingName) {
@@ -1619,7 +1814,11 @@ public class ReflectionService {
         Map<String, String> values = new LinkedHashMap<>();
         for (SkillSecret secret : secretDefinitions) {
             String name = secret.name();
-            String value = secureCredentialStore.getSecretForUser(username, bindingSecretStorageKey(binding, name));
+            String value = secureCredentialStore.getGlobalSecret(bindingSecretStorageKey(binding, name));
+            if (value == null) {
+                // Backward compatibility for existing per-user stored binding secrets.
+                value = secureCredentialStore.getSecretForUser(username, bindingSecretStorageKey(binding, name));
+            }
             if (value != null) {
                 values.put(name, value);
             }
@@ -1752,25 +1951,158 @@ public class ReflectionService {
         return "https://" + candidate;
     }
 
-    private static String applyTemplate(String template, Map<String, String> params) {
-        if (template == null || template.isBlank() || params == null || params.isEmpty()) {
+    private static String applyTemplate(String template,
+                                        Map<String, String> params,
+                                        Set<String> missingAsEmptyTokens) {
+        if (template == null || template.isBlank()) {
             return template == null ? "" : template;
         }
         Map<String, String> caseInsensitive = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-        caseInsensitive.putAll(params);
+        if (params != null && !params.isEmpty()) {
+            caseInsensitive.putAll(params);
+        }
 
         Matcher matcher = TEMPLATE_TOKEN_PATTERN.matcher(template);
         StringBuffer out = new StringBuffer();
         while (matcher.find()) {
             String token = matcher.group(1);
-            if (!caseInsensitive.containsKey(token)) {
+            if (!caseInsensitive.containsKey(token) && !containsTokenIgnoreCase(missingAsEmptyTokens, token)) {
                 continue;
             }
-            String value = caseInsensitive.get(token);
+            String value = caseInsensitive.containsKey(token) ? caseInsensitive.get(token) : "";
             matcher.appendReplacement(out, Matcher.quoteReplacement(value == null ? "" : value));
         }
         matcher.appendTail(out);
         return out.toString();
+    }
+
+    private static Set<String> optionalTemplateTokens(List<ReflectionInputParameter> inputParameters) {
+        if (inputParameters == null || inputParameters.isEmpty()) {
+            return Set.of();
+        }
+        Set<String> tokens = new LinkedHashSet<>();
+        for (ReflectionInputParameter parameter : inputParameters) {
+            if (parameter == null || parameter.name() == null || parameter.name().isBlank() || parameter.required()) {
+                continue;
+            }
+            tokens.add(parameter.name().trim().toLowerCase(Locale.ROOT));
+        }
+        return tokens.isEmpty() ? Set.of() : Set.copyOf(tokens);
+    }
+
+    private static Set<String> optionalArrayTemplateTokens(List<ReflectionInputParameter> inputParameters) {
+        if (inputParameters == null || inputParameters.isEmpty()) {
+            return Set.of();
+        }
+        Set<String> tokens = new LinkedHashSet<>();
+        for (ReflectionInputParameter parameter : inputParameters) {
+            if (parameter == null
+                    || parameter.name() == null
+                    || parameter.name().isBlank()
+                    || parameter.required()
+                    || !parameter.array()) {
+                continue;
+            }
+            tokens.add(parameter.name().trim().toLowerCase(Locale.ROOT));
+        }
+        return tokens.isEmpty() ? Set.of() : Set.copyOf(tokens);
+    }
+
+    private String pruneEmptyOptionalJsonArtifacts(String body) {
+        if (body == null || body.isBlank()) {
+            return body == null ? "" : body;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(body);
+            JsonNode pruned = pruneJsonNode(root);
+            return objectMapper.writeValueAsString(pruned);
+        } catch (Exception ex) {
+            return body;
+        }
+    }
+
+    private JsonNode pruneJsonNode(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return NullNode.instance;
+        }
+
+        if (node.isObject()) {
+            ObjectNode objectNode = (ObjectNode) node.deepCopy();
+            List<String> fieldNames = new ArrayList<>();
+            objectNode.fieldNames().forEachRemaining(fieldNames::add);
+            for (String fieldName : fieldNames) {
+                JsonNode child = pruneJsonNode(objectNode.get(fieldName));
+                if (child == null || child.isNull() || (child.isObject() && child.size() == 0)) {
+                    objectNode.remove(fieldName);
+                } else {
+                    objectNode.set(fieldName, child);
+                }
+            }
+            return objectNode;
+        }
+
+        if (node.isArray()) {
+            ArrayNode arrayNode = objectMapper.createArrayNode();
+            for (JsonNode item : node) {
+                JsonNode child = pruneJsonNode(item);
+                if (child == null || child.isNull() || (child.isObject() && child.size() == 0)) {
+                    continue;
+                }
+                arrayNode.add(child);
+            }
+            return arrayNode;
+        }
+
+        return node;
+    }
+
+    private static boolean containsTokenIgnoreCase(Set<String> tokens, String token) {
+        if (token == null || token.isBlank() || tokens == null || tokens.isEmpty()) {
+            return false;
+        }
+        return tokens.contains(token.toLowerCase(Locale.ROOT));
+    }
+
+    private static String stripEmptyQueryParameters(String rawUrl) {
+        if (rawUrl == null || rawUrl.isBlank()) {
+            return rawUrl == null ? "" : rawUrl;
+        }
+
+        int queryStart = rawUrl.indexOf('?');
+        if (queryStart < 0 || queryStart == rawUrl.length() - 1) {
+            return rawUrl;
+        }
+
+        String base = rawUrl.substring(0, queryStart);
+        String queryAndFragment = rawUrl.substring(queryStart + 1);
+        String fragment = "";
+        int fragmentStart = queryAndFragment.indexOf('#');
+        if (fragmentStart >= 0) {
+            fragment = queryAndFragment.substring(fragmentStart);
+            queryAndFragment = queryAndFragment.substring(0, fragmentStart);
+        }
+
+        List<String> kept = new ArrayList<>();
+        for (String segment : queryAndFragment.split("&")) {
+            if (segment == null || segment.isBlank()) {
+                continue;
+            }
+            int equalsIndex = segment.indexOf('=');
+            if (equalsIndex < 0) {
+                kept.add(segment);
+                continue;
+            }
+            String value = segment.substring(equalsIndex + 1);
+            if (value.isBlank()) {
+                continue;
+            }
+            kept.add(segment);
+        }
+
+        if (kept.isEmpty()) {
+            return base + fragment;
+        }
+        return base + "?" + String.join("&", kept) + fragment;
     }
 
     private static List<String> findUnresolvedTemplateTokens(String value) {
@@ -1957,6 +2289,9 @@ public class ReflectionService {
         if (input == null || input.isEmpty()) {
             return Map.of();
         }
+        if (DEV_UNREDACTED_LOGS) {
+            return Map.copyOf(input);
+        }
         Map<String, Object> sanitized = new LinkedHashMap<>();
         for (Map.Entry<String, Object> entry : input.entrySet()) {
             String key = entry.getKey();
@@ -1976,6 +2311,9 @@ public class ReflectionService {
         if (input == null || input.isEmpty()) {
             return Map.of();
         }
+        if (DEV_UNREDACTED_LOGS) {
+            return Map.copyOf(input);
+        }
         Map<String, String> sanitized = new LinkedHashMap<>();
         for (Map.Entry<String, String> entry : input.entrySet()) {
             String key = entry.getKey();
@@ -1994,6 +2332,10 @@ public class ReflectionService {
     private static String sanitizeBodyForLog(String body, String contentType) {
         if (body == null) {
             return "<none>";
+        }
+
+        if (DEV_UNREDACTED_LOGS) {
+            return body.length() > 1000 ? body.substring(0, 1000) + "...<truncated>" : body;
         }
 
         String sanitized = body;
@@ -2033,6 +2375,15 @@ public class ReflectionService {
                 || normalized.contains("token")
                 || normalized.contains("api_key")
                 || normalized.contains("apikey");
+    }
+
+    private static boolean resolveDevUnredactedLogsFlag() {
+        String systemProperty = System.getProperty("vork.dev.unredacted.logs");
+        if (systemProperty != null && !systemProperty.isBlank()) {
+            return Boolean.parseBoolean(systemProperty.trim());
+        }
+        String env = System.getenv("VORK_DEV_UNREDACTED_LOGS");
+        return env != null && Boolean.parseBoolean(env.trim());
     }
 
     private String uniqueGroupToolId(String preferredSource, String excludeGroupUuid) {
@@ -2160,16 +2511,25 @@ public class ReflectionService {
 
         public record ReflectionBindingRequest(
             String name,
+            String reflectionUuid,
             String baseUrl,
             Map<String, String> parameterValues,
             Map<String, String> secretValues,
             String copySecretsFromBindingName) {
 
             public ReflectionBindingRequest(String name,
+                                            String reflectionUuid,
                                             String baseUrl,
                                             Map<String, String> parameterValues,
                                             Map<String, String> secretValues) {
-                this(name, baseUrl, parameterValues, secretValues, null);
+                this(name, reflectionUuid, baseUrl, parameterValues, secretValues, null);
+            }
+
+            public ReflectionBindingRequest(String name,
+                                            String baseUrl,
+                                            Map<String, String> parameterValues,
+                                            Map<String, String> secretValues) {
+                this(name, null, baseUrl, parameterValues, secretValues, null);
             }
         }
 

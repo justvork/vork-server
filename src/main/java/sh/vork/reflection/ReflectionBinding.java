@@ -11,7 +11,7 @@ import sh.vork.orm.DatabaseEntity;
  */
 public record ReflectionBinding(
         String uuid,
-        String groupUuid,
+        String reflectionUuid,
         String name,
         String baseUrl,
         Map<String, String> parameterValues,
@@ -21,8 +21,8 @@ public record ReflectionBinding(
 ) implements DatabaseEntity {
 
     public ReflectionBinding {
-        if (groupUuid == null) {
-            groupUuid = "";
+        if (reflectionUuid == null) {
+            reflectionUuid = "";
         }
         if (name == null || name.isBlank()) {
             name = "default";

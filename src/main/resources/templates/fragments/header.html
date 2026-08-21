@@ -14,6 +14,11 @@
             <i class="fa-solid fa-house"></i>
         </a>
 
+        <a th:if="${!navAdminView}" th:each="app : ${navSurfaceApps}" th:href="${app.url}" th:title="${app.name}"
+           class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 text-zinc-200 transition-colors hover:bg-zinc-800">
+            <i th:class="${(app.navIcon != null and !#strings.isEmpty(app.navIcon)) ? app.navIcon : 'fa-solid fa-layer-group'}"></i>
+        </a>
+
         <button th:if="${isChatPage}" id="thinking-toggle" type="button" class="rounded-lg border border-zinc-700 px-2.5 py-1 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800" title="Toggle reasoning visibility">
             Thinking ON
         </button>

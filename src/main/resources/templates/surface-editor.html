@@ -118,6 +118,11 @@
             <span id="viewer-meta" class="text-xs text-zinc-500"></span>
         </div>
         <div class="viewer-content">
+            <div id="monaco-editor" class="monaco-editor-host hidden" aria-label="Surface code editor"></div>
+            <textarea id="viewer-editor"
+                      class="viewer-editor hidden"
+                      spellcheck="false"
+                      aria-label="Surface file editor"></textarea>
             <pre id="viewer-pre" class="hidden"><code id="viewer-code" class="language-text"></code></pre>
             <div id="viewer-empty" class="viewer-empty">
                 <i class="fa-solid fa-file-code text-4xl text-zinc-700"></i>
@@ -131,6 +136,7 @@
 <script src="/packages/npm/sockjs-client/current/dist/sockjs.min.js" th:src="@{/packages/npm/sockjs-client/current/dist/sockjs.min.js}"></script>
 <script src="/packages/npm.stomp/stompjs/current/bundles/stomp.umd.min.js" th:src="@{/packages/npm.stomp/stompjs/current/bundles/stomp.umd.min.js}"></script>
 <script src="/packages/npm/marked/current/marked.min.js" th:src="@{/packages/npm/marked/current/marked.min.js}"></script>
+<script src="/packages/npm/monaco-editor/current/min/vs/loader.js" th:src="@{/packages/npm/monaco-editor/current/min/vs/loader.js}"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
 <script src="/js/surface-editor.js" th:src="@{/js/surface-editor.js}"></script>

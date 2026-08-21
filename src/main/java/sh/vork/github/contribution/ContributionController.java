@@ -612,6 +612,10 @@ public class ContributionController {
                 existing.skillUuids(),
                 existing.reflectionBindingUuids(),
                 existing.jobUuids(),
+                existing.published(),
+                existing.logoDataUrl(),
+                existing.assignedUserUuids(),
+                existing.accessPolicy(),
                 existing.groupId(),
                 existing.artifactId(),
                 nextVersion,
@@ -628,6 +632,8 @@ public class ContributionController {
             surfaceArtifact.put("skillUuids", submitted.skillUuids());
             surfaceArtifact.put("reflectionBindingUuids", submitted.reflectionBindingUuids());
             surfaceArtifact.put("jobUuids", submitted.jobUuids());
+            surfaceArtifact.put("logoDataUrl", submitted.logoDataUrl());
+            surfaceArtifact.put("accessPolicy", submitted.accessPolicy());
             surfaceArtifact.put("groupId", submitted.groupId());
             surfaceArtifact.put("artifactId", submitted.artifactId());
             surfaceArtifact.put("version", submitted.version());
@@ -878,7 +884,7 @@ public class ContributionController {
                 .map(reflection -> cloneReflectionForGroup(reflection, nextUuid, reflection.uuid(), now))
                 .toList();
         List<ReflectionBinding> relocatedBindings = sourceBindings.stream()
-                .map(binding -> cloneBindingForGroup(binding, nextUuid, binding.uuid(), now))
+                .map(binding -> cloneBindingForGroup(binding, binding.uuid(), now))
                 .toList();
 
         ReflectionGroup submitted = new ReflectionGroup(
@@ -1439,6 +1445,10 @@ public class ContributionController {
                 existing.skillUuids(),
                 existing.reflectionBindingUuids(),
                 existing.jobUuids(),
+                existing.published(),
+                existing.logoDataUrl(),
+                existing.assignedUserUuids(),
+                existing.accessPolicy(),
                 existing.groupId(),
                 existing.artifactId(),
                 "SNAPSHOT",
@@ -1521,7 +1531,7 @@ public class ContributionController {
                 .map(reflection -> cloneReflectionForGroup(reflection, snapshotUuid, java.util.UUID.randomUUID().toString(), now))
                 .toList();
         List<ReflectionBinding> clonedBindings = sourceBindings.stream()
-                .map(binding -> cloneBindingForGroup(binding, snapshotUuid, java.util.UUID.randomUUID().toString(), now))
+                .map(binding -> cloneBindingForGroup(binding, java.util.UUID.randomUUID().toString(), now))
                 .toList();
 
         ReflectionGroup snapshot = new ReflectionGroup(
@@ -2182,7 +2192,13 @@ public class ContributionController {
         int pages = (int) ((total + pageSize - 1) / pageSize);
         for (int page = 0; page < pages; page++) {
             try (var stream = reflectionBindingRepository.list(page, pageSize)) {
-                stream.filter(binding -> binding != null && groupUuid.equals(binding.groupUuid()))
+                stream.filter(binding -> {
+                            if (binding == null || binding.reflectionUuid() == null || binding.reflectionUuid().isBlank()) {
+                                return false;
+                            }
+                            Reflection reflection = reflectionRepository.get(binding.reflectionUuid());
+                            return reflection != null && groupUuid.equals(reflection.groupUuid());
+                        })
                         .forEach(matches::add);
             }
         }
@@ -2248,12 +2264,11 @@ public class ContributionController {
             }
 
             private ReflectionBinding cloneBindingForGroup(ReflectionBinding source,
-                                   String targetGroupUuid,
                                    String targetUuid,
                                    long now) {
             return new ReflectionBinding(
                 targetUuid,
-                targetGroupUuid,
+                source.reflectionUuid(),
                 source.name(),
                 source.baseUrl(),
                 source.parameterValues(),

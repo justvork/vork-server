@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.io.ByteArrayInputStream;
 import java.util.Base64;
 import java.util.List;
 
@@ -28,6 +29,9 @@ import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.function.CreateSkillRequest;
 import sh.vork.ai.memory.InMemorySessionEnvironmentService;
 import sh.vork.ai.security.VisualizableTool;
+import sh.vork.ai.security.encrypt.EncryptionService;
+import sh.vork.filesystem.FileArea;
+import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.orm.DatabaseEntity;
 import sh.vork.security.SecureCredentialStore;
 import sh.vork.skill.Skill;
@@ -128,6 +132,119 @@ class AiConfigRecordToolsTest {
         String decoded = readStringResult(decode.call("{\"input\":\"" + encoded + "\"}"));
         assertEquals(plain, decoded);
     }
+
+    @Test
+    void encryptDecryptString_toolsRoundTripThroughEncryptionService() throws Exception {
+        JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
+        TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
+        EncryptionService encryptionService = mock(EncryptionService.class);
+        SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+        AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
+
+        when(encryptionService.encrypt("secret payload", null, null)).thenReturn("ENC:abc123");
+        when(encryptionService.decrypt("ENC:abc123", null, null)).thenReturn("secret payload");
+
+        ToolCallback encryptTool = config.encryptString(encryptionService, sessionFileSystem);
+        ToolCallback decryptTool = config.decryptString(encryptionService, sessionFileSystem);
+
+        String encrypted = readStringResult(encryptTool.call("{\"input\":\"secret payload\"}"));
+        assertEquals("ENC:abc123", encrypted);
+
+        String decrypted = readStringResult(decryptTool.call("{\"input\":\"ENC:abc123\"}"));
+        assertEquals("secret payload", decrypted);
+
+        verify(encryptionService).encrypt("secret payload", null, null);
+        verify(encryptionService).decrypt("ENC:abc123", null, null);
+        }
+
+        @Test
+        void encryptDecryptString_toolsUseLegacyKeyPathsWhenProvided() throws Exception {
+        JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
+        TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
+        EncryptionService encryptionService = mock(EncryptionService.class);
+            SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+        AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
+
+        when(encryptionService.encrypt("secret payload", "/session/legacy.prv", "/session/legacy.pub"))
+            .thenReturn("!!ENC!!abc123");
+        when(encryptionService.decrypt("!!ENC!!abc123", "/session/legacy.prv", "/session/legacy.pub"))
+            .thenReturn("secret payload");
+
+        ToolCallback encryptTool = config.encryptString(encryptionService, sessionFileSystem);
+        ToolCallback decryptTool = config.decryptString(encryptionService, sessionFileSystem);
+
+        String encrypted = readStringResult(encryptTool.call("""
+            {
+              "input": "secret payload",
+              "privateKeyPath": "/session/legacy.prv",
+              "publicKeyPath": "/session/legacy.pub"
+            }
+            """));
+        assertEquals("!!ENC!!abc123", encrypted);
+
+        String decrypted = readStringResult(decryptTool.call("""
+            {
+              "input": "!!ENC!!abc123",
+              "privateKeyPath": "/session/legacy.prv",
+              "publicKeyPath": "/session/legacy.pub"
+            }
+            """));
+        assertEquals("secret payload", decrypted);
+
+        verify(encryptionService).encrypt("secret payload", "/session/legacy.prv", "/session/legacy.pub");
+        verify(encryptionService).decrypt("!!ENC!!abc123", "/session/legacy.prv", "/session/legacy.pub");
+    }
+
+        @Test
+        void encryptDecryptString_toolsResolveLegacyKeysFromSessionSandboxWhenAvailable() throws Exception {
+        JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
+        TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
+        EncryptionService encryptionService = mock(EncryptionService.class);
+        SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+        AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
+
+        byte[] privateKeyBytes = "private-key-bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] publicKeyBytes = "public-key-bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+        when(sessionFileSystem.read(FileArea.SESSION, "session-123", "secrets"))
+            .thenAnswer(invocation -> new ByteArrayInputStream(privateKeyBytes));
+        when(sessionFileSystem.read(FileArea.SESSION, "session-123", "secrets.pub"))
+            .thenAnswer(invocation -> new ByteArrayInputStream(publicKeyBytes));
+
+        when(encryptionService.encryptWithLegacyKeys("secret payload", privateKeyBytes, publicKeyBytes))
+            .thenReturn("!!ENC!!sandboxed");
+        when(encryptionService.decryptWithLegacyKeys("!!ENC!!sandboxed", privateKeyBytes, publicKeyBytes))
+            .thenReturn("secret payload");
+
+        org.slf4j.MDC.put("sessionUuid", "session-123");
+        try {
+            ToolCallback encryptTool = config.encryptString(encryptionService, sessionFileSystem);
+            ToolCallback decryptTool = config.decryptString(encryptionService, sessionFileSystem);
+
+            String encrypted = readStringResult(encryptTool.call("""
+                {
+                  "input": "secret payload",
+                  "privateKeyPath": "secrets",
+                  "publicKeyPath": "secrets.pub"
+                }
+                """));
+            assertEquals("!!ENC!!sandboxed", encrypted);
+
+            String decrypted = readStringResult(decryptTool.call("""
+                {
+                  "input": "!!ENC!!sandboxed",
+                  "privateKeyPath": "secrets",
+                  "publicKeyPath": "secrets.pub"
+                }
+                """));
+            assertEquals("secret payload", decrypted);
+
+            verify(encryptionService).encryptWithLegacyKeys("secret payload", privateKeyBytes, publicKeyBytes);
+            verify(encryptionService).decryptWithLegacyKeys("!!ENC!!sandboxed", privateKeyBytes, publicKeyBytes);
+        } finally {
+            org.slf4j.MDC.remove("sessionUuid");
+        }
+        }
 
     @Test
     void signAndVerify_supportsPemKeyMaterial() throws Exception {

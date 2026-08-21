@@ -9,6 +9,7 @@ import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.lifecycle.AgentTemplateSeeder;
 import sh.vork.ai.service.ChatService;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.security.VorkUser;
 import sh.vork.skill.Skill;
 import sh.vork.surface.Surface;
 import sh.vork.util.ToolIdGenerator;
@@ -17,7 +18,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * Business logic for {@link Surface} CRUD and session lifecycle.
@@ -28,16 +29,22 @@ public class SurfaceService {
     private static final Logger log = LoggerFactory.getLogger(SurfaceService.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String SNAPSHOT_VERSION = "SNAPSHOT";
+    private static final Pattern ROUTE_PATH_PATTERN = Pattern.compile("^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$");
+    private static final Pattern DATA_URL_PATTERN = Pattern.compile("^data:image/(png|jpeg|jpg|gif|webp|svg\\+xml);base64,[A-Za-z0-9+/=\\r\\n]+$");
+    private static final int MAX_LOGO_DATA_URL_LENGTH = 1_500_000;
 
     private final DatabaseRepository<Surface> surfaceRepository;
     private final DatabaseRepository<Skill> skillRepository;
+    private final DatabaseRepository<VorkUser> userRepository;
     private final ChatService chatService;
 
     public SurfaceService(DatabaseRepository<Surface> surfaceRepository,
                           DatabaseRepository<Skill> skillRepository,
+                          DatabaseRepository<VorkUser> userRepository,
                           ChatService chatService) {
         this.surfaceRepository = surfaceRepository;
         this.skillRepository = skillRepository;
+        this.userRepository = userRepository;
         this.chatService = chatService;
     }
 
@@ -88,6 +95,10 @@ public class SurfaceService {
                 List.of(),
                 List.of(),
                 List.of(),
+                false,
+                "",
+                List.of(),
+                Surface.AccessPolicy.defaultPolicy(),
             groupId,
             artifactId,
             SNAPSHOT_VERSION,
@@ -111,7 +122,11 @@ public class SurfaceService {
                           String description,
                           List<String> skillUuids,
                           List<String> reflectionBindingUuids,
-                          List<String> jobUuids) {
+                          List<String> jobUuids,
+                          Boolean published,
+                          String logoDataUrl,
+                          List<String> assignedUserUuids,
+                          Surface.AccessPolicy accessPolicy) {
         Surface existing = surfaceRepository.get(uuid);
         if (existing == null) {
             return null;
@@ -124,6 +139,17 @@ public class SurfaceService {
                 ? existing.skillUuids()
                 : validateAndNormalizeSurfaceSkillUuids(skillUuids);
 
+        boolean nextPublished = published == null ? existing.published() : published;
+        String nextLogoDataUrl = logoDataUrl == null ? existing.logoDataUrl() : normalizeLogoDataUrl(logoDataUrl);
+        List<String> nextAssignedUserUuids = assignedUserUuids == null
+            ? existing.assignedUserUuids()
+            : validateAndNormalizeAssignedUsers(assignedUserUuids);
+        Surface.AccessPolicy nextAccessPolicy = accessPolicy == null
+            ? existing.accessPolicy()
+            : normalizeAccessPolicy(accessPolicy);
+
+        validatePublishConfiguration(existing.uuid(), nextPublished, nextLogoDataUrl, nextAccessPolicy, nextAssignedUserUuids);
+
         Surface updated = new Surface(
                 existing.uuid(),
                 existing.toolId(),
@@ -134,6 +160,10 @@ public class SurfaceService {
                 validatedSkillUuids,
                 reflectionBindingUuids == null ? existing.reflectionBindingUuids() : reflectionBindingUuids,
                 jobUuids == null ? existing.jobUuids() : jobUuids,
+                nextPublished,
+                nextLogoDataUrl,
+                nextAssignedUserUuids,
+                nextAccessPolicy,
             existing.groupId(),
             existing.artifactId(),
             existing.version(),
@@ -147,6 +177,63 @@ public class SurfaceService {
         log.info("Updated surface [uuid={}, name={}]", uuid, updated.name());
         return updated;
     }
+
+        /**
+         * Updates publication-facing settings regardless of artifact mutability.
+         * This is used for immutable versions where publication access can still be
+         * controlled locally (published toggle, assignments, and access routes).
+         *
+         * @return the updated surface, or {@code null} if no surface with the given UUID exists
+         */
+        public Surface updatePublicationSettings(String uuid,
+                             Boolean published,
+                             List<String> assignedUserUuids,
+                             Surface.AccessPolicy accessPolicy) {
+        Surface existing = surfaceRepository.get(uuid);
+        if (existing == null) {
+            return null;
+        }
+
+        boolean nextPublished = published == null ? existing.published() : published;
+        List<String> nextAssignedUserUuids = assignedUserUuids == null
+            ? existing.assignedUserUuids()
+            : validateAndNormalizeAssignedUsers(assignedUserUuids);
+        Surface.AccessPolicy nextAccessPolicy = accessPolicy == null
+            ? existing.accessPolicy()
+            : normalizeAccessPolicy(accessPolicy);
+
+        validatePublishConfiguration(
+            existing.uuid(),
+            nextPublished,
+            existing.logoDataUrl(),
+            nextAccessPolicy,
+            nextAssignedUserUuids);
+
+        Surface updated = new Surface(
+            existing.uuid(),
+            existing.toolId(),
+            existing.name(),
+            existing.description(),
+            existing.sessionUuid(),
+            existing.executionSessionUuid(),
+            existing.skillUuids(),
+            existing.reflectionBindingUuids(),
+            existing.jobUuids(),
+            nextPublished,
+            existing.logoDataUrl(),
+            nextAssignedUserUuids,
+            nextAccessPolicy,
+            existing.groupId(),
+            existing.artifactId(),
+            existing.version(),
+            existing.artifactStatus(),
+            existing.createdAt(),
+            System.currentTimeMillis());
+
+        surfaceRepository.save(updated);
+        log.info("Updated surface publication settings [uuid={}, published={}]", uuid, updated.published());
+        return updated;
+        }
 
     /**
      * Deletes the surface record.  The backing AI session is left intact.
@@ -202,6 +289,10 @@ public class SurfaceService {
                     surface.skillUuids(),
                     surface.reflectionBindingUuids(),
                     surface.jobUuids(),
+                    surface.published(),
+                    surface.logoDataUrl(),
+                    surface.assignedUserUuids(),
+                    surface.accessPolicy(),
                     surface.groupId(),
                     surface.artifactId(),
                     surface.version(),
@@ -250,6 +341,10 @@ public class SurfaceService {
                     surface.skillUuids(),
                     surface.reflectionBindingUuids(),
                     surface.jobUuids(),
+                    surface.published(),
+                    surface.logoDataUrl(),
+                    surface.assignedUserUuids(),
+                    surface.accessPolicy(),
                     surface.groupId(),
                     surface.artifactId(),
                     surface.version(),
@@ -352,6 +447,97 @@ public class SurfaceService {
         return new PublicSkillId(groupId, skillId);
     }
 
+    public Surface findPublishedByPrivatePath(String privatePath) {
+        String normalizedPath = normalizeRoutePath(privatePath);
+        if (normalizedPath.isBlank()) {
+            return null;
+        }
+        try (var stream = surfaceRepository.list(0, Integer.MAX_VALUE)) {
+            return stream
+                    .filter(surface -> surface != null && surface.published())
+                    .filter(surface -> surface.accessPolicy() != null && surface.accessPolicy().privateUrlEnabled())
+                    .filter(surface -> normalizedPath.equals(surface.accessPolicy().privateUrlPath()))
+                    .findFirst()
+                    .orElse(null);
+        }
+    }
+
+    public Surface findPublishedByPublicPath(String publicPath) {
+        String normalizedPath = normalizeRoutePath(publicPath);
+        if (normalizedPath.isBlank()) {
+            return null;
+        }
+        try (var stream = surfaceRepository.list(0, Integer.MAX_VALUE)) {
+            return stream
+                    .filter(surface -> surface != null && surface.published())
+                    .filter(surface -> surface.accessPolicy() != null && surface.accessPolicy().publicUrlEnabled())
+                    .filter(surface -> normalizedPath.equals(surface.accessPolicy().publicUrlPath()))
+                    .findFirst()
+                    .orElse(null);
+        }
+    }
+
+    public List<SurfaceAppLink> listPublishedHomeAppsForUser(String username) {
+        String normalizedUsername = username == null ? "" : username.trim();
+        if (normalizedUsername.isBlank()) {
+            return List.of();
+        }
+        List<SurfaceAppLink> links = new ArrayList<>();
+        try (var stream = surfaceRepository.list(0, Integer.MAX_VALUE)) {
+            stream
+                    .filter(surface -> surface != null && surface.published())
+                    .filter(surface -> surface.accessPolicy() != null && surface.accessPolicy().homeScreenEnabled())
+                    .filter(surface -> isUserAssigned(surface, normalizedUsername))
+                    .forEach(surface -> links.add(toAppLink(surface)));
+        }
+        return List.copyOf(links);
+    }
+
+    public List<SurfaceAppLink> listPublishedNavAppsForUser(String username) {
+        String normalizedUsername = username == null ? "" : username.trim();
+        if (normalizedUsername.isBlank()) {
+            return List.of();
+        }
+        List<SurfaceAppLink> links = new ArrayList<>();
+        try (var stream = surfaceRepository.list(0, Integer.MAX_VALUE)) {
+            stream
+                    .filter(surface -> surface != null && surface.published())
+                    .filter(surface -> surface.accessPolicy() != null && surface.accessPolicy().navButtonEnabled())
+                    .filter(surface -> isUserAssigned(surface, normalizedUsername))
+                    .forEach(surface -> links.add(toAppLink(surface)));
+        }
+        return List.copyOf(links);
+    }
+
+    public boolean isUserAssigned(Surface surface, String username) {
+        if (surface == null || username == null || username.isBlank()) {
+            return false;
+        }
+        if (surface.assignedUserUuids() == null || surface.assignedUserUuids().isEmpty()) {
+            return false;
+        }
+        return surface.assignedUserUuids().stream().anyMatch(username::equals);
+    }
+
+    public record SurfaceAppLink(String uuid, String name, String description, String logoDataUrl, String navIcon, String url) {
+    }
+
+    private SurfaceAppLink toAppLink(Surface surface) {
+        String navIcon = surface.accessPolicy() == null ? "" : surface.accessPolicy().navButtonIcon();
+        String url = appEntryUrl(surface);
+        return new SurfaceAppLink(
+                surface.uuid(),
+                surface.name(),
+                surface.description(),
+                surface.logoDataUrl(),
+                navIcon,
+                url);
+    }
+
+    private String appEntryUrl(Surface surface) {
+        return "/apps/published/" + surface.uuid() + "/";
+    }
+
     private List<String> validateAndNormalizeSurfaceSkillUuids(List<String> skillUuids) {
         if (skillUuids == null || skillUuids.isEmpty()) {
             return List.of();
@@ -390,6 +576,150 @@ public class SurfaceService {
             return true;
         } catch (Exception ex) {
             return false;
+        }
+    }
+
+    private List<String> validateAndNormalizeAssignedUsers(List<String> assignedUserUuids) {
+        if (assignedUserUuids == null || assignedUserUuids.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (String username : assignedUserUuids) {
+            if (username == null || username.isBlank()) {
+                continue;
+            }
+            String trimmed = username.trim();
+            VorkUser user = userRepository.get(trimmed);
+            if (user == null) {
+                throw new IllegalArgumentException("Unknown user in assigned users: " + trimmed);
+            }
+            if (!user.isEnabled()) {
+                throw new IllegalArgumentException("Assigned user is disabled: " + trimmed);
+            }
+            normalized.add(trimmed);
+        }
+        return List.copyOf(normalized);
+    }
+
+    private Surface.AccessPolicy normalizeAccessPolicy(Surface.AccessPolicy policy) {
+        if (policy == null) {
+            return Surface.AccessPolicy.defaultPolicy();
+        }
+        String navIcon = policy.navButtonIcon() == null ? "" : policy.navButtonIcon().trim();
+        String privatePath = normalizeRoutePath(policy.privateUrlPath());
+        String publicPath = normalizeRoutePath(policy.publicUrlPath());
+        if (!policy.privateUrlEnabled()) {
+            privatePath = "";
+        }
+        if (!policy.publicUrlEnabled()) {
+            publicPath = "";
+        }
+        if (!policy.navButtonEnabled()) {
+            navIcon = "";
+        }
+        return new Surface.AccessPolicy(
+                policy.homeScreenEnabled(),
+                policy.navButtonEnabled(),
+                navIcon,
+                policy.privateUrlEnabled(),
+                privatePath,
+                policy.publicUrlEnabled(),
+                publicPath);
+    }
+
+    private void validatePublishConfiguration(String surfaceUuid,
+                                              boolean published,
+                                              String logoDataUrl,
+                                              Surface.AccessPolicy accessPolicy,
+                                              List<String> assignedUsers) {
+        if (!published) {
+            return;
+        }
+        Surface.AccessPolicy effectivePolicy = accessPolicy == null ? Surface.AccessPolicy.defaultPolicy() : accessPolicy;
+        boolean hasRoute = effectivePolicy.homeScreenEnabled()
+                || effectivePolicy.navButtonEnabled()
+                || effectivePolicy.privateUrlEnabled()
+                || effectivePolicy.publicUrlEnabled();
+        if (!hasRoute) {
+            throw new IllegalArgumentException("At least one access route must be enabled when a surface is published.");
+        }
+        if ((effectivePolicy.homeScreenEnabled() || effectivePolicy.navButtonEnabled() || effectivePolicy.privateUrlEnabled())
+                && (assignedUsers == null || assignedUsers.isEmpty())) {
+            throw new IllegalArgumentException("At least one assigned user is required for home, nav, or private access policies.");
+        }
+        if (effectivePolicy.navButtonEnabled() && (effectivePolicy.navButtonIcon() == null || effectivePolicy.navButtonIcon().isBlank())) {
+            throw new IllegalArgumentException("Nav Button icon is required when Nav Button access is enabled.");
+        }
+        if (effectivePolicy.privateUrlEnabled()) {
+            validateRoutePathOrThrow("Private URL", effectivePolicy.privateUrlPath());
+            ensureRoutePathUnique(surfaceUuid, effectivePolicy.privateUrlPath());
+        }
+        if (effectivePolicy.publicUrlEnabled()) {
+            validateRoutePathOrThrow("Public URL", effectivePolicy.publicUrlPath());
+            ensureRoutePathUnique(surfaceUuid, effectivePolicy.publicUrlPath());
+        }
+        if (effectivePolicy.privateUrlEnabled() && effectivePolicy.publicUrlEnabled()
+                && effectivePolicy.privateUrlPath().equals(effectivePolicy.publicUrlPath())) {
+            throw new IllegalArgumentException("Private URL and Public URL paths must be different.");
+        }
+        if (!logoDataUrl.isBlank()) {
+            validateLogoDataUrlOrThrow(logoDataUrl);
+        }
+    }
+
+    private void validateRoutePathOrThrow(String label, String path) {
+        if (path == null || path.isBlank()) {
+            throw new IllegalArgumentException(label + " path is required when enabled.");
+        }
+        if (!ROUTE_PATH_PATTERN.matcher(path).matches()) {
+            throw new IllegalArgumentException(label + " path must be 3-64 characters and use lowercase letters, numbers, or '-'.");
+        }
+    }
+
+    private void ensureRoutePathUnique(String surfaceUuid, String path) {
+        try (var stream = surfaceRepository.list(0, Integer.MAX_VALUE)) {
+            boolean exists = stream.anyMatch(surface -> {
+                if (surface == null) {
+                    return false;
+                }
+                if (surfaceUuid != null && surfaceUuid.equals(surface.uuid())) {
+                    return false;
+                }
+                Surface.AccessPolicy policy = surface.accessPolicy();
+                if (policy == null) {
+                    return false;
+                }
+                if (policy.privateUrlEnabled() && path.equals(policy.privateUrlPath())) {
+                    return true;
+                }
+                return policy.publicUrlEnabled() && path.equals(policy.publicUrlPath());
+            });
+            if (exists) {
+                throw new IllegalArgumentException("Access path already exists: " + path);
+            }
+        }
+    }
+
+    private String normalizeRoutePath(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        return raw.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String normalizeLogoDataUrl(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        return raw.trim();
+    }
+
+    private void validateLogoDataUrlOrThrow(String logoDataUrl) {
+        if (logoDataUrl.length() > MAX_LOGO_DATA_URL_LENGTH) {
+            throw new IllegalArgumentException("Logo image is too large.");
+        }
+        if (!DATA_URL_PATTERN.matcher(logoDataUrl).matches()) {
+            throw new IllegalArgumentException("Logo must be an image data URL.");
         }
     }
 

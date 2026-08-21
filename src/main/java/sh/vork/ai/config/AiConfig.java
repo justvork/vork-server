@@ -68,11 +68,13 @@ import sh.vork.ai.function.CreateSkillRequest;
 import sh.vork.ai.function.DeleteMongoDbDocumentsRequest;
 import sh.vork.ai.function.DeleteSshConnectionRequest;
 import sh.vork.ai.function.DeleteTypeInstanceRequest;
+import sh.vork.ai.function.DecryptStringRequest;
 import sh.vork.ai.function.DesignSkillRequest;
 import sh.vork.ai.function.DisconnectSshRequest;
 import sh.vork.ai.function.DiscoverExportableTypesRequest;
 import sh.vork.ai.function.DownloadFileRequest;
 import sh.vork.ai.function.DownloadFolderAsZipRequest;
+import sh.vork.ai.function.EncryptStringRequest;
 import sh.vork.ai.function.ExecuteCommandAndOutputRequest;
 import sh.vork.ai.function.ExecuteTerminalCommandRequest;
 import sh.vork.ai.function.ExportAllJavaTypeDataRequest;
@@ -98,6 +100,7 @@ import sh.vork.ai.function.ListEnumValuesRequest;
 import sh.vork.ai.function.ListFilesRequest;
 import sh.vork.ai.function.ListJavaTypesRequest;
 import sh.vork.ai.function.ListMongoDbCollectionsRequest;
+import sh.vork.ai.function.ListNotificationLedgerEntriesRequest;
 import sh.vork.ai.function.ListNotificationProvidersRequest;
 import sh.vork.ai.function.ListSshConnectionsRequest;
 import sh.vork.ai.function.ListTypeInstancesRequest;
@@ -116,6 +119,7 @@ import sh.vork.ai.function.SshConnectRequest;
 import sh.vork.ai.function.SshCreateConnectionRequest;
 import sh.vork.ai.function.StartProcessRequest;
 import sh.vork.ai.function.StopProcessRequest;
+import sh.vork.ai.function.SummarizeNotificationLedgerRequest;
 import sh.vork.ai.function.UpdateMongoDbDocumentsRequest;
 import sh.vork.ai.function.UploadFileRequest;
 import sh.vork.ai.function.UploadTextFileRequest;
@@ -134,6 +138,7 @@ import sh.vork.ai.registry.Hidden;
 import sh.vork.ai.registry.ToolCategory;
 import sh.vork.ai.registry.ToolDepends;
 import sh.vork.ai.registry.ToolRegistry;
+import sh.vork.ai.security.encrypt.EncryptionService;
 import sh.vork.ai.security.AuthorizationRuleEngine;
 import sh.vork.ai.security.LoggedToolCallback;
 import sh.vork.ai.security.Restricted;
@@ -183,9 +188,11 @@ import sh.vork.filesystem.FileDescriptor;
 import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.knowledge.KnowledgeEntry;
 import sh.vork.knowledge.KnowledgeService;
+import sh.vork.notification.NotificationLedgerEntry;
 import sh.vork.notification.service.DirectNotificationService;
 import sh.vork.oauth.OAuthClientService;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.orm.SearchQuery;
 import sh.vork.orm.SortOrder;
 import sh.vork.scheduling.domain.DurationType;
 import sh.vork.scheduling.domain.InvocationType;
@@ -1208,6 +1215,98 @@ the protocol and will break the system. Do not converse. Execute.
                 .inputType(Base64DecodeStringRequest.class)
                 .build();
     }
+
+    @Bean
+    @Restricted
+    @ToolCategory("Encoding & Crypto")
+    public ToolCallback encryptString(EncryptionService encryptionService,
+                                      SessionFileSystem sessionFileSystem) {
+        return FunctionToolCallback
+                .builder("encryptString", (EncryptStringRequest req) -> {
+                    if (req == null || req.input() == null || req.input().isBlank()) {
+                        throw new IllegalArgumentException("input is required");
+                    }
+                    if (hasLegacyKeyPathMode(req.privateKeyPath(), req.publicKeyPath())) {
+                        String activeSessionUuid = resolveSessionUuid();
+                        KeyMaterial keyMaterial = resolveLegacyKeyMaterial(
+                                sessionFileSystem,
+                                activeSessionUuid,
+                                req.privateKeyPath(),
+                                req.publicKeyPath());
+                        if (keyMaterial != null) {
+                            return encryptionService.encryptWithLegacyKeys(
+                                    req.input(),
+                                    keyMaterial.privateKeyBytes(),
+                                    keyMaterial.publicKeyBytes());
+                        }
+                    }
+                    return encryptionService.encrypt(req.input(), req.privateKeyPath(), req.publicKeyPath());
+                })
+                .description("Encrypt a UTF-8 string using the internal EncryptionService. "
+                        + "Optionally provide privateKeyPath+publicKeyPath to use legacy file-backed RSA key mode.")
+                .inputType(EncryptStringRequest.class)
+                .build();
+    }
+
+    @Bean
+    @Restricted
+    @ToolCategory("Encoding & Crypto")
+    public ToolCallback decryptString(EncryptionService encryptionService,
+                                      SessionFileSystem sessionFileSystem) {
+        return FunctionToolCallback
+                .builder("decryptString", (DecryptStringRequest req) -> {
+                    if (req == null || req.input() == null || req.input().isBlank()) {
+                        throw new IllegalArgumentException("input is required");
+                    }
+                    if (hasLegacyKeyPathMode(req.privateKeyPath(), req.publicKeyPath())) {
+                        String activeSessionUuid = resolveSessionUuid();
+                        KeyMaterial keyMaterial = resolveLegacyKeyMaterial(
+                                sessionFileSystem,
+                                activeSessionUuid,
+                                req.privateKeyPath(),
+                                req.publicKeyPath());
+                        if (keyMaterial != null) {
+                            return encryptionService.decryptWithLegacyKeys(
+                                    req.input(),
+                                    keyMaterial.privateKeyBytes(),
+                                    keyMaterial.publicKeyBytes());
+                        }
+                    }
+                    return encryptionService.decrypt(req.input(), req.privateKeyPath(), req.publicKeyPath());
+                })
+                .description("Decrypt text using the internal EncryptionService. "
+                        + "Optionally provide privateKeyPath+publicKeyPath to use legacy file-backed RSA key mode.")
+                .inputType(DecryptStringRequest.class)
+                .build();
+    }
+
+    private static boolean hasLegacyKeyPathMode(String privateKeyPath, String publicKeyPath) {
+        return (privateKeyPath != null && !privateKeyPath.isBlank())
+                || (publicKeyPath != null && !publicKeyPath.isBlank());
+    }
+
+    private static KeyMaterial resolveLegacyKeyMaterial(SessionFileSystem sessionFileSystem,
+                                                        String sessionUuid,
+                                                        String privateKeyPath,
+                                                        String publicKeyPath) {
+        if (sessionUuid == null || sessionUuid.isBlank() || "system".equals(sessionUuid)) {
+            return null;
+        }
+        if (privateKeyPath == null || privateKeyPath.isBlank() || publicKeyPath == null || publicKeyPath.isBlank()) {
+            return null;
+        }
+
+        try (java.io.InputStream privateIn = sessionFileSystem.read(FileArea.SESSION, sessionUuid, privateKeyPath);
+             java.io.InputStream publicIn = sessionFileSystem.read(FileArea.SESSION, sessionUuid, publicKeyPath)) {
+            byte[] privateBytes = privateIn.readAllBytes();
+            byte[] publicBytes = publicIn.readAllBytes();
+            return new KeyMaterial(privateBytes, publicBytes);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private record KeyMaterial(byte[] privateKeyBytes, byte[] publicKeyBytes) {}
 
     @Bean
     @Restricted
@@ -3348,6 +3447,179 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
     }
 
     /**
+     * {@code listNotificationLedgerEntries} tool — returns notification send
+     * ledger rows for troubleshooting and audit.
+     */
+    @Bean
+    @Restricted
+    @ToolCategory("Notifications")
+    public ToolCallback listNotificationLedgerEntries(DatabaseRepository<NotificationLedgerEntry> notificationLedgerRepository) {
+        return FunctionToolCallback
+                .builder("listNotificationLedgerEntries",
+                        (ListNotificationLedgerEntriesRequest req) -> {
+                            log.debug("Tool listNotificationLedgerEntries invoked: req={}", req);
+                            try {
+                                int page = req == null || req.page() == null ? 0 : Math.max(0, req.page());
+                                int pageSize = req == null || req.pageSize() == null ? 50 : Math.max(1, req.pageSize());
+
+                                List<SearchQuery> filters = new ArrayList<>();
+                                if (req != null && req.finalState() != null && !req.finalState().isBlank()) {
+                                    filters.add(SearchQuery.eq("finalState", req.finalState().trim().toUpperCase(Locale.ROOT)));
+                                }
+                                if (req != null && req.idempotencyKey() != null && !req.idempotencyKey().isBlank()) {
+                                    filters.add(SearchQuery.eq("idempotencyKey", req.idempotencyKey().trim()));
+                                }
+                                if (req != null && req.destination() != null && !req.destination().isBlank()) {
+                                    filters.add(SearchQuery.eq("destination", req.destination().trim()));
+                                }
+                                if (req != null && req.providerConfigId() != null && !req.providerConfigId().isBlank()) {
+                                    filters.add(SearchQuery.eq("providerConfigId", req.providerConfigId().trim()));
+                                }
+
+                                SearchQuery[] searchQueries = filters.toArray(SearchQuery[]::new);
+                                long total = notificationLedgerRepository.searchCount(searchQueries);
+                                List<NotificationLedgerEntry> entries;
+                                try (var stream = notificationLedgerRepository.search(
+                                        page,
+                                        pageSize,
+                                        "createdAt",
+                                        SortOrder.DESC,
+                                        searchQueries)) {
+                                    entries = stream.toList();
+                                }
+
+                                Map<String, Object> payload = new LinkedHashMap<>();
+                                payload.put("status", "ok");
+                                payload.put("total", total);
+                                payload.put("page", page);
+                                payload.put("pageSize", pageSize);
+                                payload.put("entries", entries);
+                                return objectMapper.writeValueAsString(payload);
+                            } catch (Exception e) {
+                                return "{\"status\":\"error\",\"message\":\""
+                                        + (e.getMessage() == null ? "ledger query failed" : e.getMessage().replace("\"", "'"))
+                                        + "\"}";
+                            }
+                        })
+                .description(
+                        "List notification delivery ledger entries for troubleshooting and audit. "
+                                + "Supports optional filters: finalState (SENT|FAILED|ALREADY_SENT), "
+                                + "idempotencyKey, destination, and providerConfigId. "
+                                + "Returns paged entries sorted by createdAt descending.")
+                .inputType(ListNotificationLedgerEntriesRequest.class)
+                .build();
+    }
+
+    /**
+     * {@code summarizeNotificationLedger} tool — returns aggregate delivery
+     * health stats without returning full ledger rows.
+     */
+    @Bean
+    @Restricted
+    @ToolCategory("Notifications")
+    public ToolCallback summarizeNotificationLedger(DatabaseRepository<NotificationLedgerEntry> notificationLedgerRepository) {
+        return FunctionToolCallback
+                .builder("summarizeNotificationLedger",
+                        (SummarizeNotificationLedgerRequest req) -> {
+                            log.debug("Tool summarizeNotificationLedger invoked: req={}", req);
+                            try {
+                                List<SearchQuery> filters = new ArrayList<>();
+                                if (req != null && req.providerConfigId() != null && !req.providerConfigId().isBlank()) {
+                                    filters.add(SearchQuery.eq("providerConfigId", req.providerConfigId().trim()));
+                                }
+                                if (req != null && req.idempotencyGroup() != null && !req.idempotencyGroup().isBlank()) {
+                                    filters.add(SearchQuery.eq("idempotencyGroup", req.idempotencyGroup().trim()));
+                                }
+                                if (req != null && req.destination() != null && !req.destination().isBlank()) {
+                                    filters.add(SearchQuery.eq("destination", req.destination().trim()));
+                                }
+                                if (req != null && req.sinceEpochMillis() != null) {
+                                    filters.add(SearchQuery.gte("createdAt", req.sinceEpochMillis()));
+                                }
+
+                                SearchQuery[] searchQueries = filters.toArray(SearchQuery[]::new);
+                                long total = notificationLedgerRepository.searchCount(searchQueries);
+
+                                Map<String, Long> byFinalState = new LinkedHashMap<>();
+                                Map<String, Long> byProviderKey = new LinkedHashMap<>();
+                                Map<String, Long> byMediaType = new LinkedHashMap<>();
+                                java.util.Set<String> uniqueDestinations = new java.util.HashSet<>();
+                                long duplicateSuppressedCount = 0L;
+
+                                final int pageSize = 500;
+                                int page = 0;
+                                while (true) {
+                                    List<NotificationLedgerEntry> entries;
+                                    try (var stream = notificationLedgerRepository.search(
+                                            page,
+                                            pageSize,
+                                            "createdAt",
+                                            SortOrder.DESC,
+                                            searchQueries)) {
+                                        entries = stream.toList();
+                                    }
+
+                                    if (entries.isEmpty()) {
+                                        break;
+                                    }
+
+                                    for (NotificationLedgerEntry entry : entries) {
+                                        String finalState = entry.finalState() == null
+                                                ? "UNKNOWN"
+                                                : entry.finalState().name();
+                                        byFinalState.merge(finalState, 1L, Long::sum);
+
+                                        String providerKey = entry.providerKey() == null || entry.providerKey().isBlank()
+                                                ? "UNKNOWN"
+                                                : entry.providerKey();
+                                        byProviderKey.merge(providerKey, 1L, Long::sum);
+
+                                        String mediaType = entry.mediaType() == null || entry.mediaType().isBlank()
+                                                ? "UNKNOWN"
+                                                : entry.mediaType();
+                                        byMediaType.merge(mediaType, 1L, Long::sum);
+
+                                        if (entry.destination() != null && !entry.destination().isBlank()) {
+                                            uniqueDestinations.add(entry.destination());
+                                        }
+
+                                        if ("ALREADY_SENT".equals(finalState)) {
+                                            duplicateSuppressedCount++;
+                                        }
+                                    }
+
+                                    if (entries.size() < pageSize) {
+                                        break;
+                                    }
+                                    page++;
+                                }
+
+                                Map<String, Object> payload = new LinkedHashMap<>();
+                                payload.put("status", "ok");
+                                payload.put("total", total);
+                                payload.put("duplicateSuppressedCount", duplicateSuppressedCount);
+                                payload.put("uniqueDestinationCount", uniqueDestinations.size());
+                                payload.put("byFinalState", byFinalState);
+                                payload.put("byProviderKey", byProviderKey);
+                                payload.put("byMediaType", byMediaType);
+                                payload.put("appliedFilters", req == null ? Map.of() : req);
+                                return objectMapper.writeValueAsString(payload);
+                            } catch (Exception e) {
+                                return "{\"status\":\"error\",\"message\":\""
+                                        + (e.getMessage() == null ? "ledger summary failed" : e.getMessage().replace("\"", "'"))
+                                        + "\"}";
+                            }
+                        })
+                .description(
+                        "Summarize notification ledger delivery outcomes as aggregate counts. "
+                                + "Returns totals and grouped counts by finalState, providerKey, and mediaType, "
+                                + "plus duplicateSuppressedCount and uniqueDestinationCount. "
+                                + "Optional filters: sinceEpochMillis, providerConfigId, idempotencyGroup, destination.")
+                .inputType(SummarizeNotificationLedgerRequest.class)
+                .build();
+    }
+
+    /**
      * {@code sendNotification} tool — sends a notification to an arbitrary address
      * using a specific configured provider.
      *
@@ -3364,23 +3636,41 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
                         (SendNotificationRequest req) -> {
                             log.debug("Tool sendNotification invoked: providerConfigId={}, address={}",
                                     req.providerConfigId(), req.address());
-                            String result = directNotificationService.send(
+                            DirectNotificationService.SendResult result = directNotificationService.send(
                                     req.providerConfigId(),
                                     req.title(),
                                     req.body(),
                                     req.bodyContentType(),
+                                    req.idempotencyGroup(),
+                                    req.originatingAgent(),
+                                    req.originatingSkill(),
                                     req.address());
-                            if ("ok".equals(result)) {
-                                return "{\"status\":\"ok\"}";
+                            try {
+                                java.util.Map<String, Object> payload = new java.util.LinkedHashMap<>();
+                                payload.put("status", result.status());
+                                if (result.message() != null && !result.message().isBlank()) {
+                                    payload.put("message", result.message());
+                                }
+                                if (result.ledgerEntryId() != null && !result.ledgerEntryId().isBlank()) {
+                                    payload.put("ledgerEntryId", result.ledgerEntryId());
+                                }
+                                if (result.idempotencyKey() != null && !result.idempotencyKey().isBlank()) {
+                                    payload.put("idempotencyKey", result.idempotencyKey());
+                                }
+                                return objectMapper.writeValueAsString(payload);
+                            } catch (Exception e) {
+                                return "{\"status\":\"error\",\"message\":\""
+                                        + (e.getMessage() == null ? "serialization failed" : e.getMessage().replace("\"", "'"))
+                                        + "\"}";
                             }
-                            return "{\"status\":\"error\",\"message\":\""
-                                    + result.replace("\"", "'") + "\"}";
                         })
                 .description(
                         "Send a notification to an arbitrary email address or phone number. "
                         + "Call listNotificationProviders first to get a valid providerConfigId "
                         + "and confirm the address type is supported. "
                     + "For email providers, set bodyContentType=text/html to send HTML email. "
+                        + "Optional idempotencyGroup suppresses duplicate successful sends to the same "
+                        + "mediaType+address and returns status=already sent when deduplicated. "
                         + "address must match the provider type: email address for email providers, "
                         + "E.164 phone number (e.g. +14155552671) for SMS providers.")
                 .inputType(SendNotificationRequest.class)

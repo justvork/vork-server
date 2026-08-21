@@ -21,6 +21,14 @@ const thinkingToggleBtn = document.getElementById('thinking-toggle');
 const sidebarToggles = document.querySelectorAll('[data-role="sidebar-toggle"]');
 const newChatBtn     = document.getElementById('new-chat-btn');
 const sessionListEl  = document.getElementById('chat-session-list');
+const sandboxFilesTree = document.getElementById('sandbox-files-tree');
+const sandboxFilesTarget = document.getElementById('sandbox-files-target');
+const sandboxFilesStatus = document.getElementById('sandbox-files-status');
+const sandboxFilesRefreshBtn = document.getElementById('sandbox-files-refresh-btn');
+const sandboxFilesDownloadBtn = document.getElementById('sandbox-files-download-btn');
+const sandboxFilesNewFolderBtn = document.getElementById('sandbox-files-new-folder-btn');
+const sandboxFilesUploadBtn = document.getElementById('sandbox-files-upload-btn');
+const sandboxFileInput = document.getElementById('sandbox-file-input');
 
 let sessionUuid = null;
 let stomp       = null;
@@ -37,6 +45,9 @@ let sessionMessagePollTimer = null;
 let renderedMessageUuids = new Set();
 let lastRenderedMessageUuid = null;
 let currentAgentTemplateId = null;
+let sandboxSelectedPath = null;
+let sandboxSelectedIsDirectory = false;
+let sandboxLoadedDirs = new Map();
 
 const SESSION_MESSAGE_POLL_MS = 2000;
 
@@ -665,6 +676,9 @@ function renderExternalCampaignWaitRow(campaign) {
     removeExternalCampaignWaitRows();
     const row = document.createElement('div');
     row.className = 'external-campaign-wait-row';
+    const rowCampaignUuid = campaign && campaign.campaignUuid
+        ? String(campaign.campaignUuid).trim()
+        : '';
     const promptText = (campaign && typeof campaign.promptText === 'string' && campaign.promptText.trim())
         ? campaign.promptText.trim()
         : 'External information request in progress.';
@@ -690,12 +704,18 @@ function renderExternalCampaignWaitRow(campaign) {
 
     const cancelBtn = row.querySelector('.external-campaign-cancel-btn');
     cancelBtn.addEventListener('click', function () {
-        if (!sessionUuid || !externalCampaignLock || !externalCampaignLock.campaignUuid) {
+        const activeCampaignUuid = externalCampaignLock && externalCampaignLock.campaignUuid
+            ? String(externalCampaignLock.campaignUuid).trim()
+            : '';
+        const campaignUuid = activeCampaignUuid || rowCampaignUuid;
+
+        if (!sessionUuid || !campaignUuid) {
+            renderMessage({ role: 'ERROR', content: 'Unable to cancel request: campaign is not active.' });
             return;
         }
         cancelBtn.disabled = true;
         fetch('/api/chat/session/' + encodeURIComponent(sessionUuid)
-            + '/request-campaign/' + encodeURIComponent(externalCampaignLock.campaignUuid)
+            + '/request-campaign/' + encodeURIComponent(campaignUuid)
             + '/cancel',
             { method: 'POST' })
             .then(function (resp) { return resp.ok ? resp.json() : Promise.reject(new Error('HTTP ' + resp.status)); })
@@ -2206,6 +2226,9 @@ function switchSidebarTab(tabName) {
     if (tabName === 'skills' && sessionUuid) {
         loadSkillsPanel(sessionUuid);
     }
+    if (tabName === 'files' && sessionUuid) {
+        loadSandboxFileTree();
+    }
 }
 
 sidebarTabBtns.forEach(function (btn) {
@@ -2222,6 +2245,297 @@ if (sidebarToggles && sidebarToggles.length > 0) {
         btn.addEventListener('click', function () {
             document.body.classList.toggle('sidebar-collapsed');
         });
+    });
+}
+
+// ── Session sandbox files panel ─────────────────────────────────────────────
+
+function setSandboxStatus(text, isError) {
+    if (!sandboxFilesStatus) return;
+    sandboxFilesStatus.textContent = text;
+    sandboxFilesStatus.classList.toggle('error', !!isError);
+}
+
+function sandboxFileIconClass(name) {
+    if (!name) return 'fa-file text-zinc-400';
+    const lower = name.toLowerCase();
+    if (lower.endsWith('.pem') || lower.endsWith('.key') || lower.endsWith('.pub')) return 'fa-key text-amber-300';
+    if (lower.endsWith('.json') || lower.endsWith('.yaml') || lower.endsWith('.yml')) return 'fa-file-code text-sky-300';
+    if (lower.endsWith('.txt') || lower.endsWith('.md') || lower.endsWith('.log')) return 'fa-file-lines text-zinc-300';
+    return 'fa-file text-zinc-400';
+}
+
+function sandboxParentDirectory(path) {
+    if (!path) return '';
+    const normalized = String(path);
+    const idx = normalized.lastIndexOf('/');
+    if (idx <= 0) {
+        return idx === 0 ? '' : '';
+    }
+    return normalized.substring(0, idx);
+}
+
+function sandboxJoinPath(dir, name) {
+    const cleanDir = (dir || '').replace(/^\/+|\/+$/g, '');
+    const cleanName = (name || '').replace(/^\/+/, '');
+    return cleanDir ? (cleanDir + '/' + cleanName) : cleanName;
+}
+
+function currentSandboxUploadDir() {
+    if (!sandboxSelectedPath) {
+        return '';
+    }
+    if (sandboxSelectedIsDirectory) {
+        return sandboxSelectedPath;
+    }
+    return sandboxParentDirectory(sandboxSelectedPath);
+}
+
+function syncSandboxUploadTargetLabel() {
+    if (!sandboxFilesTarget) return;
+    const dir = currentSandboxUploadDir();
+    sandboxFilesTarget.textContent = 'Upload target: /' + (dir || '');
+}
+
+function resolveSandboxUploadPath(fileName) {
+    const dir = currentSandboxUploadDir();
+    return sandboxJoinPath(dir, fileName);
+}
+
+async function loadSandboxFileTree() {
+    if (!sandboxFilesTree) return;
+    if (!sessionUuid) {
+        sandboxFilesTree.innerHTML = '<div class="text-xs text-zinc-500 p-1">No active session.</div>';
+        return;
+    }
+
+    setSandboxStatus('Loading files...', false);
+    try {
+        const res = await fetch('/api/session-files/list?area=SESSION&sessionUuid=' + encodeURIComponent(sessionUuid));
+        if (!res.ok) {
+            sandboxFilesTree.innerHTML = '<div class="text-xs text-rose-300 p-1">Failed to load files.</div>';
+            setSandboxStatus('Failed to load files.', true);
+            return;
+        }
+        const payload = await res.json();
+        sandboxLoadedDirs.clear();
+        renderSandboxTree(payload.items || [], sandboxFilesTree, '');
+        syncSandboxUploadTargetLabel();
+        setSandboxStatus('Ready.', false);
+    } catch (e) {
+        sandboxFilesTree.innerHTML = '<div class="text-xs text-rose-300 p-1">' + escapeHtml(e.message || 'Load failed') + '</div>';
+        setSandboxStatus('Failed to load files.', true);
+    }
+}
+
+function renderSandboxTree(items, container, parentPath) {
+    container.innerHTML = '';
+    if (!items || items.length === 0) {
+        container.innerHTML = '<div class="text-xs text-zinc-500 p-1">No files</div>';
+        return;
+    }
+
+    const sorted = items.slice().sort(function (a, b) {
+        if (a.directory === b.directory) {
+            return (a.name || '').localeCompare(b.name || '');
+        }
+        return a.directory ? -1 : 1;
+    });
+
+    sorted.forEach(function (item) {
+        const fullPath = parentPath ? parentPath + '/' + item.name : item.name;
+        const node = document.createElement('div');
+        node.className = 'sandbox-node';
+
+        const row = document.createElement('div');
+        row.className = 'sandbox-item' + (sandboxSelectedPath === fullPath ? ' selected' : '');
+        row.title = fullPath;
+
+        const iconClass = item.directory ? 'fa-folder text-amber-400' : sandboxFileIconClass(item.name);
+        row.innerHTML = '<i class="fa-solid ' + iconClass + '"></i><span class="truncate">' + escapeHtml(item.name) + '</span>';
+
+        if (item.directory) {
+            const children = document.createElement('div');
+            children.className = 'sandbox-children';
+            children.style.display = 'none';
+
+            row.addEventListener('click', function () {
+                sandboxSelectedPath = fullPath;
+                sandboxSelectedIsDirectory = true;
+                refreshSandboxSelectedStyle();
+                syncSandboxUploadTargetLabel();
+                if (children.style.display === 'none') {
+                    if (!sandboxLoadedDirs.has(fullPath)) {
+                        loadSandboxDirectory(fullPath, children);
+                        sandboxLoadedDirs.set(fullPath, true);
+                    }
+                    children.style.display = 'block';
+                } else {
+                    children.style.display = 'none';
+                }
+            });
+
+            node.appendChild(row);
+            node.appendChild(children);
+        } else {
+            row.addEventListener('click', function () {
+                sandboxSelectedPath = fullPath;
+                sandboxSelectedIsDirectory = false;
+                refreshSandboxSelectedStyle();
+                syncSandboxUploadTargetLabel();
+                setSandboxStatus('Selected file: ' + fullPath, false);
+            });
+            node.appendChild(row);
+        }
+
+        container.appendChild(node);
+    });
+}
+
+function refreshSandboxSelectedStyle() {
+    if (!sandboxFilesTree) return;
+    const rows = sandboxFilesTree.querySelectorAll('.sandbox-item');
+    rows.forEach(function (row) {
+        row.classList.remove('selected');
+        if (row.title === sandboxSelectedPath) {
+            row.classList.add('selected');
+        }
+    });
+}
+
+async function loadSandboxDirectory(dir, container) {
+    try {
+        const res = await fetch('/api/session-files/list?area=SESSION&sessionUuid=' + encodeURIComponent(sessionUuid)
+            + '&dir=' + encodeURIComponent(dir));
+        if (!res.ok) {
+            container.innerHTML = '<div class="text-xs text-rose-300 p-1">Failed to load.</div>';
+            return;
+        }
+        const payload = await res.json();
+        renderSandboxTree(payload.items || [], container, dir);
+    } catch (e) {
+        container.innerHTML = '<div class="text-xs text-rose-300 p-1">' + escapeHtml(e.message || 'Load failed') + '</div>';
+    }
+}
+
+async function uploadSandboxFile(file) {
+    if (!file || !sessionUuid) return;
+    setSandboxStatus('Uploading ' + file.name + ' ...', false);
+    const formData = new FormData();
+    formData.append('file', file);
+    const targetPath = resolveSandboxUploadPath(file.name);
+    const uploadUrl = '/api/session-files/upload?area=SESSION&sessionUuid=' + encodeURIComponent(sessionUuid)
+        + '&path=' + encodeURIComponent(targetPath);
+
+    const resp = await fetch(uploadUrl, { method: 'POST', body: formData });
+    if (!resp.ok) {
+        let message = 'Upload failed';
+        try {
+            const body = await resp.json();
+            if (body && body.message) {
+                message = body.message;
+            }
+        } catch (_) {
+            // ignore json parse errors
+        }
+        throw new Error(message);
+    }
+    return resp.json();
+}
+
+async function uploadSandboxFiles(files) {
+    if (!files || files.length === 0) return;
+    let success = 0;
+    for (const file of files) {
+        try {
+            await uploadSandboxFile(file);
+            success++;
+        } catch (e) {
+            setSandboxStatus('Upload failed for ' + file.name + ': ' + (e.message || 'error'), true);
+            return;
+        }
+    }
+    setSandboxStatus('Uploaded ' + success + ' file' + (success === 1 ? '' : 's') + '.', false);
+    await loadSandboxFileTree();
+}
+
+async function createSandboxFolder() {
+    if (!sessionUuid) return;
+    const baseDir = currentSandboxUploadDir();
+    const displayBaseDir = '/' + (baseDir || '');
+    const name = window.prompt('Folder name (inside ' + displayBaseDir + '):');
+    if (!name || !name.trim()) return;
+
+    const targetDir = sandboxJoinPath(baseDir, name.trim());
+    setSandboxStatus('Creating folder...', false);
+    try {
+        const res = await fetch('/api/session-files/create-folder?area=SESSION&sessionUuid=' + encodeURIComponent(sessionUuid)
+            + '&dir=' + encodeURIComponent(targetDir), { method: 'POST' });
+        if (!res.ok) {
+            let message = 'Failed to create folder';
+            try {
+                const body = await res.json();
+                if (body && body.message) {
+                    message = body.message;
+                }
+            } catch (_) {
+                // ignore json parse errors
+            }
+            throw new Error(message);
+        }
+        setSandboxStatus('Folder created: /' + targetDir, false);
+        await loadSandboxFileTree();
+    } catch (e) {
+        setSandboxStatus(e.message || 'Failed to create folder', true);
+    }
+}
+
+if (sandboxFilesRefreshBtn) {
+    sandboxFilesRefreshBtn.addEventListener('click', function () {
+        loadSandboxFileTree();
+    });
+}
+
+if (sandboxFilesDownloadBtn) {
+    sandboxFilesDownloadBtn.addEventListener('click', function () {
+        if (!sessionUuid) {
+            setSandboxStatus('No active session.', true);
+            return;
+        }
+        if (!sandboxSelectedPath) {
+            setSandboxStatus('Select a file to download.', true);
+            return;
+        }
+        if (sandboxSelectedIsDirectory) {
+            setSandboxStatus('Selected item is a folder. Select a file to download.', true);
+            return;
+        }
+        const url = '/api/session-files/download?area=SESSION&sessionUuid=' + encodeURIComponent(sessionUuid)
+            + '&path=' + encodeURIComponent(sandboxSelectedPath);
+        window.open(url, '_blank', 'noopener');
+        setSandboxStatus('Downloading ' + sandboxSelectedPath + ' ...', false);
+    });
+}
+
+if (sandboxFilesNewFolderBtn) {
+    sandboxFilesNewFolderBtn.addEventListener('click', function () {
+        createSandboxFolder();
+    });
+}
+
+if (sandboxFilesUploadBtn && sandboxFileInput) {
+    sandboxFilesUploadBtn.addEventListener('click', function () {
+        if (!sessionUuid) {
+            setSandboxStatus('No active session.', true);
+            return;
+        }
+        sandboxFileInput.value = '';
+        sandboxFileInput.click();
+    });
+
+    sandboxFileInput.addEventListener('change', function () {
+        const files = Array.from(sandboxFileInput.files || []);
+        uploadSandboxFiles(files);
     });
 }
 
@@ -2446,7 +2760,16 @@ async function removeSessionReflectionBindingAction(uuid, bindingUuid) {
     try {
         const resp = await fetch('/api/chat/session/' + encodeURIComponent(uuid)
             + '/session-reflection-bindings/' + encodeURIComponent(bindingUuid), { method: 'DELETE' });
-        if (resp.ok) loadSkillsPanel(uuid);
+        if (resp.ok) {
+            loadSkillsPanel(uuid);
+            return;
+        }
+        const body = await resp.json().catch(function () { return null; });
+        const message = body && body.message
+            ? body.message
+            : ('Failed to remove session reflection binding (HTTP ' + resp.status + ').');
+        if (typeof showAlert === 'function') showAlert(message, 'danger');
+        console.warn('removeSessionReflectionBinding failed:', message);
     } catch (e) { console.error('removeSessionReflectionBinding failed:', e); }
 }
 
@@ -2454,7 +2777,16 @@ async function addSessionReflectionBindingAction(uuid, bindingUuid) {
     try {
         const resp = await fetch('/api/chat/session/' + encodeURIComponent(uuid)
             + '/session-reflection-bindings/' + encodeURIComponent(bindingUuid), { method: 'POST' });
-        if (resp.ok) loadSkillsPanel(uuid);
+        if (resp.ok) {
+            loadSkillsPanel(uuid);
+            return;
+        }
+        const body = await resp.json().catch(function () { return null; });
+        const message = body && body.message
+            ? body.message
+            : ('Failed to add session reflection binding (HTTP ' + resp.status + ').');
+        if (typeof showAlert === 'function') showAlert(message, 'danger');
+        console.warn('addSessionReflectionBinding failed:', message);
     } catch (e) { console.error('addSessionReflectionBinding failed:', e); }
 }
 
@@ -2462,7 +2794,16 @@ async function removeSessionMcpBindingAction(uuid, bindingUuid) {
     try {
         const resp = await fetch('/api/chat/session/' + encodeURIComponent(uuid)
             + '/session-mcp-bindings/' + encodeURIComponent(bindingUuid), { method: 'DELETE' });
-        if (resp.ok) loadSkillsPanel(uuid);
+        if (resp.ok) {
+            loadSkillsPanel(uuid);
+            return;
+        }
+        const body = await resp.json().catch(function () { return null; });
+        const message = body && body.message
+            ? body.message
+            : ('Failed to remove session MCP binding (HTTP ' + resp.status + ').');
+        if (typeof showAlert === 'function') showAlert(message, 'danger');
+        console.warn('removeSessionMcpBinding failed:', message);
     } catch (e) { console.error('removeSessionMcpBinding failed:', e); }
 }
 
@@ -2470,7 +2811,16 @@ async function addSessionMcpBindingAction(uuid, bindingUuid) {
     try {
         const resp = await fetch('/api/chat/session/' + encodeURIComponent(uuid)
             + '/session-mcp-bindings/' + encodeURIComponent(bindingUuid), { method: 'POST' });
-        if (resp.ok) loadSkillsPanel(uuid);
+        if (resp.ok) {
+            loadSkillsPanel(uuid);
+            return;
+        }
+        const body = await resp.json().catch(function () { return null; });
+        const message = body && body.message
+            ? body.message
+            : ('Failed to add session MCP binding (HTTP ' + resp.status + ').');
+        if (typeof showAlert === 'function') showAlert(message, 'danger');
+        console.warn('addSessionMcpBinding failed:', message);
     } catch (e) { console.error('addSessionMcpBinding failed:', e); }
 }
 
@@ -2980,6 +3330,7 @@ function loadSession(targetSessionUuid) {
             sessionDisplay.textContent = (data.sessionName || 'Untitled') + ' · ' + sessionUuid.substring(0, 8) + '…';
             loadAgents(data.activeAgentTemplateId);
             loadSkillsPanel(sessionUuid);
+            loadSandboxFileTree();
             clearConversationUi();
             const messages = data.messages || [];
             const lastPromptIndex = findLastUnansweredPromptIndex(messages);

@@ -29,6 +29,20 @@ public record SendNotificationRequest(
         @JsonPropertyDescription("Optional body MIME type. Supported values: text/plain (default) or text/html.")
         String bodyContentType,
 
+        @JsonProperty(value = "idempotencyGroup")
+        @JsonPropertyDescription(
+                "Optional logical idempotency group (for example sales-campaign-28-08-2026). "
+                + "When set, duplicate successful sends to the same media type + address are suppressed.")
+        String idempotencyGroup,
+
+        @JsonProperty(value = "originatingAgent")
+        @JsonPropertyDescription("Optional originating agent identifier for ledger traceability.")
+        String originatingAgent,
+
+        @JsonProperty(value = "originatingSkill")
+        @JsonPropertyDescription("Optional originating skill identifier for ledger traceability.")
+        String originatingSkill,
+
         @JsonProperty(required = true, value = "address")
         @JsonPropertyDescription(
                 "Delivery address appropriate for the chosen provider: "

@@ -6,8 +6,15 @@
 let surfaceModal;
 let surfacePublishModal;
 let allSurfaces = [];
+let allUsers = [];
 let autoSurfaceArtifactIdEnabled = true;
+let modalAssignedUsers = [];
+let modalLogoDataUrl = '';
+let modalSurfaceArtifactStatus = 'SNAPSHOT';
 let githubConnection;
+const LOGO_MAX_UPLOAD_BYTES = 1024 * 1024;
+const LOGO_TARGET_DIMENSION = 512;
+const LOGO_MAX_DATA_URL_LENGTH = 1500000;
 const csrfToken = document.querySelector('meta[name="_csrf"]')?.getAttribute('content') || '';
 const csrfHeader = document.querySelector('meta[name="_csrf_header"]')?.getAttribute('content') || 'X-CSRF-TOKEN';
 
@@ -30,6 +37,7 @@ document.addEventListener('DOMContentLoaded', function () {
         })
         : null;
     loadSurfaces();
+    loadUsers();
 
     document.getElementById('new-surface-btn').addEventListener('click', openCreate);
     document.getElementById('surface-save-btn').addEventListener('click', saveSurface);
@@ -54,6 +62,47 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    const assignedUserSearch = document.getElementById('surface-assigned-user-search');
+    if (assignedUserSearch) {
+        assignedUserSearch.addEventListener('input', function () {
+            filterAssignedUserDropdown();
+        });
+        assignedUserSearch.addEventListener('focus', function () {
+            filterAssignedUserDropdown();
+        });
+    }
+
+    const logoFileInput = document.getElementById('surface-logo-file');
+    if (logoFileInput) {
+        logoFileInput.addEventListener('change', handleLogoFileSelected);
+    }
+
+    const navIconSelect = document.getElementById('surface-policy-nav-icon');
+    if (navIconSelect) {
+        navIconSelect.addEventListener('change', updateNavIconPreview);
+    }
+
+    bindToggleButton('surface-published-toggle');
+    bindToggleButton('surface-policy-home-toggle');
+    bindToggleButton('surface-policy-nav-toggle', updateAccessPolicyInputStates);
+    bindToggleButton('surface-policy-private-toggle', updateAccessPolicyInputStates);
+    bindToggleButton('surface-policy-public-toggle', updateAccessPolicyInputStates);
+    bindToggleButton('surface-publish-breaking-change-toggle');
+    initSurfaceModalTabs();
+    setSurfaceModalTab('details');
+
+    document.addEventListener('click', function (event) {
+        const search = document.getElementById('surface-assigned-user-search');
+        const dropdown = document.getElementById('surface-assigned-user-dropdown');
+        if (!search || !dropdown) {
+            return;
+        }
+        if (!event.target.closest('#surface-assigned-user-search')
+            && !event.target.closest('#surface-assigned-user-dropdown')) {
+            dropdown.classList.add('hidden');
+        }
+    });
+
     const importBtn = document.getElementById('import-surfaces-btn');
     const importInput = document.getElementById('import-surfaces-input');
     if (importBtn && importInput) {
@@ -72,10 +121,29 @@ document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('surface-description').value = '';
         document.getElementById('surface-group-id').value = '';
         document.getElementById('surface-artifact-id').value = '';
+        setToggleButtonState('surface-published-toggle', false);
+        document.getElementById('surface-logo-file').value = '';
+        document.getElementById('surface-assigned-user-search').value = '';
+        setToggleButtonState('surface-policy-home-toggle', false);
+        setToggleButtonState('surface-policy-nav-toggle', false);
+        document.getElementById('surface-policy-nav-icon').value = '';
+        setToggleButtonState('surface-policy-private-toggle', false);
+        document.getElementById('surface-policy-private-path').value = '';
+        setToggleButtonState('surface-policy-public-toggle', false);
+        document.getElementById('surface-policy-public-path').value = '';
         clearIdentityValidation('surface-group-id', 'surface-group-id-error');
         clearIdentityValidation('surface-artifact-id', 'surface-artifact-id-error');
         document.getElementById('surface-modal-label').textContent = 'New Surface';
+        modalAssignedUsers = [];
+        modalLogoDataUrl = '';
+        renderAssignedUserPills();
+        renderLogoPreview();
+        updateAccessPolicyInputStates();
+        updateNavIconPreview();
+        setSurfaceModalTab('details');
         autoSurfaceArtifactIdEnabled = true;
+        modalSurfaceArtifactStatus = 'SNAPSHOT';
+        applySurfaceModalEditability('SNAPSHOT', true);
     });
 
     document.getElementById('surface-publish-modal').addEventListener('hidden.bs.modal', function () {
@@ -88,7 +156,7 @@ document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('surface-publish-pr-body').value = '';
         document.getElementById('surface-publish-release-notes').value = '';
         document.getElementById('surface-publish-reviewer-hints').value = '';
-        document.getElementById('surface-publish-breaking-change').checked = false;
+        setToggleButtonState('surface-publish-breaking-change-toggle', false);
         setSurfacePublishLoading(false);
     });
 });
@@ -106,6 +174,32 @@ async function loadSurfaces() {
         renderTable();
     } catch (e) {
         showAlert('Failed to load surfaces.', 'warning');
+    }
+}
+
+async function loadUsers() {
+    try {
+        const res = await fetch('/api/users');
+        if (!res.ok) {
+            allUsers = [];
+            return;
+        }
+        const users = await res.json();
+        allUsers = Array.isArray(users)
+            ? users.map(function (u) {
+                const username = (u && (u.username || u.uuid)) ? String(u.username || u.uuid).trim() : '';
+                return {
+                    username: username,
+                    displayName: u && u.displayName ? String(u.displayName).trim() : '',
+                    role: u && u.role ? String(u.role).trim() : '',
+                    enabled: !(u && u.enabled === false)
+                };
+            }).filter(function (u) {
+                return u.username && u.enabled;
+            })
+            : [];
+    } catch (e) {
+        allUsers = [];
     }
 }
 
@@ -136,6 +230,7 @@ function renderTable() {
         const contributionIdentifier = surface.uuid;
         const version = surface.version || 'SNAPSHOT';
         const artifactStatus = surface.artifactStatus || 'SNAPSHOT';
+        const published = !!surface.published;
         const isSnapshot = artifactStatus === 'SNAPSHOT';
         const canDelete = artifactStatus === 'SNAPSHOT'
             || artifactStatus === 'SUBMITTED'
@@ -163,6 +258,7 @@ function renderTable() {
             + '<td class="px-3 py-2">'
             + '  <span class="artifact-status-pill artifact-status-' + escapeHtml(artifactStatus) + '">' + escapeHtml(artifactStatus) + '</span>'
             + '</td>'
+            + '<td class="px-3 py-2 text-xs ' + (published ? 'text-emerald-300' : 'text-zinc-500') + '">' + (published ? 'Yes' : 'No') + '</td>'
             + '<td class="px-3 py-2 text-xs text-zinc-400">' + formatDate(surface.updatedAt) + '</td>'
             + '<td class="px-3 py-2 text-right">'
             + '  <div class="inline-flex gap-1 justify-end">'
@@ -191,10 +287,28 @@ function openCreate() {
     document.getElementById('surface-description').value = '';
     document.getElementById('surface-group-id').value = '';
     document.getElementById('surface-artifact-id').value = '';
+    setToggleButtonState('surface-published-toggle', false);
+    document.getElementById('surface-logo-file').value = '';
+    setToggleButtonState('surface-policy-home-toggle', false);
+    setToggleButtonState('surface-policy-nav-toggle', false);
+    document.getElementById('surface-policy-nav-icon').value = '';
+    setToggleButtonState('surface-policy-private-toggle', false);
+    document.getElementById('surface-policy-private-path').value = '';
+    setToggleButtonState('surface-policy-public-toggle', false);
+    document.getElementById('surface-policy-public-path').value = '';
     clearIdentityValidation('surface-group-id', 'surface-group-id-error');
     clearIdentityValidation('surface-artifact-id', 'surface-artifact-id-error');
+    modalAssignedUsers = [];
+    modalLogoDataUrl = '';
+    renderAssignedUserPills();
+    renderLogoPreview();
+    updateAccessPolicyInputStates();
+    updateNavIconPreview();
+    setSurfaceModalTab('details');
     document.getElementById('surface-modal-label').textContent = 'New Surface';
     autoSurfaceArtifactIdEnabled = true;
+    modalSurfaceArtifactStatus = 'SNAPSHOT';
+    applySurfaceModalEditability('SNAPSHOT', true);
     surfaceModal.show();
 }
 
@@ -209,13 +323,78 @@ function openEdit(identifier) {
     document.getElementById('surface-description').value = surface.description || '';
     document.getElementById('surface-group-id').value = surface.groupId || '';
     document.getElementById('surface-artifact-id').value = surface.artifactId || '';
+    setToggleButtonState('surface-published-toggle', !!surface.published);
+    setToggleButtonState('surface-policy-home-toggle', !!(surface.accessPolicy && surface.accessPolicy.homeScreenEnabled));
+    setToggleButtonState('surface-policy-nav-toggle', !!(surface.accessPolicy && surface.accessPolicy.navButtonEnabled));
+    document.getElementById('surface-policy-nav-icon').value = (surface.accessPolicy && surface.accessPolicy.navButtonIcon) || '';
+    setToggleButtonState('surface-policy-private-toggle', !!(surface.accessPolicy && surface.accessPolicy.privateUrlEnabled));
+    document.getElementById('surface-policy-private-path').value = (surface.accessPolicy && surface.accessPolicy.privateUrlPath) || '';
+    setToggleButtonState('surface-policy-public-toggle', !!(surface.accessPolicy && surface.accessPolicy.publicUrlEnabled));
+    document.getElementById('surface-policy-public-path').value = (surface.accessPolicy && surface.accessPolicy.publicUrlPath) || '';
+    document.getElementById('surface-logo-file').value = '';
+    modalLogoDataUrl = surface.logoDataUrl || '';
+    modalAssignedUsers = Array.isArray(surface.assignedUserUuids) ? surface.assignedUserUuids.slice() : [];
+    renderAssignedUserPills();
+    renderLogoPreview();
+    updateAccessPolicyInputStates();
+    updateNavIconPreview();
+    setSurfaceModalTab('details');
     clearIdentityValidation('surface-group-id', 'surface-group-id-error');
     clearIdentityValidation('surface-artifact-id', 'surface-artifact-id-error');
     document.getElementById('surface-group-id').setAttribute('disabled', 'disabled');
     document.getElementById('surface-artifact-id').setAttribute('disabled', 'disabled');
     document.getElementById('surface-modal-label').textContent = 'Edit Surface';
     autoSurfaceArtifactIdEnabled = false;
+    modalSurfaceArtifactStatus = surface.artifactStatus || 'SNAPSHOT';
+    applySurfaceModalEditability(modalSurfaceArtifactStatus, false);
     surfaceModal.show();
+}
+
+function applySurfaceModalEditability(artifactStatus, isCreate) {
+    const status = (artifactStatus || 'SNAPSHOT').toUpperCase();
+    const immutable = !isCreate && status !== 'SNAPSHOT';
+
+    const immutableNote = document.getElementById('surface-immutable-note');
+    if (immutableNote) {
+        immutableNote.classList.toggle('hidden', !immutable);
+    }
+
+    setElementDisabled('surface-name', immutable);
+    setElementDisabled('surface-description', immutable);
+
+    // Group/artifact identity is create-only.
+    setElementDisabled('surface-group-id', !isCreate);
+    setElementDisabled('surface-artifact-id', !isCreate);
+
+    // Publication settings remain editable on immutable versions.
+    setElementDisabled('surface-published-toggle', false);
+    setElementDisabled('surface-assigned-user-search', false);
+    setElementDisabled('surface-policy-home-toggle', false);
+    setElementDisabled('surface-policy-nav-toggle', false);
+    setElementDisabled('surface-policy-private-toggle', false);
+    setElementDisabled('surface-policy-public-toggle', false);
+
+    // Logo belongs to artifact content, not publication settings.
+    setElementDisabled('surface-logo-file', immutable);
+
+    updateAccessPolicyInputStates();
+
+    const saveBtn = document.getElementById('surface-save-btn');
+    if (saveBtn) {
+        saveBtn.textContent = immutable ? 'Save Publication Settings' : 'Save';
+    }
+}
+
+function setElementDisabled(elementId, disabled) {
+    const element = document.getElementById(elementId);
+    if (!element) {
+        return;
+    }
+    if (disabled) {
+        element.setAttribute('disabled', 'disabled');
+    } else {
+        element.removeAttribute('disabled');
+    }
 }
 
 async function saveSurface() {
@@ -224,8 +403,19 @@ async function saveSurface() {
     const description = document.getElementById('surface-description').value.trim();
     const groupId = document.getElementById('surface-group-id').value.trim();
     const artifactId = document.getElementById('surface-artifact-id').value.trim();
+    const published = getToggleButtonState('surface-published-toggle');
+    const accessPolicy = {
+        homeScreenEnabled: getToggleButtonState('surface-policy-home-toggle'),
+        navButtonEnabled: getToggleButtonState('surface-policy-nav-toggle'),
+        navButtonIcon: document.getElementById('surface-policy-nav-icon').value.trim(),
+        privateUrlEnabled: getToggleButtonState('surface-policy-private-toggle'),
+        privateUrlPath: document.getElementById('surface-policy-private-path').value.trim(),
+        publicUrlEnabled: getToggleButtonState('surface-policy-public-toggle'),
+        publicUrlPath: document.getElementById('surface-policy-public-path').value.trim()
+    };
 
     if (!name) {
+        setSurfaceModalTab('details');
         showAlert('Name is required.', 'danger', 'surface-modal-alert');
         return;
     }
@@ -235,14 +425,31 @@ async function saveSurface() {
         const validGroup = validateIdentityField(document.getElementById('surface-group-id'), 'surface-group-id-error', 'Group ID');
         const validArtifact = validateIdentityField(document.getElementById('surface-artifact-id'), 'surface-artifact-id-error', 'Artifact ID');
         if (!groupId || !artifactId || !validGroup || !validArtifact) {
+            setSurfaceModalTab('details');
             showAlert('Group ID and Artifact ID are required and must be alphanumeric (3-64 chars).', 'danger', 'surface-modal-alert');
             return;
         }
     }
 
     const body = isCreate
-        ? JSON.stringify({ name: name, description: description, groupId: groupId, artifactId: artifactId })
-        : JSON.stringify({ name: name, description: description });
+        ? JSON.stringify({
+            name: name,
+            description: description,
+            groupId: groupId,
+            artifactId: artifactId,
+            published: published,
+            logoDataUrl: modalLogoDataUrl,
+            assignedUserUuids: modalAssignedUsers.slice(),
+            accessPolicy: accessPolicy
+        })
+        : JSON.stringify({
+            name: name,
+            description: description,
+            published: published,
+            logoDataUrl: modalLogoDataUrl,
+            assignedUserUuids: modalAssignedUsers.slice(),
+            accessPolicy: accessPolicy
+        });
     const url = isCreate ? '/api/surfaces' : '/api/surfaces/' + encodeURIComponent(uuid);
 
     try {
@@ -253,12 +460,15 @@ async function saveSurface() {
         });
         if (!res.ok) {
             const data = await res.json().catch(function () { return {}; });
-            showAlert(data.error || 'Save failed.', 'danger', 'surface-modal-alert');
+            const errorMessage = data.error || 'Save failed.';
+            focusSurfaceTabForError(errorMessage);
+            showAlert(errorMessage, 'danger', 'surface-modal-alert');
             return;
         }
         surfaceModal.hide();
         await loadSurfaces();
     } catch (e) {
+        focusSurfaceTabForError(e && e.message ? e.message : '');
         showAlert('Save failed: ' + e.message, 'danger', 'surface-modal-alert');
     }
 }
@@ -334,6 +544,319 @@ function clearIdentityValidation(inputId, errorId) {
     if (errorEl) {
         errorEl.textContent = '';
     }
+}
+
+async function handleLogoFileSelected(event) {
+    const input = event && event.target;
+    if (!input || !input.files || input.files.length === 0) {
+        modalLogoDataUrl = '';
+        renderLogoPreview();
+        return;
+    }
+    const file = input.files[0];
+    if (!file || !file.type || file.type.indexOf('image/') !== 0) {
+        showAlert('Logo must be an image file.', 'warning', 'surface-modal-alert');
+        input.value = '';
+        return;
+    }
+
+    if (file.size > LOGO_MAX_UPLOAD_BYTES) {
+        showAlert('Logo is too large. Max upload size is 1 MB.', 'warning', 'surface-modal-alert');
+        input.value = '';
+        return;
+    }
+
+    try {
+        const sourceDataUrl = await fileToDataUrl(file);
+        const img = await loadImage(sourceDataUrl);
+        modalLogoDataUrl = cropSquareImageToPng(img, LOGO_TARGET_DIMENSION);
+        if (img.naturalWidth !== img.naturalHeight) {
+            showAlert('Logo was auto-cropped to a square image.', 'success', 'surface-modal-alert');
+        }
+        if (modalLogoDataUrl.length > LOGO_MAX_DATA_URL_LENGTH) {
+            throw new Error('Logo output is too large. Try a smaller image.');
+        }
+        renderLogoPreview();
+    } catch (e) {
+        showAlert(e && e.message ? e.message : 'Failed to process logo file.', 'warning', 'surface-modal-alert');
+        modalLogoDataUrl = '';
+        renderLogoPreview();
+        input.value = '';
+    }
+}
+
+function fileToDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+        const reader = new FileReader();
+        reader.onload = function () { resolve(String(reader.result || '')); };
+        reader.onerror = function () { reject(new Error('file-read-failed')); };
+        reader.readAsDataURL(file);
+    });
+}
+
+function loadImage(dataUrl) {
+    return new Promise(function (resolve, reject) {
+        const image = new Image();
+        image.onload = function () { resolve(image); };
+        image.onerror = function () { reject(new Error('Failed to decode image.')); };
+        image.src = dataUrl;
+    });
+}
+
+function cropSquareImageToPng(image, targetDimension) {
+    const sourceWidth = image.naturalWidth || image.width;
+    const sourceHeight = image.naturalHeight || image.height;
+    if (!sourceWidth || !sourceHeight) {
+        throw new Error('Invalid image dimensions.');
+    }
+
+    const side = Math.min(sourceWidth, sourceHeight);
+    const offsetX = Math.floor((sourceWidth - side) / 2);
+    const offsetY = Math.floor((sourceHeight - side) / 2);
+    const output = Math.min(targetDimension, side);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = output;
+    canvas.height = output;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+        throw new Error('Canvas is not available for image processing.');
+    }
+    ctx.drawImage(image, offsetX, offsetY, side, side, 0, 0, output, output);
+    return canvas.toDataURL('image/png');
+}
+
+function renderLogoPreview() {
+    const preview = document.getElementById('surface-logo-preview');
+    if (!preview) {
+        return;
+    }
+    if (!modalLogoDataUrl) {
+        preview.removeAttribute('src');
+        preview.classList.add('hidden');
+        return;
+    }
+    preview.src = modalLogoDataUrl;
+    preview.classList.remove('hidden');
+}
+
+function renderAssignedUserPills() {
+    const container = document.getElementById('surface-assigned-user-pills');
+    if (!container) {
+        return;
+    }
+    container.innerHTML = '';
+    if (!modalAssignedUsers.length) {
+        container.innerHTML = '<span class="text-xs text-zinc-500">No users assigned.</span>';
+        return;
+    }
+
+    modalAssignedUsers.forEach(function (username) {
+        const user = allUsers.find(function (u) { return u.username === username; });
+        const label = user && user.displayName ? user.displayName + ' (' + username + ')' : username;
+        const pill = document.createElement('span');
+        pill.className = 'surface-user-pill';
+        pill.innerHTML = '<span>' + escapeHtml(label) + '</span><button type="button" title="Remove user">&times;</button>';
+        pill.querySelector('button').addEventListener('click', function () {
+            modalAssignedUsers = modalAssignedUsers.filter(function (u) { return u !== username; });
+            renderAssignedUserPills();
+            filterAssignedUserDropdown();
+        });
+        container.appendChild(pill);
+    });
+}
+
+function filterAssignedUserDropdown() {
+    const search = document.getElementById('surface-assigned-user-search');
+    const dropdown = document.getElementById('surface-assigned-user-dropdown');
+    if (!search || !dropdown) {
+        return;
+    }
+    const query = (search.value || '').trim().toLowerCase();
+    const matches = allUsers.filter(function (u) {
+        if (!u || !u.username) {
+            return false;
+        }
+        if (modalAssignedUsers.includes(u.username)) {
+            return false;
+        }
+        if (!query) {
+            return true;
+        }
+        const text = ((u.username || '') + ' ' + (u.displayName || '') + ' ' + (u.role || '')).toLowerCase();
+        return text.includes(query);
+    }).slice(0, 20);
+
+    dropdown.innerHTML = '';
+    if (!matches.length) {
+        dropdown.classList.add('hidden');
+        return;
+    }
+
+    matches.forEach(function (u) {
+        const row = document.createElement('div');
+        row.className = 'surface-assigned-user-item';
+        row.innerHTML = '<div>' + escapeHtml(u.displayName || u.username) + '</div><div class="text-xs text-zinc-500">' + escapeHtml(u.username) + (u.role ? ' • ' + escapeHtml(u.role) : '') + '</div>';
+        row.addEventListener('click', function () {
+            modalAssignedUsers.push(u.username);
+            search.value = '';
+            dropdown.classList.add('hidden');
+            renderAssignedUserPills();
+        });
+        dropdown.appendChild(row);
+    });
+    dropdown.classList.remove('hidden');
+}
+
+function updateAccessPolicyInputStates() {
+    const navEnabled = getToggleButtonState('surface-policy-nav-toggle');
+    const privateEnabled = getToggleButtonState('surface-policy-private-toggle');
+    const publicEnabled = getToggleButtonState('surface-policy-public-toggle');
+
+    document.getElementById('surface-policy-nav-icon').disabled = !navEnabled;
+    document.getElementById('surface-policy-private-path').disabled = !privateEnabled;
+    document.getElementById('surface-policy-public-path').disabled = !publicEnabled;
+    updateNavIconPreview();
+}
+
+function updateNavIconPreview() {
+    const icon = document.getElementById('surface-policy-nav-icon');
+    const preview = document.getElementById('surface-policy-nav-icon-preview');
+    const previewIcon = document.getElementById('surface-policy-nav-icon-preview-icon');
+    const classLabel = document.getElementById('surface-policy-nav-icon-class');
+    if (!icon || !preview || !previewIcon || !classLabel) {
+        return;
+    }
+    const selectedClass = (icon.value || '').trim() || 'fa-solid fa-layer-group';
+    previewIcon.className = selectedClass;
+    classLabel.textContent = selectedClass;
+    if (icon.disabled) {
+        preview.classList.add('is-disabled');
+        classLabel.classList.add('is-disabled');
+    } else {
+        preview.classList.remove('is-disabled');
+        classLabel.classList.remove('is-disabled');
+    }
+}
+
+function initSurfaceModalTabs() {
+    const tabButtons = document.querySelectorAll('[data-surface-tab-btn]');
+    tabButtons.forEach(function (button) {
+        button.addEventListener('click', function () {
+            setSurfaceModalTab(button.getAttribute('data-surface-tab-btn') || 'details');
+        });
+    });
+}
+
+function setSurfaceModalTab(tabName) {
+    const target = tabName || 'details';
+    const tabButtons = document.querySelectorAll('[data-surface-tab-btn]');
+    const tabPanels = document.querySelectorAll('[data-surface-tab-panel]');
+
+    tabButtons.forEach(function (button) {
+        const isActive = button.getAttribute('data-surface-tab-btn') === target;
+        button.classList.toggle('is-active', isActive);
+        button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+
+    tabPanels.forEach(function (panel) {
+        const isActive = panel.getAttribute('data-surface-tab-panel') === target;
+        panel.classList.toggle('hidden', !isActive);
+    });
+}
+
+function focusSurfaceTabForError(errorMessage) {
+    const text = (errorMessage || '').toLowerCase();
+    if (!text) {
+        return;
+    }
+
+    if (text.includes('group id') || text.includes('artifact id') || text.includes('description') || text.includes('name')) {
+        setSurfaceModalTab('details');
+        return;
+    }
+
+    if (text.includes('assigned user') || text.includes('logo') || text.includes('published')) {
+        setSurfaceModalTab('publication');
+        return;
+    }
+
+    if (text.includes('private') || text.includes('public') || text.includes('path') || text.includes('route')
+        || text.includes('nav button') || text.includes('icon') || text.includes('home screen') || text.includes('policy')) {
+        setSurfaceModalTab('routes');
+        return;
+    }
+}
+
+function bindToggleButton(buttonId, onChange) {
+    if (window.VorkToggleUtil && typeof window.VorkToggleUtil.bind === 'function') {
+        window.VorkToggleUtil.bind(buttonId, function () {
+            if (typeof onChange === 'function') {
+                onChange();
+            }
+        });
+        return;
+    }
+
+    const control = document.getElementById(buttonId);
+    if (!control) {
+        return;
+    }
+
+    if (control.matches('input[type="checkbox"]')) {
+        control.addEventListener('change', function () {
+            if (typeof onChange === 'function') {
+                onChange();
+            }
+        });
+    } else {
+        control.addEventListener('click', function () {
+            const next = !getToggleButtonState(buttonId);
+            setToggleButtonState(buttonId, next);
+            if (typeof onChange === 'function') {
+                onChange();
+            }
+        });
+    }
+
+    setToggleButtonState(buttonId, getToggleButtonState(buttonId));
+}
+
+function setToggleButtonState(buttonId, enabled) {
+    if (window.VorkToggleUtil && typeof window.VorkToggleUtil.setState === 'function') {
+        window.VorkToggleUtil.setState(buttonId, enabled);
+        return;
+    }
+
+    const control = document.getElementById(buttonId);
+    if (!control) {
+        return;
+    }
+
+    if (control.matches('input[type="checkbox"]')) {
+        control.checked = !!enabled;
+        return;
+    }
+
+    control.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    control.textContent = enabled ? 'On' : 'Off';
+}
+
+function getToggleButtonState(buttonId) {
+    if (window.VorkToggleUtil && typeof window.VorkToggleUtil.getState === 'function') {
+        return window.VorkToggleUtil.getState(buttonId);
+    }
+
+    const control = document.getElementById(buttonId);
+    if (!control) {
+        return false;
+    }
+
+    if (control.matches('input[type="checkbox"]')) {
+        return !!control.checked;
+    }
+
+    return control.getAttribute('aria-pressed') === 'true';
 }
 
 async function importSurfaces(input) {
@@ -412,7 +935,7 @@ async function publishSurfaceContribution(id) {
         document.getElementById('surface-publish-pr-body').value = (draft.prBody || '').trim();
         document.getElementById('surface-publish-release-notes').value = (draft.releaseNotes || '').trim();
         document.getElementById('surface-publish-reviewer-hints').value = (draft.reviewerHints || '').trim();
-        document.getElementById('surface-publish-breaking-change').checked = !!draft.breakingChange;
+        setToggleButtonState('surface-publish-breaking-change-toggle', !!draft.breakingChange);
 
         if (draft.latestVersion) {
             showAlert('Latest in staging: ' + draft.latestVersion + '. Draft generated and ready to edit.', 'success', 'surface-publish-modal-alert');
@@ -434,7 +957,7 @@ async function submitSurfacePublishFromModal() {
     const prBody = document.getElementById('surface-publish-pr-body').value.trim();
     const releaseNotes = document.getElementById('surface-publish-release-notes').value.trim();
     const reviewerHints = document.getElementById('surface-publish-reviewer-hints').value.trim();
-    const breakingChange = !!document.getElementById('surface-publish-breaking-change').checked;
+    const breakingChange = getToggleButtonState('surface-publish-breaking-change-toggle');
 
     if (!id) {
         showAlert('Surface id is missing for publish.', 'danger', 'surface-publish-modal-alert');
@@ -497,7 +1020,7 @@ function setSurfacePublishLoading(isLoading, loadingLabel) {
         'surface-publish-pr-body',
         'surface-publish-release-notes',
         'surface-publish-reviewer-hints',
-        'surface-publish-breaking-change'
+        'surface-publish-breaking-change-toggle'
     ];
     fields.forEach(function (id) {
         const el = document.getElementById(id);

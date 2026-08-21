@@ -8,8 +8,6 @@ import sh.vork.mcp.model.McpBindingStatus;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.security.VorkUser;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -38,23 +36,10 @@ public class AttentionSignalService {
             return;
         }
 
-        String actionUrl = "/?sessionUuid=" + URLEncoder.encode(sessionUuid, StandardCharsets.UTF_8);
-        String safeToolName = toolName == null || toolName.isBlank() ? "unknown tool" : toolName;
-        String description = "Session is waiting for input from " + safeToolName + "."
-                + (reason == null || reason.isBlank() ? "" : " " + reason.trim());
-
+        // Session suspension no longer creates per-requestor attention alerts.
+        // The prompt-required UX and channel notifications remain the primary signal.
         attentionAlertService.resolveBySource(AttentionSourceType.SESSION_SUSPENSION, sessionUuid);
-        attentionAlertService.create(new AttentionAlertService.CreateAttentionAlertCommand(
-                List.of(normalizedUser),
-                "Session Requires Input",
-                description,
-                AttentionResolutionPolicy.ACTION_REQUIRED,
-                actionUrl,
-                System.currentTimeMillis(),
-                AttentionSourceType.SESSION_SUSPENSION,
-                sessionUuid));
-
-        log.info("Session suspension alert created [session={}, channel={}]", sessionUuid, normalizedUser);
+        log.debug("Session suspension alert creation skipped [session={}, channel={}]", sessionUuid, normalizedUser);
     }
 
     public void onSessionResumed(String sessionUuid) {

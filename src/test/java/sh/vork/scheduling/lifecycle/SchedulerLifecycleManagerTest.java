@@ -50,7 +50,7 @@ class SchedulerLifecycleManagerTest {
     }
 
     @Test
-    void onReady_resetsStuckActiveJobsToWaitingThenSchedules() {
+    void onReady_resetsOnlyActiveJobsAndPreservesAwaitingInput() {
         @SuppressWarnings("unchecked")
         DatabaseRepository<ScheduledJob> repo = mock(DatabaseRepository.class);
         AiSchedulerService schedulerService = mock(AiSchedulerService.class);
@@ -64,14 +64,14 @@ class SchedulerLifecycleManagerTest {
         SchedulerLifecycleManager manager = new SchedulerLifecycleManager(repo, schedulerService);
         manager.onReady();
 
-        // Both stuck jobs should be reset to WAITING in repo
+        // Only ACTIVE jobs should be reset to WAITING in repo.
         ArgumentCaptor<ScheduledJob> repoSaved = ArgumentCaptor.forClass(ScheduledJob.class);
-        verify(repo, times(2)).save(repoSaved.capture());
+        verify(repo, times(1)).save(repoSaved.capture());
         repoSaved.getAllValues().forEach(j ->
                 assertEquals(ScheduledJobStatus.WAITING, j.status(), "Expected WAITING after reset"));
 
-        // Both should be rescheduled
-        verify(schedulerService, times(2)).scheduleJob(any());
+        // Only ACTIVE jobs should be rescheduled at startup.
+        verify(schedulerService, times(1)).scheduleJob(any());
     }
 }
 

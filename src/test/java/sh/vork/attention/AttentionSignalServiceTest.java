@@ -62,12 +62,11 @@ class AttentionSignalServiceTest {
     }
 
     @Test
-    void sessionSuspensionAlertIsCreatedAndResolved() {
+    void sessionSuspensionDoesNotCreateRequesterAlert() {
         signalService.onSessionSuspended("sess-1", "alice", "sendNotification", "Approval required");
 
         List<AttentionAlert> due = alertService.listDueAlertsForChannel("alice");
-        assertEquals(1, due.size());
-        assertEquals(AttentionSourceType.SESSION_SUSPENSION, due.getFirst().sourceType());
+        assertTrue(due.isEmpty());
 
         signalService.onSessionResumed("sess-1");
         assertTrue(alertService.listDueAlertsForChannel("alice").isEmpty());

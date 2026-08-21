@@ -196,6 +196,128 @@ public class SecretsController {
         }
     }
 
+    // -- Global secrets (admin-only) -----------------------------------------
+
+    @GetMapping("/global")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<Map<String, Object>> listGlobalSecrets(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int pageSize) {
+        try {
+            log.debug("ENTER listGlobalSecrets: page={}, pageSize={}", page, pageSize);
+
+            try (Stream<Secret> stream = credentialStore.getGlobalSecrets(page, pageSize)) {
+                List<Map<String, Object>> redacted = stream.map(secret -> {
+                    Map<String, Object> item = new HashMap<>();
+                    item.put("key", secret.key());
+                    item.put("value", "••••");
+                    item.put("createdAt", secret.uuid());
+                    return item;
+                }).toList();
+
+                long total = credentialStore.countGlobalSecrets();
+
+                Map<String, Object> response = new HashMap<>();
+                response.put("secrets", redacted);
+                response.put("total", total);
+                response.put("page", page);
+                response.put("pageSize", pageSize);
+
+                log.debug("EXIT listGlobalSecrets: returning {} secrets", redacted.size());
+                return ResponseEntity.ok(response);
+            }
+        } catch (Exception e) {
+            log.error("Error in listGlobalSecrets", e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("status", "error");
+            error.put("message", e.getMessage());
+            return ResponseEntity.status(500).body(error);
+        }
+    }
+
+    @PostMapping("/global")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<Map<String, Object>> createGlobalSecret(@RequestBody CreateSecretRequest request) {
+        try {
+            log.debug("ENTER createGlobalSecret: key={}", request.key());
+            if (request.key() == null || request.key().isEmpty()) {
+                throw new IllegalArgumentException("Key cannot be empty");
+            }
+            if (request.value() == null || request.value().isEmpty()) {
+                throw new IllegalArgumentException("Value cannot be empty");
+            }
+
+            credentialStore.saveGlobalSecret(request.key(), request.value());
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("status", "ok");
+            response.put("key", request.key());
+
+            log.debug("EXIT createGlobalSecret: key={}", request.key());
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Error in createGlobalSecret", e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("status", "error");
+            error.put("message", e.getMessage());
+            return ResponseEntity.status(400).body(error);
+        }
+    }
+
+    @PutMapping("/global/{key}")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<Map<String, Object>> updateGlobalSecret(
+            @PathVariable String key,
+            @RequestBody UpdateSecretRequest request) {
+        try {
+            log.debug("ENTER updateGlobalSecret: key={}", key);
+            if (request.value() == null || request.value().isEmpty()) {
+                throw new IllegalArgumentException("Value cannot be empty");
+            }
+
+            Secret existing = credentialStore.getGlobalSecretMetadata(key);
+            if (existing == null) {
+                throw new IllegalArgumentException("Global secret not found: " + key);
+            }
+
+            credentialStore.saveGlobalSecret(key, request.value());
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("status", "ok");
+            response.put("key", key);
+
+            log.debug("EXIT updateGlobalSecret: key={}", key);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Error in updateGlobalSecret", e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("status", "error");
+            error.put("message", e.getMessage());
+            return ResponseEntity.status(400).body(error);
+        }
+    }
+
+    @DeleteMapping("/global/{key}")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<Map<String, Object>> deleteGlobalSecret(@PathVariable String key) {
+        try {
+            log.debug("ENTER deleteGlobalSecret: key={}", key);
+            credentialStore.deleteGlobalSecret(key);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("status", "ok");
+
+            log.debug("EXIT deleteGlobalSecret: key={}", key);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Error in deleteGlobalSecret", e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("status", "error");
+            error.put("message", e.getMessage());
+            return ResponseEntity.status(500).body(error);
+        }
+    }
+
     // ── Helper methods ────────────────────────────────────────────────────────
 
     /**

@@ -307,7 +307,8 @@ public class ChatController {
                 session.provider(),
                 session.createdAt(),
                 session.messages() == null ? 0 : session.messages().size(),
-                session.modelId());
+                session.modelId(),
+                session.activeAgentTemplateId());
             }
 
     @PostMapping("/session/{sessionUuid}/agent")
@@ -615,13 +616,14 @@ public class ChatController {
                     .map(reflectionService::getBindingByUuid)
                     .filter(java.util.Objects::nonNull)
                     .map(binding -> {
-                    var group = reflectionService.getGroup(binding.groupUuid());
-                    String groupName = group != null ? group.name() : binding.groupUuid();
+                    var group = reflectionService.getBindingGroup(binding);
+                    String groupUuid = group != null ? group.uuid() : "";
+                    String groupName = group != null ? group.name() : groupUuid;
                     String bindingName = binding.name() == null ? binding.uuid() : binding.name();
-                    String label = (groupName == null ? binding.groupUuid() : groupName) + " (" + bindingName + ")";
+                    String label = (groupName == null ? groupUuid : groupName) + " (" + bindingName + ")";
                     return new ReflectionBindingSummary(
                         binding.uuid(),
-                        binding.groupUuid(),
+                        groupUuid,
                         groupName,
                         bindingName,
                         label);
@@ -645,13 +647,14 @@ public class ChatController {
                     .map(reflectionService::getBindingByUuid)
                     .filter(java.util.Objects::nonNull)
                     .map(binding -> {
-                    var group = reflectionService.getGroup(binding.groupUuid());
-                    String groupName = group != null ? group.name() : binding.groupUuid();
+                    var group = reflectionService.getBindingGroup(binding);
+                    String groupUuid = group != null ? group.uuid() : "";
+                    String groupName = group != null ? group.name() : groupUuid;
                     String bindingName = binding.name() == null ? binding.uuid() : binding.name();
-                    String label = (groupName == null ? binding.groupUuid() : groupName) + " (" + bindingName + ")";
+                    String label = (groupName == null ? groupUuid : groupName) + " (" + bindingName + ")";
                     return new ReflectionBindingSummary(
                         binding.uuid(),
-                        binding.groupUuid(),
+                        groupUuid,
                         groupName,
                         bindingName,
                         label);
