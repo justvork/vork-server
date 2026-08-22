@@ -166,7 +166,7 @@ and a retry with different instructions would help.
 ### CORE RESPONSIBILITIES
 - Understand what the user wants to model and translate it into clean Java record(s)/enum(s) with \
  appropriate field names and types.
-- Always place generated schemas in the package {@code sh.vork.generated}.
+- Always place generated schemas in the user-confirmed group package (for example {@code jadaptive.crm}) and never under {@code sh.vork.*}.
 - After compiling a schema with `compileJavaType`, immediately confirm it loaded successfully \
  and describe its fields back to the user.
 - Use `getTypeSchema` before saving record instances so you always know the exact field names and \
@@ -348,6 +348,7 @@ Rules:
                     "getSurfaceReflectionContracts"
             ),
             true,
+            true,
             List.of(),
             AgentType.INTERACTIVE
     );
@@ -409,7 +410,13 @@ Rules:
                     template.agentType(),
                     preservedBindingUuids,
                     preservedAssignedUsernames,
-                    effectiveRecommendedModel);
+                    List.of(),
+                    effectiveRecommendedModel,
+                    null,
+                    null,
+                    null,
+                    template.systemAgent() ? null : sh.vork.ai.agent.ArtifactStatus.SNAPSHOT,
+                    template.hidden());
             agentTemplateRepository.save(updated);
             log.info("Step update: refreshed built-in agent template [uuid={}, name={}, tools={}, preservedSkills={}]",
                     template.uuid(), template.name(), mergedTools.size(), preservedSkills.size());

@@ -8,5 +8,6 @@ package sh.vork.reflection;
  */
 public enum ReflectionType {
     REST,
+    RECORD,
     MONGO
 }

@@ -592,6 +592,181 @@ class AiOrchestrationServiceDynamicToolResolutionTest {
     assertSame(reflectionCallback, resolved);
     }
 
+        @Test
+        void resolveDynamicToolCallbackForSession_doesNotUseLineageFallbackForRecordReflections() {
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<AiSession> sessionRepo = mock(DatabaseRepository.class);
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<AgentTemplate> agentTemplateRepo = mock(DatabaseRepository.class);
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<sh.vork.skill.Skill> skillRepo = mock(DatabaseRepository.class);
+
+        SessionToolStore sessionToolStore = mock(SessionToolStore.class);
+        sh.vork.skill.SkillToolCallbackFactory skillToolCallbackFactory = mock(sh.vork.skill.SkillToolCallbackFactory.class);
+        ReflectionService reflectionService = mock(ReflectionService.class);
+        ReflectionToolCallbackFactory reflectionToolCallbackFactory = mock(ReflectionToolCallbackFactory.class);
+
+        AiOrchestrationService service = new AiOrchestrationService(
+            Map.<AiProvider, ChatClient>of(),
+            null,
+            mock(SessionEnvironmentService.class),
+            sessionRepo,
+            agentTemplateRepo,
+            skillRepo,
+            Map.of(),
+            sessionToolStore,
+            skillToolCallbackFactory,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+
+        ReflectionTestUtils.setField(service, "reflectionService", reflectionService);
+        ReflectionTestUtils.setField(service, "reflectionToolCallbackFactory", reflectionToolCallbackFactory);
+
+        String sessionUuid = "session-record-lineage";
+        String oldGroupUuid = "group-record-old";
+        String newGroupUuid = "group-record-new";
+        String bindingUuid = "binding-record";
+        String reflectionToolName = "recordSearchCustomer";
+
+        AiSession session = new AiSession(
+            sessionUuid,
+            AiProvider.GEMINI.name(),
+            SessionOriginMode.WEB,
+            "admin",
+            "Untitled",
+            System.currentTimeMillis(),
+            0,
+            List.of(),
+            Map.of("SESSION_REFLECTION_BINDING_UUIDS", bindingUuid),
+            null,
+            "agent-tpl-concierge-001",
+            null,
+            null,
+            null,
+            null);
+
+        AgentTemplate concierge = new AgentTemplate(
+            "agent-tpl-concierge-001",
+            "Concierge",
+            "",
+            List.of("listFiles"),
+            true,
+            List.of(),
+            AgentType.INTERACTIVE,
+            List.of());
+
+        ReflectionBinding binding = new ReflectionBinding(
+            bindingUuid,
+            "binding-reflection-uuid",
+            "Record Binding",
+            "",
+            Map.of(),
+            1L,
+            System.currentTimeMillis(),
+            System.currentTimeMillis());
+
+        ReflectionGroup oldGroup = new ReflectionGroup(
+            oldGroupUuid,
+            "recordcustomer",
+            "Customer Record",
+            "",
+            ReflectionType.RECORD,
+            "",
+            true,
+            List.of(),
+            List.of(),
+            null,
+            null,
+            "customer",
+            "record",
+            "1.0.0",
+            null,
+            System.currentTimeMillis(),
+            System.currentTimeMillis());
+
+        ReflectionGroup newGroup = new ReflectionGroup(
+            newGroupUuid,
+            "recordcustomer",
+            "Customer Record",
+            "",
+            ReflectionType.RECORD,
+            "",
+            true,
+            List.of(),
+            List.of(),
+            null,
+            null,
+            "customer",
+            "record",
+            "2.0.0",
+            null,
+            System.currentTimeMillis(),
+            System.currentTimeMillis());
+
+        Reflection reflection = new Reflection(
+            "reflection-uuid",
+            reflectionToolName,
+            "Record Search",
+            "",
+            newGroupUuid,
+            List.of(),
+            "GET",
+            "/api/types/sh.vork.generated.Customer/search",
+            Map.of(),
+            Map.of(),
+            "",
+            "application/json",
+            "application/json",
+            "{}",
+            1L,
+            System.currentTimeMillis(),
+            System.currentTimeMillis());
+
+        when(sessionRepo.get(sessionUuid)).thenReturn(session);
+        when(agentTemplateRepo.get("agent-tpl-concierge-001")).thenReturn(concierge);
+        when(sessionToolStore.getTools(sessionUuid)).thenReturn(List.of());
+
+        when(reflectionService.getBindingByUuid(bindingUuid)).thenReturn(binding);
+        when(reflectionService.getReflection("binding-reflection-uuid")).thenReturn(
+            new Reflection(
+                "binding-reflection-uuid",
+                "recordBindingReference",
+                "Record Binding Reference",
+                "",
+                oldGroupUuid,
+                List.of(),
+                "GET",
+                "/api/types/sh.vork.generated.Customer/search",
+                Map.of(),
+                Map.of(),
+                "",
+                "application/json",
+                "application/json",
+                "{}",
+                1L,
+                System.currentTimeMillis(),
+                System.currentTimeMillis()));
+
+        when(reflectionService.listReflections()).thenReturn(List.of(reflection));
+        when(reflectionService.getReflectionById(reflectionToolName)).thenReturn(reflection);
+        when(reflectionService.getGroup(oldGroupUuid)).thenReturn(oldGroup);
+        when(reflectionService.getGroup(newGroupUuid)).thenReturn(newGroup);
+        when(reflectionService.listGroups()).thenReturn(List.of(oldGroup, newGroup));
+        when(reflectionService.bindingsForGroup(oldGroupUuid)).thenReturn(List.of(binding));
+        when(reflectionService.bindingsForGroup(newGroupUuid)).thenReturn(List.of());
+
+        ToolCallback resolved = service.resolveDynamicToolCallbackForSession(sessionUuid, reflectionToolName);
+
+        assertNull(resolved);
+        }
+
     @Test
     void resolveDynamicToolCallbackForSession_resolvesMcpRuntimeTool() {
         @SuppressWarnings("unchecked")
@@ -682,14 +857,18 @@ class AiOrchestrationServiceDynamicToolResolutionTest {
     void resolveDynamicToolCallbackForSession_returnsNullWhenNoMcpMatch() {
         @SuppressWarnings("unchecked")
         DatabaseRepository<AiSession> sessionRepo = mock(DatabaseRepository.class);
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<AgentTemplate> agentTemplateRepo = mock(DatabaseRepository.class);
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<sh.vork.skill.Skill> skillRepo = mock(DatabaseRepository.class);
 
         AiOrchestrationService service = new AiOrchestrationService(
                 Map.<AiProvider, ChatClient>of(),
                 null,
                 null,
                 sessionRepo,
-                mock(DatabaseRepository.class),
-                mock(DatabaseRepository.class),
+            agentTemplateRepo,
+            skillRepo,
                 Map.of(),
                 mock(SessionToolStore.class),
                 mock(sh.vork.skill.SkillToolCallbackFactory.class),

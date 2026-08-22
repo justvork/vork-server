@@ -1,6 +1,8 @@
 package sh.vork.typegen.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import sh.vork.ai.agent.AgentTemplate;
+import sh.vork.ai.entity.AiSession;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.SortOrder;
 import sh.vork.typegen.DisplayField;
@@ -10,11 +12,18 @@ import sh.vork.typegen.JavaType;
 import sh.vork.typegen.JavaTypeClassLoader;
 import sh.vork.typegen.SqlParseException;
 import sh.vork.typegen.TypeDatabaseService;
+import sh.vork.typegen.TypeRecordBindingScope;
+import sh.vork.skill.Skill;
+import sh.vork.skill.SkillFrame;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -33,6 +42,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Stream;
 
 /**
@@ -63,12 +73,21 @@ import java.util.stream.Stream;
 public class TypeDatabaseController {
 
     private static final Logger log = LoggerFactory.getLogger(TypeDatabaseController.class);
+    private static final String REFLECTION_TYPE_HEADER = "X-Vork-Reflection-Type";
+    private static final String REFLECTION_BINDING_UUID_HEADER = "X-Vork-Reflection-Binding-UUID";
+    private static final String REFLECTION_BINDING_NAME_HEADER = "X-Vork-Reflection-Binding-Name";
+    private static final String SESSION_UUID_HEADER = "X-Vork-Session-UUID";
+    private static final String SESSION_REFLECTION_BINDING_UUIDS_ENV = "SESSION_REFLECTION_BINDING_UUIDS";
 
     private final TypeDatabaseService typeDatabaseService;
     private final FormToObjectConverter formConverter;
     private final JavaTypeClassLoader classLoader;
     private final ObjectMapper objectMapper;
     private final DatabaseRepository<JavaType> javaTypeRepository;
+    private DatabaseRepository<TypeRecordBindingScope> typeRecordBindingScopeRepository;
+    private DatabaseRepository<AiSession> aiSessionRepository;
+    private DatabaseRepository<AgentTemplate> agentTemplateRepository;
+    private DatabaseRepository<Skill> skillRepository;
 
     public TypeDatabaseController(TypeDatabaseService typeDatabaseService,
                                   FormToObjectConverter formConverter,
@@ -80,6 +99,26 @@ public class TypeDatabaseController {
         this.classLoader           = classLoader;
         this.objectMapper          = objectMapper;
         this.javaTypeRepository    = javaTypeRepository;
+    }
+
+    @Autowired(required = false)
+    public void setTypeRecordBindingScopeRepository(DatabaseRepository<TypeRecordBindingScope> typeRecordBindingScopeRepository) {
+        this.typeRecordBindingScopeRepository = typeRecordBindingScopeRepository;
+    }
+
+    @Autowired(required = false)
+    public void setAiSessionRepository(DatabaseRepository<AiSession> aiSessionRepository) {
+        this.aiSessionRepository = aiSessionRepository;
+    }
+
+    @Autowired(required = false)
+    public void setAgentTemplateRepository(DatabaseRepository<AgentTemplate> agentTemplateRepository) {
+        this.agentTemplateRepository = agentTemplateRepository;
+    }
+
+    @Autowired(required = false)
+    public void setSkillRepository(DatabaseRepository<Skill> skillRepository) {
+        this.skillRepository = skillRepository;
     }
 
     // -------------------------------------------------------------------------
@@ -341,9 +380,37 @@ public class TypeDatabaseController {
             return notFound("Type not found: " + fqn);
         }
 
+        BindingContext bindingContext = resolveBindingContextFromCurrentRequest();
+        if (!bindingContext.valid()) {
+            return ResponseEntity.badRequest()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"status\":\"error\",\"message\":\"" + escape(bindingContext.errorMessage()) + "\"}");
+        }
+
         List<Object> items = new ArrayList<>();
-        try (Stream<Object> stream = typeDatabaseService.list(entityClass, page, pageSize)) {
-            stream.forEach(items::add);
+        if (bindingContext.recordScoped()) {
+            if (typeRecordBindingScopeRepository == null) {
+                return error("Record binding scope repository is not available.");
+            }
+            List<Object> filtered = new ArrayList<>();
+            try (Stream<Object> stream = typeDatabaseService.list(entityClass, 0, Integer.MAX_VALUE)) {
+                stream.forEach(entity -> {
+                    if (canAccessScopedRecord(fqn, uuidOf(entity), bindingContext.bindingUuid())) {
+                        filtered.add(entity);
+                    }
+                });
+            }
+            int from = Math.max(0, page * pageSize);
+            if (from >= filtered.size()) {
+                items = List.of();
+            } else {
+                int to = Math.min(filtered.size(), from + pageSize);
+                items = List.copyOf(filtered.subList(from, to));
+            }
+        } else {
+            try (Stream<Object> stream = typeDatabaseService.list(entityClass, page, pageSize)) {
+                stream.forEach(items::add);
+            }
         }
 
         try {
@@ -363,7 +430,27 @@ public class TypeDatabaseController {
         if (entityClass == null) {
             return notFound("Type not found: " + fqn);
         }
-        long count = typeDatabaseService.count(entityClass);
+
+        BindingContext bindingContext = resolveBindingContextFromCurrentRequest();
+        if (!bindingContext.valid()) {
+            return ResponseEntity.badRequest()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"status\":\"error\",\"message\":\"" + escape(bindingContext.errorMessage()) + "\"}");
+        }
+
+        long count;
+        if (bindingContext.recordScoped()) {
+            if (typeRecordBindingScopeRepository == null) {
+                return error("Record binding scope repository is not available.");
+            }
+            try (Stream<Object> stream = typeDatabaseService.list(entityClass, 0, Integer.MAX_VALUE)) {
+                count = stream
+                        .filter(entity -> canAccessScopedRecord(fqn, uuidOf(entity), bindingContext.bindingUuid()))
+                        .count();
+            }
+        } else {
+            count = typeDatabaseService.count(entityClass);
+        }
         return ResponseEntity.ok("{\"count\":" + count + "}");
     }
 
@@ -376,6 +463,21 @@ public class TypeDatabaseController {
         Class<?> entityClass = resolveClass(fqn);
         if (entityClass == null) {
             return notFound("Type not found: " + fqn);
+        }
+
+        BindingContext bindingContext = resolveBindingContextFromCurrentRequest();
+        if (!bindingContext.valid()) {
+            return ResponseEntity.badRequest()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"status\":\"error\",\"message\":\"" + escape(bindingContext.errorMessage()) + "\"}");
+        }
+        if (bindingContext.recordScoped()) {
+            if (typeRecordBindingScopeRepository == null) {
+                return error("Record binding scope repository is not available.");
+            }
+            if (!canAccessScopedRecord(fqn, uuid, bindingContext.bindingUuid())) {
+                return notFound("Entity not found: " + uuid);
+            }
         }
 
         Object entity = typeDatabaseService.get(entityClass, uuid);
@@ -404,6 +506,16 @@ public class TypeDatabaseController {
             return notFound("Type not found: " + fqn);
         }
 
+        BindingContext bindingContext = resolveBindingContext(request);
+        if (!bindingContext.valid()) {
+            return ResponseEntity.badRequest()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"status\":\"error\",\"message\":\"" + escape(bindingContext.errorMessage()) + "\"}");
+        }
+        if (bindingContext.recordScoped() && typeRecordBindingScopeRepository == null) {
+            return error("Record binding scope repository is not available.");
+        }
+
         Map<String, String[]> params = request.getParameterMap();
 
         Object entity;
@@ -416,7 +528,37 @@ public class TypeDatabaseController {
         }
 
         try {
+            if (bindingContext.recordScoped()) {
+                String entityUuid = uuidOf(entity);
+                if (entityUuid == null || entityUuid.isBlank()) {
+                    return ResponseEntity.badRequest()
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body("{\"status\":\"error\",\"message\":\"uuid is required for record-scoped writes.\"}");
+                }
+                TypeRecordBindingScope existingScope = typeRecordBindingScopeRepository.get(scopeId(fqn, entityUuid));
+                if (existingScope != null && !Objects.equals(existingScope.bindingUuid(), bindingContext.bindingUuid())) {
+                    return ResponseEntity.status(403)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body("{\"status\":\"error\",\"message\":\"Record belongs to a different binding scope.\"}");
+                }
+            }
+
             typeDatabaseService.save(entity);
+
+            if (bindingContext.recordScoped()) {
+                String entityUuid = uuidOf(entity);
+                long now = System.currentTimeMillis();
+                TypeRecordBindingScope existing = typeRecordBindingScopeRepository.get(scopeId(fqn, entityUuid));
+                long createdAt = existing == null ? now : existing.createdAt();
+                typeRecordBindingScopeRepository.save(new TypeRecordBindingScope(
+                        scopeId(fqn, entityUuid),
+                        fqn,
+                        entityUuid,
+                        bindingContext.bindingUuid(),
+                        bindingContext.bindingName(),
+                        createdAt,
+                        now));
+            }
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest()
                     .body("{\"status\":\"error\",\"message\":\"" + escape(e.getMessage()) + "\"}");
@@ -436,7 +578,26 @@ public class TypeDatabaseController {
         if (entityClass == null) {
             return notFound("Type not found: " + fqn);
         }
+
+        BindingContext bindingContext = resolveBindingContextFromCurrentRequest();
+        if (!bindingContext.valid()) {
+            return ResponseEntity.badRequest()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"status\":\"error\",\"message\":\"" + escape(bindingContext.errorMessage()) + "\"}");
+        }
+        if (bindingContext.recordScoped()) {
+            if (typeRecordBindingScopeRepository == null) {
+                return error("Record binding scope repository is not available.");
+            }
+            if (!canAccessScopedRecord(fqn, uuid, bindingContext.bindingUuid())) {
+                return notFound("Entity not found: " + uuid);
+            }
+        }
+
         typeDatabaseService.delete(entityClass, uuid);
+        if (bindingContext.recordScoped() && typeRecordBindingScopeRepository != null) {
+            typeRecordBindingScopeRepository.delete(scopeId(fqn, uuid));
+        }
         return ResponseEntity.ok("{\"status\":\"ok\"}");
     }
 
@@ -459,6 +620,16 @@ public class TypeDatabaseController {
             return notFound("Type not found: " + fqn);
         }
 
+        BindingContext bindingContext = resolveBindingContextFromCurrentRequest();
+        if (!bindingContext.valid()) {
+            return ResponseEntity.badRequest()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"status\":\"error\",\"message\":\"" + escape(bindingContext.errorMessage()) + "\"}");
+        }
+        if (bindingContext.recordScoped() && typeRecordBindingScopeRepository == null) {
+            return error("Record binding scope repository is not available.");
+        }
+
         try {
             SortOrder order = "DESC".equalsIgnoreCase(sortOrder) ? SortOrder.DESC : SortOrder.ASC;
             boolean mongo = "MONGO".equalsIgnoreCase(queryType);
@@ -466,18 +637,50 @@ public class TypeDatabaseController {
             List<Object> items = new ArrayList<>();
             long total;
 
-            if (mongo) {
-                try (Stream<Object> stream = typeDatabaseService.searchByMongoFilter(
-                        entityClass, query, page, pageSize, sortField, order)) {
-                    stream.forEach(items::add);
+            if (bindingContext.recordScoped()) {
+                List<Object> filtered = new ArrayList<>();
+                if (mongo) {
+                    try (Stream<Object> stream = typeDatabaseService.searchByMongoFilter(
+                            entityClass, query, 0, Integer.MAX_VALUE, sortField, order)) {
+                        stream.forEach(entity -> {
+                            if (canAccessScopedRecord(fqn, uuidOf(entity), bindingContext.bindingUuid())) {
+                                filtered.add(entity);
+                            }
+                        });
+                    }
+                } else {
+                    try (Stream<Object> stream = typeDatabaseService.searchBySql(
+                            entityClass, query, 0, Integer.MAX_VALUE, sortField, order)) {
+                        stream.forEach(entity -> {
+                            if (canAccessScopedRecord(fqn, uuidOf(entity), bindingContext.bindingUuid())) {
+                                filtered.add(entity);
+                            }
+                        });
+                    }
                 }
-                total = typeDatabaseService.searchCountByMongoFilter(entityClass, query);
+
+                total = filtered.size();
+                int from = Math.max(0, page * pageSize);
+                if (from >= filtered.size()) {
+                    items = List.of();
+                } else {
+                    int to = Math.min(filtered.size(), from + pageSize);
+                    items = List.copyOf(filtered.subList(from, to));
+                }
             } else {
-                try (Stream<Object> stream = typeDatabaseService.searchBySql(
-                        entityClass, query, page, pageSize, sortField, order)) {
-                    stream.forEach(items::add);
+                if (mongo) {
+                    try (Stream<Object> stream = typeDatabaseService.searchByMongoFilter(
+                            entityClass, query, page, pageSize, sortField, order)) {
+                        stream.forEach(items::add);
+                    }
+                    total = typeDatabaseService.searchCountByMongoFilter(entityClass, query);
+                } else {
+                    try (Stream<Object> stream = typeDatabaseService.searchBySql(
+                            entityClass, query, page, pageSize, sortField, order)) {
+                        stream.forEach(items::add);
+                    }
+                    total = typeDatabaseService.searchCountBySql(entityClass, query);
                 }
-                total = typeDatabaseService.searchCountBySql(entityClass, query);
             }
 
             Map<String, Object> payload = new LinkedHashMap<>();
@@ -506,10 +709,32 @@ public class TypeDatabaseController {
             return notFound("Type not found: " + fqn);
         }
 
+        BindingContext bindingContext = resolveBindingContextFromCurrentRequest();
+        if (!bindingContext.valid()) {
+            return ResponseEntity.badRequest()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"status\":\"error\",\"message\":\"" + escape(bindingContext.errorMessage()) + "\"}");
+        }
+        if (bindingContext.recordScoped() && typeRecordBindingScopeRepository == null) {
+            return error("Record binding scope repository is not available.");
+        }
+
         try {
-            long count = "MONGO".equalsIgnoreCase(queryType)
-                    ? typeDatabaseService.searchCountByMongoFilter(entityClass, query)
-                    : typeDatabaseService.searchCountBySql(entityClass, query);
+            boolean mongo = "MONGO".equalsIgnoreCase(queryType);
+            long count;
+            if (bindingContext.recordScoped()) {
+                try (Stream<Object> stream = mongo
+                        ? typeDatabaseService.searchByMongoFilter(entityClass, query, 0, Integer.MAX_VALUE, "uuid", SortOrder.ASC)
+                        : typeDatabaseService.searchBySql(entityClass, query, 0, Integer.MAX_VALUE, "uuid", SortOrder.ASC)) {
+                    count = stream
+                            .filter(entity -> canAccessScopedRecord(fqn, uuidOf(entity), bindingContext.bindingUuid()))
+                            .count();
+                }
+            } else {
+                count = mongo
+                        ? typeDatabaseService.searchCountByMongoFilter(entityClass, query)
+                        : typeDatabaseService.searchCountBySql(entityClass, query);
+            }
             return ResponseEntity.ok("{\"count\":" + count + "}");
         } catch (SqlParseException e) {
             return ResponseEntity.badRequest()
@@ -555,5 +780,163 @@ public class TypeDatabaseController {
         return ResponseEntity.internalServerError()
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"status\":\"error\",\"message\":\"" + escape(message) + "\"}");
+    }
+
+    private BindingContext resolveBindingContextFromCurrentRequest() {
+        ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        if (attrs == null) {
+            return BindingContext.unscoped();
+        }
+        return resolveBindingContext(attrs.getRequest());
+    }
+
+    private BindingContext resolveBindingContext(HttpServletRequest request) {
+        if (request == null) {
+            return BindingContext.unscoped();
+        }
+        String reflectionType = trimToEmpty(request.getHeader(REFLECTION_TYPE_HEADER));
+        if (!"RECORD".equalsIgnoreCase(reflectionType)) {
+            return BindingContext.unscoped();
+        }
+        String bindingUuid = trimToEmpty(request.getHeader(REFLECTION_BINDING_UUID_HEADER));
+        String bindingName = trimToEmpty(request.getHeader(REFLECTION_BINDING_NAME_HEADER));
+        if (bindingUuid.isBlank()) {
+            return BindingContext.invalid("Missing record binding context header: " + REFLECTION_BINDING_UUID_HEADER);
+        }
+        String sessionUuid = trimToEmpty(request.getHeader(SESSION_UUID_HEADER));
+        if (sessionUuid.isBlank()) {
+            return BindingContext.invalid("Missing record binding context header: " + SESSION_UUID_HEADER);
+        }
+
+        if (!isBindingAttachedToExecutionContext(sessionUuid, bindingUuid)) {
+            return BindingContext.invalid("Record binding is not attached to the current session, active agent, or executing skill.");
+        }
+
+        return BindingContext.recordScoped(bindingUuid, bindingName, sessionUuid);
+    }
+
+    private boolean isBindingAttachedToExecutionContext(String sessionUuid, String bindingUuid) {
+        if (aiSessionRepository == null || sessionUuid == null || sessionUuid.isBlank() || bindingUuid == null || bindingUuid.isBlank()) {
+            return false;
+        }
+
+        AiSession session = aiSessionRepository.get(sessionUuid);
+        if (session == null) {
+            return false;
+        }
+
+        String authenticatedUser = currentUsername();
+        if (authenticatedUser != null && !authenticatedUser.isBlank()
+                && session.username() != null && !session.username().isBlank()
+                && !authenticatedUser.equalsIgnoreCase(session.username())) {
+            return false;
+        }
+
+        java.util.LinkedHashSet<String> allowed = new java.util.LinkedHashSet<>();
+        allowed.addAll(parseSessionReflectionBindingUuids(session));
+
+        if (agentTemplateRepository != null
+                && session.getActiveAgentTemplateId() != null
+                && !session.getActiveAgentTemplateId().isBlank()) {
+            AgentTemplate template = agentTemplateRepository.get(session.getActiveAgentTemplateId());
+            if (template != null && template.bindingUuids() != null) {
+                allowed.addAll(template.bindingUuids());
+            }
+            if (template != null && template.skillUuids() != null) {
+                for (String skillUuid : template.skillUuids()) {
+                    addSkillBindings(allowed, skillUuid);
+                }
+            }
+        }
+
+        if (session.sessionSkillUuids() != null) {
+            for (String skillUuid : session.sessionSkillUuids()) {
+                addSkillBindings(allowed, skillUuid);
+            }
+        }
+
+        List<SkillFrame> skillStack = session.skillStack();
+        if (skillStack != null && !skillStack.isEmpty()) {
+            SkillFrame top = skillStack.get(skillStack.size() - 1);
+            if (top != null && top.skillUuid() != null && !top.skillUuid().isBlank()) {
+                addSkillBindings(allowed, top.skillUuid());
+            }
+        }
+
+        return allowed.contains(bindingUuid);
+    }
+
+    private void addSkillBindings(java.util.LinkedHashSet<String> target, String skillUuid) {
+        if (target == null || skillRepository == null || skillUuid == null || skillUuid.isBlank()) {
+            return;
+        }
+        Skill skill = skillRepository.get(skillUuid);
+        if (skill == null || skill.bindingUuids() == null) {
+            return;
+        }
+        for (String bindingUuid : skill.bindingUuids()) {
+            if (bindingUuid != null && !bindingUuid.isBlank()) {
+                target.add(bindingUuid.trim());
+            }
+        }
+    }
+
+    private List<String> parseSessionReflectionBindingUuids(AiSession session) {
+        if (session == null || session.environmentVariables() == null) {
+            return List.of();
+        }
+        String raw = session.environmentVariables().get(SESSION_REFLECTION_BINDING_UUIDS_ENV);
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        java.util.LinkedHashSet<String> parsed = new java.util.LinkedHashSet<>();
+        for (String token : raw.split("[,;\\n\\r\\t ]+")) {
+            if (token == null || token.isBlank()) {
+                continue;
+            }
+            parsed.add(token.trim());
+        }
+        return List.copyOf(parsed);
+    }
+
+    private String currentUsername() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getName() == null || auth.getName().isBlank()) {
+            return null;
+        }
+        return auth.getName();
+    }
+
+    private boolean canAccessScopedRecord(String typeFqn, String recordUuid, String bindingUuid) {
+        if (typeRecordBindingScopeRepository == null) {
+            return false;
+        }
+        if (typeFqn == null || typeFqn.isBlank() || recordUuid == null || recordUuid.isBlank() || bindingUuid == null || bindingUuid.isBlank()) {
+            return false;
+        }
+        TypeRecordBindingScope scope = typeRecordBindingScopeRepository.get(scopeId(typeFqn, recordUuid));
+        return scope != null && bindingUuid.equals(scope.bindingUuid());
+    }
+
+    private static String scopeId(String typeFqn, String recordUuid) {
+        return typeFqn + "::" + recordUuid;
+    }
+
+    private static String trimToEmpty(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private record BindingContext(boolean recordScoped, boolean valid, String bindingUuid, String bindingName, String sessionUuid, String errorMessage) {
+        static BindingContext unscoped() {
+            return new BindingContext(false, true, "", "", "", "");
+        }
+
+        static BindingContext recordScoped(String bindingUuid, String bindingName, String sessionUuid) {
+            return new BindingContext(true, true, bindingUuid, bindingName == null ? "" : bindingName, sessionUuid == null ? "" : sessionUuid, "");
+        }
+
+        static BindingContext invalid(String errorMessage) {
+            return new BindingContext(true, false, "", "", "", errorMessage == null ? "Invalid binding context." : errorMessage);
+        }
     }
 }

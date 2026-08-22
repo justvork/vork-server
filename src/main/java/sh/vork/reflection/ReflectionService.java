@@ -34,13 +34,20 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import sh.vork.ai.security.SkillSecretSubstitutor;
 import sh.vork.ai.function.OAuthConnectRequest;
+import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.oauth.OAuthTemplate;
 import sh.vork.oauth.OAuthClientService;
 import sh.vork.oauth.OAuthTemplateService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.RepositoryFactory;
+import sh.vork.orm.SortOrder;
 import sh.vork.security.SecureCredentialStore;
 import sh.vork.skill.SkillSecret;
+import sh.vork.typegen.JavaTypeClassLoader;
+import sh.vork.typegen.JavaType;
+import sh.vork.typegen.TypeDatabaseService;
+import sh.vork.typegen.TypeRecordBindingScope;
+import sh.vork.typegen.TypeRecordVersionMetadata;
 import sh.vork.util.ToolIdGenerator;
 import sh.vork.web.RequestOriginContext;
 
@@ -54,6 +61,7 @@ public class ReflectionService {
     private static final Pattern BINDING_NAME_PATTERN = Pattern.compile("^[A-Za-z0-9._-]+$");
     private static final Pattern TEMPLATE_TOKEN_PATTERN = Pattern.compile("\\{\\{\\s*([A-Za-z0-9._-]+)\\s*\\}\\}");
     private static final Set<String> METHODS_WITHOUT_BODY = Set.of("GET", "DELETE", "HEAD", "OPTIONS");
+    private static final String MANDATORY_RECORD_TOOL_MARKER = "x-vork-mandatory-record-tool";
         private static final String CONTENT_TYPE_JSON = "application/json";
         private static final String CONTENT_TYPE_FORM = "application/x-www-form-urlencoded";
         private static final String CONTENT_TYPE_TEXT = "text/plain";
@@ -71,6 +79,7 @@ public class ReflectionService {
     private static final boolean DEV_UNREDACTED_LOGS = resolveDevUnredactedLogsFlag();
 
     private final DatabaseRepository<Reflection> reflectionRepository;
+    private final DatabaseRepository<RecordReflection> recordReflectionRepository;
     private final DatabaseRepository<ReflectionGroup> reflectionGroupRepository;
     private final DatabaseRepository<ReflectionBinding> reflectionBindingRepository;
     private final DatabaseRepository<PendingOAuthBindingAction> pendingOAuthBindingActionRepository;
@@ -80,6 +89,11 @@ public class ReflectionService {
     private final SecureCredentialStore secureCredentialStore;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
+    private TypeDatabaseService typeDatabaseService;
+    private JavaTypeClassLoader javaTypeClassLoader;
+    private DatabaseRepository<TypeRecordBindingScope> typeRecordBindingScopeRepository;
+    private DatabaseRepository<TypeRecordVersionMetadata> typeRecordVersionMetadataRepository;
+    private DatabaseRepository<JavaType> javaTypeRepository;
 
     @Autowired
     public ReflectionService(RepositoryFactory factory,
@@ -90,6 +104,7 @@ public class ReflectionService {
                              ObjectMapper objectMapper) {
         this(
                 factory.create(Reflection.class),
+                factory.create(RecordReflection.class),
                 factory.create(ReflectionGroup.class),
                 factory.create(ReflectionBinding.class),
                 factory.create(PendingOAuthBindingAction.class),
@@ -101,7 +116,33 @@ public class ReflectionService {
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build());
     }
 
+    @Autowired(required = false)
+    public void setTypeDatabaseService(TypeDatabaseService typeDatabaseService) {
+        this.typeDatabaseService = typeDatabaseService;
+    }
+
+    @Autowired(required = false)
+    public void setJavaTypeClassLoader(JavaTypeClassLoader javaTypeClassLoader) {
+        this.javaTypeClassLoader = javaTypeClassLoader;
+    }
+
+    @Autowired(required = false)
+    public void setTypeRecordBindingScopeRepository(DatabaseRepository<TypeRecordBindingScope> typeRecordBindingScopeRepository) {
+        this.typeRecordBindingScopeRepository = typeRecordBindingScopeRepository;
+    }
+
+    @Autowired(required = false)
+    public void setTypeRecordVersionMetadataRepository(DatabaseRepository<TypeRecordVersionMetadata> typeRecordVersionMetadataRepository) {
+        this.typeRecordVersionMetadataRepository = typeRecordVersionMetadataRepository;
+    }
+
+    @Autowired(required = false)
+    public void setJavaTypeRepository(DatabaseRepository<JavaType> javaTypeRepository) {
+        this.javaTypeRepository = javaTypeRepository;
+    }
+
         ReflectionService(DatabaseRepository<Reflection> reflectionRepository,
+                  DatabaseRepository<RecordReflection> recordReflectionRepository,
                   DatabaseRepository<ReflectionGroup> reflectionGroupRepository,
                   DatabaseRepository<ReflectionBinding> reflectionBindingRepository,
                       DatabaseRepository<PendingOAuthBindingAction> pendingOAuthBindingActionRepository,
@@ -112,6 +153,7 @@ public class ReflectionService {
                   HttpClient httpClient) {
         this(
             reflectionRepository,
+            recordReflectionRepository,
             reflectionGroupRepository,
             reflectionBindingRepository,
             pendingOAuthBindingActionRepository,
@@ -124,6 +166,7 @@ public class ReflectionService {
         }
 
     ReflectionService(DatabaseRepository<Reflection> reflectionRepository,
+                      DatabaseRepository<RecordReflection> recordReflectionRepository,
                       DatabaseRepository<ReflectionGroup> reflectionGroupRepository,
                       DatabaseRepository<ReflectionBinding> reflectionBindingRepository,
                       DatabaseRepository<PendingOAuthBindingAction> pendingOAuthBindingActionRepository,
@@ -134,6 +177,7 @@ public class ReflectionService {
                       ObjectMapper objectMapper,
                       HttpClient httpClient) {
         this.reflectionRepository = reflectionRepository;
+        this.recordReflectionRepository = recordReflectionRepository;
         this.reflectionGroupRepository = reflectionGroupRepository;
         this.reflectionBindingRepository = reflectionBindingRepository;
         this.pendingOAuthBindingActionRepository = pendingOAuthBindingActionRepository;
@@ -281,8 +325,8 @@ public class ReflectionService {
         try (var stream = reflectionBindingRepository.list(0, Integer.MAX_VALUE)) {
             return stream
                     .filter(binding -> {
-                        Reflection reflection = getBindingReflection(binding);
-                        return reflection != null && groupUuid.equals(reflection.groupUuid());
+                        ReflectionGroup bindingGroup = getBindingGroup(binding);
+                        return bindingGroup != null && groupUuid.equals(bindingGroup.uuid());
                     })
                     .sorted(Comparator.comparing(
                             binding -> binding.name() == null ? "" : binding.name(),
@@ -312,7 +356,7 @@ public class ReflectionService {
         if (binding == null || binding.reflectionUuid() == null || binding.reflectionUuid().isBlank()) {
             return null;
         }
-        return reflectionRepository.get(binding.reflectionUuid());
+        return getReflection(binding.reflectionUuid());
     }
 
     public ReflectionGroup getBindingGroup(ReflectionBinding binding) {
@@ -546,11 +590,18 @@ public class ReflectionService {
 
     public List<Reflection> listReflections() {
         log.debug("ENTER listReflections");
+        List<Reflection> merged = new ArrayList<>();
         try (var stream = reflectionRepository.list(0, Integer.MAX_VALUE)) {
-            return stream.sorted(Comparator.comparing(
-                    reflection -> reflection.id() == null ? "" : reflection.id(),
-                    String.CASE_INSENSITIVE_ORDER)).toList();
+            merged.addAll(stream.toList());
         }
+        try (var stream = recordReflectionRepository.list(0, Integer.MAX_VALUE)) {
+            stream.map(this::recordToReflection).forEach(merged::add);
+        }
+        return merged.stream()
+                .sorted(Comparator.comparing(
+                        reflection -> reflection.id() == null ? "" : reflection.id(),
+                        String.CASE_INSENSITIVE_ORDER))
+                .toList();
     }
 
     public List<Reflection> reflectionsForGroup(String groupUuid) {
@@ -563,7 +614,12 @@ public class ReflectionService {
     }
 
     public Reflection getReflection(String uuid) {
-        return reflectionRepository.get(uuid);
+        Reflection reflection = reflectionRepository.get(uuid);
+        if (reflection != null) {
+            return reflection;
+        }
+        RecordReflection recordReflection = recordReflectionRepository.get(uuid);
+        return recordReflection == null ? null : recordToReflection(recordReflection);
     }
 
     public Reflection getReflectionById(String reflectionId) {
@@ -584,11 +640,122 @@ public class ReflectionService {
         return normalized;
     }
 
+        public void ensureRecordReflectionsForType(String recordFqn) {
+        log.debug("ENTER ensureRecordReflectionsForType: [recordFqn={}]", recordFqn);
+        if (recordFqn == null || recordFqn.isBlank()) {
+            throw new IllegalArgumentException("recordFqn is required.");
+        }
+
+        String normalizedFqn = recordFqn.trim();
+        String simpleName = normalizedFqn;
+        int lastDot = normalizedFqn.lastIndexOf('.');
+        if (lastDot >= 0 && lastDot < normalizedFqn.length() - 1) {
+            simpleName = normalizedFqn.substring(lastDot + 1);
+        }
+
+        String hashSuffix = Long.toString(Integer.toUnsignedLong(normalizedFqn.hashCode()), 36).toUpperCase(Locale.ROOT);
+        String compactSimpleName = simpleName.replaceAll("[^A-Za-z0-9]", "");
+        if (compactSimpleName.isBlank()) {
+            compactSimpleName = "RecordType";
+        }
+
+        String groupId = identityOrDefault("Record" + hashSuffix, simpleName, "group");
+        String artifactId = identityOrDefault(compactSimpleName + hashSuffix, simpleName, "recordartifact");
+        String groupUuid = toVid(groupId, artifactId, "SNAPSHOT");
+
+        long now = System.currentTimeMillis();
+        ReflectionGroup group = reflectionGroupRepository.get(groupUuid);
+        if (group == null) {
+            group = new ReflectionGroup(
+                groupUuid,
+                uniqueGroupToolId("record" + compactSimpleName, null),
+                "Record " + simpleName,
+                "System-managed record reflections for " + normalizedFqn,
+                ReflectionType.RECORD,
+                "",
+                true,
+                List.of(),
+                List.of(),
+                ReflectionAuthenticationMode.NONE,
+                "",
+                groupId,
+                artifactId,
+                "SNAPSHOT",
+                ArtifactStatus.SNAPSHOT,
+                now,
+                now);
+            reflectionGroupRepository.save(group);
+            log.info("Record reflection group created [groupUuid={}, fqn={}]", groupUuid, normalizedFqn);
+        } else if (group.type() != ReflectionType.RECORD) {
+            throw new IllegalArgumentException("Existing reflection group is not of type RECORD: " + groupUuid);
+        }
+
+        upsertMandatoryRecordToolReflection(
+            group,
+            normalizedFqn,
+            simpleName,
+            "CREATE",
+            "Create " + simpleName,
+            "Create or update a " + simpleName + " record.",
+            List.of(new ReflectionInputParameter("uuid", "string", "Record UUID.", true)));
+
+        upsertMandatoryRecordToolReflection(
+            group,
+            normalizedFqn,
+            simpleName,
+            "READ",
+            "Get " + simpleName,
+            "Read a " + simpleName + " record by UUID.",
+            List.of(new ReflectionInputParameter("uuid", "string", "Record UUID.", true)));
+
+        upsertMandatoryRecordToolReflection(
+            group,
+            normalizedFqn,
+            simpleName,
+            "UPDATE",
+            "Update " + simpleName,
+            "Update or upsert a " + simpleName + " record.",
+            List.of(new ReflectionInputParameter("uuid", "string", "Record UUID.", true)));
+
+        upsertMandatoryRecordToolReflection(
+            group,
+            normalizedFqn,
+            simpleName,
+            "DELETE",
+            "Delete " + simpleName,
+            "Delete a " + simpleName + " record by UUID.",
+            List.of(new ReflectionInputParameter("uuid", "string", "Record UUID.", true)));
+
+        upsertMandatoryRecordToolReflection(
+            group,
+            normalizedFqn,
+            simpleName,
+            "SEARCH",
+            "Search " + simpleName,
+            "Search " + simpleName + " records using SQL-like query syntax.",
+            List.of(
+                new ReflectionInputParameter("query", "string", "SQL-like query string.", true),
+                new ReflectionInputParameter("queryType", "string", "Query parser mode (SQL or MONGO).", false),
+                new ReflectionInputParameter("sortField", "string", "Sort field.", false),
+                new ReflectionInputParameter("sortOrder", "string", "Sort direction (ASC or DESC).", false),
+                new ReflectionInputParameter("page", "int", "Page number.", false),
+                new ReflectionInputParameter("pageSize", "int", "Page size.", false)));
+
+        log.info("Record reflections ensured [groupUuid={}, fqn={}]", groupUuid, normalizedFqn);
+        }
+
     public Reflection updateReflection(String uuid, ReflectionRequest request) {
         log.debug("ENTER updateReflection: [uuid={}]", uuid);
         Reflection existing = reflectionRepository.get(uuid);
         if (existing == null) {
+            RecordReflection recordExisting = recordReflectionRepository.get(uuid);
+            if (recordExisting != null) {
+                throw new IllegalArgumentException("Mandatory record reflection tools are immutable and cannot be updated.");
+            }
             return null;
+        }
+        if (isMandatoryRecordTool(existing)) {
+            throw new IllegalArgumentException("Mandatory record reflection tools are immutable and cannot be updated.");
         }
         Reflection normalized = normalizeAndValidate(existing, request);
         reflectionRepository.save(normalized);
@@ -600,7 +767,14 @@ public class ReflectionService {
     public boolean deleteReflection(String uuid) {
         Reflection existing = reflectionRepository.get(uuid);
         if (existing == null) {
+            RecordReflection recordExisting = recordReflectionRepository.get(uuid);
+            if (recordExisting != null) {
+                throw new IllegalArgumentException("Mandatory record reflection tools are immutable and cannot be deleted.");
+            }
             return false;
+        }
+        if (isMandatoryRecordTool(existing)) {
+            throw new IllegalArgumentException("Mandatory record reflection tools are immutable and cannot be deleted.");
         }
         reflectionRepository.delete(uuid);
         log.info("Reflection deleted [uuid={}, id={}]", uuid, existing.id());
@@ -749,8 +923,11 @@ public class ReflectionService {
 
         ReflectionGroup group = reflectionGroupRepository.get(reflection.groupUuid());
         ReflectionType type = group == null ? ReflectionType.REST : group.type();
-        if (type != ReflectionType.REST) {
-            return jsonError("Only REST reflections are executable at this time.");
+        if (type == ReflectionType.RECORD) {
+            return executeRecordReflection(reflection, runtimeInputs, bindingName, username);
+        }
+        if (type == ReflectionType.MONGO) {
+            return jsonError("MONGO reflections are not executable at this time.");
         }
 
         ReflectionBinding resolvedBinding;
@@ -792,6 +969,14 @@ public class ReflectionService {
             Set<String> optionalTemplateTokens = optionalTemplateTokens(reflection.inputParameters());
             Set<String> optionalArrayTemplateTokens = optionalArrayTemplateTokens(reflection.inputParameters());
 
+            String recordFallbackBaseUrl = null;
+            if (type == ReflectionType.RECORD) {
+                Object value = ToolExecutionContext.get("__request_base_url__");
+                if (value instanceof String s && !s.isBlank()) {
+                    recordFallbackBaseUrl = s.trim();
+                }
+            }
+
             String rawUrl = applyTemplate(reflection.url(), stringInputs, optionalTemplateTokens);
             rawUrl = stripEmptyQueryParameters(rawUrl);
             List<String> unresolvedUrlTokens = findUnresolvedTemplateTokens(rawUrl);
@@ -800,7 +985,7 @@ public class ReflectionService {
                         + String.join(", ", unresolvedUrlTokens)
                         + ". Ensure the selected binding has values and placeholder names match the binding parameters.");
             }
-            rawUrl = resolveRequestUrl(rawUrl, group, resolvedBinding);
+            rawUrl = resolveRequestUrl(rawUrl, group, resolvedBinding, recordFallbackBaseUrl);
             rawUrl = substituteSecrets(rawUrl, username, bindingSecretValues);
             URI requestUri = buildUri(rawUrl, reflection.queryParameters(), stringInputs, username, bindingSecretValues, optionalTemplateTokens);
 
@@ -812,6 +997,18 @@ public class ReflectionService {
                     reflection.headers(), stringInputs, username, bindingSecretValues, optionalTemplateTokens);
 
                 applyGroupAuthentication(resolvedHeaders, group, resolvedBinding, username);
+
+                if (type == ReflectionType.RECORD) {
+                    if (resolvedBinding != null) {
+                        putHeaderCaseInsensitive(resolvedHeaders, "X-Vork-Reflection-Binding-UUID", resolvedBinding.uuid());
+                        putHeaderCaseInsensitive(resolvedHeaders, "X-Vork-Reflection-Binding-Name", resolvedBinding.name());
+                    }
+                    String sessionUuid = ToolExecutionContext.getSessionUuid();
+                    if (sessionUuid != null && !sessionUuid.isBlank()) {
+                        putHeaderCaseInsensitive(resolvedHeaders, "X-Vork-Session-UUID", sessionUuid);
+                    }
+                    putHeaderCaseInsensitive(resolvedHeaders, "X-Vork-Reflection-Type", "RECORD");
+                }
 
                 String body = resolveBody(
                     reflection,
@@ -908,7 +1105,11 @@ public class ReflectionService {
             throw new IllegalArgumentException("Reflection group not found.");
         }
         if (group.type() != ReflectionType.REST) {
-            throw new IllegalArgumentException("Only REST reflection groups are supported at this time.");
+            throw new IllegalArgumentException("Manual reflection creation is only supported for REST groups.");
+        }
+
+        if (request.outputSchema() != null && marksMandatoryRecordTool(request.outputSchema())) {
+            throw new IllegalArgumentException("Reserved record-tool metadata cannot be set manually.");
         }
 
         String method = normalizeMethod(request.method());
@@ -1645,8 +1846,11 @@ public class ReflectionService {
                                                 ReflectionBindingRequest request) {
         String requestedReflectionUuid = request.reflectionUuid() == null ? "" : request.reflectionUuid().trim();
         if (!requestedReflectionUuid.isBlank()) {
-            Reflection requested = reflectionRepository.get(requestedReflectionUuid);
+            Reflection requested = getReflection(requestedReflectionUuid);
             if (requested == null) {
+                if (group.uuid().equals(requestedReflectionUuid)) {
+                    return group.uuid();
+                }
                 throw new IllegalArgumentException("Reflection not found for reflectionUuid.");
             }
             if (!group.uuid().equals(requested.groupUuid())) {
@@ -1656,15 +1860,18 @@ public class ReflectionService {
         }
 
         if (existing != null && existing.reflectionUuid() != null && !existing.reflectionUuid().isBlank()) {
-            Reflection prior = reflectionRepository.get(existing.reflectionUuid());
+            Reflection prior = getReflection(existing.reflectionUuid());
             if (prior != null && group.uuid().equals(prior.groupUuid())) {
                 return existing.reflectionUuid();
+            }
+            if (group.uuid().equals(existing.reflectionUuid())) {
+                return group.uuid();
             }
         }
 
         List<Reflection> groupReflections = reflectionsForGroup(group.uuid());
         if (groupReflections.isEmpty()) {
-            throw new IllegalArgumentException("Cannot create binding: group has no reflections.");
+            return group.uuid();
         }
         return groupReflections.getFirst().uuid();
     }
@@ -1863,7 +2070,8 @@ public class ReflectionService {
 
     private static String resolveRequestUrl(String reflectionUrl,
                                             ReflectionGroup group,
-                                            ReflectionBinding binding) {
+                                            ReflectionBinding binding,
+                                            String fallbackBaseUrl) {
         String url = reflectionUrl == null ? "" : reflectionUrl.trim();
         if (url.isBlank()) {
             return url;
@@ -1882,6 +2090,9 @@ public class ReflectionService {
             baseUrl = binding.baseUrl().trim();
         } else if (group.baseUrl() != null && !group.baseUrl().isBlank()) {
             baseUrl = group.baseUrl().trim();
+        }
+        if (baseUrl.isBlank() && fallbackBaseUrl != null && !fallbackBaseUrl.isBlank()) {
+            baseUrl = fallbackBaseUrl.trim();
         }
         if (baseUrl.isBlank()) {
             throw new IllegalArgumentException("Relative URL requires a group or binding base URL.");
@@ -2392,6 +2603,658 @@ public class ReflectionService {
                 "group",
                 candidate -> isGroupToolIdAvailable(candidate, excludeGroupUuid));
     }
+
+    private void upsertMandatoryRecordToolReflection(ReflectionGroup group,
+                                                     String recordFqn,
+                                                     String simpleName,
+                                                     String operation,
+                                                     String name,
+                                                     String description,
+                                                     List<ReflectionInputParameter> inputParameters) {
+        RecordReflection existing = getRecordReflectionByMetadata(recordFqn, operation);
+        Reflection legacy = getHttpRecordReflectionByMetadata(recordFqn, operation);
+
+        if (existing == null) {
+            RecordReflection byId = getRecordReflectionById(defaultRecordToolId(simpleName, operation));
+            if (byId != null && group.uuid().equals(byId.groupUuid())) {
+                existing = byId;
+            }
+        }
+        if (legacy == null) {
+            Reflection byId = getHttpReflectionById(defaultRecordToolId(simpleName, operation));
+            if (byId != null && group.uuid().equals(byId.groupUuid()) && isMandatoryRecordTool(byId)) {
+                legacy = byId;
+            }
+        }
+
+        String toolId = resolveRecordToolId(recordFqn, simpleName, operation,
+                group.uuid(), existing == null ? null : existing.uuid(), legacy == null ? null : legacy.uuid());
+
+        long now = System.currentTimeMillis();
+        RecordReflection reflection = new RecordReflection(
+                existing != null ? existing.uuid() : (legacy != null ? legacy.uuid() : UUID.randomUUID().toString()),
+                toolId,
+                name,
+                description,
+                group.uuid(),
+                inputParameters,
+                mandatoryRecordToolSchema(recordFqn, operation, simpleName),
+                existing == null ? 1L : existing.version() + 1,
+                existing == null ? now : existing.createdAt(),
+                now);
+        recordReflectionRepository.save(reflection);
+        if (legacy != null) {
+            reflectionRepository.delete(legacy.uuid());
+        }
+    }
+
+    private RecordReflection getRecordReflectionById(String reflectionId) {
+        if (reflectionId == null || reflectionId.isBlank()) {
+            return null;
+        }
+        try (var stream = recordReflectionRepository.list(0, Integer.MAX_VALUE)) {
+            return stream
+                    .filter(reflection -> reflectionId.equals(reflection.id()))
+                    .findFirst()
+                    .orElse(null);
+        }
+    }
+
+    private Reflection getHttpReflectionById(String reflectionId) {
+        if (reflectionId == null || reflectionId.isBlank()) {
+            return null;
+        }
+        try (var stream = reflectionRepository.list(0, Integer.MAX_VALUE)) {
+            return stream
+                    .filter(reflection -> reflectionId.equals(reflection.id()))
+                    .findFirst()
+                    .orElse(null);
+        }
+    }
+
+    private RecordReflection getRecordReflectionByMetadata(String recordFqn, String operation) {
+        if (recordFqn == null || recordFqn.isBlank() || operation == null || operation.isBlank()) {
+            return null;
+        }
+        try (var stream = recordReflectionRepository.list(0, Integer.MAX_VALUE)) {
+            return stream
+                    .filter(reflection -> recordToolMatches(reflection.outputSchema(), recordFqn, operation))
+                    .findFirst()
+                    .orElse(null);
+        }
+    }
+
+    private Reflection getHttpRecordReflectionByMetadata(String recordFqn, String operation) {
+        if (recordFqn == null || recordFqn.isBlank() || operation == null || operation.isBlank()) {
+            return null;
+        }
+        try (var stream = reflectionRepository.list(0, Integer.MAX_VALUE)) {
+            return stream
+                    .filter(this::isMandatoryRecordTool)
+                    .filter(reflection -> recordToolMatches(reflection.outputSchema(), recordFqn, operation))
+                    .findFirst()
+                    .orElse(null);
+        }
+    }
+
+    private Reflection recordToReflection(RecordReflection recordReflection) {
+        return new Reflection(
+                recordReflection.uuid(),
+                recordReflection.id(),
+                recordReflection.name(),
+                recordReflection.description(),
+                recordReflection.groupUuid(),
+                recordReflection.inputParameters(),
+                "POST",
+                "",
+                Map.of(),
+                Map.of(),
+                "",
+                CONTENT_TYPE_JSON,
+                CONTENT_TYPE_JSON,
+                recordReflection.outputSchema(),
+                recordReflection.version(),
+                recordReflection.createdAt(),
+                recordReflection.updatedAt());
+    }
+
+    private String resolveRecordToolId(String recordFqn,
+                                       String simpleName,
+                                       String operation,
+                                       String groupUuid,
+                                       String allowedRecordUuid,
+                                       String allowedLegacyUuid) {
+        String base = defaultRecordToolId(simpleName, operation);
+        if (isRecordToolIdAvailable(base, groupUuid, allowedRecordUuid, allowedLegacyUuid)) {
+            return base;
+        }
+        String hashSuffix = Long.toString(Integer.toUnsignedLong((recordFqn + "#" + operation).hashCode()), 36)
+                .toUpperCase(Locale.ROOT);
+        String candidate = base + hashSuffix;
+        if (isRecordToolIdAvailable(candidate, groupUuid, allowedRecordUuid, allowedLegacyUuid)) {
+            return candidate;
+        }
+
+        int attempt = 2;
+        while (attempt < 1000) {
+            String indexed = candidate + attempt;
+            if (isRecordToolIdAvailable(indexed, groupUuid, allowedRecordUuid, allowedLegacyUuid)) {
+                return indexed;
+            }
+            attempt++;
+        }
+        throw new IllegalArgumentException("Unable to resolve unique record tool id for " + base + ".");
+    }
+
+    private boolean isRecordToolIdAvailable(String candidate,
+                                            String targetGroupUuid,
+                                            String allowedRecordUuid,
+                                            String allowedLegacyUuid) {
+        RecordReflection record = getRecordReflectionById(candidate);
+        if (record != null) {
+            if (allowedRecordUuid != null && allowedRecordUuid.equals(record.uuid())) {
+                return true;
+            }
+            return targetGroupUuid != null && targetGroupUuid.equals(record.groupUuid());
+        }
+
+        Reflection legacy = getHttpReflectionById(candidate);
+        if (legacy != null) {
+            if (allowedLegacyUuid != null && allowedLegacyUuid.equals(legacy.uuid())) {
+                return true;
+            }
+            return targetGroupUuid != null && targetGroupUuid.equals(legacy.groupUuid()) && isMandatoryRecordTool(legacy);
+        }
+        return true;
+    }
+
+    private static String defaultRecordToolId(String simpleName, String operation) {
+        String baseName = toPascalIdentifier(simpleName);
+        String prefix = switch (operation == null ? "" : operation.toUpperCase(Locale.ROOT)) {
+            case "CREATE" -> "create";
+            case "UPDATE" -> "update";
+            case "READ" -> "get";
+            case "DELETE" -> "delete";
+            case "SEARCH" -> "search";
+            default -> "record";
+        };
+        return prefix + baseName;
+    }
+
+    private static String toPascalIdentifier(String value) {
+        if (value == null || value.isBlank()) {
+            return "Record";
+        }
+        String compact = value.replaceAll("[^A-Za-z0-9]", "");
+        if (compact.isBlank()) {
+            return "Record";
+        }
+        return Character.toUpperCase(compact.charAt(0)) + compact.substring(1);
+    }
+
+    private boolean recordToolMatches(String outputSchema, String recordFqn, String operation) {
+        if (outputSchema == null || outputSchema.isBlank()) {
+            return false;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(outputSchema);
+            if (!root.path(MANDATORY_RECORD_TOOL_MARKER).asBoolean(false)) {
+                return false;
+            }
+            String schemaFqn = root.path("recordFqn").asText("").trim();
+            String schemaOperation = root.path("operation").asText("").trim().toUpperCase(Locale.ROOT);
+            return recordFqn.equals(schemaFqn) && operation.equalsIgnoreCase(schemaOperation);
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    private String mandatoryRecordToolSchema(String recordFqn, String operation, String simpleName) {
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("$schema", "https://json-schema.org/draft/2020-12/schema");
+            payload.put("title", "Record " + operation + " Result - " + simpleName);
+            payload.put("description", "Response schema for " + operation + " operation on " + simpleName + ".");
+            payload.put("type", "object");
+            payload.put(MANDATORY_RECORD_TOOL_MARKER, true);
+            payload.put("recordFqn", recordFqn);
+            payload.put("recordType", simpleName);
+            payload.put("operation", operation);
+            payload.put("immutable", true);
+            payload.putAll(buildRecordOperationOutputSchema(operation));
+            return objectMapper.writeValueAsString(payload);
+        } catch (Exception ex) {
+            return "{\"" + MANDATORY_RECORD_TOOL_MARKER + "\":true}";
+        }
+    }
+
+    private Map<String, Object> buildRecordOperationOutputSchema(String operation) {
+        Map<String, Object> schema = new LinkedHashMap<>();
+        Map<String, Object> properties = new LinkedHashMap<>();
+        List<String> required = new ArrayList<>();
+
+        properties.put("status", Map.of("type", "string"));
+        properties.put("operation", Map.of("type", "string"));
+        required.add("status");
+        required.add("operation");
+
+        String normalized = operation == null ? "" : operation.toUpperCase(Locale.ROOT);
+        switch (normalized) {
+            case "CREATE", "UPDATE" -> {
+                properties.put("uuid", Map.of("type", "string"));
+                properties.put("revision", Map.of("type", "integer"));
+                properties.put("schemaVersion", Map.of("type", "integer"));
+                required.add("uuid");
+                required.add("revision");
+                required.add("schemaVersion");
+            }
+            case "READ" -> {
+                properties.put("record", Map.of("type", "object"));
+                properties.put("revision", Map.of("type", "integer"));
+                properties.put("schemaVersion", Map.of("type", "integer"));
+                required.add("record");
+            }
+            case "DELETE" -> {
+                properties.put("uuid", Map.of("type", "string"));
+                required.add("uuid");
+            }
+            case "SEARCH" -> {
+                properties.put("total", Map.of("type", "integer"));
+                properties.put("page", Map.of("type", "integer"));
+                properties.put("pageSize", Map.of("type", "integer"));
+                Map<String, Object> items = new LinkedHashMap<>();
+                items.put("type", "object");
+                properties.put("results", Map.of("type", "array", "items", items));
+                required.add("total");
+                required.add("page");
+                required.add("pageSize");
+                required.add("results");
+            }
+            default -> {
+                // Keep minimal status/operation schema for forward compatibility.
+            }
+        }
+
+        schema.put("properties", properties);
+        schema.put("required", required);
+        schema.put("additionalProperties", true);
+        return schema;
+    }
+
+    private boolean isMandatoryRecordTool(Reflection reflection) {
+        if (reflection == null) {
+            return false;
+        }
+        String outputSchema = reflection.outputSchema();
+        if (outputSchema == null || outputSchema.isBlank()) {
+            return false;
+        }
+        return marksMandatoryRecordTool(outputSchema);
+    }
+
+    private boolean marksMandatoryRecordTool(String outputSchema) {
+        if (outputSchema == null || outputSchema.isBlank()) {
+            return false;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(outputSchema);
+            return root.path(MANDATORY_RECORD_TOOL_MARKER).asBoolean(false);
+        } catch (Exception ex) {
+            return outputSchema.contains("\"" + MANDATORY_RECORD_TOOL_MARKER + "\":true");
+        }
+    }
+
+    private String executeRecordReflection(Reflection reflection,
+                                           Map<String, Object> runtimeInputs,
+                                           String bindingName,
+                                           String username) {
+        if (typeDatabaseService == null
+                || javaTypeClassLoader == null
+                || typeRecordBindingScopeRepository == null
+                || typeRecordVersionMetadataRepository == null) {
+            return jsonError("Record reflection engine is unavailable.");
+        }
+
+        ReflectionGroup group = reflectionGroupRepository.get(reflection.groupUuid());
+        ReflectionBinding resolvedBinding;
+        Map<String, Object> mergedInputs;
+        try {
+            resolvedBinding = resolveBindingForExecution(group, bindingName);
+            Map<String, Object> cleanedRuntimeInputs = new LinkedHashMap<>(runtimeInputs == null ? Map.of() : runtimeInputs);
+            cleanedRuntimeInputs.remove("bindingName");
+            mergedInputs = applyBindingInputs(group == null ? List.of() : group.bindingParameters(), resolvedBinding, cleanedRuntimeInputs);
+        } catch (Exception ex) {
+            return jsonError(ex.getMessage());
+        }
+
+        List<String> missing = new ArrayList<>();
+        for (ReflectionInputParameter parameter : reflection.inputParameters()) {
+            if (!parameter.required()) {
+                continue;
+            }
+            Object value = mergedInputs.get(parameter.name());
+            if (value == null || String.valueOf(value).isBlank()) {
+                missing.add(parameter.name());
+            }
+        }
+        if (!missing.isEmpty()) {
+            return jsonMissing(missing);
+        }
+
+        RecordToolMetadata metadata = parseRecordToolMetadata(reflection);
+        if (metadata == null) {
+            return jsonError("Record reflection metadata is invalid or missing.");
+        }
+
+        Class<?> entityClass;
+        try {
+            entityClass = javaTypeClassLoader.loadClass(metadata.recordFqn());
+        } catch (ClassNotFoundException ex) {
+            return jsonError("Record type not found: " + metadata.recordFqn());
+        }
+
+        try {
+            return switch (metadata.operation()) {
+                case "CREATE", "UPDATE" -> executeRecordSave(metadata.recordFqn(), entityClass, mergedInputs, resolvedBinding);
+                case "READ" -> executeRecordRead(metadata.recordFqn(), entityClass, mergedInputs, resolvedBinding);
+                case "DELETE" -> executeRecordDelete(metadata.recordFqn(), entityClass, mergedInputs, resolvedBinding);
+                case "SEARCH" -> executeRecordSearch(metadata.recordFqn(), entityClass, mergedInputs, resolvedBinding);
+                default -> jsonError("Unsupported record operation: " + metadata.operation());
+            };
+        } catch (Exception ex) {
+            return jsonError(ex.getMessage());
+        }
+    }
+
+    private String executeRecordSave(String recordFqn,
+                                     Class<?> entityClass,
+                                     Map<String, Object> inputs,
+                                     ReflectionBinding binding) throws Exception {
+        if (binding == null || binding.uuid() == null || binding.uuid().isBlank()) {
+            return jsonError("Binding context is required for record write operations.");
+        }
+
+        Map<String, Object> filtered = filterRecordFields(entityClass, inputs);
+        Object entity = objectMapper.convertValue(filtered, entityClass);
+        String entityUuid = entityUuid(entity);
+        if (entityUuid == null || entityUuid.isBlank()) {
+            return jsonError("Record uuid is required.");
+        }
+
+        String scopeId = recordScopeId(recordFqn, entityUuid);
+        TypeRecordBindingScope existingScope = typeRecordBindingScopeRepository.get(scopeId);
+        if (existingScope != null && !binding.uuid().equals(existingScope.bindingUuid())) {
+            return jsonError("Record belongs to a different binding scope.");
+        }
+
+        String versionId = recordVersionId(recordFqn, entityUuid);
+        TypeRecordVersionMetadata existingVersion = typeRecordVersionMetadataRepository.get(versionId);
+
+        long expectedRevision = asLong(inputs.get("expectedRevision"), 0L);
+        if (expectedRevision > 0) {
+            if (existingVersion == null) {
+                if (expectedRevision != 1L) {
+                    return jsonError("Revision mismatch. Record does not exist at expectedRevision=" + expectedRevision + ".");
+                }
+            } else if (existingVersion.entityRevision() != expectedRevision) {
+                return jsonError("Revision mismatch. expected=" + expectedRevision + ", actual=" + existingVersion.entityRevision() + ".");
+            }
+        }
+
+        typeDatabaseService.save(entity);
+
+        long now = System.currentTimeMillis();
+        typeRecordBindingScopeRepository.save(new TypeRecordBindingScope(
+                scopeId,
+                recordFqn,
+                entityUuid,
+                binding.uuid(),
+                binding.name(),
+                existingScope == null ? now : existingScope.createdAt(),
+                now));
+
+            long schemaVersion = resolveSchemaVersion(recordFqn, now);
+            long revision = existingVersion == null ? 1L : existingVersion.entityRevision() + 1L;
+            typeRecordVersionMetadataRepository.save(new TypeRecordVersionMetadata(
+                versionId,
+                recordFqn,
+                entityUuid,
+                schemaVersion,
+                revision,
+                existingVersion == null ? binding.uuid() : existingVersion.createdByBindingUuid(),
+                binding.uuid(),
+                existingVersion == null ? now : existingVersion.createdAt(),
+                now));
+
+        return objectMapper.writeValueAsString(Map.of(
+                "status", "ok",
+                "operation", "save",
+                "uuid", entityUuid,
+                "revision", revision,
+                "schemaVersion", schemaVersion));
+    }
+
+    private String executeRecordRead(String recordFqn,
+                                     Class<?> entityClass,
+                                     Map<String, Object> inputs,
+                                     ReflectionBinding binding) throws Exception {
+        String uuid = asString(inputs.get("uuid"));
+        if (uuid.isBlank()) {
+            return jsonError("uuid is required.");
+        }
+        if (!canAccessRecordScope(recordFqn, uuid, binding)) {
+            return jsonError("Record is not accessible in this binding scope.");
+        }
+
+        Object entity = typeDatabaseService.get(entityClass, uuid);
+        if (entity == null) {
+            return objectMapper.writeValueAsString(Map.of("status", "not_found", "uuid", uuid));
+        }
+
+        TypeRecordVersionMetadata version = typeRecordVersionMetadataRepository.get(recordVersionId(recordFqn, uuid));
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", "ok");
+        response.put("operation", "read");
+        response.put("record", entity);
+        if (version != null) {
+            response.put("revision", version.entityRevision());
+            response.put("schemaVersion", version.schemaVersion());
+        }
+        return objectMapper.writeValueAsString(response);
+    }
+
+    private String executeRecordDelete(String recordFqn,
+                                       Class<?> entityClass,
+                                       Map<String, Object> inputs,
+                                       ReflectionBinding binding) throws Exception {
+        String uuid = asString(inputs.get("uuid"));
+        if (uuid.isBlank()) {
+            return jsonError("uuid is required.");
+        }
+        if (!canAccessRecordScope(recordFqn, uuid, binding)) {
+            return jsonError("Record is not accessible in this binding scope.");
+        }
+
+        typeDatabaseService.delete(entityClass, uuid);
+        typeRecordBindingScopeRepository.delete(recordScopeId(recordFqn, uuid));
+        typeRecordVersionMetadataRepository.delete(recordVersionId(recordFqn, uuid));
+
+        return objectMapper.writeValueAsString(Map.of(
+                "status", "ok",
+                "operation", "delete",
+                "uuid", uuid));
+    }
+
+    private String executeRecordSearch(String recordFqn,
+                                       Class<?> entityClass,
+                                       Map<String, Object> inputs,
+                                       ReflectionBinding binding) throws Exception {
+        String query = asString(inputs.get("query"));
+        if (query.isBlank()) {
+            return jsonError("query is required.");
+        }
+
+        String queryType = asString(inputs.get("queryType"));
+        if (queryType.isBlank()) {
+            queryType = "SQL";
+        }
+        String sortField = asString(inputs.get("sortField"));
+        if (sortField.isBlank()) {
+            sortField = "uuid";
+        }
+        String sortOrderRaw = asString(inputs.get("sortOrder"));
+        SortOrder sortOrder = "DESC".equalsIgnoreCase(sortOrderRaw) ? SortOrder.DESC : SortOrder.ASC;
+        int page = asInt(inputs.get("page"), 0);
+        int pageSize = asInt(inputs.get("pageSize"), 20);
+
+        List<Object> filtered = new ArrayList<>();
+        boolean mongo = "MONGO".equalsIgnoreCase(queryType);
+        try (var stream = mongo
+                ? typeDatabaseService.searchByMongoFilter(entityClass, query, 0, Integer.MAX_VALUE, sortField, sortOrder)
+                : typeDatabaseService.searchBySql(entityClass, query, 0, Integer.MAX_VALUE, sortField, sortOrder)) {
+            stream.forEach(entity -> {
+                String uuid = entityUuid(entity);
+                if (uuid != null && canAccessRecordScope(recordFqn, uuid, binding)) {
+                    filtered.add(entity);
+                }
+            });
+        }
+
+        int from = Math.max(0, page * pageSize);
+        List<Object> pageItems;
+        if (from >= filtered.size()) {
+            pageItems = List.of();
+        } else {
+            int to = Math.min(filtered.size(), from + pageSize);
+            pageItems = List.copyOf(filtered.subList(from, to));
+        }
+
+        return objectMapper.writeValueAsString(Map.of(
+                "status", "ok",
+                "operation", "search",
+                "total", filtered.size(),
+                "page", page,
+                "pageSize", pageSize,
+                "results", pageItems));
+    }
+
+    private boolean canAccessRecordScope(String recordFqn, String recordUuid, ReflectionBinding binding) {
+        if (binding == null || binding.uuid() == null || binding.uuid().isBlank()) {
+            return false;
+        }
+        TypeRecordBindingScope scope = typeRecordBindingScopeRepository.get(recordScopeId(recordFqn, recordUuid));
+        return scope != null && binding.uuid().equals(scope.bindingUuid());
+    }
+
+    private RecordToolMetadata parseRecordToolMetadata(Reflection reflection) {
+        if (reflection == null || reflection.outputSchema() == null || reflection.outputSchema().isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(reflection.outputSchema());
+            if (!root.path(MANDATORY_RECORD_TOOL_MARKER).asBoolean(false)) {
+                return null;
+            }
+            String recordFqn = root.path("recordFqn").asText("").trim();
+            String operation = root.path("operation").asText("").trim().toUpperCase(Locale.ROOT);
+            if (recordFqn.isBlank() || operation.isBlank()) {
+                return null;
+            }
+            return new RecordToolMetadata(recordFqn, operation);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private static String recordScopeId(String recordFqn, String recordUuid) {
+        return recordFqn + "::" + recordUuid;
+    }
+
+    private static String recordVersionId(String recordFqn, String recordUuid) {
+        return recordFqn + "::" + recordUuid;
+    }
+
+    private long resolveSchemaVersion(String recordFqn, long fallback) {
+        if (javaTypeRepository == null || recordFqn == null || recordFqn.isBlank()) {
+            return fallback;
+        }
+        JavaType javaType = javaTypeRepository.get(recordFqn);
+        if (javaType == null || javaType.updatedAt() <= 0) {
+            return fallback;
+        }
+        return javaType.updatedAt();
+    }
+
+    private Map<String, Object> filterRecordFields(Class<?> entityClass, Map<String, Object> inputs) {
+        Map<String, Object> filtered = new LinkedHashMap<>();
+        if (entityClass == null || !entityClass.isRecord() || inputs == null) {
+            return filtered;
+        }
+        for (var component : entityClass.getRecordComponents()) {
+            if (component == null || component.getName() == null || component.getName().isBlank()) {
+                continue;
+            }
+            String field = component.getName();
+            if (inputs.containsKey(field)) {
+                filtered.put(field, inputs.get(field));
+            }
+        }
+        return filtered;
+    }
+
+    private static String entityUuid(Object entity) {
+        if (entity == null) {
+            return null;
+        }
+        try {
+            Object value = entity.getClass().getMethod("uuid").invoke(entity);
+            return value == null ? null : String.valueOf(value);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private static int asInt(Object value, int fallback) {
+        if (value == null) {
+            return fallback;
+        }
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        String text = String.valueOf(value).trim();
+        if (text.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(text);
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
+    }
+
+    private static long asLong(Object value, long fallback) {
+        if (value == null) {
+            return fallback;
+        }
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        String text = String.valueOf(value).trim();
+        if (text.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Long.parseLong(text);
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
+    }
+
+    private static String asString(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private record RecordToolMetadata(String recordFqn, String operation) {}
 
     private boolean isGroupToolIdAvailable(String candidate, String excludeGroupUuid) {
         String normalizedCandidate = ToolIdGenerator.normalizeBase(candidate, "group");

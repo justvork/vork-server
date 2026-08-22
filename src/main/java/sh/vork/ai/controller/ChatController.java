@@ -364,6 +364,7 @@ public class ChatController {
 
         return chatService.listAssignedAgentTemplatesForCurrentUser(agentType, true)
             .stream()
+                .filter(t -> !t.hidden())
                 .map(t -> new AgentTemplateSummary(t.uuid(), t.name(), t.agentType().name()))
                 .toList();
     }

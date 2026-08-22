@@ -15,6 +15,11 @@ public class ReflectionConfig {
     }
 
     @Bean
+    public DatabaseRepository<RecordReflection> recordReflectionRepository(RepositoryFactory factory) {
+        return factory.create(RecordReflection.class);
+    }
+
+    @Bean
     public DatabaseRepository<ReflectionGroup> reflectionGroupRepository(RepositoryFactory factory) {
         return factory.create(ReflectionGroup.class);
     }

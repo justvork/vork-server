@@ -1440,6 +1440,13 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         return false;
                 }
 
+                // Record reflections are binding-isolated and must resolve only through
+                // an exact binding group UUID match.
+                if (bindingGroup.type() == sh.vork.reflection.ReflectionType.RECORD
+                                || reflectionGroup.type() == sh.vork.reflection.ReflectionType.RECORD) {
+                        return false;
+                }
+
                 return bindingGroup.groupId() != null
                                 && reflectionGroup.groupId() != null
                                 && bindingGroup.artifactId() != null
@@ -1631,6 +1638,12 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 if (bindingGroup == null
                                 || bindingGroup.groupId() == null || bindingGroup.groupId().isBlank()
                                 || bindingGroup.artifactId() == null || bindingGroup.artifactId().isBlank()) {
+                        return List.of();
+                }
+
+                // Record reflections are strict by binding-group UUID and never inherit
+                // reflections from sibling versions or toolId aliases.
+                if (bindingGroup.type() == sh.vork.reflection.ReflectionType.RECORD) {
                         return List.of();
                 }
 

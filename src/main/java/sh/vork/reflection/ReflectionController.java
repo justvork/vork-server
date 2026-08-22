@@ -273,11 +273,15 @@ public class ReflectionController {
     @DeleteMapping("/reflections/{uuid}")
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
     public ResponseEntity<?> deleteReflection(@PathVariable String uuid) {
-        boolean deleted = reflectionService.deleteReflection(uuid);
-        if (!deleted) {
-            return ResponseEntity.notFound().build();
+        try {
+            boolean deleted = reflectionService.deleteReflection(uuid);
+            if (!deleted) {
+                return ResponseEntity.notFound().build();
+            }
+            return ResponseEntity.ok(Map.of("ok", true));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
         }
-        return ResponseEntity.ok(Map.of("ok", true));
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)

@@ -216,9 +216,7 @@ function connectStomp() {
 
             renderMessage(msg);
             if (msg.role === 'ASSISTANT' || msg.role === 'ERROR' || msg.role === 'PROMPT_REQUIRED') {
-                hideWorkingIndicator();
-                setInputEnabled(true);
-                requestPostResponseRefresh();
+                void finalizeAiTurn();
             }
         });
     }, function () {
@@ -337,24 +335,20 @@ function handleIncomingUiFrame(frame) {
             hideWorkingIndicator();
             if (frame.payload && frame.payload.message && typeof frame.payload.message === 'object') {
                 renderMessage(frame.payload.message);
-                setInputEnabled(true);
-                requestPostResponseRefresh();
+                void finalizeAiTurn();
                 return;
             }
             if (typeof frame.textResponse === 'string' && frame.textResponse) {
                 renderMessage({ role: 'ASSISTANT', content: frame.textResponse });
-                setInputEnabled(true);
-                requestPostResponseRefresh();
+                void finalizeAiTurn();
                 return;
             }
             if (frame.payload && typeof frame.payload.content === 'string' && frame.payload.content) {
                 renderMessage({ role: 'ASSISTANT', content: frame.payload.content });
-                setInputEnabled(true);
-                requestPostResponseRefresh();
+                void finalizeAiTurn();
                 return;
             }
-            setInputEnabled(true);
-            requestPostResponseRefresh();
+            void finalizeAiTurn();
             return;
 
         case 'AGENT_TRANSITION':
@@ -375,8 +369,7 @@ function handleIncomingUiFrame(frame) {
                     ? frame.textResponse
                     : 'This action requires your approval.'
             });
-            setInputEnabled(true);
-            requestPostResponseRefresh();
+            void finalizeAiTurn();
             return;
 
         case 'ERROR':
@@ -387,8 +380,7 @@ function handleIncomingUiFrame(frame) {
                     ? frame.textResponse
                     : ((frame.payload && frame.payload.message) ? String(frame.payload.message) : 'Unknown error')
             });
-            setInputEnabled(true);
-            requestPostResponseRefresh();
+            void finalizeAiTurn();
             return;
 
         default:
@@ -493,12 +485,12 @@ function showError(message) {
     messagesArea.innerHTML = '<div class="p-4 text-rose-300">' + escapeHtml(message) + '</div>';
 }
 
-function requestPostResponseRefresh() {
-    if (postResponseRefreshInFlight) {
-        postResponseRefreshQueued = true;
-        return;
+async function finalizeAiTurn() {
+    try {
+        await refreshAfterAiResponse();
+    } finally {
+        setInputEnabled(true);
     }
-    void refreshAfterAiResponse();
 }
 
 async function refreshAfterAiResponse() {

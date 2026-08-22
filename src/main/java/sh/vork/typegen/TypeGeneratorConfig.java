@@ -12,4 +12,14 @@ public class TypeGeneratorConfig {
     public DatabaseRepository<JavaType> javaTypeRepository(RepositoryFactory factory) {
         return factory.create(JavaType.class);
     }
+
+    @Bean
+    public DatabaseRepository<TypeRecordBindingScope> typeRecordBindingScopeRepository(RepositoryFactory factory) {
+        return factory.create(TypeRecordBindingScope.class);
+    }
+
+    @Bean
+    public DatabaseRepository<TypeRecordVersionMetadata> typeRecordVersionMetadataRepository(RepositoryFactory factory) {
+        return factory.create(TypeRecordVersionMetadata.class);
+    }
 }

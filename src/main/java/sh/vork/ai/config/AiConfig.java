@@ -27,6 +27,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -426,6 +428,7 @@ the protocol and will break the system. Do not converse. Execute.
                         stream
                             .filter(t -> effectiveUsername != null
                                     && !effectiveUsername.isBlank()
+                                    && !t.hidden()
                                     && agentAssignmentService.isAssignedToUser(t, effectiveUsername))
                             .forEach(t -> entries.add(java.util.Map.of(
                                 "uuid",         t.uuid(),
@@ -2584,8 +2587,9 @@ the protocol and will break the system. Do not converse. Execute.
      * <p>
      * The tool returns a small JSON object:
      * <ul>
-     * <li>{@code {"status":"ok","class":"sh.vork.generated.Foo"}} on success.</li>
+    * <li>{@code {"status":"ok","class":"jadaptive.crm.Customer","group":"jadaptive.crm"}} on success.</li>
      * <li>{@code {"status":"error","message":"..."}} on failure.</li>
+    * <li>{@code {"status":"confirm_required","message":"..."}} when group must be confirmed.</li>
      * </ul>
      */
     @Bean
@@ -2594,9 +2598,27 @@ the protocol and will break the system. Do not converse. Execute.
     public ToolCallback compileJavaType(TypeGeneratorService typeGeneratorService) {
         ToolCallback delegate = FunctionToolCallback
                 .builder("compileJavaType", (CompileTypeRequest req) -> {
+                    String group;
                     try {
-                        Class<?> clazz = typeGeneratorService.compileAndSave(req.source());
-                        return "{\"status\":\"ok\",\"class\":\"" + clazz.getName() + "\"}";
+                        group = normalizeCompileTypeGroup(req.group());
+                    } catch (IllegalArgumentException ex) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + ex.getMessage().replace("\"", "'") + "\"}";
+                    }
+
+                    if (group == null) {
+                        return "{\"status\":\"confirm_required\",\"message\":\"Please confirm target group package (for example: jadaptive.crm). Dots are allowed; sh.vork.* is not allowed.\"}";
+                    }
+
+                    String source = req.source();
+                    if (source == null || source.isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"source is required\"}";
+                    }
+
+                    try {
+                        String normalizedSource = rewritePackageForGroup(source, group);
+                        Class<?> clazz = typeGeneratorService.compileAndSave(normalizedSource);
+                        return "{\"status\":\"ok\",\"class\":\"" + clazz.getName() + "\",\"group\":\"" + group + "\"}";
                     } catch (TypeGenerationException e) {
                         return "{\"status\":\"error\",\"message\":\"" +
                                 e.getMessage().replace("\"", "'") + "\"}";
@@ -2609,7 +2631,7 @@ The schema is persisted to MongoDB and will be available after a restart.
 Returns the fully-qualified class name on success. 
 If a type implements sh.vork.orm.DatabaseEntity, uuid must be String (String uuid(); and field/component type String), never java.util.UUID. 
 Any record should implement sh.vork.orm.DatabaseEntity. 
-All types should use a sub-package of sh.vork.generated.
+All types must use the confirmed group package (for example jadaptive.crm) and must not be under sh.vork.*.
 When generating a record that will be managed in the Data Inspector UI, annotate record components with @sh.vork.typegen.DisplayField to control table columns and form rendering. Example: @DisplayField(label="Full Name", order=1, tableColumn=true, inputType="text", required=true). Fields not annotated with tableColumn=true will not appear in the table but will still appear in the create/edit form. Use tableColumn=false for nested records, long text, and list fields.
 Embedded value-object types (e.g. Address, LineItem) that are only used as nested fields inside a parent record MUST NOT implement DatabaseEntity and MUST NOT have a uuid field. Only top-level records that are stored and queried independently should implement DatabaseEntity. This distinction controls which types appear in the Data Inspector dropdown.
 When generating an enum and there is enough context to give each constant a human-readable display name (e.g. country names, status labels, category titles), always add a single String constructor field and a getLabel() accessor: private final String label; EnumName(String label) { this.label = label; } public String getLabel() { return label; }. This enables the Data Inspector to show readable labels in dropdowns and table columns instead of raw constant names. If there is no meaningful display name beyond the constant name itself, omit the field.
@@ -2633,6 +2655,51 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
                 return argumentsJson;
             }
         });
+    }
+
+    private static String normalizeCompileTypeGroup(String rawGroup) {
+        if (rawGroup == null || rawGroup.isBlank()) {
+            return null;
+        }
+
+        String group = rawGroup.trim();
+        if (group.startsWith(".") || group.endsWith(".")) {
+            throw new IllegalArgumentException("group must not start or end with '.'.");
+        }
+
+        String lowered = group.toLowerCase(Locale.ROOT);
+        if ("sh.vork".equals(lowered) || lowered.startsWith("sh.vork.")) {
+            throw new IllegalArgumentException("group must not be under sh.vork.*");
+        }
+
+        String[] segments = group.split("\\.");
+        if (segments.length == 0) {
+            throw new IllegalArgumentException("group is invalid.");
+        }
+        for (String segment : segments) {
+            if (segment == null || segment.isBlank()) {
+                throw new IllegalArgumentException("group contains an empty package segment.");
+            }
+            if (!Character.isJavaIdentifierStart(segment.charAt(0))) {
+                throw new IllegalArgumentException("group segment must start with a valid Java identifier character: " + segment);
+            }
+            for (int i = 1; i < segment.length(); i++) {
+                if (!Character.isJavaIdentifierPart(segment.charAt(i))) {
+                    throw new IllegalArgumentException("group segment contains invalid character: " + segment);
+                }
+            }
+        }
+        return group;
+    }
+
+    private static String rewritePackageForGroup(String source, String groupPackage) {
+        Pattern pattern = Pattern.compile("(?m)^\\s*package\\s+[\\w.]+\\s*;");
+        Matcher matcher = pattern.matcher(source);
+        String packageLine = "package " + groupPackage + ";";
+        if (matcher.find()) {
+            return matcher.replaceFirst(packageLine);
+        }
+        return packageLine + "\n\n" + source;
     }
 
     /**

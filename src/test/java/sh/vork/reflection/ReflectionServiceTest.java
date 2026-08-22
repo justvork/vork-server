@@ -36,6 +36,11 @@ import sh.vork.oauth.OAuthTemplateService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.mock.MapDatabaseRepository;
 import sh.vork.security.SecureCredentialStore;
+import sh.vork.typegen.JavaTypeClassLoader;
+import sh.vork.typegen.JavaType;
+import sh.vork.typegen.TypeDatabaseService;
+import sh.vork.typegen.TypeRecordBindingScope;
+import sh.vork.typegen.TypeRecordVersionMetadata;
 
 class ReflectionServiceTest {
 
@@ -49,6 +54,7 @@ class ReflectionServiceTest {
     @BeforeEach
     void setUp() {
         DatabaseRepository<Reflection> reflectionRepository = new MapDatabaseRepository<>(Reflection.class);
+        DatabaseRepository<RecordReflection> recordReflectionRepository = new MapDatabaseRepository<>(RecordReflection.class);
         DatabaseRepository<ReflectionGroup> groupRepository = new MapDatabaseRepository<>(ReflectionGroup.class);
         DatabaseRepository<ReflectionBinding> bindingRepository = new MapDatabaseRepository<>(ReflectionBinding.class);
         DatabaseRepository<PendingOAuthBindingAction> pendingOauthBindingActionRepository =
@@ -80,6 +86,7 @@ class ReflectionServiceTest {
 
         reflectionService = new ReflectionService(
                 reflectionRepository,
+                recordReflectionRepository,
                 groupRepository,
                 bindingRepository,
                 pendingOauthBindingActionRepository,
@@ -939,6 +946,245 @@ class ReflectionServiceTest {
         assertTrue(requestBody.contains("\"tags\":[]"));
     }
 
+        @Test
+        void createReflectionRejectsManualRecordGroups() {
+                ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                                "Record Group", "desc", "RECORD", "", List.of(), List.of()));
+
+                ReflectionService.ReflectionRequest request = new ReflectionService.ReflectionRequest(
+                                "recordSearchCustomer",
+                                "Search Customer",
+                                "desc",
+                                group.uuid(),
+                                List.of(new ReflectionInputParameter("query", "string", "query", true)),
+                                "GET",
+                                "/api/types/sh.vork.generated.Customer/search",
+                                Map.of(),
+                                Map.of("query", "{{query}}"),
+                                "",
+                                "application/json",
+                                "application/json",
+                                "");
+
+                IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                                () -> reflectionService.createReflection(request));
+                assertTrue(ex.getMessage().contains("only supported for REST groups"));
+        }
+
+            @Test
+            void executeRecordReflectionUsesDatabaseEngineAndNotHttpUrl() {
+                reflectionService.ensureRecordReflectionsForType("sh.vork.generated.Customer");
+
+                Reflection reflection = reflectionService.listReflections().stream()
+                        .filter(r -> r.outputSchema().contains("\"recordFqn\":\"sh.vork.generated.Customer\""))
+                        .filter(r -> r.outputSchema().contains("\"operation\":\"CREATE\""))
+                        .findFirst()
+                        .orElseThrow();
+
+                ReflectionGroup group = reflectionService.getGroup(reflection.groupUuid());
+
+                ReflectionBinding binding = reflectionService.createBinding("alice", group.uuid(),
+                        new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+                TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
+                JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
+                DatabaseRepository<TypeRecordBindingScope> scopeRepo = new MapDatabaseRepository<>(TypeRecordBindingScope.class);
+                DatabaseRepository<TypeRecordVersionMetadata> versionRepo = new MapDatabaseRepository<>(TypeRecordVersionMetadata.class);
+                DatabaseRepository<JavaType> javaTypeRepo = new MapDatabaseRepository<>(JavaType.class);
+                javaTypeRepo.save(new JavaType("sh.vork.generated.Customer", "package sh.vork.generated; public record Customer(String uuid, String name) {}", Map.of(), 1L, 99L));
+                reflectionService.setTypeDatabaseService(typeDatabaseService);
+                reflectionService.setJavaTypeClassLoader(classLoader);
+                reflectionService.setTypeRecordBindingScopeRepository(scopeRepo);
+                reflectionService.setTypeRecordVersionMetadataRepository(versionRepo);
+                reflectionService.setJavaTypeRepository(javaTypeRepo);
+
+                try {
+                        when(classLoader.loadClass("sh.vork.generated.Customer")).thenAnswer(invocation -> CustomerRecord.class);
+                } catch (ClassNotFoundException e) {
+                    throw new RuntimeException(e);
+                }
+
+                String result = reflectionService.executeRestReflection(
+                        reflection.id(),
+                        Map.of("uuid", "cust-1", "name", "3SP Ltd"),
+                        "default",
+                        "alice");
+
+                assertTrue(result.contains("\"status\":\"ok\""));
+                                assertTrue(result.contains("\"revision\":1"));
+                                assertTrue(result.contains("\"schemaVersion\":99"));
+                verify(typeDatabaseService).save(any(CustomerRecord.class));
+                TypeRecordBindingScope scope = scopeRepo.get("sh.vork.generated.Customer::cust-1");
+                assertNotNull(scope);
+                assertEquals(binding.uuid(), scope.bindingUuid());
+                                TypeRecordVersionMetadata version = versionRepo.get("sh.vork.generated.Customer::cust-1");
+                                assertNotNull(version);
+                                assertEquals(1L, version.entityRevision());
+                                assertEquals(99L, version.schemaVersion());
+            }
+
+            @Test
+            void executeRecordReflectionDeniesCrossBindingWrite() {
+                reflectionService.ensureRecordReflectionsForType("sh.vork.generated.Customer");
+
+                Reflection reflection = reflectionService.listReflections().stream()
+                        .filter(r -> r.outputSchema().contains("\"recordFqn\":\"sh.vork.generated.Customer\""))
+                        .filter(r -> r.outputSchema().contains("\"operation\":\"UPDATE\""))
+                        .findFirst()
+                        .orElseThrow();
+
+                ReflectionGroup group = reflectionService.getGroup(reflection.groupUuid());
+
+                ReflectionBinding bindingA = reflectionService.createBinding("alice", group.uuid(),
+                        new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+                reflectionService.createBinding("alice", group.uuid(),
+                        new ReflectionService.ReflectionBindingRequest("sandbox", "", Map.of(), Map.of()));
+
+                TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
+                JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
+                DatabaseRepository<TypeRecordBindingScope> scopeRepo = new MapDatabaseRepository<>(TypeRecordBindingScope.class);
+                DatabaseRepository<TypeRecordVersionMetadata> versionRepo = new MapDatabaseRepository<>(TypeRecordVersionMetadata.class);
+                scopeRepo.save(new TypeRecordBindingScope(
+                        "sh.vork.generated.Customer::cust-1",
+                        "sh.vork.generated.Customer",
+                        "cust-1",
+                        bindingA.uuid(),
+                        bindingA.name(),
+                        1L,
+                        1L));
+
+                reflectionService.setTypeDatabaseService(typeDatabaseService);
+                reflectionService.setJavaTypeClassLoader(classLoader);
+                reflectionService.setTypeRecordBindingScopeRepository(scopeRepo);
+                reflectionService.setTypeRecordVersionMetadataRepository(versionRepo);
+
+                try {
+                        when(classLoader.loadClass("sh.vork.generated.Customer")).thenAnswer(invocation -> CustomerRecord.class);
+                } catch (ClassNotFoundException e) {
+                    throw new RuntimeException(e);
+                }
+
+                String result = reflectionService.executeRestReflection(
+                        reflection.id(),
+                        Map.of("uuid", "cust-1", "name", "New Name"),
+                        "sandbox",
+                        "alice");
+
+                assertTrue(result.contains("different binding scope"));
+                verify(typeDatabaseService, org.mockito.Mockito.never()).save(any());
+            }
+
+            @Test
+            void executeRecordReflectionUpdateEnforcesExpectedRevision() {
+                reflectionService.ensureRecordReflectionsForType("sh.vork.generated.Customer");
+
+                Reflection reflection = reflectionService.listReflections().stream()
+                        .filter(r -> r.outputSchema().contains("\"recordFqn\":\"sh.vork.generated.Customer\""))
+                        .filter(r -> r.outputSchema().contains("\"operation\":\"UPDATE\""))
+                        .findFirst()
+                        .orElseThrow();
+
+                ReflectionGroup group = reflectionService.getGroup(reflection.groupUuid());
+                ReflectionBinding binding = reflectionService.createBinding("alice", group.uuid(),
+                        new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+                TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
+                JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
+                DatabaseRepository<TypeRecordBindingScope> scopeRepo = new MapDatabaseRepository<>(TypeRecordBindingScope.class);
+                DatabaseRepository<TypeRecordVersionMetadata> versionRepo = new MapDatabaseRepository<>(TypeRecordVersionMetadata.class);
+                scopeRepo.save(new TypeRecordBindingScope(
+                        "sh.vork.generated.Customer::cust-1",
+                        "sh.vork.generated.Customer",
+                        "cust-1",
+                        binding.uuid(),
+                        binding.name(),
+                        1L,
+                        1L));
+                versionRepo.save(new TypeRecordVersionMetadata(
+                        "sh.vork.generated.Customer::cust-1",
+                        "sh.vork.generated.Customer",
+                        "cust-1",
+                        77L,
+                        3L,
+                        binding.uuid(),
+                        binding.uuid(),
+                        1L,
+                        1L));
+
+                reflectionService.setTypeDatabaseService(typeDatabaseService);
+                reflectionService.setJavaTypeClassLoader(classLoader);
+                reflectionService.setTypeRecordBindingScopeRepository(scopeRepo);
+                reflectionService.setTypeRecordVersionMetadataRepository(versionRepo);
+
+                try {
+                    when(classLoader.loadClass("sh.vork.generated.Customer")).thenAnswer(invocation -> CustomerRecord.class);
+                } catch (ClassNotFoundException e) {
+                    throw new RuntimeException(e);
+                }
+
+                String mismatch = reflectionService.executeRestReflection(
+                        reflection.id(),
+                        Map.of("uuid", "cust-1", "name", "New Name", "expectedRevision", 2),
+                        "default",
+                        "alice");
+                assertTrue(mismatch.contains("Revision mismatch"));
+                verify(typeDatabaseService, org.mockito.Mockito.never()).save(any());
+
+                String success = reflectionService.executeRestReflection(
+                        reflection.id(),
+                        Map.of("uuid", "cust-1", "name", "New Name", "expectedRevision", 3),
+                        "default",
+                        "alice");
+                assertTrue(success.contains("\"status\":\"ok\""));
+                assertTrue(success.contains("\"revision\":4"));
+                verify(typeDatabaseService).save(any(CustomerRecord.class));
+            }
+
+        @Test
+        void ensureRecordReflectionsForTypeCreatesRecordGroupAndMandatoryTools() {
+                reflectionService.ensureRecordReflectionsForType("sh.vork.generated.CustomerRecord");
+
+                List<ReflectionGroup> recordGroups = reflectionService.listGroups().stream()
+                                .filter(group -> group.type() == ReflectionType.RECORD)
+                                .toList();
+                assertEquals(1, recordGroups.size());
+
+                ReflectionGroup group = recordGroups.getFirst();
+                List<Reflection> tools = reflectionService.reflectionsForGroup(group.uuid());
+                assertEquals(5, tools.size());
+                assertTrue(tools.stream().allMatch(tool -> tool.outputSchema().contains("x-vork-mandatory-record-tool")));
+                assertTrue(tools.stream().allMatch(tool -> tool.url().isBlank()));
+                assertTrue(tools.stream().allMatch(tool -> tool.headers().isEmpty()));
+        }
+
+        @Test
+        void mandatoryRecordReflectionsAreImmutableForUpdateAndDelete() {
+                reflectionService.ensureRecordReflectionsForType("sh.vork.generated.CustomerRecord");
+
+                Reflection mandatory = reflectionService.listReflections().stream()
+                                .filter(reflection -> reflection.outputSchema().contains("x-vork-mandatory-record-tool"))
+                                .findFirst()
+                                .orElseThrow();
+
+                ReflectionService.ReflectionRequest request = new ReflectionService.ReflectionRequest(
+                                mandatory.id(),
+                                mandatory.name(),
+                                mandatory.description(),
+                                mandatory.groupUuid(),
+                                mandatory.inputParameters(),
+                                mandatory.method(),
+                                mandatory.url(),
+                                mandatory.headers(),
+                                mandatory.queryParameters(),
+                                mandatory.bodyTemplate(),
+                                mandatory.requestContentType(),
+                                mandatory.responseContentType(),
+                                mandatory.outputSchema());
+
+                assertThrows(IllegalArgumentException.class, () -> reflectionService.updateReflection(mandatory.uuid(), request));
+                assertThrows(IllegalArgumentException.class, () -> reflectionService.deleteReflection(mandatory.uuid()));
+        }
+
         private static String readBody(HttpRequest request) throws Exception {
                 var publisherOpt = request.bodyPublisher();
                 if (publisherOpt.isEmpty()) {
@@ -977,4 +1223,6 @@ class ReflectionServiceTest {
 
                 return new String(future.get(), StandardCharsets.UTF_8);
         }
+
+        private record CustomerRecord(String uuid, String name) implements sh.vork.orm.DatabaseEntity {}
 }

@@ -22,6 +22,7 @@ import java.util.List;
  *                     agent may invoke; an empty list means no tool restriction
  *                     is applied (all tools available)
  * @param systemAgent  {@code true} for built-in agents that must not be deleted
+ * @param hidden       {@code true} to hide the agent from user/admin selection lists
  * @param skillUuids   UUIDs of {@link sh.vork.skill.Skill} records this agent
  *                     is permitted to invoke; triggers auto-injection of the
  *                     {@code executeSkill} tool into the allowed-tools list
@@ -35,6 +36,7 @@ public record AgentTemplate(
         String       systemPrompt,
         List<String> allowedTools,
         boolean      systemAgent,
+        boolean      hidden,
         List<String> skillUuids,
     AgentType    agentType,
     List<String> bindingUuids,
@@ -138,7 +140,19 @@ public record AgentTemplate(
                          List<String> skillUuids,
                          AgentType agentType) {
                 this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
-                    List.of(), List.of(), List.of(), null, null, null, null, null);
+                    List.of(), List.of(), List.of(), null, null, null, null, null, false);
+    }
+
+    public AgentTemplate(String uuid,
+                         String name,
+                         String systemPrompt,
+                         List<String> allowedTools,
+                         boolean systemAgent,
+                         boolean hidden,
+                         List<String> skillUuids,
+                         AgentType agentType) {
+                this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
+                    List.of(), List.of(), List.of(), null, null, null, null, null, hidden);
     }
 
     public AgentTemplate(String uuid,
@@ -150,7 +164,7 @@ public record AgentTemplate(
                          AgentType agentType,
                          List<String> bindingUuids) {
                 this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
-                    bindingUuids, List.of(), List.of(), null, null, null, null, null);
+                    bindingUuids, List.of(), List.of(), null, null, null, null, null, false);
     }
 
     public AgentTemplate(String uuid,
@@ -163,7 +177,7 @@ public record AgentTemplate(
                          List<String> bindingUuids,
                          List<String> assignedUsernames) {
         this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
-            bindingUuids, assignedUsernames, List.of(), null, null, null, null, null);
+            bindingUuids, assignedUsernames, List.of(), null, null, null, null, null, false);
     }
 
         public AgentTemplate(String uuid,
@@ -179,7 +193,7 @@ public record AgentTemplate(
                  String recommendedModel) {
         this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
             bindingUuids, assignedUsernames, jobUuids, recommendedModel, null, null, null,
-            systemAgent ? null : ArtifactStatus.SNAPSHOT);
+            systemAgent ? null : ArtifactStatus.SNAPSHOT, false);
         }
 
         public AgentTemplate(String uuid,
@@ -194,7 +208,7 @@ public record AgentTemplate(
                  String recommendedModel) {
         this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
             bindingUuids, assignedUsernames, List.of(), recommendedModel, null, null, null,
-            systemAgent ? null : ArtifactStatus.SNAPSHOT);
+            systemAgent ? null : ArtifactStatus.SNAPSHOT, false);
         }
 
     public AgentTemplate(String uuid,
@@ -213,7 +227,7 @@ public record AgentTemplate(
                          String version) {
         this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
                     bindingUuids, assignedUsernames, jobUuids, recommendedModel, groupId, artifactId, version,
-                systemAgent ? null : ArtifactStatus.SNAPSHOT);
+                systemAgent ? null : ArtifactStatus.SNAPSHOT, false);
     }
 
     public AgentTemplate(String uuid,
@@ -223,6 +237,26 @@ public record AgentTemplate(
                          boolean systemAgent,
                          List<String> skillUuids,
                          AgentType agentType,
+                 List<String> bindingUuids,
+                 List<String> assignedUsernames,
+                 List<String> jobUuids,
+                 String recommendedModel,
+                 String groupId,
+                 String artifactId,
+                 String version,
+                 ArtifactStatus artifactStatus) {
+        this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
+            bindingUuids, assignedUsernames, jobUuids, recommendedModel, groupId, artifactId, version,
+            artifactStatus, false);
+        }
+
+        public AgentTemplate(String uuid,
+                 String name,
+                 String systemPrompt,
+                 List<String> allowedTools,
+                 boolean systemAgent,
+                 List<String> skillUuids,
+                 AgentType agentType,
                          List<String> bindingUuids,
                          List<String> assignedUsernames,
                          String recommendedModel,
@@ -232,7 +266,28 @@ public record AgentTemplate(
                          ArtifactStatus artifactStatus) {
         this(uuid, name, systemPrompt, allowedTools, systemAgent, skillUuids, agentType,
                 bindingUuids, assignedUsernames, List.of(), recommendedModel, groupId, artifactId, version,
-                artifactStatus);
+                    artifactStatus, false);
+                }
+
+                public AgentTemplate(String uuid,
+                         String name,
+                         String systemPrompt,
+                         List<String> allowedTools,
+                         boolean systemAgent,
+                         List<String> skillUuids,
+                         AgentType agentType,
+                         List<String> bindingUuids,
+                         List<String> assignedUsernames,
+                         List<String> jobUuids,
+                         String recommendedModel,
+                         String groupId,
+                         String artifactId,
+                         String version,
+                         ArtifactStatus artifactStatus,
+                         boolean hidden) {
+                this(uuid, name, systemPrompt, allowedTools, systemAgent, hidden, skillUuids, agentType,
+                    bindingUuids, assignedUsernames, jobUuids, recommendedModel, groupId, artifactId, version,
+                    artifactStatus);
     }
 
     private static String normalizeIdentifier(String raw) {

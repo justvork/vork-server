@@ -7,6 +7,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
+import sh.vork.reflection.ReflectionService;
+
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaCompiler;
@@ -83,6 +85,9 @@ public class TypeGeneratorService {
     @Nullable
     private DatabaseRepository<JavaType> javaTypeRepository;
 
+    @Nullable
+    private ReflectionService reflectionService;
+
     @Autowired(required = false)
     public void setJavaTypeClassLoader(JavaTypeClassLoader javaTypeClassLoader) {
         this.javaTypeClassLoader = javaTypeClassLoader;
@@ -91,6 +96,11 @@ public class TypeGeneratorService {
     @Autowired(required = false)
     public void setJavaTypeRepository(DatabaseRepository<JavaType> javaTypeRepository) {
         this.javaTypeRepository = javaTypeRepository;
+    }
+
+    @Autowired(required = false)
+    public void setReflectionService(ReflectionService reflectionService) {
+        this.reflectionService = reflectionService;
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -273,6 +283,10 @@ public class TypeGeneratorService {
 
         javaTypeRepository.save(new JavaType(fqn, source, base64Bytecode, createdAt, now));
         javaTypeClassLoader.register(fqn, bytecodeMap);
+
+        if (reflectionService != null) {
+            reflectionService.ensureRecordReflectionsForType(fqn);
+        }
 
         log.info("Compiled, persisted, and registered: {}", fqn);
         return clazz;

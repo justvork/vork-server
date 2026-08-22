@@ -98,6 +98,7 @@ public class AgentController {
         try (var stream = agentRepository.list(0, Integer.MAX_VALUE)) {
             agents = stream
                     .filter(agent -> !agent.systemAgent())
+                    .filter(agent -> !agent.hidden())
                     .collect(Collectors.toList());
         }
         // Build uuid→name map so the template can display skill names in pills
@@ -119,6 +120,7 @@ public class AgentController {
         try (var stream = agentRepository.list(0, Integer.MAX_VALUE)) {
             return stream
                     .filter(agent -> !agent.systemAgent())
+                    .filter(agent -> !agent.hidden())
                     .collect(Collectors.toList());
         }
     }
