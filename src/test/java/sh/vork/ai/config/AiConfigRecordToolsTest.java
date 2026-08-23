@@ -51,46 +51,19 @@ class AiConfigRecordToolsTest {
     }
 
     @Test
-    void getTypeInstance_returnsRecordJsonWhenFound() throws Exception {
+    void getTypeSchema_returnsRecordFieldSchema() throws Exception {
         JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
         TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
 
         doReturn(CatRecord.class).when(classLoader).loadClass("sh.vork.generated.Cat");
-        when(typeDatabaseService.get(CatRecord.class, "cat-1")).thenReturn(new CatRecord("cat-1", "Milo"));
 
         AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
-        ToolCallback tool = config.getTypeInstance();
+        ToolCallback tool = config.getTypeSchema();
 
-        String args = "{\"fqn\":\"sh.vork.generated.Cat\",\"uuid\":\"cat-1\"}";
-        String output = tool.call(args);
-
-        var map = objectMapper.readValue(output, new TypeReference<java.util.Map<String, Object>>() {});
-        assertEquals("cat-1", map.get("uuid"));
-        assertEquals("Milo", map.get("name"));
-    }
-
-    @Test
-    void countTypeInstances_supportsUnfilteredAndSqlFilteredCounts() {
-        JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
-        TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
-
-        try {
-            doReturn(CatRecord.class).when(classLoader).loadClass("sh.vork.generated.Cat");
-        } catch (ClassNotFoundException e) {
-            throw new AssertionError(e);
-        }
-        when(typeDatabaseService.count(CatRecord.class)).thenReturn(7L);
-        when(typeDatabaseService.searchCountBySql(CatRecord.class, "name LIKE '%mi%'"))
-                .thenReturn(2L);
-
-        AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
-        ToolCallback tool = config.countTypeInstances();
-
-        String noFilterOutput = tool.call("{\"fqn\":\"sh.vork.generated.Cat\"}");
-        assertTrue(noFilterOutput.contains("\"count\":7"));
-
-        String sqlFilterOutput = tool.call("{\"fqn\":\"sh.vork.generated.Cat\",\"query\":\"name LIKE '%mi%'\",\"queryType\":\"SQL\"}");
-        assertTrue(sqlFilterOutput.contains("\"count\":2"));
+        String output = tool.call("{\"fqn\":\"sh.vork.generated.Cat\"}");
+        assertTrue(output.contains("\"schema\""));
+        assertTrue(output.contains("\"uuid\""));
+        assertTrue(output.contains("\"name\""));
     }
 
     @Test
@@ -139,13 +112,14 @@ class AiConfigRecordToolsTest {
         TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
         EncryptionService encryptionService = mock(EncryptionService.class);
         SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+        InMemorySessionEnvironmentService sessionEnv = new InMemorySessionEnvironmentService();
         AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
 
-        when(encryptionService.encrypt("secret payload", null, null)).thenReturn("ENC:abc123");
-        when(encryptionService.decrypt("ENC:abc123", null, null)).thenReturn("secret payload");
+        when(encryptionService.encrypt("secret payload")).thenReturn("ENC:abc123");
+        when(encryptionService.decrypt("ENC:abc123")).thenReturn("secret payload");
 
-        ToolCallback encryptTool = config.encryptString(encryptionService, sessionFileSystem);
-        ToolCallback decryptTool = config.decryptString(encryptionService, sessionFileSystem);
+        ToolCallback encryptTool = config.encryptString(encryptionService, sessionFileSystem, sessionEnv);
+        ToolCallback decryptTool = config.decryptString(encryptionService, sessionFileSystem, sessionEnv);
 
         String encrypted = readStringResult(encryptTool.call("{\"input\":\"secret payload\"}"));
         assertEquals("ENC:abc123", encrypted);
@@ -153,97 +127,116 @@ class AiConfigRecordToolsTest {
         String decrypted = readStringResult(decryptTool.call("{\"input\":\"ENC:abc123\"}"));
         assertEquals("secret payload", decrypted);
 
-        verify(encryptionService).encrypt("secret payload", null, null);
-        verify(encryptionService).decrypt("ENC:abc123", null, null);
+        verify(encryptionService).encrypt("secret payload");
+        verify(encryptionService).decrypt("ENC:abc123");
         }
 
         @Test
-        void encryptDecryptString_toolsUseLegacyKeyPathsWhenProvided() throws Exception {
+        void encryptDecryptString_toolsUseSessionConfiguredRsaPrivateKey() throws Exception {
         JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
         TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
         EncryptionService encryptionService = mock(EncryptionService.class);
             SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+            InMemorySessionEnvironmentService sessionEnv = new InMemorySessionEnvironmentService();
         AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
 
-        when(encryptionService.encrypt("secret payload", "/session/legacy.prv", "/session/legacy.pub"))
+        byte[] privateKeyBytes = "private-key-bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        when(sessionFileSystem.read(FileArea.SESSION, "session-123", "legacy/private.pem"))
+                .thenAnswer(_invocation -> new ByteArrayInputStream(privateKeyBytes));
+
+        when(encryptionService.encryptWithLegacyPrivateKey("secret payload", privateKeyBytes))
             .thenReturn("!!ENC!!abc123");
-        when(encryptionService.decrypt("!!ENC!!abc123", "/session/legacy.prv", "/session/legacy.pub"))
+        when(encryptionService.decryptWithLegacyPrivateKey("!!ENC!!abc123", privateKeyBytes))
             .thenReturn("secret payload");
 
-        ToolCallback encryptTool = config.encryptString(encryptionService, sessionFileSystem);
-        ToolCallback decryptTool = config.decryptString(encryptionService, sessionFileSystem);
+        ToolCallback configureTool = config.configureEncryption(sessionEnv, sessionFileSystem);
+        ToolCallback encryptTool = config.encryptString(encryptionService, sessionFileSystem, sessionEnv);
+        ToolCallback decryptTool = config.decryptString(encryptionService, sessionFileSystem, sessionEnv);
 
-        String encrypted = readStringResult(encryptTool.call("""
-            {
-              "input": "secret payload",
-              "privateKeyPath": "/session/legacy.prv",
-              "publicKeyPath": "/session/legacy.pub"
-            }
-            """));
-        assertEquals("!!ENC!!abc123", encrypted);
+        org.slf4j.MDC.put("sessionUuid", "session-123");
+        try {
+            configureTool.call("""
+                {
+                  "type": "RSA",
+                  "filePath": "legacy/private.pem"
+                }
+                """);
 
-        String decrypted = readStringResult(decryptTool.call("""
-            {
-              "input": "!!ENC!!abc123",
-              "privateKeyPath": "/session/legacy.prv",
-              "publicKeyPath": "/session/legacy.pub"
-            }
-            """));
-        assertEquals("secret payload", decrypted);
+            String encrypted = readStringResult(encryptTool.call("""
+                {
+                  "input": "secret payload"
+                }
+                """));
+            assertEquals("!!ENC!!abc123", encrypted);
 
-        verify(encryptionService).encrypt("secret payload", "/session/legacy.prv", "/session/legacy.pub");
-        verify(encryptionService).decrypt("!!ENC!!abc123", "/session/legacy.prv", "/session/legacy.pub");
+            String decrypted = readStringResult(decryptTool.call("""
+                {
+                  "input": "!!ENC!!abc123"
+                }
+                """));
+            assertEquals("secret payload", decrypted);
+        } finally {
+            org.slf4j.MDC.remove("sessionUuid");
+        }
+
+        verify(encryptionService).encryptWithLegacyPrivateKey("secret payload", privateKeyBytes);
+        verify(encryptionService).decryptWithLegacyPrivateKey("!!ENC!!abc123", privateKeyBytes);
     }
 
         @Test
-        void encryptDecryptString_toolsResolveLegacyKeysFromSessionSandboxWhenAvailable() throws Exception {
+        void configureEncryption_clear_revertsToDefaultEncryptionProvider() throws Exception {
         JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
         TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
         EncryptionService encryptionService = mock(EncryptionService.class);
         SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+        InMemorySessionEnvironmentService sessionEnv = new InMemorySessionEnvironmentService();
         AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
 
         byte[] privateKeyBytes = "private-key-bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        byte[] publicKeyBytes = "public-key-bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        when(sessionFileSystem.read(FileArea.SESSION, "session-123", "legacy/private.pem"))
+                .thenAnswer(_invocation -> new ByteArrayInputStream(privateKeyBytes));
 
-        when(sessionFileSystem.read(FileArea.SESSION, "session-123", "secrets"))
-            .thenAnswer(invocation -> new ByteArrayInputStream(privateKeyBytes));
-        when(sessionFileSystem.read(FileArea.SESSION, "session-123", "secrets.pub"))
-            .thenAnswer(invocation -> new ByteArrayInputStream(publicKeyBytes));
-
-        when(encryptionService.encryptWithLegacyKeys("secret payload", privateKeyBytes, publicKeyBytes))
-            .thenReturn("!!ENC!!sandboxed");
-        when(encryptionService.decryptWithLegacyKeys("!!ENC!!sandboxed", privateKeyBytes, publicKeyBytes))
-            .thenReturn("secret payload");
+        when(encryptionService.encryptWithLegacyPrivateKey("secret payload", privateKeyBytes))
+                .thenReturn("!!ENC!!sandboxed");
+        when(encryptionService.encrypt("secret payload")).thenReturn("ENC:default");
 
         org.slf4j.MDC.put("sessionUuid", "session-123");
         try {
-            ToolCallback encryptTool = config.encryptString(encryptionService, sessionFileSystem);
-            ToolCallback decryptTool = config.decryptString(encryptionService, sessionFileSystem);
+            ToolCallback configureTool = config.configureEncryption(sessionEnv, sessionFileSystem);
+            ToolCallback encryptTool = config.encryptString(encryptionService, sessionFileSystem, sessionEnv);
+
+            configureTool.call("""
+                {
+                  "type": "RSA",
+                  "filePath": "legacy/private.pem"
+                }
+                """);
 
             String encrypted = readStringResult(encryptTool.call("""
                 {
-                  "input": "secret payload",
-                  "privateKeyPath": "secrets",
-                  "publicKeyPath": "secrets.pub"
+                  "input": "secret payload"
                 }
                 """));
             assertEquals("!!ENC!!sandboxed", encrypted);
 
-            String decrypted = readStringResult(decryptTool.call("""
+            configureTool.call("""
                 {
-                  "input": "!!ENC!!sandboxed",
-                  "privateKeyPath": "secrets",
-                  "publicKeyPath": "secrets.pub"
+                  "clear": true
+                }
+                """);
+
+            String encryptedDefault = readStringResult(encryptTool.call("""
+                {
+                  "input": "secret payload"
                 }
                 """));
-            assertEquals("secret payload", decrypted);
-
-            verify(encryptionService).encryptWithLegacyKeys("secret payload", privateKeyBytes, publicKeyBytes);
-            verify(encryptionService).decryptWithLegacyKeys("!!ENC!!sandboxed", privateKeyBytes, publicKeyBytes);
+            assertEquals("ENC:default", encryptedDefault);
         } finally {
             org.slf4j.MDC.remove("sessionUuid");
         }
+
+        verify(encryptionService).encryptWithLegacyPrivateKey("secret payload", privateKeyBytes);
+        verify(encryptionService).encrypt("secret payload");
         }
 
     @Test

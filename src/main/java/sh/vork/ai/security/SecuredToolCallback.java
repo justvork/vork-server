@@ -13,6 +13,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import org.slf4j.MDC;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.exception.ToolSuspensionException;
@@ -26,17 +28,38 @@ import sh.vork.ai.protocol.interaction.InteractionFormSchema;
  */
 public class SecuredToolCallback implements ToolCallback {
 
+    private static final Logger log = LoggerFactory.getLogger(SecuredToolCallback.class);
+
     private final ToolCallback delegate;
     private final AuthorizationRuleEngine ruleEngine;
+    private final PreAuthorizationTokenService preAuthorizationTokenService;
+    private final ApprovalPolicyRuntimeResolver approvalPolicyRuntimeResolver;
     private final boolean forceAuthorization;
 
     public SecuredToolCallback(ToolCallback delegate, AuthorizationRuleEngine ruleEngine) {
-        this(delegate, ruleEngine, false);
+        this(delegate, ruleEngine, null, null, false);
     }
 
     public SecuredToolCallback(ToolCallback delegate, AuthorizationRuleEngine ruleEngine, boolean forceAuthorization) {
+        this(delegate, ruleEngine, null, null, forceAuthorization);
+    }
+
+    public SecuredToolCallback(ToolCallback delegate,
+                               AuthorizationRuleEngine ruleEngine,
+                               PreAuthorizationTokenService preAuthorizationTokenService,
+                               boolean forceAuthorization) {
+        this(delegate, ruleEngine, preAuthorizationTokenService, null, forceAuthorization);
+    }
+
+    public SecuredToolCallback(ToolCallback delegate,
+                               AuthorizationRuleEngine ruleEngine,
+                               PreAuthorizationTokenService preAuthorizationTokenService,
+                               ApprovalPolicyRuntimeResolver approvalPolicyRuntimeResolver,
+                               boolean forceAuthorization) {
         this.delegate = delegate;
         this.ruleEngine = ruleEngine;
+        this.preAuthorizationTokenService = preAuthorizationTokenService;
+        this.approvalPolicyRuntimeResolver = approvalPolicyRuntimeResolver;
         this.forceAuthorization = forceAuthorization;
     }
 
@@ -64,6 +87,13 @@ public class SecuredToolCallback implements ToolCallback {
         String username = resolveUsername();
         String toolName = delegate.getToolDefinition().name();
         String effectiveArguments = resolveArguments(arguments, toolContext);
+        String sessionUuid = ToolExecutionContext.getSessionUuid();
+
+        if (preAuthorizationTokenService != null
+                && preAuthorizationTokenService.consumeMatchingToken(username, sessionUuid, toolName, effectiveArguments)) {
+            log.debug("Pre-authorization accepted [tool={}, user={}, session={}]", toolName, username, sessionUuid);
+            return;
+        }
 
         if (ruleEngine.requiresAuthorization(toolName, username, "pending-id", forceAuthorization)) {
             String reasoning = extractReasoning(toolContext);
@@ -86,7 +116,12 @@ public class SecuredToolCallback implements ToolCallback {
                             new FormAction("SESSION", "Allow for Session", "secondary"),
                             new FormAction("ALWAYS", "Always Allow", "success"),
                             new FormAction("DENIED", "Deny", "danger")));
-            throw new ToolSuspensionException(toolName, effectiveArguments, reasoning, formSchema);
+
+            ToolSuspensionException.SuspensionCampaign campaign = null;
+            if (approvalPolicyRuntimeResolver != null) {
+                campaign = approvalPolicyRuntimeResolver.resolveCampaign(sessionUuid, toolName);
+            }
+            throw new ToolSuspensionException(toolName, effectiveArguments, reasoning, formSchema, campaign);
         }
 
         if (!ruleEngine.isRolePermitted(toolName, username)) {
@@ -187,7 +222,7 @@ public class SecuredToolCallback implements ToolCallback {
                 // Fall back to raw payload if formatter fails.
             }
         }
-        return "```json\n" + normalizeArguments(argumentsJson) + "\n```";
+        return AuthorizationArgumentsFormatter.toApprovalMarkdown(argumentsJson);
     }
 
     private static String normalizeArguments(String arguments) {

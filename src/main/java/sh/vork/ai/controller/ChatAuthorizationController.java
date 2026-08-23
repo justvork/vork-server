@@ -55,6 +55,7 @@ import sh.vork.ai.protocol.interaction.FormAction;
 import sh.vork.ai.protocol.interaction.FormField;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
 import sh.vork.ai.security.AuthorizationRuleEngine;
+import sh.vork.ai.security.AuthorizationArgumentsFormatter;
 import sh.vork.ai.security.VisualizableTool;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
@@ -1668,7 +1669,7 @@ public class ChatAuthorizationController {
                 // Fall through to raw arguments.
             }
         }
-        return raw;
+        return AuthorizationArgumentsFormatter.toApprovalMarkdown(raw);
     }
 
     private static String abbreviate(String value, int maxLen) {

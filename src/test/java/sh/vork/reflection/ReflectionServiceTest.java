@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -16,6 +17,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -28,6 +30,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mongodb.client.FindIterable;
+import com.mongodb.client.MongoCollection;
+import com.mongodb.client.model.ReplaceOptions;
+import com.mongodb.client.result.DeleteResult;
+import com.mongodb.client.result.UpdateResult;
+
+import org.bson.Document;
+import org.bson.conversions.Bson;
 
 import sh.vork.ai.security.SkillSecretSubstitutor;
 import sh.vork.oauth.OAuthTemplate;
@@ -55,6 +65,7 @@ class ReflectionServiceTest {
     void setUp() {
         DatabaseRepository<Reflection> reflectionRepository = new MapDatabaseRepository<>(Reflection.class);
         DatabaseRepository<RecordReflection> recordReflectionRepository = new MapDatabaseRepository<>(RecordReflection.class);
+        DatabaseRepository<MongoReflection> mongoReflectionRepository = new MapDatabaseRepository<>(MongoReflection.class);
         DatabaseRepository<ReflectionGroup> groupRepository = new MapDatabaseRepository<>(ReflectionGroup.class);
         DatabaseRepository<ReflectionBinding> bindingRepository = new MapDatabaseRepository<>(ReflectionBinding.class);
         DatabaseRepository<PendingOAuthBindingAction> pendingOauthBindingActionRepository =
@@ -87,6 +98,7 @@ class ReflectionServiceTest {
         reflectionService = new ReflectionService(
                 reflectionRepository,
                 recordReflectionRepository,
+                mongoReflectionRepository,
                 groupRepository,
                 bindingRepository,
                 pendingOauthBindingActionRepository,
@@ -947,28 +959,146 @@ class ReflectionServiceTest {
     }
 
         @Test
-        void createReflectionRejectsManualRecordGroups() {
-                ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
-                                "Record Group", "desc", "RECORD", "", List.of(), List.of()));
+        void createReflectionAllowsCustomRecordSearchTools() {
+                reflectionService.ensureRecordReflectionsForType("sh.vork.generated.Customer");
+
+                ReflectionGroup group = reflectionService.listGroups().stream()
+                        .filter(g -> g.type() == ReflectionType.RECORD)
+                        .findFirst()
+                        .orElseThrow();
 
                 ReflectionService.ReflectionRequest request = new ReflectionService.ReflectionRequest(
-                                "recordSearchCustomer",
-                                "Search Customer",
-                                "desc",
+                                "recordSearchCustomerByName",
+                                "Search Customer By Name",
+                                "Custom SQL search",
                                 group.uuid(),
                                 List.of(new ReflectionInputParameter("query", "string", "query", true)),
-                                "GET",
-                                "/api/types/sh.vork.generated.Customer/search",
+                                "POST",
+                                "",
                                 Map.of(),
-                                Map.of("query", "{{query}}"),
+                                Map.of(),
                                 "",
                                 "application/json",
                                 "application/json",
-                                "");
+                                "{\"x-vork-record-tool\":true,\"recordFqn\":\"sh.vork.generated.Customer\",\"operation\":\"SEARCH\"}");
 
-                IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                                () -> reflectionService.createReflection(request));
-                assertTrue(ex.getMessage().contains("only supported for REST groups"));
+                Reflection created = reflectionService.createReflection(request);
+
+                assertNotNull(created);
+                assertEquals("recordSearchCustomerByName", created.id());
+                assertTrue(created.outputSchema().contains("\"x-vork-record-tool\":true"));
+                assertTrue(created.outputSchema().contains("\"recordFqn\":\"sh.vork.generated.Customer\""));
+                assertTrue(created.outputSchema().contains("\"operation\":\"SEARCH\""));
+        }
+
+        @Test
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        void executeCustomRecordSearchPaginatesWithoutDeclaredPagingParameters() throws Exception {
+                reflectionService.ensureRecordReflectionsForType("sh.vork.generated.Customer");
+
+                ReflectionGroup group = reflectionService.listGroups().stream()
+                        .filter(g -> g.type() == ReflectionType.RECORD)
+                        .findFirst()
+                        .orElseThrow();
+
+                Reflection custom = reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                        "recordSearchCustomerPaged",
+                        "Search Customer Paged",
+                        "Custom SQL search without declared paging inputs",
+                        group.uuid(),
+                        List.of(),
+                        "POST",
+                        "",
+                        Map.of(),
+                        Map.of(),
+                        "",
+                        "application/json",
+                        "application/json",
+                        "{\"x-vork-record-tool\":true,\"recordFqn\":\"sh.vork.generated.Customer\",\"operation\":\"SEARCH\"}"));
+
+                assertNotNull(custom);
+                assertTrue(custom.inputParameters().isEmpty());
+
+                ReflectionBinding binding = reflectionService.getBinding(group.uuid(), "default");
+                assertNotNull(binding);
+
+                TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
+                JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
+                DatabaseRepository<TypeRecordBindingScope> scopeRepo = new MapDatabaseRepository<>(TypeRecordBindingScope.class);
+                DatabaseRepository<TypeRecordVersionMetadata> versionRepo = new MapDatabaseRepository<>(TypeRecordVersionMetadata.class);
+
+                reflectionService.setTypeDatabaseService(typeDatabaseService);
+                reflectionService.setJavaTypeClassLoader(classLoader);
+                reflectionService.setTypeRecordBindingScopeRepository(scopeRepo);
+                reflectionService.setTypeRecordVersionMetadataRepository(versionRepo);
+
+                try {
+                        when(classLoader.loadClass("sh.vork.generated.Customer")).thenAnswer(invocation -> CustomerRecord.class);
+                } catch (ClassNotFoundException e) {
+                    throw new RuntimeException(e);
+                }
+
+                CustomerRecord c1 = new CustomerRecord("cust-1", "Alpha");
+                CustomerRecord c2 = new CustomerRecord("cust-2", "Beta");
+                CustomerRecord c3 = new CustomerRecord("cust-3", "Gamma");
+
+                scopeRepo.save(new TypeRecordBindingScope(
+                        "sh.vork.generated.Customer::cust-1",
+                        "sh.vork.generated.Customer",
+                        "cust-1",
+                        binding.uuid(),
+                        binding.name(),
+                        1L,
+                        1L));
+                scopeRepo.save(new TypeRecordBindingScope(
+                        "sh.vork.generated.Customer::cust-2",
+                        "sh.vork.generated.Customer",
+                        "cust-2",
+                        binding.uuid(),
+                        binding.name(),
+                        1L,
+                        1L));
+                scopeRepo.save(new TypeRecordBindingScope(
+                        "sh.vork.generated.Customer::cust-3",
+                        "sh.vork.generated.Customer",
+                        "cust-3",
+                        binding.uuid(),
+                        binding.name(),
+                        1L,
+                        1L));
+
+                when(typeDatabaseService.searchBySql(
+                        eq(CustomerRecord.class),
+                        eq("name LIKE '%'"),
+                        eq(0),
+                        eq(Integer.MAX_VALUE),
+                        eq("uuid"),
+                        eq(sh.vork.orm.SortOrder.ASC)))
+                        .thenReturn((java.util.stream.Stream) List.of(c1, c2, c3).stream());
+
+                String result = reflectionService.executeRestReflection(
+                        custom.id(),
+                        Map.of(
+                                "query", "name LIKE '%'",
+                                "page", 1,
+                                "pageSize", 1),
+                        "default",
+                        "alice");
+
+                assertTrue(result.contains("\"status\":\"ok\""));
+                assertTrue(result.contains("\"operation\":\"search\""));
+                assertTrue(result.contains("\"total\":3"));
+                assertTrue(result.contains("\"page\":1"));
+                assertTrue(result.contains("\"pageSize\":1"));
+                assertTrue(result.contains("\"uuid\":\"cust-2\""));
+
+                verify(typeDatabaseService).searchBySql(
+                        eq(CustomerRecord.class),
+                        eq("name LIKE '%'"),
+                        eq(0),
+                        eq(Integer.MAX_VALUE),
+                        eq("uuid"),
+                        eq(sh.vork.orm.SortOrder.ASC));
         }
 
             @Test
@@ -983,8 +1113,8 @@ class ReflectionServiceTest {
 
                 ReflectionGroup group = reflectionService.getGroup(reflection.groupUuid());
 
-                ReflectionBinding binding = reflectionService.createBinding("alice", group.uuid(),
-                        new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+                ReflectionBinding binding = reflectionService.getBinding(group.uuid(), "default");
+                assertNotNull(binding);
 
                 TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
                 JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
@@ -1006,18 +1136,26 @@ class ReflectionServiceTest {
 
                 String result = reflectionService.executeRestReflection(
                         reflection.id(),
-                        Map.of("uuid", "cust-1", "name", "3SP Ltd"),
+                        Map.of("name", "3SP Ltd"),
                         "default",
                         "alice");
 
                 assertTrue(result.contains("\"status\":\"ok\""));
                                 assertTrue(result.contains("\"revision\":1"));
                                 assertTrue(result.contains("\"schemaVersion\":99"));
-                verify(typeDatabaseService).save(any(CustomerRecord.class));
-                TypeRecordBindingScope scope = scopeRepo.get("sh.vork.generated.Customer::cust-1");
+                verify(typeDatabaseService, never()).get(eq(CustomerRecord.class), eq("cust-1"));
+
+                org.mockito.ArgumentCaptor<CustomerRecord> entityCaptor = org.mockito.ArgumentCaptor.forClass(CustomerRecord.class);
+                verify(typeDatabaseService).save(entityCaptor.capture());
+                ReflectionServiceTest.CustomerRecord savedEntity = entityCaptor.getValue();
+                String generatedUuid = savedEntity.uuid();
+                assertNotNull(generatedUuid);
+                assertTrue(!generatedUuid.isBlank());
+
+                TypeRecordBindingScope scope = scopeRepo.get("sh.vork.generated.Customer::" + generatedUuid);
                 assertNotNull(scope);
                 assertEquals(binding.uuid(), scope.bindingUuid());
-                                TypeRecordVersionMetadata version = versionRepo.get("sh.vork.generated.Customer::cust-1");
+                                TypeRecordVersionMetadata version = versionRepo.get("sh.vork.generated.Customer::" + generatedUuid);
                                 assertNotNull(version);
                                 assertEquals(1L, version.entityRevision());
                                 assertEquals(99L, version.schemaVersion());
@@ -1085,8 +1223,8 @@ class ReflectionServiceTest {
                         .orElseThrow();
 
                 ReflectionGroup group = reflectionService.getGroup(reflection.groupUuid());
-                ReflectionBinding binding = reflectionService.createBinding("alice", group.uuid(),
-                        new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+                ReflectionBinding binding = reflectionService.getBinding(group.uuid(), "default");
+                assertNotNull(binding);
 
                 TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
                 JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
@@ -1150,11 +1288,53 @@ class ReflectionServiceTest {
                 assertEquals(1, recordGroups.size());
 
                 ReflectionGroup group = recordGroups.getFirst();
+                assertEquals("record", group.groupId());
+                assertEquals("CustomerRecord", group.artifactId());
+                assertEquals("SNAPSHOT", group.version());
                 List<Reflection> tools = reflectionService.reflectionsForGroup(group.uuid());
                 assertEquals(5, tools.size());
                 assertTrue(tools.stream().allMatch(tool -> tool.outputSchema().contains("x-vork-mandatory-record-tool")));
                 assertTrue(tools.stream().allMatch(tool -> tool.url().isBlank()));
                 assertTrue(tools.stream().allMatch(tool -> tool.headers().isEmpty()));
+                ReflectionBinding defaultBinding = reflectionService.getBinding(group.uuid(), "default");
+                assertNotNull(defaultBinding);
+        }
+
+        @Test
+        void ensureRecordReflectionsForEnumCreatesListToolOnly() {
+                reflectionService.ensureRecordReflectionsForType("java.time.DayOfWeek");
+
+                List<Reflection> tools = reflectionService.listReflections().stream()
+                                .filter(tool -> tool.outputSchema().contains("\"recordFqn\":\"java.time.DayOfWeek\""))
+                                .toList();
+
+                assertEquals(1, tools.size());
+                Reflection listTool = tools.getFirst();
+                assertTrue(listTool.outputSchema().contains("\"operation\":\"LIST\""));
+                assertTrue(listTool.id().startsWith("list"));
+        }
+
+        @Test
+        void ensureRecordReflectionsForRecordIncludesFieldInputsForCreateAndUpdate() {
+                reflectionService.ensureRecordReflectionsForType(CustomerRecord.class.getName());
+
+                Reflection createTool = reflectionService.listReflections().stream()
+                                .filter(tool -> tool.outputSchema().contains("\"recordFqn\":\"" + CustomerRecord.class.getName() + "\""))
+                                .filter(tool -> tool.outputSchema().contains("\"operation\":\"CREATE\""))
+                                .findFirst()
+                                .orElseThrow();
+
+                Reflection updateTool = reflectionService.listReflections().stream()
+                                .filter(tool -> tool.outputSchema().contains("\"recordFqn\":\"" + CustomerRecord.class.getName() + "\""))
+                                .filter(tool -> tool.outputSchema().contains("\"operation\":\"UPDATE\""))
+                                .findFirst()
+                                .orElseThrow();
+
+                assertTrue(createTool.inputParameters().stream().noneMatch(parameter -> "uuid".equals(parameter.name())));
+                assertTrue(createTool.inputParameters().stream().anyMatch(parameter -> "name".equals(parameter.name())));
+                assertTrue(createTool.inputParameters().stream().anyMatch(parameter -> "record".equals(parameter.name())));
+                assertTrue(updateTool.inputParameters().stream().anyMatch(parameter -> "uuid".equals(parameter.name()) && parameter.required()));
+                assertTrue(updateTool.inputParameters().stream().anyMatch(parameter -> "expectedRevision".equals(parameter.name())));
         }
 
         @Test
@@ -1183,6 +1363,285 @@ class ReflectionServiceTest {
 
                 assertThrows(IllegalArgumentException.class, () -> reflectionService.updateReflection(mandatory.uuid(), request));
                 assertThrows(IllegalArgumentException.class, () -> reflectionService.deleteReflection(mandatory.uuid()));
+        }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void executeMongoCreateInsertsDocumentAndReturnsOkPayload() throws Exception {
+        MongoCollection<Document> collection = mock(MongoCollection.class);
+
+        String result = invokeMongoOperation("executeMongoCreate",
+                "vork",
+                "customers",
+                collection,
+                Map.of("document", "{\"name\":\"Acme\"}"));
+
+        verify(collection).insertOne(any(Document.class));
+        assertTrue(result.contains("\"status\":\"ok\""));
+        assertTrue(result.contains("\"operation\":\"create\""));
+        assertTrue(result.contains("\"collection\":\"customers\""));
+        assertTrue(result.contains("\"name\":\"Acme\""));
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void executeMongoReadReturnsNotFoundWhenDocumentMissing() throws Exception {
+        MongoCollection<Document> collection = mock(MongoCollection.class);
+        FindIterable<Document> iterable = mock(FindIterable.class);
+                when(collection.find(any(Bson.class))).thenReturn((FindIterable) iterable);
+        when(iterable.first()).thenReturn(null);
+
+        String result = invokeMongoOperation("executeMongoRead",
+                "vork",
+                "customers",
+                collection,
+                Map.of("uuid", "cust-1"));
+
+        assertTrue(result.contains("\"status\":\"not_found\""));
+        assertTrue(result.contains("\"operation\":\"read\""));
+        assertTrue(result.contains("\"uuid\":\"cust-1\""));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void executeMongoUpdateReturnsNotFoundWhenNoRowsModified() throws Exception {
+        MongoCollection<Document> collection = mock(MongoCollection.class);
+        UpdateResult updateResult = mock(UpdateResult.class);
+        when(updateResult.getModifiedCount()).thenReturn(0L);
+                when(collection.replaceOne(any(Bson.class), any(Document.class), any(ReplaceOptions.class))).thenReturn(updateResult);
+
+        String result = invokeMongoOperation("executeMongoUpdate",
+                "vork",
+                "customers",
+                collection,
+                Map.of("uuid", "cust-1", "document", "{\"name\":\"Updated\"}"));
+
+        assertTrue(result.contains("\"status\":\"not_found\""));
+        assertTrue(result.contains("\"operation\":\"update\""));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void executeMongoDeleteReturnsDeletedCountAndOkStatus() throws Exception {
+        MongoCollection<Document> collection = mock(MongoCollection.class);
+        DeleteResult deleteResult = mock(DeleteResult.class);
+        when(deleteResult.getDeletedCount()).thenReturn(1L);
+        when(collection.deleteOne(any())).thenReturn(deleteResult);
+
+        String result = invokeMongoOperation("executeMongoDelete",
+                "vork",
+                "customers",
+                collection,
+                Map.of("uuid", "cust-1"));
+
+        assertTrue(result.contains("\"status\":\"ok\""));
+        assertTrue(result.contains("\"operation\":\"delete\""));
+        assertTrue(result.contains("\"deletedCount\":1"));
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void executeMongoSearchReturnsPagedResultsForMongoQuery() throws Exception {
+        MongoCollection<Document> collection = mock(MongoCollection.class);
+        FindIterable<Document> iterable = mock(FindIterable.class);
+
+        when(collection.countDocuments(any(Document.class))).thenReturn(2L);
+        when(collection.find(any(Document.class))).thenReturn((FindIterable) iterable);
+        when(iterable.sort(any(Document.class))).thenReturn((FindIterable) iterable);
+        when(iterable.skip(any(Integer.class))).thenReturn((FindIterable) iterable);
+        when(iterable.limit(any(Integer.class))).thenReturn((FindIterable) iterable);
+                when(iterable.into(any(List.class))).thenAnswer(invocation -> {
+                        List<Document> target = invocation.getArgument(0);
+            target.add(new Document("_id", "cust-1").append("name", "Acme"));
+            return target;
+        });
+
+        String result = invokeMongoOperation("executeMongoSearch",
+                "vork",
+                "customers",
+                collection,
+                Map.of(
+                        "query", "{\"name\":\"Acme\"}",
+                        "queryType", "MONGO",
+                        "sortField", "name",
+                        "sortOrder", "ASC",
+                        "page", 0,
+                        "pageSize", 20));
+
+        assertTrue(result.contains("\"status\":\"ok\""));
+        assertTrue(result.contains("\"operation\":\"search\""));
+        assertTrue(result.contains("\"total\":2"));
+        assertTrue(result.contains("\"name\":\"Acme\""));
+    }
+
+    @Test
+    void executeMongoReflectionUsesBindingSecretUriWhenRuntimeUriMissing() {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "Mongo Group",
+                "desc",
+                "MONGO",
+                "",
+                List.of(new sh.vork.skill.SkillSecret("MONGO_URI", "Mongo URI")),
+                List.of()));
+
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+        Reflection reflection = new Reflection(
+                UUID.randomUUID().toString(),
+                "getMongoCustomer",
+                "Get Mongo Customer",
+                "desc",
+                group.uuid(),
+                List.of(new ReflectionInputParameter("uuid", "string", "Document id", true)),
+                "POST",
+                "/mongodb/tools/getMongoCustomer",
+                Map.of(),
+                Map.of(),
+                "",
+                "application/json",
+                "application/json",
+                "{\"x-vork-mandatory-mongo-tool\":true,\"database\":\"vork\",\"collection\":\"customers\",\"operation\":\"READ\"}",
+                1L,
+                System.currentTimeMillis(),
+                System.currentTimeMillis());
+
+        when(secureCredentialStore.getGlobalSecret(eq("REFLECTION_BINDING:" + group.uuid() + ":default:MONGO_URI")))
+                .thenReturn("mongodb://");
+
+        String result = invokeMongoReflection(reflection, Map.of("uuid", "cust-1"), "default", "alice");
+
+        verify(secureCredentialStore).getGlobalSecret(eq("REFLECTION_BINDING:" + group.uuid() + ":default:MONGO_URI"));
+        assertTrue(!result.contains("Mongo connection URI is missing for this binding"));
+        assertTrue(result.contains("\"status\":\"error\""));
+    }
+
+    @Test
+    void createMongoToolReflectionCreatesCustomMongoTool() {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "Mongo Group",
+                "desc",
+                "MONGO",
+                "",
+                true,
+                List.of(),
+                List.of(),
+                "NONE",
+                "",
+                "mongogroup",
+                "tools"));
+
+        Reflection created = reflectionService.createMongoToolReflection(new ReflectionService.MongoToolRequest(
+                "getMongoOrders",
+                "Get Mongo Orders",
+                "Read orders",
+                group.uuid(),
+                "vork",
+                "orders",
+                "READ",
+                "",
+                "",
+                ""));
+
+        assertEquals("getMongoOrders", created.id());
+        assertEquals(group.uuid(), created.groupUuid());
+        assertTrue(created.outputSchema().contains("\"x-vork-mongo-tool\":true"));
+        assertTrue(created.outputSchema().contains("\"collection\":\"orders\""));
+    }
+
+    @Test
+    void updateMongoToolReflectionUpdatesCustomMongoTool() {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "Mongo Group",
+                "desc",
+                "MONGO",
+                "",
+                true,
+                List.of(),
+                List.of(),
+                "NONE",
+                "",
+                "mongogroup2",
+                "tools"));
+
+        Reflection created = reflectionService.createMongoToolReflection(new ReflectionService.MongoToolRequest(
+                "searchMongoOrders",
+                "Search Mongo Orders",
+                "Search orders",
+                group.uuid(),
+                "vork",
+                "orders",
+                "SEARCH",
+                "",
+                "SQL",
+                "status = 'ACTIVE'"));
+
+        Reflection updated = reflectionService.updateMongoToolReflection(created.uuid(), new ReflectionService.MongoToolRequest(
+                "searchMongoOrders",
+                "Search Mongo Orders Updated",
+                "Search orders updated",
+                group.uuid(),
+                "vork",
+                "orders_v2",
+                "READ",
+                "",
+                "",
+                ""));
+
+        assertNotNull(updated);
+        assertEquals(created.uuid(), updated.uuid());
+        assertEquals("Search Mongo Orders Updated", updated.name());
+        assertTrue(updated.outputSchema().contains("\"collection\":\"orders_v2\""));
+        assertTrue(updated.outputSchema().contains("\"operation\":\"READ\""));
+    }
+
+    private String invokeMongoOperation(String methodName,
+                                        String database,
+                                        String collectionName,
+                                        MongoCollection<Document> collection,
+                                        Map<String, Object> inputs) throws Exception {
+        Method method;
+        Object result;
+        if ("executeMongoSearch".equals(methodName)) {
+            method = ReflectionService.class.getDeclaredMethod(
+                    methodName,
+                    String.class,
+                    String.class,
+                    MongoCollection.class,
+                    Map.class,
+                    Reflection.class,
+                    Class.forName("sh.vork.reflection.ReflectionService$MongoToolMetadata"));
+            method.setAccessible(true);
+            result = method.invoke(reflectionService, database, collectionName, collection, inputs, null, null);
+        } else {
+            method = ReflectionService.class.getDeclaredMethod(
+                    methodName,
+                    String.class,
+                    String.class,
+                    MongoCollection.class,
+                    Map.class);
+            method.setAccessible(true);
+            result = method.invoke(reflectionService, database, collectionName, collection, inputs);
+        }
+        return (String) result;
+    }
+
+        private String invokeMongoReflection(Reflection reflection,
+                                                                                 Map<String, Object> runtimeInputs,
+                                                                                 String bindingName,
+                                                                                 String username) {
+                try {
+                        Method method = ReflectionService.class.getDeclaredMethod(
+                                        "executeMongoReflection",
+                                        Reflection.class,
+                                        Map.class,
+                                        String.class,
+                                        String.class);
+                        method.setAccessible(true);
+                        return (String) method.invoke(reflectionService, reflection, runtimeInputs, bindingName, username);
+                } catch (Exception ex) {
+                        throw new RuntimeException(ex);
+                }
         }
 
         private static String readBody(HttpRequest request) throws Exception {

@@ -26,11 +26,26 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.mongodb.ConnectionString;
+import com.mongodb.MongoClientSettings;
+import com.mongodb.MongoCredential;
+import com.mongodb.client.MongoClient;
+import com.mongodb.client.MongoClients;
+import com.mongodb.client.MongoCollection;
+import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.Aggregates;
+import com.mongodb.client.model.Filters;
+import com.mongodb.client.model.ReplaceOptions;
+
+import org.bson.Document;
+import org.bson.conversions.Bson;
+import org.bson.types.ObjectId;
 
 import sh.vork.ai.security.SkillSecretSubstitutor;
 import sh.vork.ai.function.OAuthConnectRequest;
@@ -40,11 +55,13 @@ import sh.vork.oauth.OAuthClientService;
 import sh.vork.oauth.OAuthTemplateService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.RepositoryFactory;
+import sh.vork.orm.SearchQuery;
 import sh.vork.orm.SortOrder;
 import sh.vork.security.SecureCredentialStore;
 import sh.vork.skill.SkillSecret;
 import sh.vork.typegen.JavaTypeClassLoader;
 import sh.vork.typegen.JavaType;
+import sh.vork.typegen.SqlQueryParser;
 import sh.vork.typegen.TypeDatabaseService;
 import sh.vork.typegen.TypeRecordBindingScope;
 import sh.vork.typegen.TypeRecordVersionMetadata;
@@ -62,9 +79,13 @@ public class ReflectionService {
     private static final Pattern TEMPLATE_TOKEN_PATTERN = Pattern.compile("\\{\\{\\s*([A-Za-z0-9._-]+)\\s*\\}\\}");
     private static final Set<String> METHODS_WITHOUT_BODY = Set.of("GET", "DELETE", "HEAD", "OPTIONS");
     private static final String MANDATORY_RECORD_TOOL_MARKER = "x-vork-mandatory-record-tool";
+    private static final String RECORD_TOOL_MARKER = "x-vork-record-tool";
+    private static final String MANDATORY_MONGO_TOOL_MARKER = "x-vork-mandatory-mongo-tool";
+    private static final String MONGO_TOOL_MARKER = "x-vork-mongo-tool";
         private static final String CONTENT_TYPE_JSON = "application/json";
         private static final String CONTENT_TYPE_FORM = "application/x-www-form-urlencoded";
         private static final String CONTENT_TYPE_TEXT = "text/plain";
+        private static final int RECORD_LIST_MAX_PAGE_SIZE = 100;
         private static final Set<String> SUPPORTED_CONTENT_TYPES = Set.of(
             CONTENT_TYPE_JSON,
             CONTENT_TYPE_FORM,
@@ -80,6 +101,7 @@ public class ReflectionService {
 
     private final DatabaseRepository<Reflection> reflectionRepository;
     private final DatabaseRepository<RecordReflection> recordReflectionRepository;
+    private final DatabaseRepository<MongoReflection> mongoReflectionRepository;
     private final DatabaseRepository<ReflectionGroup> reflectionGroupRepository;
     private final DatabaseRepository<ReflectionBinding> reflectionBindingRepository;
     private final DatabaseRepository<PendingOAuthBindingAction> pendingOAuthBindingActionRepository;
@@ -105,6 +127,7 @@ public class ReflectionService {
         this(
                 factory.create(Reflection.class),
                 factory.create(RecordReflection.class),
+            factory.create(MongoReflection.class),
                 factory.create(ReflectionGroup.class),
                 factory.create(ReflectionBinding.class),
                 factory.create(PendingOAuthBindingAction.class),
@@ -143,6 +166,7 @@ public class ReflectionService {
 
         ReflectionService(DatabaseRepository<Reflection> reflectionRepository,
                   DatabaseRepository<RecordReflection> recordReflectionRepository,
+                  DatabaseRepository<MongoReflection> mongoReflectionRepository,
                   DatabaseRepository<ReflectionGroup> reflectionGroupRepository,
                   DatabaseRepository<ReflectionBinding> reflectionBindingRepository,
                       DatabaseRepository<PendingOAuthBindingAction> pendingOAuthBindingActionRepository,
@@ -154,6 +178,7 @@ public class ReflectionService {
         this(
             reflectionRepository,
             recordReflectionRepository,
+            mongoReflectionRepository,
             reflectionGroupRepository,
             reflectionBindingRepository,
             pendingOAuthBindingActionRepository,
@@ -167,6 +192,7 @@ public class ReflectionService {
 
     ReflectionService(DatabaseRepository<Reflection> reflectionRepository,
                       DatabaseRepository<RecordReflection> recordReflectionRepository,
+                      DatabaseRepository<MongoReflection> mongoReflectionRepository,
                       DatabaseRepository<ReflectionGroup> reflectionGroupRepository,
                       DatabaseRepository<ReflectionBinding> reflectionBindingRepository,
                       DatabaseRepository<PendingOAuthBindingAction> pendingOAuthBindingActionRepository,
@@ -178,6 +204,7 @@ public class ReflectionService {
                       HttpClient httpClient) {
         this.reflectionRepository = reflectionRepository;
         this.recordReflectionRepository = recordReflectionRepository;
+        this.mongoReflectionRepository = mongoReflectionRepository;
         this.reflectionGroupRepository = reflectionGroupRepository;
         this.reflectionBindingRepository = reflectionBindingRepository;
         this.pendingOAuthBindingActionRepository = pendingOAuthBindingActionRepository;
@@ -300,11 +327,51 @@ public class ReflectionService {
     }
 
     public GroupDeleteResult deleteGroup(String uuid) {
+        return deleteGroup(null, uuid, false);
+    }
+
+    public GroupDeleteResult deleteGroup(String username, String uuid, boolean purge) {
         log.debug("ENTER deleteGroup: [uuid={}]", uuid);
         ReflectionGroup existing = reflectionGroupRepository.get(uuid);
         if (existing == null) {
             return new GroupDeleteResult(false, "Group not found.");
         }
+
+        if (purge) {
+            if (username == null || username.isBlank()) {
+                return new GroupDeleteResult(false, "Authenticated user is required for purge delete.");
+            }
+
+            List<ReflectionBinding> bindings = bindingsForGroup(uuid);
+            for (ReflectionBinding binding : bindings) {
+                try {
+                    deleteBinding(username, uuid, binding.name());
+                } catch (Exception ex) {
+                    log.warn("Failed to purge delete binding [groupUuid={}, bindingName={}]: {}",
+                            uuid, binding.name(), ex.getMessage());
+                    return new GroupDeleteResult(false, "Failed to delete binding '" + binding.name() + "': " + ex.getMessage());
+                }
+            }
+
+            List<Reflection> members = reflectionsForGroup(uuid);
+            for (Reflection reflection : members) {
+                reflectionRepository.delete(reflection.uuid());
+                recordReflectionRepository.delete(reflection.uuid());
+                mongoReflectionRepository.delete(reflection.uuid());
+            }
+
+            try (var stream = pendingOAuthBindingActionRepository.list(0, Integer.MAX_VALUE)) {
+                stream.filter(action -> action != null && uuid.equals(action.groupUuid()))
+                        .map(PendingOAuthBindingAction::uuid)
+                        .forEach(pendingOAuthBindingActionRepository::delete);
+            }
+
+            reflectionGroupRepository.delete(uuid);
+            log.info("Reflection group purged [uuid={}, deletedReflections={}, deletedBindings={}]",
+                    uuid, members.size(), bindings.size());
+            return new GroupDeleteResult(true, null);
+        }
+
         List<Reflection> members = reflectionsForGroup(uuid);
         if (!members.isEmpty()) {
             return new GroupDeleteResult(false, "Cannot delete non-empty group. Remove reflections first.");
@@ -597,6 +664,9 @@ public class ReflectionService {
         try (var stream = recordReflectionRepository.list(0, Integer.MAX_VALUE)) {
             stream.map(this::recordToReflection).forEach(merged::add);
         }
+        try (var stream = mongoReflectionRepository.list(0, Integer.MAX_VALUE)) {
+            stream.map(this::mongoToReflection).forEach(merged::add);
+        }
         return merged.stream()
                 .sorted(Comparator.comparing(
                         reflection -> reflection.id() == null ? "" : reflection.id(),
@@ -619,7 +689,11 @@ public class ReflectionService {
             return reflection;
         }
         RecordReflection recordReflection = recordReflectionRepository.get(uuid);
-        return recordReflection == null ? null : recordToReflection(recordReflection);
+        if (recordReflection != null) {
+            return recordToReflection(recordReflection);
+        }
+        MongoReflection mongoReflection = mongoReflectionRepository.get(uuid);
+        return mongoReflection == null ? null : mongoToReflection(mongoReflection);
     }
 
     public Reflection getReflectionById(String reflectionId) {
@@ -635,9 +709,269 @@ public class ReflectionService {
     public Reflection createReflection(ReflectionRequest request) {
         log.debug("ENTER createReflection: [id={}]", request == null ? "null" : request.id());
         Reflection normalized = normalizeAndValidate(null, request);
-        reflectionRepository.save(normalized);
+        ReflectionGroup group = reflectionGroupRepository.get(normalized.groupUuid());
+        if (group != null && group.type() == ReflectionType.MONGO) {
+            mongoReflectionRepository.save(reflectionToMongo(normalized));
+            reflectionRepository.delete(normalized.uuid());
+            recordReflectionRepository.delete(normalized.uuid());
+        } else {
+            reflectionRepository.save(normalized);
+            mongoReflectionRepository.delete(normalized.uuid());
+        }
         log.info("Reflection created [uuid={}, id={}]", normalized.uuid(), normalized.id());
         return normalized;
+    }
+
+    public MongoConnectionInspection inspectMongoConnection(MongoConnectionRequest request) {
+        log.debug("ENTER inspectMongoConnection");
+        if (request == null || request.connectionUri() == null || request.connectionUri().isBlank()) {
+            throw new IllegalArgumentException("Mongo connectionUri is required.");
+        }
+        try (MongoClient client = openMongoClient(request)) {
+            List<String> databaseNames = new ArrayList<>();
+            client.listDatabaseNames().into(databaseNames);
+            databaseNames.sort(String.CASE_INSENSITIVE_ORDER);
+            log.debug("EXIT inspectMongoConnection: [databaseCount={}]", databaseNames.size());
+            return new MongoConnectionInspection(databaseNames);
+        } catch (Exception ex) {
+            log.warn("inspectMongoConnection failed: {}", ex.getMessage());
+            throw new IllegalArgumentException("Failed to connect to MongoDB: " + ex.getMessage());
+        }
+    }
+
+    public MongoDatabaseInspection inspectMongoDatabase(MongoDatabaseInspectRequest request) {
+        log.debug("ENTER inspectMongoDatabase: [database={}]", request == null ? null : request.database());
+        if (request == null || request.database() == null || request.database().isBlank()) {
+            throw new IllegalArgumentException("Mongo database is required.");
+        }
+
+        int sampleSize = request.sampleSize() == null || request.sampleSize() < 1
+                ? 20
+                : Math.min(request.sampleSize(), 200);
+
+        try (MongoClient client = openMongoClient(new MongoConnectionRequest(
+                request.connectionUri(),
+                request.username(),
+                request.password(),
+                request.authDatabase(),
+                request.tlsEnabled()))) {
+            MongoDatabase database = client.getDatabase(request.database().trim());
+            List<String> collectionNames = new ArrayList<>();
+            database.listCollectionNames().into(collectionNames);
+            collectionNames.sort(String.CASE_INSENSITIVE_ORDER);
+
+            List<MongoCollectionInspection> collections = new ArrayList<>();
+            for (String collectionName : collectionNames) {
+                MongoCollection<Document> collection = database.getCollection(collectionName);
+                long estimatedCount = collection.estimatedDocumentCount();
+                List<Document> sampleDocs = sampleDocuments(collection, sampleSize);
+                String schema = inferJsonSchema(sampleDocs);
+                collections.add(new MongoCollectionInspection(
+                        collectionName,
+                        estimatedCount,
+                        schema));
+            }
+            log.debug("EXIT inspectMongoDatabase: [database={}, collectionCount={}]",
+                    request.database(), collections.size());
+            return new MongoDatabaseInspection(request.database().trim(), collections);
+        } catch (Exception ex) {
+            log.warn("inspectMongoDatabase failed [database={}]: {}",
+                    request.database(), ex.getMessage());
+            throw new IllegalArgumentException("Failed to inspect Mongo database: " + ex.getMessage());
+        }
+    }
+
+    public MongoWizardGenerationResult generateMongoReflectionsFromWizard(String username,
+                                                                           MongoWizardGenerateRequest request) {
+        log.debug("ENTER generateMongoReflectionsFromWizard: [database={}, collectionCount={}]",
+                request == null ? null : request.database(),
+                request == null || request.collections() == null ? 0 : request.collections().size());
+        requireUsername(username);
+        if (request == null) {
+            throw new IllegalArgumentException("Mongo wizard payload is required.");
+        }
+        if (request.database() == null || request.database().isBlank()) {
+            throw new IllegalArgumentException("Mongo database is required.");
+        }
+        if (request.collections() == null || request.collections().isEmpty()) {
+            throw new IllegalArgumentException("At least one Mongo collection must be selected.");
+        }
+        if (request.groupId() == null || !IDENTITY_PATTERN.matcher(request.groupId().trim()).matches()) {
+            throw new IllegalArgumentException("Group ID must be alphanumeric and 3-64 characters.");
+        }
+        if (request.artifactId() == null || !IDENTITY_PATTERN.matcher(request.artifactId().trim()).matches()) {
+            throw new IllegalArgumentException("Artifact ID must be alphanumeric and 3-64 characters.");
+        }
+
+        MongoDatabaseInspection inspection = inspectMongoDatabase(new MongoDatabaseInspectRequest(
+                request.connectionUri(),
+                request.username(),
+                request.password(),
+                request.authDatabase(),
+                request.tlsEnabled(),
+                request.database(),
+                request.sampleSize()));
+
+        Map<String, String> inferredSchemasByCollection = new LinkedHashMap<>();
+        for (MongoCollectionInspection collection : inspection.collections()) {
+            inferredSchemasByCollection.put(collection.name(), collection.inferredSchema());
+        }
+
+        List<String> selectedCollections = request.collections().stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(value -> !value.isBlank())
+                .distinct()
+                .toList();
+        if (selectedCollections.isEmpty()) {
+            throw new IllegalArgumentException("At least one Mongo collection must be selected.");
+        }
+
+        for (String collectionName : selectedCollections) {
+            if (!inferredSchemasByCollection.containsKey(collectionName)) {
+                throw new IllegalArgumentException("Collection not found in database: " + collectionName);
+            }
+        }
+
+        String defaultGroupName = "Mongo " + request.database().trim();
+        String groupName = request.groupName() == null || request.groupName().isBlank()
+                ? defaultGroupName
+                : request.groupName().trim();
+
+        List<SkillSecret> bindingSecrets = List.of(
+                new SkillSecret("MONGO_URI", "Mongo connection URI"),
+                new SkillSecret("MONGO_USERNAME", "Mongo username"),
+                new SkillSecret("MONGO_PASSWORD", "Mongo password"));
+        List<ReflectionBindingParameter> bindingParameters = List.of(
+            new ReflectionBindingParameter("mongoUri", "hidden", "Mongo connection URI", request.connectionUri().trim()),
+                new ReflectionBindingParameter("mongoDatabase", "string", "Mongo database name", request.database().trim()),
+                new ReflectionBindingParameter("mongoAuthDatabase", "string", "Mongo auth database", request.authDatabase() == null || request.authDatabase().isBlank() ? "admin" : request.authDatabase().trim()),
+                new ReflectionBindingParameter("mongoTls", "boolean", "Enable TLS for Mongo connection", String.valueOf(Boolean.TRUE.equals(request.tlsEnabled()))));
+
+        ReflectionGroup group = createGroup(new ReflectionGroupRequest(
+                groupName,
+                request.groupDescription() == null ? "" : request.groupDescription().trim(),
+                ReflectionType.MONGO.name(),
+                "",
+                false,
+                bindingSecrets,
+                bindingParameters,
+                "NONE",
+                "",
+                request.groupId().trim(),
+                request.artifactId().trim()));
+
+        Map<String, String> secretValues = new LinkedHashMap<>();
+        secretValues.put("MONGO_URI", request.connectionUri() == null ? "" : request.connectionUri().trim());
+        if (request.username() != null && !request.username().isBlank()) {
+            secretValues.put("MONGO_USERNAME", request.username().trim());
+        }
+        if (request.password() != null && !request.password().isBlank()) {
+            secretValues.put("MONGO_PASSWORD", request.password());
+        }
+
+        Map<String, String> parameterValues = new LinkedHashMap<>();
+        parameterValues.put("mongoUri", request.connectionUri().trim());
+        parameterValues.put("mongoDatabase", request.database().trim());
+        parameterValues.put("mongoAuthDatabase", request.authDatabase() == null || request.authDatabase().isBlank() ? "admin" : request.authDatabase().trim());
+        parameterValues.put("mongoTls", String.valueOf(Boolean.TRUE.equals(request.tlsEnabled())));
+
+        ReflectionBinding binding = createBinding(
+                username,
+                group.uuid(),
+                new ReflectionBindingRequest("default", "", parameterValues, secretValues));
+
+        Map<String, List<String>> toolIdsByCollection = new LinkedHashMap<>();
+        for (String collectionName : selectedCollections) {
+            String schema = inferredSchemasByCollection.get(collectionName);
+            List<String> toolIds = upsertMandatoryMongoCollectionTools(
+                    group,
+                    request.database().trim(),
+                    collectionName,
+                    schema);
+            toolIdsByCollection.put(collectionName, toolIds);
+        }
+
+        log.info("Mongo reflection wizard generated [groupUuid={}, bindingName={}, collectionCount={}]",
+                group.uuid(), binding.name(), selectedCollections.size());
+        return new MongoWizardGenerationResult(group.uuid(), binding.name(), toolIdsByCollection);
+    }
+
+    public Reflection createMongoToolReflection(MongoToolRequest request) {
+        log.debug("ENTER createMongoToolReflection: [id={}]", request == null ? null : request.id());
+        MongoToolRequest normalizedRequest = normalizeAndValidateMongoToolRequest(request, null);
+
+        if (getReflectionById(normalizedRequest.id()) != null) {
+            throw new IllegalArgumentException("A reflection with this ID already exists: " + normalizedRequest.id());
+        }
+
+        long now = System.currentTimeMillis();
+        MongoReflection created = new MongoReflection(
+                UUID.randomUUID().toString(),
+                normalizedRequest.id(),
+                normalizedRequest.name(),
+                normalizedRequest.description(),
+                normalizedRequest.groupUuid(),
+                mongoInputParametersForOperation(normalizedRequest.operation()),
+            mongoToolSchema(
+                normalizedRequest.database(),
+                normalizedRequest.collection(),
+                normalizedRequest.operation(),
+                false,
+                normalizedRequest.inferredSchema(),
+                normalizedRequest.queryType(),
+                normalizedRequest.queryTemplate()),
+                1L,
+                now,
+                now);
+
+        mongoReflectionRepository.save(created);
+        reflectionRepository.delete(created.uuid());
+        recordReflectionRepository.delete(created.uuid());
+        log.info("Mongo custom reflection created [uuid={}, id={}]", created.uuid(), created.id());
+        return mongoToReflection(created);
+    }
+
+    public Reflection updateMongoToolReflection(String uuid, MongoToolRequest request) {
+        log.debug("ENTER updateMongoToolReflection: [uuid={}]", uuid);
+        MongoReflection existing = mongoReflectionRepository.get(uuid);
+        if (existing == null) {
+            return null;
+        }
+        if (isMandatoryMongoToolSchema(existing.outputSchema())) {
+            throw new IllegalArgumentException("Mandatory mongo reflection tools are immutable and cannot be updated.");
+        }
+
+        MongoToolRequest normalizedRequest = normalizeAndValidateMongoToolRequest(request, existing);
+
+        Reflection idConflict = getReflectionById(normalizedRequest.id());
+        if (idConflict != null && !existing.uuid().equals(idConflict.uuid())) {
+            throw new IllegalArgumentException("A reflection with this ID already exists: " + normalizedRequest.id());
+        }
+
+        MongoReflection updated = new MongoReflection(
+                existing.uuid(),
+                normalizedRequest.id(),
+                normalizedRequest.name(),
+                normalizedRequest.description(),
+                normalizedRequest.groupUuid(),
+                mongoInputParametersForOperation(normalizedRequest.operation()),
+            mongoToolSchema(
+                normalizedRequest.database(),
+                normalizedRequest.collection(),
+                normalizedRequest.operation(),
+                false,
+                normalizedRequest.inferredSchema(),
+                normalizedRequest.queryType(),
+                normalizedRequest.queryTemplate()),
+                existing.version() + 1,
+                existing.createdAt(),
+                System.currentTimeMillis());
+
+        mongoReflectionRepository.save(updated);
+        reflectionRepository.delete(existing.uuid());
+        log.info("Mongo custom reflection updated [uuid={}, id={}, version={}]", updated.uuid(), updated.id(), updated.version());
+        return mongoToReflection(updated);
     }
 
         public void ensureRecordReflectionsForType(String recordFqn) {
@@ -653,14 +987,16 @@ public class ReflectionService {
             simpleName = normalizedFqn.substring(lastDot + 1);
         }
 
-        String hashSuffix = Long.toString(Integer.toUnsignedLong(normalizedFqn.hashCode()), 36).toUpperCase(Locale.ROOT);
         String compactSimpleName = simpleName.replaceAll("[^A-Za-z0-9]", "");
         if (compactSimpleName.isBlank()) {
             compactSimpleName = "RecordType";
         }
 
-        String groupId = identityOrDefault("Record" + hashSuffix, simpleName, "group");
-        String artifactId = identityOrDefault(compactSimpleName + hashSuffix, simpleName, "recordartifact");
+        Class<?> resolvedType = resolveRecordReflectionType(normalizedFqn);
+        boolean enumType = resolvedType != null && resolvedType.isEnum();
+
+        String groupId = "record";
+        String artifactId = identityOrDefault(compactSimpleName, simpleName, "record");
         String groupUuid = toVid(groupId, artifactId, "SNAPSHOT");
 
         long now = System.currentTimeMillis();
@@ -690,6 +1026,22 @@ public class ReflectionService {
             throw new IllegalArgumentException("Existing reflection group is not of type RECORD: " + groupUuid);
         }
 
+        if (enumType) {
+            upsertMandatoryRecordToolReflection(
+                group,
+                normalizedFqn,
+                simpleName,
+                "LIST",
+                "List " + simpleName,
+                "List all values for enum " + simpleName + ".",
+                List.of());
+
+            pruneMandatoryRecordOperations(normalizedFqn, Set.of("LIST"));
+            ensureDefaultRecordBinding(group);
+            log.info("Enum record reflections ensured [groupUuid={}, fqn={}]", groupUuid, normalizedFqn);
+            return;
+        }
+
         upsertMandatoryRecordToolReflection(
             group,
             normalizedFqn,
@@ -697,7 +1049,7 @@ public class ReflectionService {
             "CREATE",
             "Create " + simpleName,
             "Create or update a " + simpleName + " record.",
-            List.of(new ReflectionInputParameter("uuid", "string", "Record UUID.", true)));
+            buildRecordWriteInputParameters(resolvedType, false, false));
 
         upsertMandatoryRecordToolReflection(
             group,
@@ -715,7 +1067,7 @@ public class ReflectionService {
             "UPDATE",
             "Update " + simpleName,
             "Update or upsert a " + simpleName + " record.",
-            List.of(new ReflectionInputParameter("uuid", "string", "Record UUID.", true)));
+            buildRecordWriteInputParameters(resolvedType, true, true));
 
         upsertMandatoryRecordToolReflection(
             group,
@@ -741,8 +1093,27 @@ public class ReflectionService {
                 new ReflectionInputParameter("page", "int", "Page number.", false),
                 new ReflectionInputParameter("pageSize", "int", "Page size.", false)));
 
+        pruneMandatoryRecordOperations(normalizedFqn, Set.of("CREATE", "READ", "UPDATE", "DELETE", "SEARCH"));
+        ensureDefaultRecordBinding(group);
+
         log.info("Record reflections ensured [groupUuid={}, fqn={}]", groupUuid, normalizedFqn);
         }
+
+    private void ensureDefaultRecordBinding(ReflectionGroup group) {
+        if (group == null) {
+            return;
+        }
+        ReflectionBinding existing = getBinding(group.uuid(), "default");
+        if (existing != null) {
+            return;
+        }
+        ReflectionBinding autoCreated = normalizeBindingRequest(
+                null,
+                group,
+                new ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+        reflectionBindingRepository.save(autoCreated);
+        log.info("Record default binding auto-created [groupUuid={}, bindingName={}]", group.uuid(), autoCreated.name());
+    }
 
     public Reflection updateReflection(String uuid, ReflectionRequest request) {
         log.debug("ENTER updateReflection: [uuid={}]", uuid);
@@ -752,13 +1123,30 @@ public class ReflectionService {
             if (recordExisting != null) {
                 throw new IllegalArgumentException("Mandatory record reflection tools are immutable and cannot be updated.");
             }
-            return null;
+            MongoReflection mongoExisting = mongoReflectionRepository.get(uuid);
+            if (mongoExisting == null) {
+                return null;
+            }
+            if (isMandatoryMongoToolSchema(mongoExisting.outputSchema())) {
+                throw new IllegalArgumentException("Mandatory mongo reflection tools are immutable and cannot be updated.");
+            }
+            throw new IllegalArgumentException("Mongo reflection updates must be performed via mongo-specific editor flow.");
         }
         if (isMandatoryRecordTool(existing)) {
             throw new IllegalArgumentException("Mandatory record reflection tools are immutable and cannot be updated.");
         }
+        if (isMandatoryMongoTool(existing)) {
+            throw new IllegalArgumentException("Mandatory mongo reflection tools are immutable and cannot be updated.");
+        }
         Reflection normalized = normalizeAndValidate(existing, request);
-        reflectionRepository.save(normalized);
+        ReflectionGroup group = reflectionGroupRepository.get(normalized.groupUuid());
+        if (group != null && group.type() == ReflectionType.MONGO) {
+            mongoReflectionRepository.save(reflectionToMongo(normalized));
+            reflectionRepository.delete(normalized.uuid());
+        } else {
+            reflectionRepository.save(normalized);
+            mongoReflectionRepository.delete(normalized.uuid());
+        }
         log.info("Reflection updated [uuid={}, id={}, version={}]",
                 normalized.uuid(), normalized.id(), normalized.version());
         return normalized;
@@ -771,12 +1159,25 @@ public class ReflectionService {
             if (recordExisting != null) {
                 throw new IllegalArgumentException("Mandatory record reflection tools are immutable and cannot be deleted.");
             }
-            return false;
+            MongoReflection mongoExisting = mongoReflectionRepository.get(uuid);
+            if (mongoExisting == null) {
+                return false;
+            }
+            if (isMandatoryMongoToolSchema(mongoExisting.outputSchema())) {
+                throw new IllegalArgumentException("Mandatory mongo reflection tools are immutable and cannot be deleted.");
+            }
+            mongoReflectionRepository.delete(uuid);
+            log.info("Reflection deleted [uuid={}, id={}]", uuid, mongoExisting.id());
+            return true;
         }
         if (isMandatoryRecordTool(existing)) {
             throw new IllegalArgumentException("Mandatory record reflection tools are immutable and cannot be deleted.");
         }
+        if (isMandatoryMongoTool(existing)) {
+            throw new IllegalArgumentException("Mandatory mongo reflection tools are immutable and cannot be deleted.");
+        }
         reflectionRepository.delete(uuid);
+        mongoReflectionRepository.delete(uuid);
         log.info("Reflection deleted [uuid={}, id={}]", uuid, existing.id());
         return true;
     }
@@ -902,7 +1303,14 @@ public class ReflectionService {
                 })
                 .toList();
         for (Reflection reflection : normalizedReflections) {
-            reflectionRepository.save(reflection);
+            if (normalizedGroup.type() == ReflectionType.MONGO) {
+                mongoReflectionRepository.save(reflectionToMongo(reflection));
+                reflectionRepository.delete(reflection.uuid());
+                recordReflectionRepository.delete(reflection.uuid());
+            } else {
+                reflectionRepository.save(reflection);
+                mongoReflectionRepository.delete(reflection.uuid());
+            }
         }
 
         List<String> importedUuids = normalizedReflections.stream().map(Reflection::uuid).toList();
@@ -927,7 +1335,7 @@ public class ReflectionService {
             return executeRecordReflection(reflection, runtimeInputs, bindingName, username);
         }
         if (type == ReflectionType.MONGO) {
-            return jsonError("MONGO reflections are not executable at this time.");
+            return executeMongoReflection(reflection, runtimeInputs, bindingName, username);
         }
 
         ReflectionBinding resolvedBinding;
@@ -1104,6 +1512,9 @@ public class ReflectionService {
         if (group == null) {
             throw new IllegalArgumentException("Reflection group not found.");
         }
+        if (group.type() == ReflectionType.RECORD) {
+            return normalizeAndValidateRecordTool(existing, request, group);
+        }
         if (group.type() != ReflectionType.REST) {
             throw new IllegalArgumentException("Manual reflection creation is only supported for REST groups.");
         }
@@ -1274,6 +1685,163 @@ public class ReflectionService {
             case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS" -> method;
             default -> throw new IllegalArgumentException("Unsupported HTTP method: " + method);
         };
+    }
+
+    private Reflection normalizeAndValidateRecordTool(Reflection existing,
+                                                      ReflectionRequest request,
+                                                      ReflectionGroup group) {
+        if (request.outputSchema() != null && marksMandatoryRecordTool(request.outputSchema())) {
+            throw new IllegalArgumentException("Reserved record-tool metadata cannot be set manually.");
+        }
+
+        String id = request.id() == null ? "" : request.id().trim();
+        String name = request.name() == null ? "" : request.name().trim();
+        if (id.isBlank()) {
+            throw new IllegalArgumentException("Reflection id is required.");
+        }
+        if (!REFLECTION_ID_PATTERN.matcher(id).matches()) {
+            throw new IllegalArgumentException("Reflection id must be alphanumeric.");
+        }
+        if (name.isBlank()) {
+            throw new IllegalArgumentException("Reflection name is required.");
+        }
+
+        validateUniqueId(id, existing == null ? null : existing.uuid());
+
+        RecordToolMetadata baseMetadata = resolveGroupRecordMetadata(group);
+        if (baseMetadata == null || baseMetadata.recordFqn() == null || baseMetadata.recordFqn().isBlank()) {
+            throw new IllegalArgumentException("Unable to resolve record type for this RECORD group.");
+        }
+
+        RecordToolMetadata requestedMetadata = parseAnyRecordToolMetadata(request.outputSchema());
+        String operation = requestedMetadata == null || requestedMetadata.operation() == null || requestedMetadata.operation().isBlank()
+                ? "SEARCH"
+                : requestedMetadata.operation().toUpperCase(Locale.ROOT);
+        String recordFqn = requestedMetadata == null || requestedMetadata.recordFqn() == null || requestedMetadata.recordFqn().isBlank()
+                ? baseMetadata.recordFqn()
+                : requestedMetadata.recordFqn().trim();
+
+        if (!baseMetadata.recordFqn().equals(recordFqn)) {
+            throw new IllegalArgumentException("Custom record tools must target the group record type: " + baseMetadata.recordFqn());
+        }
+        if (!List.of("SEARCH", "CREATE", "READ", "UPDATE", "DELETE", "LIST").contains(operation)) {
+            throw new IllegalArgumentException("Unsupported record operation: " + operation);
+        }
+
+        List<ReflectionInputParameter> parameters = normalizeInputParameters(request.inputParameters());
+
+        String requestedQueryType = requestedMetadata == null ? "" : requestedMetadata.queryType();
+        String normalizedQueryType = requestedQueryType == null || requestedQueryType.isBlank()
+            ? "SQL"
+            : requestedQueryType.toUpperCase(Locale.ROOT);
+        if (!"SQL".equals(normalizedQueryType)) {
+            throw new IllegalArgumentException("Record search queryType must be SQL.");
+        }
+
+        String outputSchema = customRecordToolSchema(recordFqn, operation, baseMetadata.recordFqn(), normalizedQueryType);
+        long now = System.currentTimeMillis();
+        String method = normalizeMethod(request.method());
+        if (method.isBlank()) {
+            method = "POST";
+        }
+
+        if (existing == null) {
+            return new Reflection(
+                    UUID.randomUUID().toString(),
+                    id,
+                    name,
+                    request.description() == null ? "" : request.description().trim(),
+                    group.uuid(),
+                    parameters,
+                    method,
+                    "",
+                    Map.of(),
+                    Map.of(),
+                    request.bodyTemplate() == null ? "" : request.bodyTemplate(),
+                    CONTENT_TYPE_JSON,
+                    CONTENT_TYPE_JSON,
+                    outputSchema,
+                    1L,
+                    now,
+                    now);
+        }
+
+        return new Reflection(
+                existing.uuid(),
+                id,
+                name,
+                request.description() == null ? "" : request.description().trim(),
+                group.uuid(),
+                parameters,
+                method,
+                "",
+                Map.of(),
+                Map.of(),
+                request.bodyTemplate() == null ? "" : request.bodyTemplate(),
+                CONTENT_TYPE_JSON,
+                CONTENT_TYPE_JSON,
+                outputSchema,
+                existing.version() + 1,
+                existing.createdAt(),
+                now);
+    }
+
+    private RecordToolMetadata resolveGroupRecordMetadata(ReflectionGroup group) {
+        if (group == null) {
+            return null;
+        }
+        List<Reflection> groupReflections = reflectionsForGroup(group.uuid());
+        for (Reflection reflection : groupReflections) {
+            RecordToolMetadata metadata = parseRecordToolMetadata(reflection);
+            if (metadata != null && metadata.recordFqn() != null && !metadata.recordFqn().isBlank()) {
+                return metadata;
+            }
+        }
+        return null;
+    }
+
+    private RecordToolMetadata parseAnyRecordToolMetadata(String outputSchema) {
+        if (outputSchema == null || outputSchema.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(outputSchema);
+            boolean mandatory = root.path(MANDATORY_RECORD_TOOL_MARKER).asBoolean(false);
+            boolean custom = root.path(RECORD_TOOL_MARKER).asBoolean(false);
+            if (!mandatory && !custom) {
+                return null;
+            }
+            String recordFqn = root.path("recordFqn").asText("").trim();
+            String operation = root.path("operation").asText("").trim().toUpperCase(Locale.ROOT);
+            if (recordFqn.isBlank() || operation.isBlank()) {
+                return null;
+            }
+            String queryType = root.path("queryType").asText("").trim().toUpperCase(Locale.ROOT);
+            return new RecordToolMetadata(recordFqn, operation, queryType);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private String customRecordToolSchema(String recordFqn, String operation, String recordTypeLabel, String queryType) {
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("$schema", "https://json-schema.org/draft/2020-12/schema");
+            payload.put("title", "Record " + operation + " Tool - " + recordTypeLabel);
+            payload.put("description", "Custom record tool for " + operation + " on " + recordTypeLabel + ".");
+            payload.put("type", "object");
+            payload.put(RECORD_TOOL_MARKER, true);
+            payload.put(MANDATORY_RECORD_TOOL_MARKER, false);
+            payload.put("recordFqn", recordFqn);
+            payload.put("recordType", recordTypeLabel);
+            payload.put("operation", operation);
+            payload.put("queryType", queryType == null || queryType.isBlank() ? "SQL" : queryType.toUpperCase(Locale.ROOT));
+            payload.put("immutable", false);
+            payload.putAll(buildRecordOperationOutputSchema(operation));
+            return objectMapper.writeValueAsString(payload);
+        } catch (Exception ex) {
+            return "{\"" + RECORD_TOOL_MARKER + "\":true,\"recordFqn\":\"" + recordFqn + "\",\"operation\":\"" + operation + "\"}";
+        }
     }
 
     private static String normalizeRequestContentType(String rawContentType) {
@@ -2014,7 +2582,7 @@ public class ReflectionService {
     private Map<String, String> loadBindingSecretValues(String username,
                                                         ReflectionBinding binding,
                                                         List<SkillSecret> secretDefinitions) {
-        if (username == null || username.isBlank() || binding == null || secretDefinitions == null || secretDefinitions.isEmpty()) {
+        if (binding == null || secretDefinitions == null || secretDefinitions.isEmpty()) {
             return Map.of();
         }
 
@@ -2022,7 +2590,7 @@ public class ReflectionService {
         for (SkillSecret secret : secretDefinitions) {
             String name = secret.name();
             String value = secureCredentialStore.getGlobalSecret(bindingSecretStorageKey(binding, name));
-            if (value == null) {
+            if ((value == null || value.isBlank()) && username != null && !username.isBlank()) {
                 // Backward compatibility for existing per-user stored binding secrets.
                 value = secureCredentialStore.getSecretForUser(username, bindingSecretStorageKey(binding, name));
             }
@@ -2660,6 +3228,18 @@ public class ReflectionService {
         }
     }
 
+    private MongoReflection getMongoReflectionById(String reflectionId) {
+        if (reflectionId == null || reflectionId.isBlank()) {
+            return null;
+        }
+        try (var stream = mongoReflectionRepository.list(0, Integer.MAX_VALUE)) {
+            return stream
+                    .filter(reflection -> reflectionId.equals(reflection.id()))
+                    .findFirst()
+                    .orElse(null);
+        }
+    }
+
     private Reflection getHttpReflectionById(String reflectionId) {
         if (reflectionId == null || reflectionId.isBlank()) {
             return null;
@@ -2718,6 +3298,41 @@ public class ReflectionService {
                 recordReflection.updatedAt());
     }
 
+    private Reflection mongoToReflection(MongoReflection mongoReflection) {
+        return new Reflection(
+                mongoReflection.uuid(),
+                mongoReflection.id(),
+                mongoReflection.name(),
+                mongoReflection.description(),
+                mongoReflection.groupUuid(),
+                mongoReflection.inputParameters(),
+                "POST",
+                "",
+                Map.of(),
+                Map.of(),
+                "",
+                CONTENT_TYPE_JSON,
+                CONTENT_TYPE_JSON,
+                mongoReflection.outputSchema(),
+                mongoReflection.version(),
+                mongoReflection.createdAt(),
+                mongoReflection.updatedAt());
+    }
+
+    private MongoReflection reflectionToMongo(Reflection reflection) {
+        return new MongoReflection(
+                reflection.uuid(),
+                reflection.id(),
+                reflection.name(),
+                reflection.description(),
+                reflection.groupUuid(),
+                reflection.inputParameters(),
+                reflection.outputSchema(),
+                reflection.version(),
+                reflection.createdAt(),
+                reflection.updatedAt());
+    }
+
     private String resolveRecordToolId(String recordFqn,
                                        String simpleName,
                                        String operation,
@@ -2765,6 +3380,11 @@ public class ReflectionService {
             }
             return targetGroupUuid != null && targetGroupUuid.equals(legacy.groupUuid()) && isMandatoryRecordTool(legacy);
         }
+
+        MongoReflection mongo = getMongoReflectionById(candidate);
+        if (mongo != null) {
+            return targetGroupUuid != null && targetGroupUuid.equals(mongo.groupUuid());
+        }
         return true;
     }
 
@@ -2776,6 +3396,7 @@ public class ReflectionService {
             case "READ" -> "get";
             case "DELETE" -> "delete";
             case "SEARCH" -> "search";
+            case "LIST" -> "list";
             default -> "record";
         };
         return prefix + baseName;
@@ -2798,7 +3419,8 @@ public class ReflectionService {
         }
         try {
             JsonNode root = objectMapper.readTree(outputSchema);
-            if (!root.path(MANDATORY_RECORD_TOOL_MARKER).asBoolean(false)) {
+            if (!root.path(MANDATORY_RECORD_TOOL_MARKER).asBoolean(false)
+                    && !root.path(RECORD_TOOL_MARKER).asBoolean(false)) {
                 return false;
             }
             String schemaFqn = root.path("recordFqn").asText("").trim();
@@ -2870,6 +3492,10 @@ public class ReflectionService {
                 required.add("pageSize");
                 required.add("results");
             }
+            case "LIST" -> {
+                properties.put("values", Map.of("type", "array", "items", Map.of("type", "string")));
+                required.add("values");
+            }
             default -> {
                 // Keep minimal status/operation schema for forward compatibility.
             }
@@ -2901,6 +3527,25 @@ public class ReflectionService {
             return root.path(MANDATORY_RECORD_TOOL_MARKER).asBoolean(false);
         } catch (Exception ex) {
             return outputSchema.contains("\"" + MANDATORY_RECORD_TOOL_MARKER + "\":true");
+        }
+    }
+
+    private boolean isMandatoryMongoTool(Reflection reflection) {
+        if (reflection == null) {
+            return false;
+        }
+        return isMandatoryMongoToolSchema(reflection.outputSchema());
+    }
+
+    private boolean isMandatoryMongoToolSchema(String outputSchema) {
+        if (outputSchema == null || outputSchema.isBlank()) {
+            return false;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(outputSchema);
+            return root.path(MANDATORY_MONGO_TOOL_MARKER).asBoolean(false);
+        } catch (Exception ex) {
+            return outputSchema.contains("\"" + MANDATORY_MONGO_TOOL_MARKER + "\":true");
         }
     }
 
@@ -2955,10 +3600,12 @@ public class ReflectionService {
 
         try {
             return switch (metadata.operation()) {
-                case "CREATE", "UPDATE" -> executeRecordSave(metadata.recordFqn(), entityClass, mergedInputs, resolvedBinding);
+                case "CREATE" -> executeRecordSave(metadata.recordFqn(), entityClass, mergedInputs, resolvedBinding, false);
+                case "UPDATE" -> executeRecordSave(metadata.recordFqn(), entityClass, mergedInputs, resolvedBinding, true);
                 case "READ" -> executeRecordRead(metadata.recordFqn(), entityClass, mergedInputs, resolvedBinding);
                 case "DELETE" -> executeRecordDelete(metadata.recordFqn(), entityClass, mergedInputs, resolvedBinding);
-                case "SEARCH" -> executeRecordSearch(metadata.recordFqn(), entityClass, mergedInputs, resolvedBinding);
+                case "SEARCH" -> executeRecordSearch(metadata.recordFqn(), entityClass, mergedInputs, resolvedBinding, reflection, metadata);
+                case "LIST" -> executeRecordList(metadata.recordFqn(), entityClass, mergedInputs, resolvedBinding);
                 default -> jsonError("Unsupported record operation: " + metadata.operation());
             };
         } catch (Exception ex) {
@@ -2966,15 +3613,417 @@ public class ReflectionService {
         }
     }
 
+    private String executeMongoReflection(Reflection reflection,
+                                          Map<String, Object> runtimeInputs,
+                                          String bindingName,
+                                          String username) {
+        ReflectionGroup group = reflectionGroupRepository.get(reflection.groupUuid());
+        ReflectionBinding resolvedBinding;
+        Map<String, String> bindingSecretValues;
+        Map<String, Object> mergedInputs;
+
+        try {
+            resolvedBinding = resolveBindingForExecution(group, bindingName);
+            bindingSecretValues = loadBindingSecretValues(username, resolvedBinding,
+                    group == null ? List.of() : group.bindingSecrets());
+
+            Map<String, Object> cleanedRuntimeInputs = new LinkedHashMap<>(runtimeInputs == null ? Map.of() : runtimeInputs);
+            cleanedRuntimeInputs.remove("bindingName");
+            mergedInputs = applyBindingInputs(group == null ? List.of() : group.bindingParameters(), resolvedBinding, cleanedRuntimeInputs);
+        } catch (Exception ex) {
+            return jsonError(ex.getMessage());
+        }
+
+        List<String> missing = new ArrayList<>();
+        for (ReflectionInputParameter parameter : reflection.inputParameters()) {
+            if (!parameter.required()) {
+                continue;
+            }
+            Object value = mergedInputs.get(parameter.name());
+            if (value == null || String.valueOf(value).isBlank()) {
+                missing.add(parameter.name());
+            }
+        }
+        if (!missing.isEmpty()) {
+            return jsonMissing(missing);
+        }
+
+        MongoToolMetadata metadata = parseMongoToolMetadata(reflection);
+        if (metadata == null) {
+            return jsonError("Mongo reflection metadata is invalid or missing.");
+        }
+
+        String uri = firstNonBlank(
+                bindingSecretValues.get("MONGO_URI"),
+            bindingSecretValues.get("MONGO_CONNECTION_URI"),
+            asString(mergedInputs.get("mongoUri")),
+            asString(mergedInputs.get("mongoConnectionUri")),
+            asString(mergedInputs.get("connectionUri")),
+            asString(mergedInputs.get("uri")));
+        if (uri == null || uri.isBlank()) {
+            return jsonError("Mongo connection URI is missing for this binding.");
+        }
+
+        String connectionUsername = firstNonBlank(
+                bindingSecretValues.get("MONGO_USERNAME"),
+            bindingSecretValues.get("MONGO_USER"),
+            asString(mergedInputs.get("mongoUsername")),
+            asString(mergedInputs.get("mongoUser")),
+            asString(mergedInputs.get("username")));
+        String connectionPassword = firstNonBlank(
+                bindingSecretValues.get("MONGO_PASSWORD"),
+            asString(mergedInputs.get("mongoPassword")),
+            asString(mergedInputs.get("password")));
+        String authDatabase = firstNonBlank(
+                asString(mergedInputs.get("mongoAuthDatabase")),
+            asString(mergedInputs.get("mongoAuthDb")),
+            asString(mergedInputs.get("authDatabase")),
+                "admin");
+        Boolean tlsEnabled = asBooleanObject(firstNonNull(
+            mergedInputs.get("mongoTls"),
+            mergedInputs.get("tlsEnabled"),
+            mergedInputs.get("tls")));
+
+        String database = firstNonBlank(metadata.database(), asString(mergedInputs.get("mongoDatabase")));
+        if (database == null || database.isBlank()) {
+            return jsonError("Mongo database is not configured for this reflection.");
+        }
+
+        try (MongoClient client = openMongoClient(new MongoConnectionRequest(
+                uri,
+                connectionUsername,
+                connectionPassword,
+                authDatabase,
+                tlsEnabled))) {
+            MongoCollection<Document> collection = client
+                    .getDatabase(database)
+                    .getCollection(metadata.collection());
+
+            return switch (metadata.operation()) {
+                case "CREATE" -> executeMongoCreate(database, metadata.collection(), collection, mergedInputs);
+                case "READ" -> executeMongoRead(database, metadata.collection(), collection, mergedInputs);
+                case "UPDATE" -> executeMongoUpdate(database, metadata.collection(), collection, mergedInputs);
+                case "DELETE" -> executeMongoDelete(database, metadata.collection(), collection, mergedInputs);
+                case "SEARCH" -> executeMongoSearch(database, metadata.collection(), collection, mergedInputs, reflection, metadata);
+                default -> jsonError("Unsupported mongo operation: " + metadata.operation());
+            };
+        } catch (Exception ex) {
+            return jsonError(ex.getMessage());
+        }
+    }
+
+    private String executeMongoCreate(String database,
+                                      String collectionName,
+                                      MongoCollection<Document> collection,
+                                      Map<String, Object> inputs) throws Exception {
+        Document document = parseDocumentInput(inputs.get("document"));
+        collection.insertOne(document);
+        return objectMapper.writeValueAsString(Map.of(
+                "status", "ok",
+                "operation", "create",
+                "database", database,
+                "collection", collectionName,
+                "document", normalizeBson(document)));
+    }
+
+    private String executeMongoRead(String database,
+                                    String collectionName,
+                                    MongoCollection<Document> collection,
+                                    Map<String, Object> inputs) throws Exception {
+        String uuid = asString(inputs.get("uuid"));
+        if (uuid.isBlank()) {
+            return jsonError("uuid is required.");
+        }
+        Bson filter = Filters.eq("_id", toMongoId(uuid));
+        Document found = collection.find(filter).first();
+        if (found == null) {
+            return objectMapper.writeValueAsString(Map.of(
+                    "status", "not_found",
+                    "operation", "read",
+                    "database", database,
+                    "collection", collectionName,
+                    "uuid", uuid));
+        }
+        return objectMapper.writeValueAsString(Map.of(
+                "status", "ok",
+                "operation", "read",
+                "database", database,
+                "collection", collectionName,
+                "document", normalizeBson(found)));
+    }
+
+    private String executeMongoUpdate(String database,
+                                      String collectionName,
+                                      MongoCollection<Document> collection,
+                                      Map<String, Object> inputs) throws Exception {
+        String uuid = asString(inputs.get("uuid"));
+        if (uuid.isBlank()) {
+            return jsonError("uuid is required.");
+        }
+        Object idValue = toMongoId(uuid);
+        Document replacement = parseDocumentInput(inputs.get("document"));
+        replacement.put("_id", idValue);
+        long modified = collection.replaceOne(Filters.eq("_id", idValue), replacement, new ReplaceOptions().upsert(false))
+                .getModifiedCount();
+        if (modified == 0L) {
+            return objectMapper.writeValueAsString(Map.of(
+                    "status", "not_found",
+                    "operation", "update",
+                    "database", database,
+                    "collection", collectionName,
+                    "uuid", uuid));
+        }
+        return objectMapper.writeValueAsString(Map.of(
+                "status", "ok",
+                "operation", "update",
+                "database", database,
+                "collection", collectionName,
+                "document", normalizeBson(replacement)));
+    }
+
+    private String executeMongoDelete(String database,
+                                      String collectionName,
+                                      MongoCollection<Document> collection,
+                                      Map<String, Object> inputs) throws Exception {
+        String uuid = asString(inputs.get("uuid"));
+        if (uuid.isBlank()) {
+            return jsonError("uuid is required.");
+        }
+        long deleted = collection.deleteOne(Filters.eq("_id", toMongoId(uuid))).getDeletedCount();
+        return objectMapper.writeValueAsString(Map.of(
+                "status", deleted > 0 ? "ok" : "not_found",
+                "operation", "delete",
+                "database", database,
+                "collection", collectionName,
+                "uuid", uuid,
+                "deletedCount", deleted));
+    }
+
+    private String executeMongoSearch(String database,
+                                      String collectionName,
+                                      MongoCollection<Document> collection,
+                                      Map<String, Object> inputs,
+                                      Reflection reflection,
+                                      MongoToolMetadata metadata) throws Exception {
+        String query = asString(inputs.get("query"));
+        if (query.isBlank()) {
+            String queryTemplate = metadata == null ? "" : asString(metadata.queryTemplate());
+            if (queryTemplate != null && !queryTemplate.isBlank()) {
+                query = applyBodyTemplate(queryTemplate, toStringMap(inputs), CONTENT_TYPE_TEXT, Set.of(), Set.of()).trim();
+            }
+        }
+        if (query.isBlank()) {
+            String fallback = reflection == null ? "" : asString(reflection.bodyTemplate());
+            if (fallback != null && !fallback.isBlank()) {
+                query = applyBodyTemplate(fallback, toStringMap(inputs), CONTENT_TYPE_TEXT, Set.of(), Set.of()).trim();
+            }
+        }
+        if (query.isBlank()) {
+            return jsonError("query is required.");
+        }
+
+        String queryType = asString(inputs.get("queryType"));
+        if (queryType.isBlank()) {
+            queryType = metadata == null ? "" : asString(metadata.queryType());
+        }
+        if (queryType.isBlank()) {
+            queryType = "MONGO";
+        }
+        queryType = queryType.toUpperCase(Locale.ROOT);
+
+        String sortField = asString(inputs.get("sortField"));
+        if (sortField.isBlank()) {
+            sortField = "_id";
+        }
+        String sortOrderRaw = asString(inputs.get("sortOrder"));
+        int sortOrder = "DESC".equalsIgnoreCase(sortOrderRaw) ? -1 : 1;
+        int page = asInt(inputs.get("page"), 0);
+        int pageSize = asInt(inputs.get("pageSize"), 20);
+        if (page < 0) {
+            page = 0;
+        }
+        if (pageSize < 1) {
+            pageSize = 20;
+        }
+        if (pageSize > 500) {
+            pageSize = 500;
+        }
+
+        if ("MONGO".equals(queryType)) {
+            Document filter = Document.parse(query);
+            long total = collection.countDocuments(filter);
+            List<Document> documents = collection.find(filter)
+                    .sort(new Document(sortField, sortOrder))
+                    .skip(page * pageSize)
+                    .limit(pageSize)
+                    .into(new ArrayList<>());
+
+            List<Object> normalized = documents.stream().map(this::normalizeBson).toList();
+            return objectMapper.writeValueAsString(Map.of(
+                    "status", "ok",
+                    "operation", "search",
+                    "database", database,
+                    "collection", collectionName,
+                    "queryType", "MONGO",
+                    "total", total,
+                    "page", page,
+                    "pageSize", pageSize,
+                    "results", normalized));
+        }
+
+        if (!"SQL".equals(queryType)) {
+            return jsonError("Mongo search queryType must be SQL or MONGO.");
+        }
+
+        SearchQuery parsed;
+        try {
+            parsed = SqlQueryParser.parse(query);
+        } catch (RuntimeException ex) {
+            return jsonError("Invalid SQL query: " + ex.getMessage());
+        }
+
+        List<Map<String, Object>> matched = new ArrayList<>();
+        for (Document document : collection.find()) {
+            Object normalized = normalizeBson(document);
+            Map<String, Object> map = objectMapper.convertValue(normalized, new TypeReference<Map<String, Object>>() {});
+            if (parsed.test(map)) {
+                matched.add(map);
+            }
+        }
+
+        final String sortFieldFinal = sortField;
+        final int sortOrderFinal = sortOrder;
+        matched.sort((left, right) -> {
+            Object leftVal = SearchQuery.resolve(left, sortFieldFinal);
+            Object rightVal = SearchQuery.resolve(right, sortFieldFinal);
+            if (leftVal == null && rightVal == null) {
+                return 0;
+            }
+            if (leftVal == null) {
+                return sortOrderFinal > 0 ? -1 : 1;
+            }
+            if (rightVal == null) {
+                return sortOrderFinal > 0 ? 1 : -1;
+            }
+            int cmp = SearchQuery.compareValues(leftVal, rightVal);
+            return sortOrderFinal > 0 ? cmp : -cmp;
+        });
+
+        int from = Math.max(0, page * pageSize);
+        List<Map<String, Object>> pageItems;
+        if (from >= matched.size()) {
+            pageItems = List.of();
+        } else {
+            int to = Math.min(matched.size(), from + pageSize);
+            pageItems = List.copyOf(matched.subList(from, to));
+        }
+
+        return objectMapper.writeValueAsString(Map.of(
+                "status", "ok",
+                "operation", "search",
+                "database", database,
+                "collection", collectionName,
+                "queryType", "SQL",
+                "total", matched.size(),
+                "page", page,
+                "pageSize", pageSize,
+                "results", pageItems));
+    }
+
+    private static Object toMongoId(String uuid) {
+        if (uuid != null && ObjectId.isValid(uuid)) {
+            return new ObjectId(uuid);
+        }
+        return uuid;
+    }
+
+    private Document parseDocumentInput(Object value) {
+        if (value == null) {
+            throw new IllegalArgumentException("document is required.");
+        }
+        if (value instanceof Document document) {
+            return new Document(document);
+        }
+        if (value instanceof String text) {
+            if (text.isBlank()) {
+                throw new IllegalArgumentException("document is required.");
+            }
+            return Document.parse(text);
+        }
+        if (value instanceof Map<?, ?> map) {
+            return Document.parse(writeJson(map));
+        }
+        if (value instanceof JsonNode node) {
+            return Document.parse(writeJson(node));
+        }
+        throw new IllegalArgumentException("document must be a JSON object payload.");
+    }
+
+    private String writeJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("Unable to serialize document payload.");
+        }
+    }
+
+    private Object normalizeBson(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof ObjectId objectId) {
+            return objectId.toHexString();
+        }
+        if (value instanceof Document document) {
+            Map<String, Object> mapped = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> entry : document.entrySet()) {
+                mapped.put(entry.getKey(), normalizeBson(entry.getValue()));
+            }
+            return mapped;
+        }
+        if (value instanceof List<?> list) {
+            List<Object> normalized = new ArrayList<>(list.size());
+            for (Object item : list) {
+                normalized.add(normalizeBson(item));
+            }
+            return normalized;
+        }
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> normalized = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                normalized.put(String.valueOf(entry.getKey()), normalizeBson(entry.getValue()));
+            }
+            return normalized;
+        }
+        return value;
+    }
+
     private String executeRecordSave(String recordFqn,
                                      Class<?> entityClass,
                                      Map<String, Object> inputs,
-                                     ReflectionBinding binding) throws Exception {
+                                     ReflectionBinding binding,
+                                     boolean requireUuidInput) throws Exception {
         if (binding == null || binding.uuid() == null || binding.uuid().isBlank()) {
             return jsonError("Binding context is required for record write operations.");
         }
 
-        Map<String, Object> filtered = filterRecordFields(entityClass, inputs);
+        Map<String, Object> sourceInputs = new LinkedHashMap<>(inputs == null ? Map.of() : inputs);
+        Object recordPayload = sourceInputs.get("record");
+        if (recordPayload != null && !asString(recordPayload).isBlank()) {
+            Map<String, Object> parsedRecord = parseRecordPayload(recordPayload);
+            parsedRecord.putAll(sourceInputs);
+            sourceInputs = parsedRecord;
+        }
+
+        if (requireUuidInput) {
+            if (asString(sourceInputs.get("uuid")).isBlank()) {
+                return jsonError("uuid is required.");
+            }
+        } else {
+            sourceInputs.put("uuid", generateUniqueRecordUuid(entityClass));
+        }
+
+        Map<String, Object> filtered = filterRecordFields(entityClass, sourceInputs);
         Object entity = objectMapper.convertValue(filtered, entityClass);
         String entityUuid = entityUuid(entity);
         if (entityUuid == null || entityUuid.isBlank()) {
@@ -3034,6 +4083,17 @@ public class ReflectionService {
                 "schemaVersion", schemaVersion));
     }
 
+    private String generateUniqueRecordUuid(Class<?> entityClass) {
+        for (int attempt = 0; attempt < 8; attempt++) {
+            String candidate = UUID.randomUUID().toString();
+            Object existing = typeDatabaseService.get(entityClass, candidate);
+            if (existing == null) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException("Unable to generate a unique record uuid.");
+    }
+
     private String executeRecordRead(String recordFqn,
                                      Class<?> entityClass,
                                      Map<String, Object> inputs,
@@ -3085,18 +4145,80 @@ public class ReflectionService {
                 "uuid", uuid));
     }
 
+    private String executeRecordList(String recordFqn,
+                                     Class<?> entityClass,
+                                     Map<String, Object> inputs,
+                                     ReflectionBinding binding) throws Exception {
+        int page = asInt(inputs.get("page"), 0);
+        if (page < 0) {
+            page = 0;
+        }
+        int pageSize = asInt(inputs.get("pageSize"), 20);
+        if (pageSize < 1) {
+            pageSize = 20;
+        }
+        if (pageSize > RECORD_LIST_MAX_PAGE_SIZE) {
+            pageSize = RECORD_LIST_MAX_PAGE_SIZE;
+        }
+
+        SearchQuery[] predicates = new SearchQuery[]{
+                SearchQuery.eq("typeFqn", recordFqn),
+                SearchQuery.eq("bindingUuid", binding == null ? "" : binding.uuid())
+        };
+
+        long total = typeRecordBindingScopeRepository.searchCount(predicates);
+        List<TypeRecordBindingScope> scopes;
+        try (var scopeStream = typeRecordBindingScopeRepository.search(page, pageSize, "updatedAt", SortOrder.DESC, predicates)) {
+            scopes = scopeStream.toList();
+        }
+
+        List<Object> records = new ArrayList<>();
+        for (TypeRecordBindingScope scope : scopes) {
+            if (scope == null || scope.recordUuid() == null || scope.recordUuid().isBlank()) {
+                continue;
+            }
+            Object entity = typeDatabaseService.get(entityClass, scope.recordUuid());
+            if (entity != null) {
+                records.add(entity);
+            }
+        }
+
+        return objectMapper.writeValueAsString(Map.of(
+                "status", "ok",
+                "operation", "list",
+                "maxPageSize", RECORD_LIST_MAX_PAGE_SIZE,
+                "total", total,
+                "page", page,
+                "pageSize", pageSize,
+                "results", records));
+    }
+
     private String executeRecordSearch(String recordFqn,
                                        Class<?> entityClass,
                                        Map<String, Object> inputs,
-                                       ReflectionBinding binding) throws Exception {
+                                       ReflectionBinding binding,
+                                       Reflection reflection,
+                                       RecordToolMetadata metadata) throws Exception {
         String query = asString(inputs.get("query"));
+        if (query.isBlank()) {
+            String template = reflection == null ? "" : asString(reflection.bodyTemplate());
+            if (template != null && !template.isBlank()) {
+                query = applyBodyTemplate(template, toStringMap(inputs), CONTENT_TYPE_TEXT, Set.of(), Set.of()).trim();
+            }
+        }
         if (query.isBlank()) {
             return jsonError("query is required.");
         }
 
         String queryType = asString(inputs.get("queryType"));
         if (queryType.isBlank()) {
+            queryType = metadata == null ? "" : asString(metadata.queryType());
+        }
+        if (queryType.isBlank()) {
             queryType = "SQL";
+        }
+        if (!"SQL".equalsIgnoreCase(queryType)) {
+            return jsonError("Record search queryType must be SQL.");
         }
         String sortField = asString(inputs.get("sortField"));
         if (sortField.isBlank()) {
@@ -3108,10 +4230,7 @@ public class ReflectionService {
         int pageSize = asInt(inputs.get("pageSize"), 20);
 
         List<Object> filtered = new ArrayList<>();
-        boolean mongo = "MONGO".equalsIgnoreCase(queryType);
-        try (var stream = mongo
-                ? typeDatabaseService.searchByMongoFilter(entityClass, query, 0, Integer.MAX_VALUE, sortField, sortOrder)
-                : typeDatabaseService.searchBySql(entityClass, query, 0, Integer.MAX_VALUE, sortField, sortOrder)) {
+        try (var stream = typeDatabaseService.searchBySql(entityClass, query, 0, Integer.MAX_VALUE, sortField, sortOrder)) {
             stream.forEach(entity -> {
                 String uuid = entityUuid(entity);
                 if (uuid != null && canAccessRecordScope(recordFqn, uuid, binding)) {
@@ -3152,7 +4271,8 @@ public class ReflectionService {
         }
         try {
             JsonNode root = objectMapper.readTree(reflection.outputSchema());
-            if (!root.path(MANDATORY_RECORD_TOOL_MARKER).asBoolean(false)) {
+            if (!root.path(MANDATORY_RECORD_TOOL_MARKER).asBoolean(false)
+                    && !root.path(RECORD_TOOL_MARKER).asBoolean(false)) {
                 return null;
             }
             String recordFqn = root.path("recordFqn").asText("").trim();
@@ -3160,7 +4280,33 @@ public class ReflectionService {
             if (recordFqn.isBlank() || operation.isBlank()) {
                 return null;
             }
-            return new RecordToolMetadata(recordFqn, operation);
+            String queryType = root.path("queryType").asText("").trim().toUpperCase(Locale.ROOT);
+            return new RecordToolMetadata(recordFqn, operation, queryType);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private MongoToolMetadata parseMongoToolMetadata(Reflection reflection) {
+        if (reflection == null || reflection.outputSchema() == null || reflection.outputSchema().isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(reflection.outputSchema());
+            boolean mandatory = root.path(MANDATORY_MONGO_TOOL_MARKER).asBoolean(false);
+            boolean custom = root.path(MONGO_TOOL_MARKER).asBoolean(false);
+            if (!mandatory && !custom && !root.hasNonNull("collection") && !root.hasNonNull("operation")) {
+                return null;
+            }
+            String database = root.path("database").asText("").trim();
+            String collection = root.path("collection").asText("").trim();
+            String operation = root.path("operation").asText("").trim().toUpperCase(Locale.ROOT);
+            if (collection.isBlank() || operation.isBlank()) {
+                return null;
+            }
+            String queryType = root.path("queryType").asText("").trim().toUpperCase(Locale.ROOT);
+            String queryTemplate = root.path("queryTemplate").asText("").trim();
+            return new MongoToolMetadata(database, collection, operation, queryType, queryTemplate);
         } catch (Exception ex) {
             return null;
         }
@@ -3254,7 +4400,690 @@ public class ReflectionService {
         return value == null ? "" : String.valueOf(value).trim();
     }
 
-    private record RecordToolMetadata(String recordFqn, String operation) {}
+    private Map<String, Object> parseRecordPayload(Object value) {
+        if (value == null) {
+            return Map.of();
+        }
+        if (value instanceof Map<?, ?> rawMap) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : rawMap.entrySet()) {
+                result.put(String.valueOf(entry.getKey()), entry.getValue());
+            }
+            return result;
+        }
+        if (value instanceof JsonNode node) {
+            return objectMapper.convertValue(node, new TypeReference<Map<String, Object>>() {});
+        }
+        if (value instanceof String text) {
+            if (text.isBlank()) {
+                return Map.of();
+            }
+            try {
+                JsonNode node = objectMapper.readTree(text);
+                if (!node.isObject()) {
+                    throw new IllegalArgumentException("record payload must be a JSON object.");
+                }
+                return objectMapper.convertValue(node, new TypeReference<Map<String, Object>>() {});
+            } catch (IllegalArgumentException ex) {
+                throw ex;
+            } catch (Exception ex) {
+                throw new IllegalArgumentException("record payload must be valid JSON object.");
+            }
+        }
+        throw new IllegalArgumentException("record payload must be a JSON object.");
+    }
+
+    private Class<?> resolveRecordReflectionType(String recordFqn) {
+        if (recordFqn == null || recordFqn.isBlank()) {
+            return null;
+        }
+        if (javaTypeClassLoader != null) {
+            try {
+                return javaTypeClassLoader.loadClass(recordFqn);
+            } catch (ClassNotFoundException ignored) {
+                // Fall through to default class loader.
+            }
+        }
+        try {
+            return Class.forName(recordFqn);
+        } catch (ClassNotFoundException ignored) {
+            return null;
+        }
+    }
+
+    private List<ReflectionInputParameter> buildRecordWriteInputParameters(Class<?> recordType,
+                                                                           boolean includeExpectedRevision,
+                                                                           boolean includeUuidInput) {
+        List<ReflectionInputParameter> parameters = new ArrayList<>();
+        parameters.add(new ReflectionInputParameter("record", "string", "Optional JSON object containing record fields.", false));
+
+        if (recordType != null && recordType.isRecord()) {
+            for (var component : recordType.getRecordComponents()) {
+                String fieldName = component.getName();
+                if (!includeUuidInput && "uuid".equalsIgnoreCase(fieldName)) {
+                    continue;
+                }
+                Class<?> fieldType = component.getType();
+                boolean array = fieldType.isArray() || java.util.Collection.class.isAssignableFrom(fieldType);
+                String inputType = mapJavaTypeToInputType(fieldType);
+                boolean required = includeUuidInput && "uuid".equalsIgnoreCase(fieldName);
+                String description = "Record field " + fieldName + ".";
+                parameters.add(new ReflectionInputParameter(fieldName, inputType, description, required, array));
+            }
+        } else if (includeUuidInput) {
+            parameters.add(new ReflectionInputParameter("uuid", "string", "Record UUID.", true));
+        }
+
+        if (includeExpectedRevision) {
+            parameters.add(new ReflectionInputParameter("expectedRevision", "int", "Optional optimistic concurrency revision.", false));
+        }
+        return parameters;
+    }
+
+    private static String mapJavaTypeToInputType(Class<?> type) {
+        if (type == null) {
+            return "string";
+        }
+        if (type == boolean.class || type == Boolean.class) {
+            return "boolean";
+        }
+        if (type == int.class || type == Integer.class
+                || type == long.class || type == Long.class
+                || type == short.class || type == Short.class
+                || type == byte.class || type == Byte.class) {
+            return "int";
+        }
+        if (type == float.class || type == Float.class
+                || type == double.class || type == Double.class) {
+            return "double";
+        }
+        return "string";
+    }
+
+    private void pruneMandatoryRecordOperations(String recordFqn, Set<String> keepOperations) {
+        Set<String> allowed = new LinkedHashSet<>();
+        if (keepOperations != null) {
+            for (String operation : keepOperations) {
+                if (operation != null && !operation.isBlank()) {
+                    allowed.add(operation.trim().toUpperCase(Locale.ROOT));
+                }
+            }
+        }
+        List<String> candidates = List.of("CREATE", "READ", "UPDATE", "DELETE", "SEARCH", "LIST");
+        for (String operation : candidates) {
+            if (allowed.contains(operation)) {
+                continue;
+            }
+            RecordReflection recordReflection = getRecordReflectionByMetadata(recordFqn, operation);
+            if (recordReflection != null) {
+                recordReflectionRepository.delete(recordReflection.uuid());
+            }
+            Reflection legacy = getHttpRecordReflectionByMetadata(recordFqn, operation);
+            if (legacy != null) {
+                reflectionRepository.delete(legacy.uuid());
+            }
+        }
+    }
+
+    private static Boolean asBooleanObject(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Boolean booleanValue) {
+            return booleanValue;
+        }
+        String text = String.valueOf(value).trim();
+        if (text.isBlank()) {
+            return null;
+        }
+        if ("true".equalsIgnoreCase(text) || "1".equals(text) || "yes".equalsIgnoreCase(text)) {
+            return Boolean.TRUE;
+        }
+        if ("false".equalsIgnoreCase(text) || "0".equals(text) || "no".equalsIgnoreCase(text)) {
+            return Boolean.FALSE;
+        }
+        return null;
+    }
+
+    private static String firstNonBlank(String first, String second) {
+        if (first != null && !first.isBlank()) {
+            return first.trim();
+        }
+        if (second != null && !second.isBlank()) {
+            return second.trim();
+        }
+        return "";
+    }
+
+    private static String firstNonBlank(String... candidates) {
+        if (candidates == null || candidates.length == 0) {
+            return "";
+        }
+        for (String candidate : candidates) {
+            if (candidate != null && !candidate.isBlank()) {
+                return candidate.trim();
+            }
+        }
+        return "";
+    }
+
+    private static Object firstNonNull(Object... values) {
+        if (values == null || values.length == 0) {
+            return null;
+        }
+        for (Object value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private MongoClient openMongoClient(MongoConnectionRequest request) {
+        ConnectionString connectionString = new ConnectionString(request.connectionUri().trim());
+        MongoClientSettings.Builder settings = MongoClientSettings.builder()
+                .applyConnectionString(connectionString);
+
+        if (request.username() != null && !request.username().isBlank()) {
+            String authDb = request.authDatabase() == null || request.authDatabase().isBlank()
+                    ? "admin"
+                    : request.authDatabase().trim();
+            char[] password = request.password() == null ? new char[0] : request.password().toCharArray();
+            settings.credential(MongoCredential.createCredential(request.username().trim(), authDb, password));
+        }
+
+        if (request.tlsEnabled() != null) {
+            settings.applyToSslSettings(ssl -> ssl.enabled(Boolean.TRUE.equals(request.tlsEnabled())));
+        }
+
+        return MongoClients.create(settings.build());
+    }
+
+    private List<Document> sampleDocuments(MongoCollection<Document> collection, int sampleSize) {
+        List<Document> sampleDocs = new ArrayList<>();
+        if (sampleSize <= 0) {
+            return sampleDocs;
+        }
+        try {
+            collection.aggregate(List.of(Aggregates.sample(sampleSize))).into(sampleDocs);
+        } catch (Exception ex) {
+            collection.find().limit(sampleSize).into(sampleDocs);
+        }
+        return sampleDocs;
+    }
+
+    private String inferJsonSchema(List<Document> sampleDocs) {
+        try {
+            ObjectNode merged = objectMapper.createObjectNode();
+            merged.put("type", "object");
+            merged.put("additionalProperties", true);
+            merged.set("properties", objectMapper.createObjectNode());
+
+            if (sampleDocs == null || sampleDocs.isEmpty()) {
+                return objectMapper.writeValueAsString(merged);
+            }
+
+            JsonNode combined = null;
+            for (Document document : sampleDocs) {
+                JsonNode node = objectMapper.valueToTree(document);
+                JsonNode schema = inferNodeSchema(node);
+                combined = combined == null ? schema : mergeSchemas(combined, schema);
+            }
+            if (combined == null || !combined.isObject()) {
+                return objectMapper.writeValueAsString(merged);
+            }
+            return objectMapper.writeValueAsString(combined);
+        } catch (Exception ex) {
+            return "{\"type\":\"object\",\"additionalProperties\":true}";
+        }
+    }
+
+    private JsonNode inferNodeSchema(JsonNode node) {
+        ObjectNode schema = objectMapper.createObjectNode();
+        if (node == null || node instanceof NullNode || node.isNull()) {
+            schema.put("type", "null");
+            return schema;
+        }
+        if (node.isObject()) {
+            schema.put("type", "object");
+            schema.put("additionalProperties", true);
+            ObjectNode properties = objectMapper.createObjectNode();
+            node.properties().forEach(entry -> properties.set(entry.getKey(), inferNodeSchema(entry.getValue())));
+            schema.set("properties", properties);
+            return schema;
+        }
+        if (node.isArray()) {
+            schema.put("type", "array");
+            JsonNode items = null;
+            for (JsonNode item : node) {
+                JsonNode itemSchema = inferNodeSchema(item);
+                items = items == null ? itemSchema : mergeSchemas(items, itemSchema);
+            }
+            if (items == null) {
+                items = objectMapper.createObjectNode();
+            }
+            schema.set("items", items);
+            return schema;
+        }
+        if (node.isBoolean()) {
+            schema.put("type", "boolean");
+            return schema;
+        }
+        if (node.isIntegralNumber()) {
+            schema.put("type", "integer");
+            return schema;
+        }
+        if (node.isFloatingPointNumber() || node.isBigDecimal()) {
+            schema.put("type", "number");
+            return schema;
+        }
+        schema.put("type", "string");
+        return schema;
+    }
+
+    private JsonNode mergeSchemas(JsonNode left, JsonNode right) {
+        if (left == null) {
+            return right;
+        }
+        if (right == null) {
+            return left;
+        }
+
+        ObjectNode merged = objectMapper.createObjectNode();
+        Set<String> typeSet = new LinkedHashSet<>();
+        collectTypes(left, typeSet);
+        collectTypes(right, typeSet);
+
+        if (typeSet.size() == 1) {
+            merged.put("type", typeSet.iterator().next());
+        } else {
+            ArrayNode types = objectMapper.createArrayNode();
+            typeSet.forEach(types::add);
+            merged.set("type", types);
+        }
+
+        boolean leftObject = hasType(left, "object");
+        boolean rightObject = hasType(right, "object");
+        if (leftObject || rightObject) {
+            merged.put("additionalProperties", true);
+            ObjectNode properties = objectMapper.createObjectNode();
+            JsonNode leftProps = left.path("properties");
+            JsonNode rightProps = right.path("properties");
+            Set<String> names = new LinkedHashSet<>();
+            if (leftProps.isObject()) {
+                leftProps.fieldNames().forEachRemaining(names::add);
+            }
+            if (rightProps.isObject()) {
+                rightProps.fieldNames().forEachRemaining(names::add);
+            }
+            for (String name : names) {
+                JsonNode leftSchema = leftProps.isObject() ? leftProps.get(name) : null;
+                JsonNode rightSchema = rightProps.isObject() ? rightProps.get(name) : null;
+                properties.set(name, mergeSchemas(leftSchema, rightSchema));
+            }
+            merged.set("properties", properties);
+        }
+
+        boolean leftArray = hasType(left, "array");
+        boolean rightArray = hasType(right, "array");
+        if (leftArray || rightArray) {
+            JsonNode leftItems = left.path("items");
+            JsonNode rightItems = right.path("items");
+            merged.set("items", mergeSchemas(
+                    leftItems.isMissingNode() ? null : leftItems,
+                    rightItems.isMissingNode() ? null : rightItems));
+        }
+
+        return merged;
+    }
+
+    private static void collectTypes(JsonNode schema, Set<String> target) {
+        if (schema == null) {
+            return;
+        }
+        JsonNode type = schema.get("type");
+        if (type == null) {
+            return;
+        }
+        if (type.isTextual()) {
+            target.add(type.asText());
+            return;
+        }
+        if (type.isArray()) {
+            for (JsonNode value : type) {
+                if (value.isTextual()) {
+                    target.add(value.asText());
+                }
+            }
+        }
+    }
+
+    private static boolean hasType(JsonNode schema, String typeName) {
+        if (schema == null) {
+            return false;
+        }
+        JsonNode type = schema.get("type");
+        if (type == null) {
+            return false;
+        }
+        if (type.isTextual()) {
+            return typeName.equalsIgnoreCase(type.asText());
+        }
+        if (type.isArray()) {
+            for (JsonNode value : type) {
+                if (value.isTextual() && typeName.equalsIgnoreCase(value.asText())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private List<String> upsertMandatoryMongoCollectionTools(ReflectionGroup group,
+                                                              String database,
+                                                              String collection,
+                                                              String inferredSchema) {
+        List<String> generatedToolIds = new ArrayList<>();
+        generatedToolIds.add(upsertMandatoryMongoToolReflection(
+                group,
+                database,
+                collection,
+                "CREATE",
+                "Create " + collection,
+                "Create a document in Mongo collection " + collection + ".",
+                List.of(new ReflectionInputParameter("document", "string", "JSON document payload.", true)),
+                inferredSchema));
+        generatedToolIds.add(upsertMandatoryMongoToolReflection(
+                group,
+                database,
+                collection,
+                "READ",
+                "Get " + collection,
+                "Read a Mongo document by _id from collection " + collection + ".",
+                List.of(new ReflectionInputParameter("uuid", "string", "Document _id.", true)),
+                inferredSchema));
+        generatedToolIds.add(upsertMandatoryMongoToolReflection(
+                group,
+                database,
+                collection,
+                "UPDATE",
+                "Update " + collection,
+                "Update a Mongo document by _id in collection " + collection + ".",
+                List.of(
+                        new ReflectionInputParameter("uuid", "string", "Document _id.", true),
+                        new ReflectionInputParameter("document", "string", "JSON document payload.", true)),
+                inferredSchema));
+        generatedToolIds.add(upsertMandatoryMongoToolReflection(
+                group,
+                database,
+                collection,
+                "DELETE",
+                "Delete " + collection,
+                "Delete a Mongo document by _id from collection " + collection + ".",
+                List.of(new ReflectionInputParameter("uuid", "string", "Document _id.", true)),
+                inferredSchema));
+        generatedToolIds.add(upsertMandatoryMongoToolReflection(
+                group,
+                database,
+                collection,
+                "SEARCH",
+                "Search " + collection,
+                "Search Mongo documents in collection " + collection + " using SQL-like or Mongo query syntax.",
+                List.of(
+                        new ReflectionInputParameter("query", "string", "Query string.", true),
+                        new ReflectionInputParameter("queryType", "string", "Query parser mode (SQL or MONGO).", false),
+                        new ReflectionInputParameter("sortField", "string", "Sort field.", false),
+                        new ReflectionInputParameter("sortOrder", "string", "Sort direction (ASC or DESC).", false),
+                        new ReflectionInputParameter("page", "int", "Page number.", false),
+                        new ReflectionInputParameter("pageSize", "int", "Page size.", false)),
+                inferredSchema));
+        return List.copyOf(generatedToolIds);
+    }
+
+    private String upsertMandatoryMongoToolReflection(ReflectionGroup group,
+                                                      String database,
+                                                      String collection,
+                                                      String operation,
+                                                      String name,
+                                                      String description,
+                                                      List<ReflectionInputParameter> inputParameters,
+                                                      String inferredSchema) {
+        String operationUpper = operation == null ? "" : operation.toUpperCase(Locale.ROOT);
+        String toolId = resolveMongoToolId(collection, operationUpper, group.uuid());
+        MongoReflection existing = getMongoReflectionById(toolId);
+        Reflection legacy = getHttpReflectionById(toolId);
+        RecordReflection recordLegacy = getRecordReflectionById(toolId);
+
+        long now = System.currentTimeMillis();
+        MongoReflection reflection = new MongoReflection(
+                existing != null
+                        ? existing.uuid()
+                        : (legacy != null ? legacy.uuid() : (recordLegacy != null ? recordLegacy.uuid() : UUID.randomUUID().toString())),
+                toolId,
+                name,
+                description,
+                group.uuid(),
+                inputParameters,
+                mandatoryMongoToolSchema(database, collection, operationUpper, inferredSchema),
+                existing == null ? 1L : existing.version() + 1,
+                existing == null ? now : existing.createdAt(),
+                now);
+
+        mongoReflectionRepository.save(reflection);
+        if (legacy != null) {
+            reflectionRepository.delete(legacy.uuid());
+        }
+        if (recordLegacy != null) {
+            recordReflectionRepository.delete(recordLegacy.uuid());
+        }
+        return toolId;
+    }
+
+    private String mandatoryMongoToolSchema(String database,
+                                            String collection,
+                                            String operation,
+                                            String inferredSchema) {
+        return mongoToolSchema(database, collection, operation, true, inferredSchema, "MONGO", "");
+    }
+
+    private String mongoToolSchema(String database,
+                                   String collection,
+                                   String operation,
+                                   boolean mandatory,
+                                   String inferredSchema,
+                                   String queryType,
+                                   String queryTemplate) {
+        try {
+            ObjectNode root = objectMapper.createObjectNode();
+            root.put("$schema", "https://json-schema.org/draft/2020-12/schema");
+            root.put("type", "object");
+            root.put("additionalProperties", true);
+            root.put(MONGO_TOOL_MARKER, true);
+            root.put(MANDATORY_MONGO_TOOL_MARKER, mandatory);
+            root.put("database", database);
+            root.put("collection", collection);
+            root.put("operation", operation);
+            if ("SEARCH".equalsIgnoreCase(operation)) {
+                root.put("queryType", queryType == null || queryType.isBlank() ? "MONGO" : queryType.toUpperCase(Locale.ROOT));
+                root.put("queryTemplate", queryTemplate == null ? "" : queryTemplate);
+            }
+
+            ObjectNode resultProperties = objectMapper.createObjectNode();
+            resultProperties.set("status", objectMapper.createObjectNode().put("type", "string"));
+            resultProperties.set("operation", objectMapper.createObjectNode().put("type", "string"));
+            resultProperties.set("collection", objectMapper.createObjectNode().put("type", "string"));
+            resultProperties.set("database", objectMapper.createObjectNode().put("type", "string"));
+            resultProperties.set("result", objectMapper.createObjectNode().put("type", "object").put("additionalProperties", true));
+
+            if (inferredSchema != null && !inferredSchema.isBlank()) {
+                try {
+                    JsonNode inferredNode = objectMapper.readTree(inferredSchema);
+                    resultProperties.set("document", inferredNode);
+                    resultProperties.set("documents", objectMapper.createObjectNode()
+                            .put("type", "array")
+                            .set("items", inferredNode));
+                } catch (Exception ignored) {
+                    resultProperties.set("document", objectMapper.createObjectNode().put("type", "object").put("additionalProperties", true));
+                }
+            }
+
+            root.set("properties", resultProperties);
+            return objectMapper.writeValueAsString(root);
+        } catch (Exception ex) {
+            return "{\"type\":\"object\",\"" + MONGO_TOOL_MARKER + "\":true,\"" + MANDATORY_MONGO_TOOL_MARKER + "\":" + mandatory + ",\"database\":\""
+                    + (database == null ? "" : database)
+                    + "\",\"collection\":\""
+                    + (collection == null ? "" : collection)
+                    + "\",\"operation\":\""
+                    + (operation == null ? "" : operation)
+                    + "\"}";
+        }
+    }
+
+    private MongoToolRequest normalizeAndValidateMongoToolRequest(MongoToolRequest request, MongoReflection existing) {
+        if (request == null) {
+            throw new IllegalArgumentException("Mongo tool payload is required.");
+        }
+        if (request.id() == null || request.id().isBlank()) {
+            throw new IllegalArgumentException("Mongo tool ID is required.");
+        }
+        if (!REFLECTION_ID_PATTERN.matcher(request.id().trim()).matches()) {
+            throw new IllegalArgumentException("Mongo tool ID must be alphanumeric.");
+        }
+        if (request.name() == null || request.name().isBlank()) {
+            throw new IllegalArgumentException("Mongo tool name is required.");
+        }
+        if (request.groupUuid() == null || request.groupUuid().isBlank()) {
+            throw new IllegalArgumentException("Mongo group is required.");
+        }
+        ReflectionGroup group = reflectionGroupRepository.get(request.groupUuid().trim());
+        if (group == null) {
+            throw new IllegalArgumentException("Mongo group not found.");
+        }
+        if (group.type() != ReflectionType.MONGO) {
+            throw new IllegalArgumentException("Mongo custom tools can only be created in MONGO groups.");
+        }
+        if (request.collection() == null || request.collection().isBlank()) {
+            throw new IllegalArgumentException("Mongo collection is required.");
+        }
+        if (request.operation() == null || request.operation().isBlank()) {
+            throw new IllegalArgumentException("Mongo operation is required.");
+        }
+        String operation = request.operation().trim().toUpperCase(Locale.ROOT);
+        if (!Set.of("CREATE", "READ", "UPDATE", "DELETE", "SEARCH").contains(operation)) {
+            throw new IllegalArgumentException("Mongo operation must be one of CREATE, READ, UPDATE, DELETE, SEARCH.");
+        }
+
+        String queryType = request.queryType() == null ? "" : request.queryType().trim().toUpperCase(Locale.ROOT);
+        String queryTemplate = request.queryTemplate() == null ? "" : request.queryTemplate().trim();
+        if (!"SEARCH".equals(operation)) {
+            queryType = "";
+            queryTemplate = "";
+        } else {
+            if (queryType.isBlank()) {
+                queryType = "MONGO";
+            }
+            if (!"MONGO".equals(queryType) && !"SQL".equals(queryType)) {
+                throw new IllegalArgumentException("Mongo search queryType must be SQL or MONGO.");
+            }
+        }
+
+        String database = request.database() == null ? "" : request.database().trim();
+        if (database.isBlank() && existing != null) {
+            MongoToolMetadata existingMetadata = parseMongoToolMetadata(mongoToReflection(existing));
+            if (existingMetadata != null && existingMetadata.database() != null) {
+                database = existingMetadata.database();
+            }
+        }
+
+        return new MongoToolRequest(
+                request.id().trim(),
+                request.name().trim(),
+                request.description() == null ? "" : request.description().trim(),
+                request.groupUuid().trim(),
+                database,
+                request.collection().trim(),
+                operation,
+                request.inferredSchema() == null ? "" : request.inferredSchema().trim(),
+                queryType,
+                queryTemplate);
+    }
+
+    private List<ReflectionInputParameter> mongoInputParametersForOperation(String operation) {
+        return switch (operation) {
+            case "CREATE" -> List.of(new ReflectionInputParameter("document", "string", "JSON document payload.", true));
+            case "READ" -> List.of(new ReflectionInputParameter("uuid", "string", "Document _id.", true));
+            case "UPDATE" -> List.of(
+                    new ReflectionInputParameter("uuid", "string", "Document _id.", true),
+                    new ReflectionInputParameter("document", "string", "JSON document payload.", true));
+            case "DELETE" -> List.of(new ReflectionInputParameter("uuid", "string", "Document _id.", true));
+            case "SEARCH" -> List.of(
+                    new ReflectionInputParameter("query", "string", "Search query string.", false),
+                    new ReflectionInputParameter("queryType", "string", "Query parser mode (SQL or MONGO).", false),
+                    new ReflectionInputParameter("sortField", "string", "Sort field.", false),
+                    new ReflectionInputParameter("sortOrder", "string", "Sort direction (ASC or DESC).", false),
+                    new ReflectionInputParameter("page", "int", "Page number.", false),
+                    new ReflectionInputParameter("pageSize", "int", "Page size.", false));
+            default -> List.of();
+        };
+    }
+
+    private String resolveMongoToolId(String collection, String operation, String groupUuid) {
+        String base = defaultMongoToolId(collection, operation);
+        if (isMongoToolIdAvailable(base, groupUuid)) {
+            return base;
+        }
+
+        String hashSuffix = Long.toString(Integer.toUnsignedLong((collection + "#" + operation).hashCode()), 36)
+                .toUpperCase(Locale.ROOT);
+        String candidate = base + hashSuffix;
+        if (isMongoToolIdAvailable(candidate, groupUuid)) {
+            return candidate;
+        }
+
+        int attempt = 2;
+        while (attempt < 1000) {
+            String indexed = candidate + attempt;
+            if (isMongoToolIdAvailable(indexed, groupUuid)) {
+                return indexed;
+            }
+            attempt++;
+        }
+        throw new IllegalArgumentException("Unable to resolve unique mongo tool id for " + base + ".");
+    }
+
+    private boolean isMongoToolIdAvailable(String candidate, String groupUuid) {
+        Reflection legacy = getHttpReflectionById(candidate);
+        if (legacy != null) {
+            return groupUuid != null && groupUuid.equals(legacy.groupUuid());
+        }
+        RecordReflection record = getRecordReflectionById(candidate);
+        if (record != null) {
+            return groupUuid != null && groupUuid.equals(record.groupUuid());
+        }
+        MongoReflection mongo = getMongoReflectionById(candidate);
+        if (mongo != null) {
+            return groupUuid != null && groupUuid.equals(mongo.groupUuid());
+        }
+        return true;
+    }
+
+    private static String defaultMongoToolId(String collection, String operation) {
+        String baseName = toPascalIdentifier(collection);
+        String prefix = switch (operation == null ? "" : operation.toUpperCase(Locale.ROOT)) {
+            case "CREATE" -> "create";
+            case "UPDATE" -> "update";
+            case "READ" -> "get";
+            case "DELETE" -> "delete";
+            case "SEARCH" -> "search";
+            default -> "mongo";
+        };
+        return prefix + baseName;
+    }
+
+    private record RecordToolMetadata(String recordFqn, String operation, String queryType) {}
+
+    private record MongoToolMetadata(String database, String collection, String operation, String queryType, String queryTemplate) {}
 
     private boolean isGroupToolIdAvailable(String candidate, String excludeGroupUuid) {
         String normalizedCandidate = ToolIdGenerator.normalizeBase(candidate, "group");
@@ -3325,6 +5154,52 @@ public class ReflectionService {
     private static String toVid(String groupId, String artifactId, String version) {
         return groupId + "-" + artifactId + "-" + version;
     }
+
+        public record MongoConnectionRequest(
+            String connectionUri,
+            String username,
+            String password,
+            String authDatabase,
+            Boolean tlsEnabled) {}
+
+        public record MongoDatabaseInspectRequest(
+            String connectionUri,
+            String username,
+            String password,
+            String authDatabase,
+            Boolean tlsEnabled,
+            String database,
+            Integer sampleSize) {}
+
+        public record MongoConnectionInspection(List<String> databases) {}
+
+        public record MongoCollectionInspection(
+            String name,
+            long estimatedCount,
+            String inferredSchema) {}
+
+        public record MongoDatabaseInspection(
+            String database,
+            List<MongoCollectionInspection> collections) {}
+
+        public record MongoWizardGenerateRequest(
+            String connectionUri,
+            String username,
+            String password,
+            String authDatabase,
+            Boolean tlsEnabled,
+            String database,
+            List<String> collections,
+            Integer sampleSize,
+            String groupName,
+            String groupDescription,
+            String groupId,
+            String artifactId) {}
+
+        public record MongoWizardGenerationResult(
+            String groupUuid,
+            String bindingName,
+            Map<String, List<String>> toolIdsByCollection) {}
 
         public record ReflectionGroupRequest(
             String name,
@@ -3411,6 +5286,19 @@ public class ReflectionService {
             String responseContentType,
             String outputSchema
     ) {}
+
+            public record MongoToolRequest(
+                String id,
+                String name,
+                String description,
+                String groupUuid,
+                String database,
+                String collection,
+                String operation,
+                String inferredSchema,
+                String queryType,
+                String queryTemplate
+            ) {}
 
     public record GroupDeleteResult(boolean ok, String message) {}
 

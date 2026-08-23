@@ -29,6 +29,9 @@ import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.SessionOriginMode;
 import jakarta.servlet.http.HttpServletRequest;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.reflection.ReflectionBinding;
+import sh.vork.reflection.ReflectionGroup;
+import sh.vork.reflection.ReflectionType;
 import sh.vork.typegen.FormToObjectConverter;
 import sh.vork.typegen.JavaType;
 import sh.vork.typegen.JavaTypeClassLoader;
@@ -325,6 +328,232 @@ class TypeDatabaseControllerRecordBindingScopeTest {
                 assertEquals(400, response.getStatusCode().value());
                 assertTrue(response.getBody().contains("not attached"));
         }
+
+            @Test
+            void search_recordScopedWithoutSessionUuidUsesBindingScopeWhenBindingExists() throws Exception {
+                TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
+                FormToObjectConverter formConverter = mock(FormToObjectConverter.class);
+                JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
+                @SuppressWarnings("unchecked")
+                DatabaseRepository<JavaType> javaTypeRepository = (DatabaseRepository<JavaType>) mock(DatabaseRepository.class);
+                @SuppressWarnings("unchecked")
+                DatabaseRepository<TypeRecordBindingScope> scopeRepository = (DatabaseRepository<TypeRecordBindingScope>) mock(DatabaseRepository.class);
+                @SuppressWarnings("unchecked")
+                DatabaseRepository<ReflectionBinding> reflectionBindingRepository = (DatabaseRepository<ReflectionBinding>) mock(DatabaseRepository.class);
+
+                doReturn(DummyRecord.class).when(classLoader).loadClass("sh.vork.generated.Customer");
+                when(typeDatabaseService.searchBySql(eq(DummyRecord.class), eq("name LIKE '%a%'"), eq(0), eq(Integer.MAX_VALUE), eq("uuid"), any()))
+                        .thenReturn(Stream.of(new DummyRecord("r-1", "Alice"), new DummyRecord("r-2", "Bob")));
+
+                when(scopeRepository.get("sh.vork.generated.Customer::r-1")).thenReturn(new TypeRecordBindingScope(
+                        "sh.vork.generated.Customer::r-1",
+                        "sh.vork.generated.Customer",
+                        "r-1",
+                        "binding-a",
+                        "A",
+                        1L,
+                        1L));
+                when(scopeRepository.get("sh.vork.generated.Customer::r-2")).thenReturn(new TypeRecordBindingScope(
+                        "sh.vork.generated.Customer::r-2",
+                        "sh.vork.generated.Customer",
+                        "r-2",
+                        "binding-b",
+                        "B",
+                        1L,
+                        1L));
+                when(reflectionBindingRepository.get("binding-a")).thenReturn(new ReflectionBinding(
+                        "binding-a",
+                        "group-a",
+                        "A",
+                        "",
+                        Map.of(),
+                        1L,
+                        1L,
+                        1L));
+
+                TypeDatabaseController controller = new TypeDatabaseController(
+                        typeDatabaseService,
+                        formConverter,
+                        classLoader,
+                        objectMapper,
+                        javaTypeRepository);
+                controller.setTypeRecordBindingScopeRepository(scopeRepository);
+                controller.setReflectionBindingRepository(reflectionBindingRepository);
+
+                MockHttpServletRequest request = new MockHttpServletRequest();
+                request.addHeader("X-Vork-Reflection-Type", "RECORD");
+                request.addHeader("X-Vork-Reflection-Binding-UUID", "binding-a");
+                request.addHeader("X-Vork-Reflection-Binding-Name", "A");
+                RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+                try {
+                    ResponseEntity<String> response = controller.search(
+                            "sh.vork.generated.Customer",
+                            "name LIKE '%a%'",
+                            "SQL",
+                            "uuid",
+                            "ASC",
+                            0,
+                            20);
+
+                    assertEquals(200, response.getStatusCode().value());
+                    Map<String, Object> payload = objectMapper.readValue(response.getBody(), new TypeReference<>() {});
+                    assertEquals(1, payload.get("total"));
+
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> results = (List<Map<String, Object>>) payload.get("results");
+                    assertEquals(1, results.size());
+                    assertEquals("r-1", results.get(0).get("uuid"));
+                } finally {
+                    RequestContextHolder.resetRequestAttributes();
+                }
+            }
+
+            @Test
+            void search_bindingOwnedByRecordGroupScopesEvenWhenHeaderTypeIsRest() throws Exception {
+                TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
+                FormToObjectConverter formConverter = mock(FormToObjectConverter.class);
+                JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
+                @SuppressWarnings("unchecked")
+                DatabaseRepository<JavaType> javaTypeRepository = (DatabaseRepository<JavaType>) mock(DatabaseRepository.class);
+                @SuppressWarnings("unchecked")
+                DatabaseRepository<TypeRecordBindingScope> scopeRepository = (DatabaseRepository<TypeRecordBindingScope>) mock(DatabaseRepository.class);
+                @SuppressWarnings("unchecked")
+                DatabaseRepository<ReflectionBinding> reflectionBindingRepository = (DatabaseRepository<ReflectionBinding>) mock(DatabaseRepository.class);
+                @SuppressWarnings("unchecked")
+                DatabaseRepository<ReflectionGroup> reflectionGroupRepository = (DatabaseRepository<ReflectionGroup>) mock(DatabaseRepository.class);
+
+                doReturn(DummyRecord.class).when(classLoader).loadClass("sh.vork.generated.Customer");
+                when(typeDatabaseService.list(eq(DummyRecord.class), eq(0), eq(Integer.MAX_VALUE)))
+                        .thenReturn(Stream.of(new DummyRecord("r-1", "Alice"), new DummyRecord("r-2", "Bob")));
+
+                when(scopeRepository.get("sh.vork.generated.Customer::r-1")).thenReturn(new TypeRecordBindingScope(
+                        "sh.vork.generated.Customer::r-1",
+                        "sh.vork.generated.Customer",
+                        "r-1",
+                        "binding-a",
+                        "A",
+                        1L,
+                        1L));
+                when(scopeRepository.get("sh.vork.generated.Customer::r-2")).thenReturn(new TypeRecordBindingScope(
+                        "sh.vork.generated.Customer::r-2",
+                        "sh.vork.generated.Customer",
+                        "r-2",
+                        "binding-b",
+                        "B",
+                        1L,
+                        1L));
+
+                when(reflectionBindingRepository.get("binding-a")).thenReturn(new ReflectionBinding(
+                        "binding-a",
+                        "group-record-a",
+                        "A",
+                        "",
+                        Map.of(),
+                        1L,
+                        1L,
+                        1L));
+                when(reflectionGroupRepository.get("group-record-a")).thenReturn(new ReflectionGroup(
+                        "group-record-a",
+                        "tool-record-a",
+                        "Record A",
+                        "",
+                        ReflectionType.RECORD,
+                        "",
+                        true,
+                        List.of(),
+                        List.of(),
+                        sh.vork.reflection.ReflectionAuthenticationMode.NONE,
+                        "",
+                        "record",
+                        "Customer",
+                        "SNAPSHOT",
+                        sh.vork.reflection.ArtifactStatus.SNAPSHOT,
+                        1L,
+                        1L));
+
+                TypeDatabaseController controller = new TypeDatabaseController(
+                        typeDatabaseService,
+                        formConverter,
+                        classLoader,
+                        objectMapper,
+                        javaTypeRepository);
+                controller.setTypeRecordBindingScopeRepository(scopeRepository);
+                controller.setReflectionBindingRepository(reflectionBindingRepository);
+                controller.setReflectionGroupRepository(reflectionGroupRepository);
+
+                MockHttpServletRequest request = new MockHttpServletRequest();
+                request.addHeader("X-Vork-Reflection-Type", "REST");
+                request.addHeader("X-Vork-Reflection-Binding-UUID", "binding-a");
+                request.addHeader("X-Vork-Reflection-Binding-Name", "A");
+                RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+                try {
+                    ResponseEntity<String> response = controller.list("sh.vork.generated.Customer", 0, 20);
+
+                    assertEquals(200, response.getStatusCode().value());
+                    List<Map<String, Object>> rows = objectMapper.readValue(response.getBody(), new TypeReference<>() {});
+                    assertEquals(1, rows.size());
+                    assertEquals("r-1", rows.getFirst().get("uuid"));
+                } finally {
+                    RequestContextHolder.resetRequestAttributes();
+                }
+            }
+
+            @Test
+            void list_recordScopedFallsBackToBindingNameWhenScopeUuidDiffers() throws Exception {
+                TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
+                FormToObjectConverter formConverter = mock(FormToObjectConverter.class);
+                JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
+                @SuppressWarnings("unchecked")
+                DatabaseRepository<JavaType> javaTypeRepository = (DatabaseRepository<JavaType>) mock(DatabaseRepository.class);
+                @SuppressWarnings("unchecked")
+                DatabaseRepository<TypeRecordBindingScope> scopeRepository = (DatabaseRepository<TypeRecordBindingScope>) mock(DatabaseRepository.class);
+
+                doReturn(DummyRecord.class).when(classLoader).loadClass("sh.vork.generated.Customer");
+                when(typeDatabaseService.list(eq(DummyRecord.class), eq(0), eq(Integer.MAX_VALUE)))
+                        .thenReturn(Stream.of(new DummyRecord("r-1", "Alice"), new DummyRecord("r-2", "Bob")));
+
+                // Record r-1 was scoped under an older binding UUID but same binding name.
+                when(scopeRepository.get("sh.vork.generated.Customer::r-1")).thenReturn(new TypeRecordBindingScope(
+                        "sh.vork.generated.Customer::r-1",
+                        "sh.vork.generated.Customer",
+                        "r-1",
+                        "binding-a-old",
+                        "A",
+                        1L,
+                        1L));
+                when(scopeRepository.get("sh.vork.generated.Customer::r-2")).thenReturn(new TypeRecordBindingScope(
+                        "sh.vork.generated.Customer::r-2",
+                        "sh.vork.generated.Customer",
+                        "r-2",
+                        "binding-b",
+                        "B",
+                        1L,
+                        1L));
+
+                TypeDatabaseController controller = new TypeDatabaseController(
+                        typeDatabaseService,
+                        formConverter,
+                        classLoader,
+                        objectMapper,
+                        javaTypeRepository);
+                controller.setTypeRecordBindingScopeRepository(scopeRepository);
+
+                MockHttpServletRequest request = new MockHttpServletRequest();
+                request.addHeader("X-Vork-Reflection-Type", "RECORD");
+                request.addHeader("X-Vork-Reflection-Binding-UUID", "binding-a-new");
+                request.addHeader("X-Vork-Reflection-Binding-Name", "A");
+                RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+                try {
+                    ResponseEntity<String> response = controller.list("sh.vork.generated.Customer", 0, 20);
+
+                    assertEquals(200, response.getStatusCode().value());
+                    List<Map<String, Object>> rows = objectMapper.readValue(response.getBody(), new TypeReference<>() {});
+                    assertEquals(1, rows.size());
+                    assertEquals("r-1", rows.getFirst().get("uuid"));
+                } finally {
+                    RequestContextHolder.resetRequestAttributes();
+                }
+            }
 
     private record DummyRecord(String uuid, String name) {}
 }

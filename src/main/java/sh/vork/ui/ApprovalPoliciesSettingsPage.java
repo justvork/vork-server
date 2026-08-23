@@ -3,25 +3,25 @@ package sh.vork.ui;
 import org.springframework.stereotype.Component;
 
 @Component
-public class DataInspectorSettingsPage implements SettingsPage {
+public class ApprovalPoliciesSettingsPage implements SettingsPage {
 
     @Override
     public String getIcon() {
-        return "fa-table-list";
+        return "fa-user-check";
     }
 
     @Override
     public String getName() {
-        return "Data Inspector";
+        return "Approval Policies";
     }
 
     @Override
     public String getDescription() {
-        return "Inspect and explore persisted records across types.";
+        return "Configure default approval routing and conditional overrides.";
     }
 
     @Override
     public String getPath() {
-        return "data-inspector";
+        return "approval-policies";
     }
 }

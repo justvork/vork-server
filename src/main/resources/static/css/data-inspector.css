@@ -13,9 +13,59 @@
     max-width: 360px;
 }
 
+.inspector-search-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-right: 0.25rem;
+}
+
+.inspector-search-type {
+    width: 130px;
+}
+
+.inspector-search-input {
+    width: min(480px, 38vw);
+    min-width: 260px;
+}
+
+.inspector-extra-params {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    min-width: 260px;
+}
+
+.inspector-extra-param-row {
+    display: grid;
+    grid-template-columns: minmax(110px, auto) minmax(160px, 1fr);
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.inspector-extra-param-label {
+    font-size: 0.75rem;
+    color: var(--vork-muted);
+    white-space: nowrap;
+}
+
+.inspector-extra-param-input {
+    min-width: 0;
+}
+
 /* State panels */
 .inspector-state {
     min-height: 160px;
+}
+
+.inspector-context-hint {
+    margin-bottom: 0.75rem;
+    border: 1px solid rgba(250, 170, 2, 0.35);
+    background: rgba(253, 170, 2, 0.1);
+    border-radius: 0.5rem;
+    padding: 0.55rem 0.7rem;
+    font-size: 0.78rem;
+    color: #f5deb1;
 }
 
 /* Table */
@@ -35,6 +85,22 @@
     color: var(--vork-muted);
     padding: 0.5rem 0.75rem;
     white-space: nowrap;
+    text-align: left;
+}
+
+.inspector-sortable-th {
+    cursor: pointer;
+    user-select: none;
+}
+
+.inspector-sortable-th:hover {
+    color: var(--vork-fg);
+}
+
+.inspector-sort-indicator {
+    color: #fdaa02;
+    font-size: 0.72rem;
+    margin-left: 0.2rem;
 }
 
 .inspector-table tbody td {
@@ -149,4 +215,24 @@
 @media (max-width: 575.98px) {
     .inspector-type-select { max-width: 100%; }
     .inspector-table tbody td { font-size: 0.8rem; }
+    .inspector-search-controls {
+        width: 100%;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+    .inspector-search-type {
+        width: 120px;
+    }
+    .inspector-search-input {
+        width: 100%;
+        min-width: 0;
+    }
+    .inspector-extra-params {
+        width: 100%;
+        min-width: 0;
+    }
+    .inspector-extra-param-row {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+    }
 }

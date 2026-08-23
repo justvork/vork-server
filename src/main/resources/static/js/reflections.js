@@ -9,6 +9,7 @@ let groups = [];
 let reflections = [];
 let oauthTemplates = [];
 let modalParameters = [];
+let recordModalParameters = [];
 let modalHeaders = [];
 let modalQueryParameters = [];
 let modalGroupBindingParameters = [];
@@ -17,6 +18,14 @@ let modalBindingParameterValues = {};
 let modalBindingSecretValues = {};
 let oauthConnectDefaults = null;
 let githubConnection = null;
+let mongoWizardCollections = [];
+let mongoWizardStep = 1;
+let mongoWizardConnectionValidated = false;
+let mongoWizardCollectionsLoaded = false;
+
+function isValidIdentity(value) {
+    return /^[A-Za-z0-9]{3,64}$/.test(String(value || '').trim());
+}
 
 const alertArea = document.getElementById('alert-area');
 
@@ -31,10 +40,14 @@ document.addEventListener('DOMContentLoaded', init);
 
 function bindEvents() {
     const newGroupBtn = document.getElementById('new-group-btn');
+    const mongoWizardBtn = document.getElementById('mongo-wizard-btn');
     const importReflectionsBtn = document.getElementById('import-reflections-btn');
     const importReflectionsInput = document.getElementById('import-reflections-input');
     if (newGroupBtn) {
         newGroupBtn.addEventListener('click', openCreateGroupModal);
+    }
+    if (mongoWizardBtn) {
+        mongoWizardBtn.addEventListener('click', openMongoWizardModal);
     }
     if (importReflectionsBtn && importReflectionsInput) {
         importReflectionsBtn.addEventListener('click', function () {
@@ -42,6 +55,51 @@ function bindEvents() {
         });
         importReflectionsInput.addEventListener('change', function () {
             importReflections(importReflectionsInput);
+        });
+    }
+
+    const groupsBody = document.getElementById('groups-body');
+    if (groupsBody) {
+        groupsBody.addEventListener('click', function (event) {
+            if (isReadOnly) {
+                return;
+            }
+            const target = event.target instanceof Element ? event.target.closest('button[data-action]') : null;
+            if (!target) {
+                return;
+            }
+            const action = target.getAttribute('data-action');
+            const groupUuid = target.getAttribute('data-group-id');
+            if (action !== 'add-tool' && action !== 'add-reflection' && action !== 'add-mongo-tool' && action !== 'add-binding') {
+                return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (action === 'add-binding') {
+                openCreateBindingModal(groupUuid);
+                return;
+            }
+
+            if (action === 'add-mongo-tool') {
+                openCreateMongoToolModal(groupUuid);
+                return;
+            }
+            if (action === 'add-reflection') {
+                openCreateReflectionModal(groupUuid);
+                return;
+            }
+
+            const groupType = resolveGroupType(groupUuid);
+            if (groupType === 'MONGO') {
+                openCreateMongoToolModal(groupUuid);
+                return;
+            }
+            if (groupType === 'RECORD') {
+                openCreateRecordToolModal(groupUuid);
+                return;
+            }
+            openCreateReflectionModal(groupUuid);
         });
     }
 
@@ -62,6 +120,49 @@ function bindEvents() {
     document.getElementById('reflection-modal-close').addEventListener('click', closeReflectionModal);
     document.getElementById('reflection-modal-cancel').addEventListener('click', closeReflectionModal);
     document.getElementById('reflection-modal-save').addEventListener('click', saveReflection);
+
+    const mongoToolModalClose = document.getElementById('mongo-tool-modal-close');
+    const mongoToolModalCancel = document.getElementById('mongo-tool-modal-cancel');
+    const mongoToolModalSave = document.getElementById('mongo-tool-modal-save');
+    if (mongoToolModalClose) {
+        mongoToolModalClose.addEventListener('click', closeMongoToolModal);
+    }
+    if (mongoToolModalCancel) {
+        mongoToolModalCancel.addEventListener('click', closeMongoToolModal);
+    }
+    if (mongoToolModalSave) {
+        mongoToolModalSave.addEventListener('click', saveMongoToolReflection);
+    }
+    const mongoToolOperation = document.getElementById('mongo-tool-operation');
+    if (mongoToolOperation) {
+        mongoToolOperation.addEventListener('change', syncMongoToolSearchConfigVisibility);
+    }
+    const recordToolModalClose = document.getElementById('record-tool-modal-close');
+    const recordToolModalCancel = document.getElementById('record-tool-modal-cancel');
+    const recordToolModalSave = document.getElementById('record-tool-modal-save');
+    const addRecordParamBtn = document.getElementById('add-record-param-btn');
+    if (recordToolModalClose) {
+        recordToolModalClose.addEventListener('click', closeRecordToolModal);
+    }
+    if (recordToolModalCancel) {
+        recordToolModalCancel.addEventListener('click', closeRecordToolModal);
+    }
+    if (recordToolModalSave) {
+        recordToolModalSave.addEventListener('click', saveRecordToolReflection);
+    }
+    if (addRecordParamBtn) {
+        addRecordParamBtn.addEventListener('click', function () {
+            recordModalParameters.push({ name: '', type: 'string', description: '', required: false, array: false });
+            renderRecordToolParameters();
+        });
+    }
+    const recordToolOperation = document.getElementById('record-tool-operation');
+    if (recordToolOperation) {
+        recordToolOperation.addEventListener('change', function () {
+            syncRecordToolOperationUi();
+            renderRecordToolParameters();
+        });
+    }
     document.getElementById('reflection-method').addEventListener('change', function () {
         updateRequestTemplateVisibility();
     });
@@ -91,6 +192,67 @@ function bindEvents() {
     document.getElementById('binding-modal-cancel').addEventListener('click', closeBindingModal);
     document.getElementById('binding-modal-save').addEventListener('click', saveBinding);
 
+    const mongoWizardClose = document.getElementById('mongo-wizard-modal-close');
+    const mongoWizardCancel = document.getElementById('mongo-wizard-cancel');
+    const mongoWizardInspectConnection = document.getElementById('mongo-wizard-inspect-connection');
+    const mongoWizardInspectDatabase = document.getElementById('mongo-wizard-inspect-database');
+    const mongoWizardGenerate = document.getElementById('mongo-wizard-generate');
+    const mongoWizardSelectAll = document.getElementById('mongo-wizard-select-all');
+    const mongoWizardNext = document.getElementById('mongo-wizard-next');
+    const mongoWizardBack = document.getElementById('mongo-wizard-back');
+
+    if (mongoWizardClose) {
+        mongoWizardClose.addEventListener('click', closeMongoWizardModal);
+    }
+    if (mongoWizardCancel) {
+        mongoWizardCancel.addEventListener('click', closeMongoWizardModal);
+    }
+    if (mongoWizardInspectConnection) {
+        mongoWizardInspectConnection.addEventListener('click', inspectMongoWizardConnection);
+    }
+    if (mongoWizardInspectDatabase) {
+        mongoWizardInspectDatabase.addEventListener('click', inspectMongoWizardDatabase);
+    }
+    if (mongoWizardGenerate) {
+        mongoWizardGenerate.addEventListener('click', generateMongoWizardReflections);
+    }
+    if (mongoWizardNext) {
+        mongoWizardNext.addEventListener('click', moveMongoWizardStepForward);
+    }
+    if (mongoWizardBack) {
+        mongoWizardBack.addEventListener('click', moveMongoWizardStepBack);
+    }
+    if (mongoWizardSelectAll) {
+        mongoWizardSelectAll.addEventListener('click', toggleMongoWizardSelectAll);
+    }
+    const mongoWizardUri = document.getElementById('mongo-wizard-uri');
+    const mongoWizardUsername = document.getElementById('mongo-wizard-username');
+    const mongoWizardPassword = document.getElementById('mongo-wizard-password');
+    const mongoWizardAuthDb = document.getElementById('mongo-wizard-auth-db');
+    const mongoWizardTls = document.getElementById('mongo-wizard-tls');
+    const mongoWizardDatabase = document.getElementById('mongo-wizard-database');
+
+    [mongoWizardUri, mongoWizardUsername, mongoWizardPassword, mongoWizardAuthDb].forEach(function (input) {
+        if (!input) {
+            return;
+        }
+        input.addEventListener('input', function () {
+            mongoWizardConnectionValidated = false;
+            mongoWizardCollectionsLoaded = false;
+        });
+    });
+    if (mongoWizardTls) {
+        mongoWizardTls.addEventListener('change', function () {
+            mongoWizardConnectionValidated = false;
+            mongoWizardCollectionsLoaded = false;
+        });
+    }
+    if (mongoWizardDatabase) {
+        mongoWizardDatabase.addEventListener('change', function () {
+            mongoWizardCollectionsLoaded = false;
+        });
+    }
+
     document.getElementById('reflection-publish-modal-close').addEventListener('click', closeReflectionPublishModal);
     document.getElementById('reflection-publish-modal-cancel').addEventListener('click', closeReflectionPublishModal);
     document.getElementById('reflection-publish-submit-btn').addEventListener('click', submitReflectionPublishFromModal);
@@ -99,8 +261,11 @@ function bindEvents() {
         if (event.key === 'Escape') {
             closeGroupModal();
             closeReflectionModal();
+            closeMongoToolModal();
+            closeRecordToolModal();
             closeBindingModal();
             closeReflectionPublishModal();
+            closeMongoWizardModal();
         }
     });
 }
@@ -226,14 +391,22 @@ function reflectionsForGroupUuid(groupUuid) {
 }
 
 function renderReflectionPillsHtml(groupReflections, groupUuid) {
+    const groupType = resolveGroupType(groupUuid);
+    const isMongoGroup = groupType === 'MONGO';
+
     if (!groupReflections || groupReflections.length === 0) {
         if (isReadOnly) {
             return '<span class="text-xs text-zinc-500">No reflections</span>';
         }
+        if (isMongoGroup) {
+            return isReadOnly
+                ? '<span class="text-xs text-zinc-500">Managed by Mongo wizard/custom Mongo tools.</span>'
+                : '<button class="rounded-full border border-dashed border-zinc-600 px-3 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" data-action="add-tool" data-group-id="' + escapeHtml(groupUuid) + '"><i class="fa-solid fa-plus mr-1"></i>Add tool</button>';
+        }
         return ''
             + '<button class="rounded-full border border-dashed border-zinc-600 px-3 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" '
-            + 'data-action="add-reflection" data-group-id="' + escapeHtml(groupUuid) + '">'
-            + '<i class="fa-solid fa-plus mr-1"></i>Add first reflection</button>';
+            + 'data-action="add-tool" data-group-id="' + escapeHtml(groupUuid) + '">'
+            + '<i class="fa-solid fa-plus mr-1"></i>Add first tool</button>';
     }
 
     const pills = groupReflections
@@ -259,12 +432,21 @@ function renderReflectionPillsHtml(groupReflections, groupUuid) {
 
     const addButton = isReadOnly
         ? ''
-        : '<button class="mb-1 inline-flex items-center rounded-full border border-dashed border-zinc-600 px-2.5 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" data-action="add-reflection" data-group-id="' + escapeHtml(groupUuid) + '" title="Add reflection to group"><i class="fa-solid fa-plus mr-1"></i>Add</button>';
+        : (isMongoGroup
+            ? '<button class="mb-1 inline-flex items-center rounded-full border border-dashed border-zinc-600 px-2.5 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" data-action="add-tool" data-group-id="' + escapeHtml(groupUuid) + '" title="Add tool to group"><i class="fa-solid fa-plus mr-1"></i>Add tool</button>'
+            : '<button class="mb-1 inline-flex items-center rounded-full border border-dashed border-zinc-600 px-2.5 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" data-action="add-tool" data-group-id="' + escapeHtml(groupUuid) + '" title="Add tool to group"><i class="fa-solid fa-plus mr-1"></i>Add tool</button>');
 
     return pills + addButton;
 }
 
+function resolveGroupType(groupUuid) {
+    const entry = findGroupEntry(groupUuid);
+    const group = entry ? (entry.group || entry) : null;
+    return String((group && group.type) ? group.type : 'REST').toUpperCase();
+}
+
 function renderBindingPillsHtml(bindings, groupUuid) {
+    const groupType = resolveGroupType(groupUuid);
     const sorted = (bindings || []).slice().sort(function (a, b) {
         return String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });
     });
@@ -281,6 +463,7 @@ function renderBindingPillsHtml(bindings, groupUuid) {
 
     const pills = sorted.map(function (binding) {
         const bindingName = escapeHtml(binding.name || 'default');
+        const bindingUuid = escapeHtml(binding.uuid || '');
         const baseUrl = escapeHtml(binding.baseUrl || '');
         const pillTitle = baseUrl ? ('Binding: ' + bindingName + ' (' + baseUrl + ')') : ('Binding: ' + bindingName);
         return ''
@@ -288,6 +471,7 @@ function renderBindingPillsHtml(bindings, groupUuid) {
             + '  <button class="inline-flex items-center gap-1 transition-colors hover:text-cyan-300" data-action="edit-binding" data-group-id="' + escapeHtml(groupUuid) + '" data-name="' + bindingName + '" title="' + escapeHtml(pillTitle) + '">'
             + '    <span class="font-mono">' + bindingName + '</span>'
             + '  </button>'
+            + '  <button class="px-1 py-0.5 text-[10px] text-emerald-300 transition-colors hover:text-emerald-200" data-action="explore-binding" data-group-id="' + escapeHtml(groupUuid) + '" data-name="' + bindingName + '" data-binding-uuid="' + bindingUuid + '" data-group-type="' + escapeHtml(groupType) + '" title="Open Reflection Explorer with this binding"><i class="fa-solid fa-flask-vial"></i></button>'
             + (isReadOnly ? '' : '  <button class="ml-1 px-1 py-0.5 text-[10px] text-zinc-300 transition-colors hover:text-cyan-300" data-action="copy-binding" data-group-id="' + escapeHtml(groupUuid) + '" data-name="' + bindingName + '" title="Copy binding"><i class="fa-solid fa-copy"></i></button>')
             + (isReadOnly ? '' : '  <button class="px-1 py-0.5 text-[10px] text-rose-300 transition-colors hover:text-rose-200" data-action="delete-binding" data-group-id="' + escapeHtml(groupUuid) + '" data-name="' + bindingName + '" title="Delete binding"><i class="fa-solid fa-trash"></i></button>')
             + '</span>';
@@ -340,9 +524,31 @@ function bindDynamicTableEvents(root) {
             exportGroup(button.getAttribute('data-id'));
         });
     });
+    root.querySelectorAll('button[data-action="add-tool"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            const groupUuid = button.getAttribute('data-group-id');
+            const groupType = resolveGroupType(groupUuid);
+            if (groupType === 'MONGO') {
+                openCreateMongoToolModal(groupUuid);
+                return;
+            }
+            if (groupType === 'RECORD') {
+                openCreateRecordToolModal(groupUuid);
+                return;
+            }
+            openCreateReflectionModal(groupUuid);
+        });
+    });
+
+    // Legacy action names kept for compatibility with older rendered rows.
     root.querySelectorAll('button[data-action="add-reflection"]').forEach(function (button) {
         button.addEventListener('click', function () {
             openCreateReflectionModal(button.getAttribute('data-group-id'));
+        });
+    });
+    root.querySelectorAll('button[data-action="add-mongo-tool"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            openCreateMongoToolModal(button.getAttribute('data-group-id'));
         });
     });
     root.querySelectorAll('button[data-action="edit-reflection"]').forEach(function (button) {
@@ -370,6 +576,14 @@ function bindDynamicTableEvents(root) {
             openEditBindingModal(button.getAttribute('data-group-id'), button.getAttribute('data-name'));
         });
     });
+    root.querySelectorAll('button[data-action="explore-binding"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            openReflectionExplorer(
+                button.getAttribute('data-group-id'),
+                button.getAttribute('data-name'),
+                button.getAttribute('data-binding-uuid'));
+        });
+    });
     root.querySelectorAll('button[data-action="copy-binding"]').forEach(function (button) {
         button.addEventListener('click', function () {
             openCopyBindingModal(button.getAttribute('data-group-id'), button.getAttribute('data-name'));
@@ -380,6 +594,26 @@ function bindDynamicTableEvents(root) {
             deleteBinding(button.getAttribute('data-group-id'), button.getAttribute('data-name'));
         });
     });
+}
+
+function openReflectionExplorer(groupUuid, bindingName, bindingUuid) {
+    const params = new URLSearchParams();
+    const currentParams = new URLSearchParams(window.location.search || '');
+    const sessionUuid = currentParams.get('sessionUuid');
+    if (groupUuid) {
+        params.set('groupUuid', groupUuid);
+    }
+    if (bindingName) {
+        params.set('bindingName', bindingName);
+    }
+    if (bindingUuid) {
+        params.set('bindingUuid', bindingUuid);
+    }
+    if (sessionUuid) {
+        params.set('sessionUuid', sessionUuid);
+    }
+    const suffix = params.toString();
+    window.location.href = '/data-inspector' + (suffix ? ('?' + suffix) : '');
 }
 
 function initGitHubConnection() {
@@ -634,7 +868,7 @@ async function refreshReflectionGroupContributionStatus(id) {
 }
 
 function openCreateGroupModal() {
-    document.getElementById('group-modal-title').textContent = 'New Reflection Group';
+    document.getElementById('group-modal-title').textContent = 'New REST/OAuth Reflection Group';
     document.getElementById('group-id').value = '';
     document.getElementById('group-name').value = '';
     document.getElementById('group-group-id').value = '';
@@ -643,6 +877,7 @@ function openCreateGroupModal() {
     document.getElementById('group-artifact-id').disabled = false;
     document.getElementById('group-description').value = '';
     document.getElementById('group-type').value = 'REST';
+    document.getElementById('group-type').disabled = true;
     document.getElementById('group-base-url').value = '';
     document.getElementById('group-url-override-enabled').checked = true;
     document.getElementById('group-auth-mode').value = 'NONE';
@@ -672,6 +907,7 @@ function openEditGroupModal(uuid) {
     document.getElementById('group-artifact-id').disabled = true;
     document.getElementById('group-description').value = group.description || '';
     document.getElementById('group-type').value = group.type || 'REST';
+    document.getElementById('group-type').disabled = true;
     document.getElementById('group-base-url').value = group.baseUrl || '';
     document.getElementById('group-url-override-enabled').checked = group.urlOverrideEnabled !== false;
     document.getElementById('group-auth-mode').value = group.authenticationMode || 'NONE';
@@ -697,6 +933,343 @@ function openEditGroupModal(uuid) {
     showModal('group-modal');
 }
 
+function openMongoWizardModal() {
+    clearMongoWizardAlert();
+    mongoWizardCollections = [];
+    mongoWizardStep = 1;
+    mongoWizardConnectionValidated = false;
+    mongoWizardCollectionsLoaded = false;
+    document.getElementById('mongo-wizard-uri').value = '';
+    document.getElementById('mongo-wizard-username').value = '';
+    document.getElementById('mongo-wizard-password').value = '';
+    document.getElementById('mongo-wizard-auth-db').value = '';
+    document.getElementById('mongo-wizard-tls').checked = false;
+    document.getElementById('mongo-wizard-group-name').value = '';
+    document.getElementById('mongo-wizard-group-description').value = '';
+    document.getElementById('mongo-wizard-group-id').value = '';
+    document.getElementById('mongo-wizard-artifact-id').value = '';
+    document.getElementById('mongo-wizard-database').innerHTML = '';
+    document.getElementById('mongo-wizard-collections').innerHTML = '<p class="text-xs text-zinc-500">Inspect a database to list collections.</p>';
+    syncMongoWizardStepUi();
+    showModal('mongo-wizard-modal');
+}
+
+function closeMongoWizardModal() {
+    hideModal('mongo-wizard-modal');
+}
+
+function syncMongoWizardStepUi() {
+    const step1 = document.getElementById('mongo-wizard-step-1');
+    const step2 = document.getElementById('mongo-wizard-step-2');
+    const step3 = document.getElementById('mongo-wizard-step-3');
+    const backBtn = document.getElementById('mongo-wizard-back');
+    const nextBtn = document.getElementById('mongo-wizard-next');
+    const generateBtn = document.getElementById('mongo-wizard-generate');
+    const indicator = document.getElementById('mongo-wizard-step-indicator');
+    const stepTitle = document.getElementById('mongo-wizard-step-title');
+    const chips = [
+        document.getElementById('mongo-step-chip-1'),
+        document.getElementById('mongo-step-chip-2'),
+        document.getElementById('mongo-step-chip-3')
+    ];
+
+    if (step1) step1.classList.toggle('hidden', mongoWizardStep !== 1);
+    if (step2) step2.classList.toggle('hidden', mongoWizardStep !== 2);
+    if (step3) step3.classList.toggle('hidden', mongoWizardStep !== 3);
+
+    if (backBtn) backBtn.classList.toggle('hidden', mongoWizardStep === 1);
+    if (nextBtn) nextBtn.classList.toggle('hidden', mongoWizardStep === 3);
+    if (generateBtn) generateBtn.classList.toggle('hidden', mongoWizardStep !== 3);
+
+    if (indicator) {
+        indicator.textContent = 'Step ' + mongoWizardStep + ' of 3';
+    }
+    if (stepTitle) {
+        stepTitle.textContent = mongoWizardStep === 1
+            ? 'Connection'
+            : (mongoWizardStep === 2 ? 'Database' : 'Collections');
+    }
+
+    chips.forEach(function (chip, index) {
+        if (!chip) {
+            return;
+        }
+        const stepNumber = index + 1;
+        chip.classList.remove(
+            'border-cyan-500/50', 'bg-cyan-500/10', 'text-cyan-300',
+            'border-emerald-500/40', 'bg-emerald-500/10', 'text-emerald-300',
+            'border-zinc-700', 'bg-zinc-950', 'text-zinc-400'
+        );
+
+        if (stepNumber === mongoWizardStep) {
+            chip.classList.add('border-cyan-500/50', 'bg-cyan-500/10', 'text-cyan-300');
+            return;
+        }
+        if (stepNumber < mongoWizardStep) {
+            chip.classList.add('border-emerald-500/40', 'bg-emerald-500/10', 'text-emerald-300');
+            return;
+        }
+        chip.classList.add('border-zinc-700', 'bg-zinc-950', 'text-zinc-400');
+    });
+}
+
+function moveMongoWizardStepForward() {
+    clearMongoWizardAlert();
+    if (mongoWizardStep === 1) {
+        const connectionUri = document.getElementById('mongo-wizard-uri').value.trim();
+        const groupId = document.getElementById('mongo-wizard-group-id').value.trim();
+        const artifactId = document.getElementById('mongo-wizard-artifact-id').value.trim();
+        if (!connectionUri) {
+            showMongoWizardAlert('Connection URI is required.', 'warning');
+            return;
+        }
+        if (!isValidIdentity(groupId)) {
+            showMongoWizardAlert('Group ID must be alphanumeric and 3-64 characters.', 'warning');
+            return;
+        }
+        if (!isValidIdentity(artifactId)) {
+            showMongoWizardAlert('Artifact ID must be alphanumeric and 3-64 characters.', 'warning');
+            return;
+        }
+        if (!mongoWizardConnectionValidated) {
+            showMongoWizardAlert('Validate connection before proceeding to the next step.', 'warning');
+            return;
+        }
+        mongoWizardStep = 2;
+        syncMongoWizardStepUi();
+        return;
+    }
+
+    if (mongoWizardStep === 2) {
+        const database = document.getElementById('mongo-wizard-database').value;
+        if (!database) {
+            showMongoWizardAlert('Select a database before proceeding.', 'warning');
+            return;
+        }
+        if (!mongoWizardCollectionsLoaded || !mongoWizardCollections || mongoWizardCollections.length === 0) {
+            showMongoWizardAlert('Load collections before proceeding to the final step.', 'warning');
+            return;
+        }
+        mongoWizardStep = 3;
+        syncMongoWizardStepUi();
+    }
+}
+
+function moveMongoWizardStepBack() {
+    clearMongoWizardAlert();
+    mongoWizardStep = Math.max(1, mongoWizardStep - 1);
+    syncMongoWizardStepUi();
+}
+
+function mongoWizardConnectionPayload() {
+    return {
+        connectionUri: document.getElementById('mongo-wizard-uri').value.trim(),
+        username: document.getElementById('mongo-wizard-username').value.trim(),
+        password: document.getElementById('mongo-wizard-password').value,
+        authDatabase: document.getElementById('mongo-wizard-auth-db').value.trim(),
+        tlsEnabled: document.getElementById('mongo-wizard-tls').checked
+    };
+}
+
+async function inspectMongoWizardConnection() {
+    clearMongoWizardAlert();
+    const payload = mongoWizardConnectionPayload();
+    if (!payload.connectionUri) {
+        showMongoWizardAlert('Connection URI is required.', 'warning');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/reflection-groups/mongo/inspect-connection', {
+            method: 'POST',
+            headers: buildJsonHeaders(),
+            body: JSON.stringify(payload)
+        });
+        const result = await parseJson(response);
+        if (!response.ok) {
+            showMongoWizardAlert(result.error || 'Failed to inspect Mongo connection.', 'danger');
+            return;
+        }
+
+        const databaseSelect = document.getElementById('mongo-wizard-database');
+        databaseSelect.innerHTML = '';
+        (result.databases || []).forEach(function (name) {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            databaseSelect.appendChild(option);
+        });
+
+        if ((result.databases || []).length === 0) {
+            mongoWizardConnectionValidated = false;
+            showMongoWizardAlert('Connection successful but no databases were returned.', 'warning');
+            return;
+        }
+
+        mongoWizardConnectionValidated = true;
+        mongoWizardCollectionsLoaded = false;
+        mongoWizardCollections = [];
+        document.getElementById('mongo-wizard-collections').innerHTML = '<p class="text-xs text-zinc-500">Load collections for the selected database.</p>';
+        showMongoWizardAlert('Connection validated. Continue to step 2.', 'success');
+    } catch (_error) {
+        mongoWizardConnectionValidated = false;
+        showMongoWizardAlert('Network error inspecting Mongo connection.', 'danger');
+    }
+}
+
+async function inspectMongoWizardDatabase() {
+    clearMongoWizardAlert();
+    const payload = mongoWizardConnectionPayload();
+    payload.database = document.getElementById('mongo-wizard-database').value;
+    payload.sampleSize = 20;
+
+    if (!payload.connectionUri) {
+        showMongoWizardAlert('Connection URI is required.', 'warning');
+        return;
+    }
+    if (!payload.database) {
+        showMongoWizardAlert('Select a database first.', 'warning');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/reflection-groups/mongo/inspect-database', {
+            method: 'POST',
+            headers: buildJsonHeaders(),
+            body: JSON.stringify(payload)
+        });
+        const result = await parseJson(response);
+        if (!response.ok) {
+            showMongoWizardAlert(result.error || 'Failed to inspect Mongo database.', 'danger');
+            return;
+        }
+
+        mongoWizardCollections = (result.collections || []).map(function (collection) {
+            return {
+                name: collection.name,
+                estimatedCount: collection.estimatedCount || 0,
+                inferredSchema: collection.inferredSchema || ''
+            };
+        });
+        mongoWizardCollectionsLoaded = true;
+        renderMongoWizardCollections();
+        showMongoWizardAlert('Collections loaded. Continue to step 3 and select one or more collections.', 'success');
+    } catch (_error) {
+        mongoWizardCollectionsLoaded = false;
+        showMongoWizardAlert('Network error inspecting Mongo database.', 'danger');
+    }
+}
+
+function renderMongoWizardCollections() {
+    const container = document.getElementById('mongo-wizard-collections');
+    if (!container) {
+        return;
+    }
+    container.innerHTML = '';
+    if (!mongoWizardCollections || mongoWizardCollections.length === 0) {
+        container.innerHTML = '<p class="text-xs text-zinc-500">No collections found.</p>';
+        return;
+    }
+
+    mongoWizardCollections.forEach(function (collection, index) {
+        const row = document.createElement('label');
+        row.className = 'mb-2 flex items-center justify-between rounded-md border border-zinc-800 px-2 py-1';
+        row.innerHTML = ''
+            + '<span class="inline-flex items-center gap-2">'
+            + '  <input type="checkbox" class="mongo-wizard-collection-check h-4 w-4 rounded border-zinc-700 bg-zinc-950 text-[#fdaa02]" data-index="' + index + '">'
+            + '  <span>' + escapeHtml(collection.name) + '</span>'
+            + '</span>'
+            + '<span class="text-xs text-zinc-500">~' + escapeHtml(String(collection.estimatedCount)) + ' docs</span>';
+        container.appendChild(row);
+    });
+}
+
+function toggleMongoWizardSelectAll() {
+    const checks = Array.from(document.querySelectorAll('.mongo-wizard-collection-check'));
+    if (checks.length === 0) {
+        return;
+    }
+    const allChecked = checks.every(function (input) { return input.checked; });
+    checks.forEach(function (input) {
+        input.checked = !allChecked;
+    });
+}
+
+async function generateMongoWizardReflections() {
+    clearMongoWizardAlert();
+    const payload = mongoWizardConnectionPayload();
+    payload.database = document.getElementById('mongo-wizard-database').value;
+    payload.sampleSize = 20;
+    payload.groupName = document.getElementById('mongo-wizard-group-name').value.trim();
+    payload.groupDescription = document.getElementById('mongo-wizard-group-description').value.trim();
+    payload.groupId = document.getElementById('mongo-wizard-group-id').value.trim();
+    payload.artifactId = document.getElementById('mongo-wizard-artifact-id').value.trim();
+
+    const selectedCollections = Array.from(document.querySelectorAll('.mongo-wizard-collection-check'))
+        .filter(function (input) { return input.checked; })
+        .map(function (input) {
+            const index = Number(input.getAttribute('data-index'));
+            return mongoWizardCollections[index] ? mongoWizardCollections[index].name : '';
+        })
+        .filter(function (name) { return !!name; });
+
+    payload.collections = selectedCollections;
+
+    if (!payload.connectionUri) {
+        showMongoWizardAlert('Connection URI is required.', 'warning');
+        return;
+    }
+    if (!isValidIdentity(payload.groupId)) {
+        showMongoWizardAlert('Group ID must be alphanumeric and 3-64 characters.', 'warning');
+        return;
+    }
+    if (!isValidIdentity(payload.artifactId)) {
+        showMongoWizardAlert('Artifact ID must be alphanumeric and 3-64 characters.', 'warning');
+        return;
+    }
+    if (!payload.database) {
+        showMongoWizardAlert('Select a database first.', 'warning');
+        return;
+    }
+    if (selectedCollections.length === 0) {
+        showMongoWizardAlert('Select at least one collection.', 'warning');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/reflection-groups/mongo/wizard-generate', {
+            method: 'POST',
+            headers: buildJsonHeaders(),
+            body: JSON.stringify(payload)
+        });
+        const result = await parseJson(response);
+        if (!response.ok) {
+            showMongoWizardAlert(result.error || 'Failed to generate Mongo reflections.', 'danger');
+            return;
+        }
+        closeMongoWizardModal();
+        showAlert('Mongo reflections generated for ' + selectedCollections.length + ' collection(s).', 'success');
+        await loadAll();
+    } catch (_error) {
+        showMongoWizardAlert('Network error generating Mongo reflections.', 'danger');
+    }
+}
+
+function showMongoWizardAlert(message, level) {
+    const alert = document.getElementById('mongo-wizard-alert');
+    if (!alert) {
+        return;
+    }
+    alert.innerHTML = '<div class="rounded-lg border px-3 py-2 text-sm ' + alertClass(level) + '">' + escapeHtml(message || '') + '</div>';
+}
+
+function clearMongoWizardAlert() {
+    const alert = document.getElementById('mongo-wizard-alert');
+    if (alert) {
+        alert.innerHTML = '';
+    }
+}
+
 async function saveGroup() {
     const groupType = document.getElementById('group-type').value;
     const authenticationMode = document.getElementById('group-auth-mode').value;
@@ -708,8 +1281,8 @@ async function saveGroup() {
         name: document.getElementById('group-name').value.trim(),
         description: document.getElementById('group-description').value.trim(),
         type: groupType,
-        baseUrl: document.getElementById('group-base-url').value.trim(),
-        urlOverrideEnabled: document.getElementById('group-url-override-enabled').checked,
+        baseUrl: groupType === 'MONGO' ? '' : document.getElementById('group-base-url').value.trim(),
+        urlOverrideEnabled: groupType === 'MONGO' ? false : document.getElementById('group-url-override-enabled').checked,
         bindingParameters: sanitizeBindingParameterSchema(modalGroupBindingParameters),
         bindingSecrets: sanitizeBindingSecretSchema(modalGroupBindingSecrets),
         authenticationMode: authenticationMode,
@@ -788,9 +1361,30 @@ function syncGroupAuthVisibility() {
     const typeValue = document.getElementById('group-type').value;
     const modeSelect = document.getElementById('group-auth-mode');
     const oauthWrap = document.getElementById('group-oauth-template-wrap');
+    const baseUrlWrap = document.getElementById('group-base-url-wrap');
+    const urlOverrideWrap = document.getElementById('group-url-override-wrap');
+    const authModeWrap = document.getElementById('group-auth-mode-wrap');
 
     if (!modeSelect || !oauthWrap) {
         return;
+    }
+
+    const isMongo = typeValue === 'MONGO';
+
+    if (baseUrlWrap) {
+        baseUrlWrap.classList.toggle('hidden', isMongo);
+    }
+    if (urlOverrideWrap) {
+        urlOverrideWrap.classList.toggle('hidden', isMongo);
+    }
+    if (authModeWrap) {
+        authModeWrap.classList.toggle('hidden', isMongo);
+    }
+
+    if (isMongo) {
+        document.getElementById('group-base-url').value = '';
+        document.getElementById('group-url-override-enabled').checked = false;
+        modeSelect.value = 'NONE';
     }
 
     if (typeValue !== 'REST' && modeSelect.value === 'OAUTH') {
@@ -1331,11 +1925,28 @@ function sanitizeBindingValueMap(values) {
 }
 
 async function deleteGroup(uuid) {
+    const entry = findGroupEntry(uuid);
+    const reflectionCount = entry && Array.isArray(entry.reflections) ? entry.reflections.length : 0;
+    const bindingCount = entry && Array.isArray(entry.bindings) ? entry.bindings.length : 0;
+    const hasChildren = reflectionCount > 0 || bindingCount > 0;
+
     if (!confirm('Delete this reflection group?')) {
         return;
     }
+
+    let purge = false;
+    if (hasChildren) {
+        const message = 'This group contains ' + reflectionCount + ' reflection(s) and ' + bindingCount + ' binding(s).\n\n'
+            + 'Delete EVERYTHING in this group (tools, bindings, and group) permanently?';
+        if (!confirm(message)) {
+            return;
+        }
+        purge = true;
+    }
+
     try {
-        const response = await fetch('/api/reflection-groups/' + encodeURIComponent(uuid), {
+        const url = '/api/reflection-groups/' + encodeURIComponent(uuid) + (purge ? '?purge=true' : '');
+        const response = await fetch(url, {
             method: 'DELETE',
             headers: buildCsrfHeaders()
         });
@@ -1344,7 +1955,7 @@ async function deleteGroup(uuid) {
             showAlert(result.error || 'Failed to delete group.', 'danger');
             return;
         }
-        showAlert('Group deleted.', 'success');
+        showAlert(purge ? 'Group and all contents deleted.' : 'Group deleted.', 'success');
         await loadAll();
     } catch (_error) {
         showAlert('Network error while deleting group.', 'danger');
@@ -1357,7 +1968,28 @@ function openCreateReflectionModal(defaultGroupUuid) {
         return;
     }
 
-    document.getElementById('reflection-modal-title').textContent = 'New Reflection';
+    if (defaultGroupUuid && resolveGroupType(defaultGroupUuid) === 'MONGO') {
+        showAlert('Mongo reflections are managed through the Mongo Wizard.', 'info');
+        openMongoWizardModal();
+        return;
+    }
+
+    if (defaultGroupUuid && resolveGroupType(defaultGroupUuid) === 'RECORD') {
+        openCreateRecordToolModal(defaultGroupUuid);
+        return;
+    }
+
+    const supportedGroups = (groups || []).filter(function (entry) {
+        const group = entry.group || entry;
+        const type = String(group.type || 'REST').toUpperCase();
+        return type === 'REST';
+    });
+    if (supportedGroups.length === 0) {
+        showAlert('Create a REST group before adding REST/OAuth reflections.', 'warning');
+        return;
+    }
+
+    document.getElementById('reflection-modal-title').textContent = 'New REST/OAuth Reflection';
     document.getElementById('reflection-uuid').value = '';
     document.getElementById('reflection-id').value = '';
     document.getElementById('reflection-name').value = '';
@@ -1389,7 +2021,17 @@ function openEditReflectionModal(uuid) {
         return;
     }
 
-    document.getElementById('reflection-modal-title').textContent = 'Edit Reflection';
+    if (resolveGroupType(reflection.groupUuid) === 'MONGO') {
+        openEditMongoToolModal(uuid);
+        return;
+    }
+
+    if (resolveGroupType(reflection.groupUuid) === 'RECORD') {
+        openEditRecordToolModal(uuid);
+        return;
+    }
+
+    document.getElementById('reflection-modal-title').textContent = 'Edit REST/OAuth Reflection';
     populateReflectionModalFromReflection(reflection, false);
     showModal('reflection-modal');
 }
@@ -1401,7 +2043,17 @@ function openCopyReflectionModal(uuid) {
         return;
     }
 
-    document.getElementById('reflection-modal-title').textContent = 'Copy Reflection';
+    if (resolveGroupType(reflection.groupUuid) === 'MONGO') {
+        showAlert('Copy for Mongo tools is not supported in this modal. Create a new Mongo tool and adjust values.', 'info');
+        return;
+    }
+
+    if (resolveGroupType(reflection.groupUuid) === 'RECORD') {
+        openCopyRecordToolModal(uuid);
+        return;
+    }
+
+    document.getElementById('reflection-modal-title').textContent = 'Copy REST/OAuth Reflection';
     populateReflectionModalFromReflection(reflection, true);
     showModal('reflection-modal');
 }
@@ -1456,8 +2108,20 @@ async function saveReflection() {
         bodyTemplate: document.getElementById('reflection-body').value
     };
 
-    if (!payload.id || !payload.name || !payload.groupUuid || !payload.url) {
-        showReflectionModalAlert('ID, Name, Group, and URL are required.', 'warning');
+    const groupType = resolveGroupType(payload.groupUuid);
+
+    if (!payload.id || !payload.name || !payload.groupUuid) {
+        showReflectionModalAlert('ID, Name, and Group are required.', 'warning');
+        return;
+    }
+
+    if (groupType === 'REST' && !payload.url) {
+        showReflectionModalAlert('URL is required for REST reflections.', 'warning');
+        return;
+    }
+
+    if (groupType !== 'REST') {
+        showReflectionModalAlert('This modal is for REST/OAuth reflections only.', 'warning');
         return;
     }
 
@@ -1571,16 +2235,587 @@ function populateGroupSelect(selectedUuid) {
         return;
     }
     select.innerHTML = '';
-    groups.forEach(function (entry) {
+    const eligibleGroups = (groups || []).filter(function (entry) {
         const group = entry.group || entry;
+        const type = String(group.type || 'REST').toUpperCase();
+        return type === 'REST';
+    });
+    eligibleGroups.forEach(function (entry) {
+        const group = entry.group || entry;
+        const type = String(group.type || 'REST').toUpperCase();
         const option = document.createElement('option');
         option.value = group.uuid;
-        option.textContent = group.name + ' [' + (group.type || 'REST') + ']';
+        option.textContent = group.name + ' [' + type + ']';
         if (selectedUuid && selectedUuid === group.uuid) {
             option.selected = true;
         }
         select.appendChild(option);
     });
+    if (select.options.length > 0 && select.selectedIndex < 0) {
+        select.selectedIndex = 0;
+    }
+}
+
+function populateRecordGroupSelect(selectedUuid) {
+    const select = document.getElementById('record-tool-group');
+    if (!select) {
+        return;
+    }
+    select.innerHTML = '';
+    const recordGroups = (groups || []).filter(function (entry) {
+        const group = entry.group || entry;
+        return String(group.type || 'REST').toUpperCase() === 'RECORD';
+    });
+    recordGroups.forEach(function (entry) {
+        const group = entry.group || entry;
+        const option = document.createElement('option');
+        option.value = group.uuid;
+        option.textContent = group.name + ' [RECORD]';
+        if (selectedUuid && selectedUuid === group.uuid) {
+            option.selected = true;
+        }
+        select.appendChild(option);
+    });
+    if (select.options.length > 0 && select.selectedIndex < 0) {
+        select.selectedIndex = 0;
+    }
+}
+
+function parseRecordToolMetadataFromOutputSchema(outputSchema) {
+    if (!outputSchema) {
+        return { recordFqn: '', operation: 'SEARCH', queryType: 'SQL' };
+    }
+    try {
+        const parsed = JSON.parse(outputSchema);
+        return {
+            recordFqn: String(parsed.recordFqn || '').trim(),
+            operation: String(parsed.operation || 'SEARCH').trim().toUpperCase(),
+            queryType: String(parsed.queryType || 'SQL').trim().toUpperCase()
+        };
+    } catch (_error) {
+        return { recordFqn: '', operation: 'SEARCH', queryType: 'SQL' };
+    }
+}
+
+function mapRecordBackendOperationToModal(operation) {
+    const normalized = String(operation || 'SEARCH').toUpperCase();
+    if (normalized === 'READ') {
+        return 'GET';
+    }
+    if (normalized === 'LIST' || normalized === 'SEARCH' || normalized === 'GET') {
+        return normalized;
+    }
+    return 'SEARCH';
+}
+
+function mapRecordModalOperationToBackend(operation) {
+    const normalized = String(operation || 'SEARCH').toUpperCase();
+    if (normalized === 'GET') {
+        return 'READ';
+    }
+    return normalized;
+}
+
+function currentRecordModalOperation() {
+    const value = document.getElementById('record-tool-operation')?.value || 'SEARCH';
+    return String(value).toUpperCase();
+}
+
+function syncRecordToolOperationUi() {
+    const operation = currentRecordModalOperation();
+    const searchConfig = document.getElementById('record-tool-search-config');
+    if (searchConfig) {
+        searchConfig.classList.toggle('hidden', operation !== 'SEARCH');
+    }
+}
+
+function openCreateRecordToolModal(defaultGroupUuid) {
+    const recordGroups = (groups || []).filter(function (entry) {
+        const group = entry.group || entry;
+        return String(group.type || 'REST').toUpperCase() === 'RECORD';
+    });
+    if (recordGroups.length === 0) {
+        showAlert('Create a RECORD group first before adding a record tool.', 'warning');
+        return;
+    }
+
+    document.getElementById('record-tool-modal-title').textContent = 'New Record Search Tool';
+    document.getElementById('record-tool-uuid').value = '';
+    document.getElementById('record-tool-id').value = '';
+    document.getElementById('record-tool-name').value = '';
+    document.getElementById('record-tool-description').value = '';
+    document.getElementById('record-tool-operation').value = 'SEARCH';
+    document.getElementById('record-tool-query-type').value = 'SQL';
+    document.getElementById('record-tool-query-template').value = '';
+    populateRecordGroupSelect(defaultGroupUuid || '');
+    recordModalParameters = [];
+    syncRecordToolOperationUi();
+    renderRecordToolParameters();
+    clearRecordToolModalAlert();
+    showModal('record-tool-modal');
+}
+
+function openEditRecordToolModal(uuid) {
+    const reflection = reflections.find(function (item) { return item.uuid === uuid; });
+    if (!reflection) {
+        showAlert('Record reflection not found. Reload and try again.', 'warning');
+        return;
+    }
+    const metadata = parseRecordToolMetadataFromOutputSchema(reflection.outputSchema || '');
+
+    document.getElementById('record-tool-modal-title').textContent = 'Edit Record Search Tool';
+    document.getElementById('record-tool-uuid').value = reflection.uuid || '';
+    document.getElementById('record-tool-id').value = reflection.id || '';
+    document.getElementById('record-tool-name').value = reflection.name || '';
+    document.getElementById('record-tool-description').value = reflection.description || '';
+    document.getElementById('record-tool-operation').value = mapRecordBackendOperationToModal(metadata.operation || 'SEARCH');
+    document.getElementById('record-tool-query-type').value = 'SQL';
+    document.getElementById('record-tool-query-template').value = reflection.bodyTemplate || '';
+    populateRecordGroupSelect(reflection.groupUuid || '');
+    recordModalParameters = (reflection.inputParameters || []).map(function (parameter) {
+        return {
+            name: parameter.name || '',
+            type: parameter.type || 'string',
+            description: parameter.description || '',
+            required: !!parameter.required,
+            array: !!parameter.array
+        };
+    });
+    syncRecordToolOperationUi();
+    renderRecordToolParameters();
+    clearRecordToolModalAlert();
+    showModal('record-tool-modal');
+}
+
+function openCopyRecordToolModal(uuid) {
+    const reflection = reflections.find(function (item) { return item.uuid === uuid; });
+    if (!reflection) {
+        showAlert('Record reflection not found. Reload and try again.', 'warning');
+        return;
+    }
+    const metadata = parseRecordToolMetadataFromOutputSchema(reflection.outputSchema || '');
+
+    document.getElementById('record-tool-modal-title').textContent = 'Copy Record Search Tool';
+    document.getElementById('record-tool-uuid').value = '';
+    document.getElementById('record-tool-id').value = '';
+    document.getElementById('record-tool-name').value = reflection.name || '';
+    document.getElementById('record-tool-description').value = reflection.description || '';
+    document.getElementById('record-tool-operation').value = mapRecordBackendOperationToModal(metadata.operation || 'SEARCH');
+    document.getElementById('record-tool-query-type').value = 'SQL';
+    document.getElementById('record-tool-query-template').value = reflection.bodyTemplate || '';
+    populateRecordGroupSelect(reflection.groupUuid || '');
+    recordModalParameters = (reflection.inputParameters || []).map(function (parameter) {
+        return {
+            name: parameter.name || '',
+            type: parameter.type || 'string',
+            description: parameter.description || '',
+            required: !!parameter.required,
+            array: !!parameter.array
+        };
+    });
+    syncRecordToolOperationUi();
+    renderRecordToolParameters();
+    clearRecordToolModalAlert();
+    showModal('record-tool-modal');
+}
+
+function closeRecordToolModal() {
+    hideModal('record-tool-modal');
+}
+
+function showRecordToolModalAlert(message, level) {
+    const alert = document.getElementById('record-tool-modal-alert');
+    if (!alert) {
+        return;
+    }
+    alert.innerHTML = '<div class="rounded-lg border px-3 py-2 text-sm ' + alertClass(level) + '">' + escapeHtml(message || '') + '</div>';
+}
+
+function clearRecordToolModalAlert() {
+    const alert = document.getElementById('record-tool-modal-alert');
+    if (alert) {
+        alert.innerHTML = '';
+    }
+}
+
+function renderRecordToolParameters() {
+    const container = document.getElementById('record-tool-params-list');
+    if (!container) {
+        return;
+    }
+    container.innerHTML = '';
+
+    if (!recordModalParameters || recordModalParameters.length === 0) {
+        container.innerHTML = '<p class="text-xs text-zinc-500">No explicit parameters. Runtime input is still accepted.</p>';
+        return;
+    }
+
+    const header = document.createElement('div');
+    header.className = 'grid grid-cols-12 gap-2 mb-1 text-xs text-zinc-500';
+    header.innerHTML = ''
+        + '<div class="col-span-3">Name</div>'
+        + '<div class="col-span-2">Type</div>'
+        + '<div class="col-span-3">Description</div>'
+        + '<div class="col-span-1">Array</div>'
+        + '<div class="col-span-2">Required</div>'
+        + '<div class="col-span-1"></div>';
+    container.appendChild(header);
+
+    recordModalParameters.forEach(function (parameter, index) {
+        const row = document.createElement('div');
+        row.className = 'grid grid-cols-12 gap-2 mb-2';
+        row.innerHTML = ''
+            + '<input class="col-span-3 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 record-param-name" data-index="' + index + '" value="' + escapeHtml(parameter.name || '') + '" placeholder="query">'
+            + '<select class="col-span-2 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 record-param-type" data-index="' + index + '">'
+            + '  <option value="string">string</option>'
+            + '  <option value="int">int</option>'
+            + '  <option value="double">double</option>'
+            + '  <option value="boolean">boolean</option>'
+            + '</select>'
+            + '<input class="col-span-3 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 record-param-description" data-index="' + index + '" value="' + escapeHtml(parameter.description || '') + '" placeholder="parameter purpose">'
+            + '<label class="col-span-1 inline-flex items-center justify-center text-xs text-zinc-300"><input type="checkbox" class="record-param-array" data-index="' + index + '" ' + (parameter.array ? 'checked' : '') + '></label>'
+            + '<label class="col-span-2 inline-flex items-center gap-1 text-xs text-zinc-300"><input type="checkbox" class="record-param-required" data-index="' + index + '" ' + (parameter.required ? 'checked' : '') + '>Required</label>'
+            + '<button type="button" class="col-span-1 rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 remove-record-param" data-index="' + index + '" title="Remove"><i class="fa-solid fa-xmark"></i></button>';
+        container.appendChild(row);
+        const typeSelect = row.querySelector('.record-param-type');
+        if (typeSelect) {
+            typeSelect.value = parameter.type || 'string';
+        }
+    });
+
+    container.querySelectorAll('.record-param-name').forEach(function (input) {
+        input.addEventListener('input', function () {
+            const index = Number(input.getAttribute('data-index'));
+            recordModalParameters[index].name = input.value;
+        });
+    });
+    container.querySelectorAll('.record-param-type').forEach(function (input) {
+        input.addEventListener('change', function () {
+            const index = Number(input.getAttribute('data-index'));
+            recordModalParameters[index].type = input.value;
+        });
+    });
+    container.querySelectorAll('.record-param-description').forEach(function (input) {
+        input.addEventListener('input', function () {
+            const index = Number(input.getAttribute('data-index'));
+            recordModalParameters[index].description = input.value;
+        });
+    });
+    container.querySelectorAll('.record-param-array').forEach(function (input) {
+        input.addEventListener('change', function () {
+            const index = Number(input.getAttribute('data-index'));
+            recordModalParameters[index].array = !!input.checked;
+        });
+    });
+    container.querySelectorAll('.record-param-required').forEach(function (input) {
+        input.addEventListener('change', function () {
+            const index = Number(input.getAttribute('data-index'));
+            recordModalParameters[index].required = !!input.checked;
+        });
+    });
+    container.querySelectorAll('.remove-record-param').forEach(function (button) {
+        button.addEventListener('click', function () {
+            const index = Number(button.getAttribute('data-index'));
+            recordModalParameters.splice(index, 1);
+            renderRecordToolParameters();
+        });
+    });
+}
+
+async function saveRecordToolReflection() {
+    const uuid = document.getElementById('record-tool-uuid').value.trim();
+    const groupUuid = document.getElementById('record-tool-group').value;
+    const recordFqn = resolveRecordFqnForGroup(groupUuid);
+    const queryType = 'SQL';
+    const modalOperation = currentRecordModalOperation();
+    const backendOperation = mapRecordModalOperationToBackend(modalOperation);
+    const queryTemplate = document.getElementById('record-tool-query-template').value.trim();
+
+    if (!recordFqn) {
+        showRecordToolModalAlert('Unable to resolve record type for this group.', 'warning');
+        return;
+    }
+
+    const inputParameters = sanitizeParameters(recordModalParameters);
+
+    const payload = {
+        id: document.getElementById('record-tool-id').value.trim(),
+        name: document.getElementById('record-tool-name').value.trim(),
+        description: document.getElementById('record-tool-description').value.trim(),
+        groupUuid: groupUuid,
+        inputParameters: inputParameters,
+        method: 'POST',
+        url: '',
+        requestContentType: 'application/json',
+        responseContentType: 'application/json',
+        outputSchema: JSON.stringify({
+            '$schema': 'https://json-schema.org/draft/2020-12/schema',
+            type: 'object',
+            'x-vork-record-tool': true,
+            'x-vork-mandatory-record-tool': false,
+            recordFqn: recordFqn,
+            operation: backendOperation,
+            queryType: queryType
+        }),
+        headers: {},
+        queryParameters: {},
+        bodyTemplate: modalOperation === 'SEARCH' ? queryTemplate : ''
+    };
+
+    if (!payload.id || !payload.name || !payload.groupUuid) {
+        showRecordToolModalAlert('ID, Name, and Record Group are required.', 'warning');
+        return;
+    }
+    if (!/^[A-Za-z0-9]+$/.test(payload.id)) {
+        showRecordToolModalAlert('ID must be alphanumeric.', 'warning');
+        return;
+    }
+    if (resolveGroupType(payload.groupUuid) !== 'RECORD') {
+        showRecordToolModalAlert('Selected group must be a RECORD group.', 'warning');
+        return;
+    }
+
+    const hasUuidParam = inputParameters.some(function (parameter) {
+        return String(parameter.name || '').trim().toLowerCase() === 'uuid';
+    });
+    if (modalOperation === 'GET' && !hasUuidParam) {
+        showRecordToolModalAlert('GET tools require an input parameter named uuid.', 'warning');
+        return;
+    }
+
+    try {
+        const response = await fetch(uuid ? '/api/reflections/' + encodeURIComponent(uuid) : '/api/reflections', {
+            method: uuid ? 'PUT' : 'POST',
+            headers: buildJsonHeaders(),
+            body: JSON.stringify(payload)
+        });
+        const result = await parseJson(response);
+        if (!response.ok) {
+            showRecordToolModalAlert(result.error || 'Failed to save record tool.', 'danger');
+            return;
+        }
+
+        closeRecordToolModal();
+        showAlert(uuid ? 'Record tool updated.' : 'Record tool created.', 'success');
+        await loadAll();
+    } catch (_error) {
+        showRecordToolModalAlert('Network error while saving record tool.', 'danger');
+    }
+}
+
+function resolveRecordFqnForGroup(groupUuid) {
+    const groupReflections = reflectionsForGroupUuid(groupUuid);
+    for (let i = 0; i < groupReflections.length; i += 1) {
+        const reflection = groupReflections[i] || {};
+        const outputSchema = reflection.outputSchema || '';
+        if (!outputSchema) {
+            continue;
+        }
+        try {
+            const parsed = JSON.parse(outputSchema);
+            const recordFqn = parsed && parsed.recordFqn ? String(parsed.recordFqn).trim() : '';
+            if (recordFqn) {
+                return recordFqn;
+            }
+        } catch (_err) {
+            const match = outputSchema.match(/"recordFqn"\s*:\s*"([^"]+)"/);
+            if (match && match[1]) {
+                return match[1].trim();
+            }
+        }
+    }
+    return '';
+}
+
+function populateMongoGroupSelect(selectedUuid) {
+    const select = document.getElementById('mongo-tool-group');
+    if (!select) {
+        return;
+    }
+    select.innerHTML = '';
+    const mongoGroups = (groups || []).filter(function (entry) {
+        const group = entry.group || entry;
+        return String(group.type || 'REST').toUpperCase() === 'MONGO';
+    });
+    mongoGroups.forEach(function (entry) {
+        const group = entry.group || entry;
+        const option = document.createElement('option');
+        option.value = group.uuid;
+        option.textContent = group.name + ' [MONGO]';
+        if (selectedUuid && selectedUuid === group.uuid) {
+            option.selected = true;
+        }
+        select.appendChild(option);
+    });
+    if (select.options.length > 0 && select.selectedIndex < 0) {
+        select.selectedIndex = 0;
+    }
+}
+
+function parseMongoMetadataFromOutputSchema(outputSchema) {
+    if (!outputSchema) {
+        return { database: '', collection: '', operation: 'READ', queryType: 'MONGO', queryTemplate: '' };
+    }
+    try {
+        const parsed = JSON.parse(outputSchema);
+        return {
+            database: String(parsed.database || '').trim(),
+            collection: String(parsed.collection || '').trim(),
+            operation: String(parsed.operation || 'READ').trim().toUpperCase(),
+            queryType: String(parsed.queryType || 'MONGO').trim().toUpperCase(),
+            queryTemplate: String(parsed.queryTemplate || '').trim()
+        };
+    } catch (_error) {
+        return { database: '', collection: '', operation: 'READ', queryType: 'MONGO', queryTemplate: '' };
+    }
+}
+
+function openCreateMongoToolModal(defaultGroupUuid) {
+    const mongoGroups = (groups || []).filter(function (entry) {
+        const group = entry.group || entry;
+        return String(group.type || 'REST').toUpperCase() === 'MONGO';
+    });
+    if (mongoGroups.length === 0) {
+        showAlert('Create a MONGO group first, or use Mongo Wizard to generate one.', 'warning');
+        return;
+    }
+
+    document.getElementById('mongo-tool-modal-title').textContent = 'New Mongo Tool';
+    document.getElementById('mongo-tool-uuid').value = '';
+    document.getElementById('mongo-tool-id').value = '';
+    document.getElementById('mongo-tool-name').value = '';
+    document.getElementById('mongo-tool-description').value = '';
+    document.getElementById('mongo-tool-database').value = '';
+    document.getElementById('mongo-tool-collection').value = '';
+    document.getElementById('mongo-tool-operation').value = 'READ';
+    document.getElementById('mongo-tool-query-type').value = 'MONGO';
+    document.getElementById('mongo-tool-query-template').value = '';
+    document.getElementById('mongo-tool-inferred-schema').value = '';
+    populateMongoGroupSelect(defaultGroupUuid || '');
+    syncMongoToolSearchConfigVisibility();
+    clearMongoToolModalAlert();
+    showModal('mongo-tool-modal');
+}
+
+function openEditMongoToolModal(uuid) {
+    const reflection = reflections.find(function (item) { return item.uuid === uuid; });
+    if (!reflection) {
+        showAlert('Mongo reflection not found. Reload and try again.', 'warning');
+        return;
+    }
+    const metadata = parseMongoMetadataFromOutputSchema(reflection.outputSchema || '');
+    const schemaText = (function () {
+        try {
+            const parsed = JSON.parse(reflection.outputSchema || '{}');
+            const inferred = parsed.properties && parsed.properties.document ? parsed.properties.document : null;
+            return inferred ? JSON.stringify(inferred, null, 2) : '';
+        } catch (_error) {
+            return '';
+        }
+    })();
+
+    document.getElementById('mongo-tool-modal-title').textContent = 'Edit Mongo Tool';
+    document.getElementById('mongo-tool-uuid').value = reflection.uuid || '';
+    document.getElementById('mongo-tool-id').value = reflection.id || '';
+    document.getElementById('mongo-tool-name').value = reflection.name || '';
+    document.getElementById('mongo-tool-description').value = reflection.description || '';
+    document.getElementById('mongo-tool-database').value = metadata.database || '';
+    document.getElementById('mongo-tool-collection').value = metadata.collection || '';
+    document.getElementById('mongo-tool-operation').value = metadata.operation || 'READ';
+    document.getElementById('mongo-tool-query-type').value = metadata.queryType === 'SQL' ? 'SQL' : 'MONGO';
+    document.getElementById('mongo-tool-query-template').value = metadata.queryTemplate || '';
+    document.getElementById('mongo-tool-inferred-schema').value = schemaText;
+    populateMongoGroupSelect(reflection.groupUuid || '');
+    syncMongoToolSearchConfigVisibility();
+    clearMongoToolModalAlert();
+    showModal('mongo-tool-modal');
+}
+
+function syncMongoToolSearchConfigVisibility() {
+    const operation = (document.getElementById('mongo-tool-operation')?.value || '').toUpperCase();
+    const block = document.getElementById('mongo-tool-search-config');
+    if (!block) {
+        return;
+    }
+    block.classList.toggle('hidden', operation !== 'SEARCH');
+}
+
+function closeMongoToolModal() {
+    hideModal('mongo-tool-modal');
+}
+
+function showMongoToolModalAlert(message, level) {
+    const alert = document.getElementById('mongo-tool-modal-alert');
+    if (!alert) {
+        return;
+    }
+    alert.innerHTML = '<div class="rounded-lg border px-3 py-2 text-sm ' + alertClass(level) + '">' + escapeHtml(message || '') + '</div>';
+}
+
+function clearMongoToolModalAlert() {
+    const alert = document.getElementById('mongo-tool-modal-alert');
+    if (alert) {
+        alert.innerHTML = '';
+    }
+}
+
+async function saveMongoToolReflection() {
+    const uuid = document.getElementById('mongo-tool-uuid').value.trim();
+    const inferredSchemaRaw = document.getElementById('mongo-tool-inferred-schema').value.trim();
+    if (inferredSchemaRaw) {
+        try {
+            JSON.parse(inferredSchemaRaw);
+        } catch (_error) {
+            showMongoToolModalAlert('Inferred schema must be valid JSON.', 'warning');
+            return;
+        }
+    }
+
+    const payload = {
+        id: document.getElementById('mongo-tool-id').value.trim(),
+        name: document.getElementById('mongo-tool-name').value.trim(),
+        description: document.getElementById('mongo-tool-description').value.trim(),
+        groupUuid: document.getElementById('mongo-tool-group').value,
+        database: document.getElementById('mongo-tool-database').value.trim(),
+        collection: document.getElementById('mongo-tool-collection').value.trim(),
+        operation: document.getElementById('mongo-tool-operation').value,
+        inferredSchema: inferredSchemaRaw,
+        queryType: document.getElementById('mongo-tool-query-type').value,
+        queryTemplate: document.getElementById('mongo-tool-query-template').value.trim()
+    };
+
+    if (!payload.id || !payload.name || !payload.groupUuid || !payload.collection || !payload.operation) {
+        showMongoToolModalAlert('ID, Name, Mongo Group, Collection, and Operation are required.', 'warning');
+        return;
+    }
+    if (!/^[A-Za-z0-9]+$/.test(payload.id)) {
+        showMongoToolModalAlert('ID must be alphanumeric.', 'warning');
+        return;
+    }
+
+    if (String(payload.operation || '').toUpperCase() !== 'SEARCH') {
+        payload.queryType = '';
+        payload.queryTemplate = '';
+    }
+
+    try {
+        const response = await fetch(uuid ? '/api/mongo-reflections/' + encodeURIComponent(uuid) : '/api/mongo-reflections', {
+            method: uuid ? 'PUT' : 'POST',
+            headers: buildJsonHeaders(),
+            body: JSON.stringify(payload)
+        });
+        const result = await parseJson(response);
+        if (!response.ok) {
+            showMongoToolModalAlert(result.error || 'Failed to save Mongo tool.', 'danger');
+            return;
+        }
+
+        closeMongoToolModal();
+        showAlert(uuid ? 'Mongo tool updated.' : 'Mongo tool created.', 'success');
+        await loadAll();
+    } catch (_error) {
+        showMongoToolModalAlert('Network error while saving Mongo tool.', 'danger');
+    }
 }
 
 function renderParameters() {

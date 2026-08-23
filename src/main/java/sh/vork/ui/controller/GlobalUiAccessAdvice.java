@@ -2,6 +2,7 @@ package sh.vork.ui.controller;
 
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import jakarta.servlet.http.HttpServletRequest;
@@ -21,7 +22,8 @@ public class GlobalUiAccessAdvice {
     private static final String NAV_LAYOUT_SESSION_KEY = "VORK_NAV_LAYOUT";
     private final SurfaceService surfaceService;
 
-    public GlobalUiAccessAdvice(SurfaceService surfaceService) {
+    @Autowired
+    public GlobalUiAccessAdvice(@Autowired(required = false) SurfaceService surfaceService) {
         this.surfaceService = surfaceService;
     }
 
@@ -49,6 +51,9 @@ public class GlobalUiAccessAdvice {
             return List.of();
         }
         if (hasManageUsersPermission() && request != null && !"/".equals(request.getRequestURI())) {
+            return List.of();
+        }
+        if (surfaceService == null) {
             return List.of();
         }
         return surfaceService.listPublishedNavAppsForUser(auth.getName());

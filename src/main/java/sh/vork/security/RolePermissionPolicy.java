@@ -15,7 +15,8 @@ public final class RolePermissionPolicy {
     private static final Map<UserRole, Set<Permission>> ROLE_PERMISSIONS = new EnumMap<>(UserRole.class);
         private static final Map<String, Permission> TOOL_PERMISSIONS = Map.of(
             "createSkill", Permission.SKILLS_WRITE,
-            "compileJavaType", Permission.TYPES_WRITE
+            "compileJavaType", Permission.TYPES_WRITE,
+            "configureSessionApproval", Permission.USERS_MANAGE
         );
 
     static {

@@ -38,8 +38,9 @@ import java.util.regex.Pattern;
  *   <li>Keywords ({@code AND}, {@code OR}, {@code NOT}, {@code LIKE}, {@code IN},
  *       {@code IS}, {@code NULL}, {@code TRUE}, {@code FALSE}) are
  *       case-insensitive.</li>
- *   <li>String literals must be single-quoted. Escape a literal single quote by
- *       doubling it: {@code 'it''s fine'}.</li>
+ *   <li>String literals can be single-quoted or double-quoted. Escape quote
+ *       characters by doubling the active delimiter: {@code 'it''s fine'} or
+ *       {@code "a ""quoted"" value"}.</li>
  *   <li>The {@code WHERE} keyword itself must <em>not</em> be included — pass
  *       only the predicate expression.</li>
  * </ul>
@@ -89,7 +90,7 @@ public class SqlQueryParser {
                 case '(' -> { list.add(new Token(TokenType.LPAREN, "(")); charPos++; }
                 case ')' -> { list.add(new Token(TokenType.RPAREN, ")")); charPos++; }
                 case ',' -> { list.add(new Token(TokenType.COMMA,  ",")); charPos++; }
-                case '\'' -> list.add(readString());
+                case '\'', '"' -> list.add(readString(c));
                 case '!', '<', '>', '=' -> list.add(readOp());
                 default -> {
                     if (Character.isDigit(c) || (c == '-' && charPos + 1 < input.length()
@@ -108,17 +109,17 @@ public class SqlQueryParser {
         return list;
     }
 
-    private Token readString() {
-        charPos++; // skip opening '
+    private Token readString(char delimiter) {
+        charPos++; // skip opening quote
         StringBuilder sb = new StringBuilder();
         while (charPos < input.length()) {
             char c = input.charAt(charPos);
-            if (c == '\'') {
-                if (charPos + 1 < input.length() && input.charAt(charPos + 1) == '\'') {
-                    sb.append('\''); // escaped ''
+            if (c == delimiter) {
+                if (charPos + 1 < input.length() && input.charAt(charPos + 1) == delimiter) {
+                    sb.append(delimiter); // escaped quote via doubled delimiter
                     charPos += 2;
                 } else {
-                    charPos++; // closing '
+                    charPos++; // closing quote
                     break;
                 }
             } else {

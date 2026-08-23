@@ -166,6 +166,47 @@ class EncryptionServiceTest {
         assertTrue(ex.getMessage().contains("must both be provided"));
     }
 
+    @Test
+    void encryptDecrypt_roundTrip_withLegacyPrivateKeyOnly() throws Exception {
+        TestProvider provider = new TestProvider("!!SFT!!", 100);
+        EncryptionService service = initializedService(Map.of("software", provider));
+
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        KeyPair keyPair = generator.generateKeyPair();
+
+        String plain = "legacy-private-key-only";
+        String encrypted = service.encryptWithLegacyPrivateKey(plain, keyPair.getPrivate().getEncoded());
+
+        assertTrue(encrypted.startsWith("!!ENC!!"));
+        assertEquals(plain, service.decryptWithLegacyPrivateKey(encrypted, keyPair.getPrivate().getEncoded()));
+    }
+
+    @Test
+    void encryptWithLegacyPrivateKey_throwsForInvalidPrivateKeyMaterial() {
+        TestProvider provider = new TestProvider("!!SFT!!", 100);
+        EncryptionService service = initializedService(Map.of("software", provider));
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> service.encryptWithLegacyPrivateKey("plain", "not-a-private-key".getBytes(StandardCharsets.UTF_8)));
+
+        assertTrue(ex.getMessage().contains("Failed to derive RSA public key"));
+    }
+
+    @Test
+    void softwareKeystoreMethods_requireNonEmptyKeystoreBytes() {
+        TestProvider provider = new TestProvider("!!SFT!!", 100);
+        EncryptionService service = initializedService(Map.of("software", provider));
+
+        IllegalArgumentException encryptEx = assertThrows(IllegalArgumentException.class,
+                () -> service.encryptWithSoftwareKeystore("plain", null, null, null));
+        assertTrue(encryptEx.getMessage().contains("keystoreBytes"));
+
+        IllegalArgumentException decryptEx = assertThrows(IllegalArgumentException.class,
+                () -> service.decryptWithSoftwareKeystore("!!ENC!!abc", new byte[0], null, null));
+        assertTrue(decryptEx.getMessage().contains("keystoreBytes"));
+    }
+
     private EncryptionService initializedService(Map<String, EncryptionProvider> providers) {
         ApplicationContext context = mock(ApplicationContext.class);
         when(context.getBeansOfType(EncryptionProvider.class)).thenReturn(providers);

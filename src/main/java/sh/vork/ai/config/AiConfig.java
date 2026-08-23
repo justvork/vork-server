@@ -27,6 +27,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -36,6 +37,7 @@ import org.slf4j.MDC;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.function.FunctionToolCallback;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
@@ -60,7 +62,7 @@ import sh.vork.ai.function.Base64DecodeStringRequest;
 import sh.vork.ai.function.Base64EncodeStringRequest;
 import sh.vork.ai.function.CheckProcessRequest;
 import sh.vork.ai.function.CompileTypeRequest;
-import sh.vork.ai.function.CountTypeInstancesRequest;
+import sh.vork.ai.function.ConfigureEncryptionRequest;
 import sh.vork.ai.function.CreateAttentionAlertToolRequest;
 import sh.vork.ai.function.CreateFolderRequest;
 import sh.vork.ai.function.CreateMongoDbConnectionRequest;
@@ -69,7 +71,6 @@ import sh.vork.ai.function.CreateSessionTextFileRequest;
 import sh.vork.ai.function.CreateSkillRequest;
 import sh.vork.ai.function.DeleteMongoDbDocumentsRequest;
 import sh.vork.ai.function.DeleteSshConnectionRequest;
-import sh.vork.ai.function.DeleteTypeInstanceRequest;
 import sh.vork.ai.function.DecryptStringRequest;
 import sh.vork.ai.function.DesignSkillRequest;
 import sh.vork.ai.function.DisconnectSshRequest;
@@ -90,7 +91,6 @@ import sh.vork.ai.function.GetDateTimeRequest;
 import sh.vork.ai.function.GetMongoDbCollectionSchemaRequest;
 import sh.vork.ai.function.GetPublicKeyRequest;
 import sh.vork.ai.function.GetSurfaceReflectionContractsRequest;
-import sh.vork.ai.function.GetTypeInstanceRequest;
 import sh.vork.ai.function.GetTypeSchemaRequest;
 import sh.vork.ai.function.HttpRequestToolRequest;
 import sh.vork.ai.function.InsertMongoDbDocumentRequest;
@@ -105,15 +105,13 @@ import sh.vork.ai.function.ListMongoDbCollectionsRequest;
 import sh.vork.ai.function.ListNotificationLedgerEntriesRequest;
 import sh.vork.ai.function.ListNotificationProvidersRequest;
 import sh.vork.ai.function.ListSshConnectionsRequest;
-import sh.vork.ai.function.ListTypeInstancesRequest;
 import sh.vork.ai.function.LogInfoRequest;
 import sh.vork.ai.function.ReadFileRequest;
 import sh.vork.ai.function.ReadProcessRequest;
+import sh.vork.ai.function.RequestAuthorizationToolRequest;
 import sh.vork.ai.function.RequestInformationToolRequest;
 import sh.vork.ai.function.ResolveArchitectureRequest;
-import sh.vork.ai.function.SaveTypeInstanceRequest;
 import sh.vork.ai.function.SearchMongoDbDocumentsRequest;
-import sh.vork.ai.function.SearchTypeInstancesRequest;
 import sh.vork.ai.function.SendNotificationRequest;
 import sh.vork.ai.function.SetSshAliasRequest;
 import sh.vork.ai.function.SignDataRequest;
@@ -142,7 +140,11 @@ import sh.vork.ai.registry.ToolDepends;
 import sh.vork.ai.registry.ToolRegistry;
 import sh.vork.ai.security.encrypt.EncryptionService;
 import sh.vork.ai.security.AuthorizationRuleEngine;
+import sh.vork.ai.security.ApprovalPolicyRuntimeResolver;
+import sh.vork.ai.security.ApprovalPolicy;
+import sh.vork.ai.security.ApprovalPolicyService;
 import sh.vork.ai.security.LoggedToolCallback;
+import sh.vork.ai.security.PreAuthorizationTokenService;
 import sh.vork.ai.security.Restricted;
 import sh.vork.ai.security.SecuredToolCallback;
 import sh.vork.ai.security.VisualizableToolCallback;
@@ -160,6 +162,7 @@ import sh.vork.channel.ChannelService;
 import sh.vork.ai.tool.CheckProcessTool;
 import sh.vork.ai.tool.CompleteBackgroundTaskRequest;
 import sh.vork.ai.tool.CompleteSkillExecutionRequest;
+import sh.vork.ai.tool.ConfigureSessionApprovalRequest;
 import sh.vork.ai.tool.CreateSessionTextFileTool;
 import sh.vork.ai.tool.DefineKnowledgeRequest;
 import sh.vork.ai.tool.DelegateTaskRequest;
@@ -209,7 +212,6 @@ import sh.vork.skill.Skill;
 import sh.vork.skill.SkillService;
 import sh.vork.typegen.JavaType;
 import sh.vork.typegen.JavaTypeClassLoader;
-import sh.vork.typegen.SqlParseException;
 import sh.vork.typegen.TypeDatabaseService;
 import sh.vork.typegen.TypeExportService;
 import sh.vork.typegen.TypeGenerationException;
@@ -302,15 +304,19 @@ Any conversational preamble or postamble outside of these structures violates
 the protocol and will break the system. Do not converse. Execute.
                                 """.stripIndent();
     private final JavaTypeClassLoader typeClassLoader;
-    private final TypeDatabaseService typeDatabaseService;
     private final ObjectMapper objectMapper;
 
+    @Autowired
     public AiConfig(JavaTypeClassLoader typeClassLoader,
-            TypeDatabaseService typeDatabaseService,
             ObjectMapper objectMapper) {
         this.typeClassLoader = typeClassLoader;
-        this.typeDatabaseService = typeDatabaseService;
         this.objectMapper = objectMapper;
+    }
+
+    public AiConfig(JavaTypeClassLoader typeClassLoader,
+            TypeDatabaseService ignoredTypeDatabaseService,
+            ObjectMapper objectMapper) {
+        this(typeClassLoader, objectMapper);
     }
 
     // -------------------------------------------------------------------------
@@ -385,6 +391,8 @@ the protocol and will break the system. Do not converse. Execute.
     public Map<String, ToolCallback> securedToolCallbackMap(
             List<ToolCallback> toolCallbacks,
             AuthorizationRuleEngine authorizationRuleEngine,
+            PreAuthorizationTokenService preAuthorizationTokenService,
+            ApprovalPolicyRuntimeResolver approvalPolicyRuntimeResolver,
             ConfigurableListableBeanFactory beanFactory) {
         Map<String, ToolCallback> map = new LinkedHashMap<>();
         toolCallbacks.forEach(tool -> {
@@ -393,7 +401,7 @@ the protocol and will break the system. Do not converse. Execute.
                 return; // hidden tools are injected per-session via SessionToolStore
             }
             ToolCallback wrapped = isRestrictedTool(beanFactory, toolName)
-                    ? new SecuredToolCallback(tool, authorizationRuleEngine)
+                    ? new SecuredToolCallback(tool, authorizationRuleEngine, preAuthorizationTokenService, approvalPolicyRuntimeResolver, false)
                     : tool;
             map.put(toolName, new LoggedToolCallback(wrapped));
         });
@@ -403,6 +411,68 @@ the protocol and will break the system. Do not converse. Execute.
     /**
      * {@code listAgentTemplates} tool — returns all configured {@link AgentTemplate} records.
      */
+    @Bean
+    @Restricted
+    @ToolCategory("Authorization")
+    public ToolCallback requestAuthorization(PreAuthorizationTokenService preAuthorizationTokenService,
+                                             ConfigurableListableBeanFactory beanFactory) {
+        return FunctionToolCallback
+                .builder("requestAuthorization", (RequestAuthorizationToolRequest req) -> {
+                    if (req == null) {
+                        return "{\"status\":\"error\",\"message\":\"request is required\"}";
+                    }
+                    if (req.toolName() == null || req.toolName().isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"toolName is required\"}";
+                    }
+                    if (req.argumentsJson() == null || req.argumentsJson().isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"argumentsJson is required\"}";
+                    }
+
+                    String targetTool = req.toolName().trim();
+                    boolean restricted = isRestrictedTool(beanFactory, targetTool);
+                    if (!restricted) {
+                        return "{\"status\":\"error\",\"message\":\"toolName is not restricted: "
+                                + targetTool.replace("\"", "'") + "\"}";
+                    }
+
+                    String username = resolveUsername();
+                    String sessionUuid = resolveSessionUuid();
+                    if ((username == null || username.isBlank()) && sessionUuid != null && !sessionUuid.isBlank()) {
+                        username = "session:" + sessionUuid;
+                    }
+                    if (username == null || username.isBlank()) {
+                        username = "anonymous";
+                    }
+
+                    PreAuthorizationTokenService.IssuedToken issued = preAuthorizationTokenService.issueToken(
+                            username,
+                            sessionUuid,
+                            targetTool,
+                            req.argumentsJson(),
+                            req.ttlSeconds(),
+                            req.scope(),
+                            req.reason());
+
+                    try {
+                        return objectMapper.writeValueAsString(Map.of(
+                                "status", "ok",
+                                "preAuthorizationToken", issued.token(),
+                                "toolName", issued.toolName(),
+                                "scope", issued.scope(),
+                                "argumentsSha256", issued.argumentsSha256(),
+                                "expiresAt", issued.expiresAt()));
+                    } catch (Exception ex) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + ex.getMessage().replace("\"", "'") + "\"}";
+                    }
+                })
+                .description("Create a pre-authorization token for an exact restricted tool payload. "
+                        + "This tool is itself restricted and requires explicit approval. "
+                        + "Tokens are one-time and consumed only when the target restricted tool is called with an exact payload match.")
+                .inputType(RequestAuthorizationToolRequest.class)
+                .build();
+    }
+
     @Bean
     @Hidden
     @ToolCategory("Agent Orchestration")
@@ -1073,6 +1143,145 @@ the protocol and will break the system. Do not converse. Execute.
                 .build();
     }
 
+    @Bean
+    @Restricted
+    @ToolCategory("Meta")
+    public ToolCallback configureSessionApproval(SessionEnvironmentService sessionEnvironmentService,
+                                                 ChannelService channelService,
+                                                 ApprovalPolicyService approvalPolicyService) {
+        return FunctionToolCallback
+                .builder("configureSessionApproval", (ConfigureSessionApprovalRequest req) -> {
+                    String sessionUuid = resolveSessionUuid();
+                    if (sessionUuid == null || sessionUuid.isBlank() || "system".equalsIgnoreCase(sessionUuid)) {
+                        return "{\"status\":\"error\",\"message\":\"No AI session bound\"}";
+                    }
+
+                    Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+                    boolean canManageUsers = auth != null
+                            && auth.getAuthorities() != null
+                            && auth.getAuthorities().stream().anyMatch(a -> "USERS_MANAGE".equals(a.getAuthority()));
+                    if (!canManageUsers) {
+                        return "{\"status\":\"error\",\"message\":\"configureSessionApproval requires USERS_MANAGE\"}";
+                    }
+
+                    if (req != null && Boolean.TRUE.equals(req.clear())) {
+                        sessionEnvironmentService.deleteEnv(sessionUuid, ApprovalPolicyRuntimeResolver.SESSION_APPROVAL_OVERRIDE_ENV);
+                        ToolExecutionContext.remove(ApprovalPolicyRuntimeResolver.SESSION_APPROVAL_OVERRIDE_ENV);
+                        return "{\"status\":\"ok\",\"action\":\"cleared\"}";
+                    }
+
+                    boolean enabled = req == null || req.enabled() == null || req.enabled();
+                    String policyId = req == null || req.policyId() == null ? "" : req.policyId().trim();
+                    String policyName = req == null || req.policyName() == null ? "" : req.policyName().trim();
+                    String reason = req == null || req.reason() == null ? "" : req.reason().trim();
+                    String responsePolicyRaw = req == null || req.responsePolicy() == null ? "" : req.responsePolicy().trim();
+                    Integer quorum = req == null ? null : req.quorum();
+
+                    if (!policyId.isBlank() && approvalPolicyService.getPolicy(policyId) == null) {
+                        return "{\"status\":\"error\",\"message\":\"Unknown policyId: "
+                                + policyId.replace("\"", "'") + "\"}";
+                    }
+                    if (!policyName.isBlank()) {
+                        ApprovalPolicy policyByName;
+                        try {
+                            policyByName = approvalPolicyService.getPolicyByName(policyName);
+                        } catch (IllegalArgumentException ex) {
+                            return "{\"status\":\"error\",\"message\":\""
+                                    + ex.getMessage().replace("\"", "'") + "\"}";
+                        }
+                        if (policyByName == null) {
+                            return "{\"status\":\"error\",\"message\":\"Unknown policyName: "
+                                    + policyName.replace("\"", "'") + "\"}";
+                        }
+                        if (!policyId.isBlank() && !policyId.equals(policyByName.uuid())) {
+                            return "{\"status\":\"error\",\"message\":\"policyId and policyName refer to different policies\"}";
+                        }
+                        policyId = policyByName.uuid();
+                    }
+
+                    List<String> channels = new ArrayList<>();
+                    if (req != null && req.channelNames() != null) {
+                        for (String raw : req.channelNames()) {
+                            if (raw == null || raw.isBlank()) {
+                                continue;
+                            }
+                            String query = raw.trim();
+                            var exact = channelService.resolveByChannelName(query);
+                            if (exact.isPresent()) {
+                                channels.add(exact.get().channelName());
+                                continue;
+                            }
+                            List<ChannelRef> candidates = channelService.search(query, 8);
+                            if (candidates.isEmpty()) {
+                                return "{\"status\":\"error\",\"message\":\"Unknown channel: "
+                                        + query.replace("\"", "'") + "\"}";
+                            }
+                            if (candidates.size() > 1) {
+                                return "{\"status\":\"error\",\"message\":\"Ambiguous channel query: "
+                                        + query.replace("\"", "'") + ". Use exact channelName.\"}";
+                            }
+                            channels.add(candidates.getFirst().channelName());
+                        }
+                    }
+                    channels = channels.stream().filter(v -> v != null && !v.isBlank()).map(String::trim).distinct().toList();
+
+                    if (policyId.isBlank() && enabled && channels.isEmpty()) {
+                        return "{\"status\":\"error\",\"message\":\"Provide policyId or at least one channel when enabled=true\"}";
+                    }
+
+                    String responsePolicy = responsePolicyRaw.isBlank() ? "FIRST" : responsePolicyRaw.toUpperCase(Locale.ROOT);
+                    if (!Set.of("FIRST", "ALL", "QUORUM").contains(responsePolicy)) {
+                        return "{\"status\":\"error\",\"message\":\"responsePolicy must be FIRST, ALL, or QUORUM\"}";
+                    }
+                    if (!"QUORUM".equals(responsePolicy)) {
+                        quorum = null;
+                    } else if (quorum == null || quorum < 1) {
+                        quorum = 1;
+                    }
+
+                    Map<String, Object> payload = new LinkedHashMap<>();
+                    payload.put("enabled", enabled);
+                    if (!policyId.isBlank()) {
+                        payload.put("policyId", policyId);
+                    }
+                    if (!channels.isEmpty()) {
+                        payload.put("channels", channels);
+                    }
+                    payload.put("responsePolicy", responsePolicy);
+                    if (quorum != null) {
+                        payload.put("quorum", quorum);
+                    }
+                    if (!reason.isBlank()) {
+                        payload.put("reason", reason);
+                    }
+
+                    try {
+                        String json = objectMapper.writeValueAsString(payload);
+                        sessionEnvironmentService.setEnv(sessionUuid, ApprovalPolicyRuntimeResolver.SESSION_APPROVAL_OVERRIDE_ENV, json);
+                        ToolExecutionContext.put(ApprovalPolicyRuntimeResolver.SESSION_APPROVAL_OVERRIDE_ENV, json);
+
+                        Map<String, Object> response = new LinkedHashMap<>();
+                        response.put("status", "ok");
+                        response.put("sessionUuid", sessionUuid);
+                        response.put("override", payload);
+                        log.info("Session approval override configured [session={}, enabled={}, policyId={}, channels={}, responsePolicy={}]",
+                                sessionUuid, enabled, policyId, channels.size(), responsePolicy);
+                        return objectMapper.writeValueAsString(response);
+                    } catch (Exception ex) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + (ex.getMessage() == null ? "serialization failed" : ex.getMessage().replace("\"", "'"))
+                                + "\"}";
+                    }
+                })
+                .description("Configure or clear a session-scoped approval override for protected tool calls."
+                        + " Admin-only: requires USERS_MANAGE."
+                        + " Use clear=true to remove override."
+                    + " When enabled, provide either policyId, policyName, or channelNames."
+                        + " responsePolicy supports FIRST, ALL, or QUORUM.")
+                .inputType(ConfigureSessionApprovalRequest.class)
+                .build();
+    }
+
     /**
      * Global meta-tool for generic key/value session memory.
      *
@@ -1222,31 +1431,101 @@ the protocol and will break the system. Do not converse. Execute.
     @Bean
     @Restricted
     @ToolCategory("Encoding & Crypto")
+    public ToolCallback configureEncryption(SessionEnvironmentService sessionEnvironmentService,
+                                            SessionFileSystem sessionFileSystem) {
+        return FunctionToolCallback
+                .builder("configureEncryption", (ConfigureEncryptionRequest req) -> {
+                    String sessionUuid = resolveSessionUuid();
+                    if (sessionUuid == null || sessionUuid.isBlank() || "system".equalsIgnoreCase(sessionUuid)) {
+                        throw new IllegalArgumentException("configureEncryption requires a bound AI session");
+                    }
+
+                    if (req != null && Boolean.TRUE.equals(req.clear())) {
+                        sessionEnvironmentService.deleteEnv(sessionUuid, "SESSION_ENCRYPTION_CONFIG");
+                        ToolExecutionContext.remove("SESSION_ENCRYPTION_CONFIG");
+                        return "{\"status\":\"ok\",\"cleared\":true}";
+                    }
+
+                    if (req == null || req.type() == null || req.type().isBlank()) {
+                        throw new IllegalArgumentException("type is required (RSA or SOFTWARE)");
+                    }
+                    if (req.filePath() == null || req.filePath().isBlank()) {
+                        throw new IllegalArgumentException("filePath is required");
+                    }
+
+                    String type = req.type().trim().toUpperCase(Locale.ROOT);
+                    if (!"RSA".equals(type) && !"SOFTWARE".equals(type)) {
+                        throw new IllegalArgumentException("type must be RSA or SOFTWARE");
+                    }
+
+                    Map<String, String> env = sessionEnvironmentService.getEnv(sessionUuid);
+                    String resolvedFilePath = resolveSessionPathTemplate(req.filePath().trim(), env);
+                    ensureSessionFileExists(sessionFileSystem, sessionUuid, resolvedFilePath);
+
+                    Map<String, Object> payload = new LinkedHashMap<>();
+                    payload.put("type", type);
+                    payload.put("filePath", resolvedFilePath);
+
+                    if ("SOFTWARE".equals(type)) {
+                        if (req.keystoreAlias() != null && !req.keystoreAlias().isBlank()) {
+                            payload.put("keystoreAlias", req.keystoreAlias().trim());
+                        }
+                        if (req.keystorePassword() != null && !req.keystorePassword().isBlank()) {
+                            payload.put("keystorePassword", req.keystorePassword());
+                        }
+                    }
+
+                    try {
+                        String json = objectMapper.writeValueAsString(payload);
+                        sessionEnvironmentService.setEnv(sessionUuid, "SESSION_ENCRYPTION_CONFIG", json);
+                        ToolExecutionContext.put("SESSION_ENCRYPTION_CONFIG", json);
+
+                        Map<String, Object> response = new LinkedHashMap<>();
+                        response.put("status", "ok");
+                        response.put("sessionUuid", sessionUuid);
+                        response.put("configuration", payload);
+                        return objectMapper.writeValueAsString(response);
+                    } catch (Exception ex) {
+                        throw new IllegalStateException("Failed to persist session encryption configuration", ex);
+                    }
+                })
+                .description("Configure session encryption mode for encryptString/decryptString. "
+                        + "Use type=RSA with a PKCS#8 private key file, or type=SOFTWARE with a .p12 keystore file. "
+                        + "For SOFTWARE, keystoreAlias and keystorePassword are optional and defaults are used when omitted. "
+                        + "Use clear=true to revert to system default encryption.")
+                .inputType(ConfigureEncryptionRequest.class)
+                .build();
+    }
+
+    @Bean
+    @Restricted
+    @ToolCategory("Encoding & Crypto")
     public ToolCallback encryptString(EncryptionService encryptionService,
-                                      SessionFileSystem sessionFileSystem) {
+                                      SessionFileSystem sessionFileSystem,
+                                      SessionEnvironmentService sessionEnvironmentService) {
         return FunctionToolCallback
                 .builder("encryptString", (EncryptStringRequest req) -> {
                     if (req == null || req.input() == null || req.input().isBlank()) {
                         throw new IllegalArgumentException("input is required");
                     }
-                    if (hasLegacyKeyPathMode(req.privateKeyPath(), req.publicKeyPath())) {
-                        String activeSessionUuid = resolveSessionUuid();
-                        KeyMaterial keyMaterial = resolveLegacyKeyMaterial(
-                                sessionFileSystem,
-                                activeSessionUuid,
-                                req.privateKeyPath(),
-                                req.publicKeyPath());
-                        if (keyMaterial != null) {
-                            return encryptionService.encryptWithLegacyKeys(
-                                    req.input(),
-                                    keyMaterial.privateKeyBytes(),
-                                    keyMaterial.publicKeyBytes());
-                        }
+
+                    String sessionUuid = resolveSessionUuid();
+                    SessionEncryptionConfig config = resolveSessionEncryptionConfig(sessionEnvironmentService, sessionUuid);
+                    if (config == null) {
+                        return encryptionService.encrypt(req.input());
                     }
-                    return encryptionService.encrypt(req.input(), req.privateKeyPath(), req.publicKeyPath());
+
+                    byte[] keyMaterial = readSessionFileBytes(sessionFileSystem, sessionUuid, config.filePath());
+                    if ("RSA".equals(config.type())) {
+                        return encryptionService.encryptWithLegacyPrivateKey(req.input(), keyMaterial);
+                    }
+                    return encryptionService.encryptWithSoftwareKeystore(
+                            req.input(),
+                            keyMaterial,
+                            config.keystoreAlias(),
+                            config.keystorePassword());
                 })
-                .description("Encrypt a UTF-8 string using the internal EncryptionService. "
-                        + "Optionally provide privateKeyPath+publicKeyPath to use legacy file-backed RSA key mode.")
+                .description("Encrypt a UTF-8 string using session encryption config if present; otherwise system default encryption is used.")
                 .inputType(EncryptStringRequest.class)
                 .build();
     }
@@ -1255,61 +1534,120 @@ the protocol and will break the system. Do not converse. Execute.
     @Restricted
     @ToolCategory("Encoding & Crypto")
     public ToolCallback decryptString(EncryptionService encryptionService,
-                                      SessionFileSystem sessionFileSystem) {
+                                      SessionFileSystem sessionFileSystem,
+                                      SessionEnvironmentService sessionEnvironmentService) {
         return FunctionToolCallback
                 .builder("decryptString", (DecryptStringRequest req) -> {
                     if (req == null || req.input() == null || req.input().isBlank()) {
                         throw new IllegalArgumentException("input is required");
                     }
-                    if (hasLegacyKeyPathMode(req.privateKeyPath(), req.publicKeyPath())) {
-                        String activeSessionUuid = resolveSessionUuid();
-                        KeyMaterial keyMaterial = resolveLegacyKeyMaterial(
-                                sessionFileSystem,
-                                activeSessionUuid,
-                                req.privateKeyPath(),
-                                req.publicKeyPath());
-                        if (keyMaterial != null) {
-                            return encryptionService.decryptWithLegacyKeys(
-                                    req.input(),
-                                    keyMaterial.privateKeyBytes(),
-                                    keyMaterial.publicKeyBytes());
-                        }
+
+                    String sessionUuid = resolveSessionUuid();
+                    SessionEncryptionConfig config = resolveSessionEncryptionConfig(sessionEnvironmentService, sessionUuid);
+                    if (config == null) {
+                        return encryptionService.decrypt(req.input());
                     }
-                    return encryptionService.decrypt(req.input(), req.privateKeyPath(), req.publicKeyPath());
+
+                    byte[] keyMaterial = readSessionFileBytes(sessionFileSystem, sessionUuid, config.filePath());
+                    if ("RSA".equals(config.type())) {
+                        return encryptionService.decryptWithLegacyPrivateKey(req.input(), keyMaterial);
+                    }
+                    return encryptionService.decryptWithSoftwareKeystore(
+                            req.input(),
+                            keyMaterial,
+                            config.keystoreAlias(),
+                            config.keystorePassword());
                 })
-                .description("Decrypt text using the internal EncryptionService. "
-                        + "Optionally provide privateKeyPath+publicKeyPath to use legacy file-backed RSA key mode.")
+                .description("Decrypt text using session encryption config if present; otherwise system default encryption is used.")
                 .inputType(DecryptStringRequest.class)
                 .build();
     }
 
-    private static boolean hasLegacyKeyPathMode(String privateKeyPath, String publicKeyPath) {
-        return (privateKeyPath != null && !privateKeyPath.isBlank())
-                || (publicKeyPath != null && !publicKeyPath.isBlank());
+    private SessionEncryptionConfig resolveSessionEncryptionConfig(SessionEnvironmentService sessionEnvironmentService,
+                                                                   String sessionUuid) {
+        if (sessionUuid == null || sessionUuid.isBlank() || "system".equalsIgnoreCase(sessionUuid)) {
+            return null;
+        }
+
+        Map<String, String> env = sessionEnvironmentService.getEnv(sessionUuid);
+        if (env == null || env.isEmpty()) {
+            return null;
+        }
+
+        String raw = env.get("SESSION_ENCRYPTION_CONFIG");
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+
+        try {
+            var node = objectMapper.readTree(raw);
+            String type = node.path("type").asText("").trim().toUpperCase(Locale.ROOT);
+            String filePath = node.path("filePath").asText("").trim();
+            if (type.isBlank() || filePath.isBlank()) {
+                return null;
+            }
+
+            String keystoreAlias = node.has("keystoreAlias") ? node.path("keystoreAlias").asText("").trim() : "";
+            String keystorePassword = node.has("keystorePassword") ? node.path("keystorePassword").asText("") : "";
+            return new SessionEncryptionConfig(
+                    type,
+                    filePath,
+                    keystoreAlias.isBlank() ? null : keystoreAlias,
+                    keystorePassword.isBlank() ? null : keystorePassword);
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("SESSION_ENCRYPTION_CONFIG is invalid JSON");
+        }
     }
 
-    private static KeyMaterial resolveLegacyKeyMaterial(SessionFileSystem sessionFileSystem,
-                                                        String sessionUuid,
-                                                        String privateKeyPath,
-                                                        String publicKeyPath) {
-        if (sessionUuid == null || sessionUuid.isBlank() || "system".equals(sessionUuid)) {
-            return null;
-        }
-        if (privateKeyPath == null || privateKeyPath.isBlank() || publicKeyPath == null || publicKeyPath.isBlank()) {
-            return null;
-        }
-
-        try (java.io.InputStream privateIn = sessionFileSystem.read(FileArea.SESSION, sessionUuid, privateKeyPath);
-             java.io.InputStream publicIn = sessionFileSystem.read(FileArea.SESSION, sessionUuid, publicKeyPath)) {
-            byte[] privateBytes = privateIn.readAllBytes();
-            byte[] publicBytes = publicIn.readAllBytes();
-            return new KeyMaterial(privateBytes, publicBytes);
-        } catch (Exception ignored) {
-            return null;
+    private static void ensureSessionFileExists(SessionFileSystem sessionFileSystem,
+                                                String sessionUuid,
+                                                String relativePath) {
+        try (java.io.InputStream in = sessionFileSystem.read(FileArea.SESSION, sessionUuid, relativePath)) {
+            in.readNBytes(1);
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("Session file not found: " + relativePath);
         }
     }
 
-    private record KeyMaterial(byte[] privateKeyBytes, byte[] publicKeyBytes) {}
+    private static byte[] readSessionFileBytes(SessionFileSystem sessionFileSystem,
+                                               String sessionUuid,
+                                               String relativePath) {
+        if (sessionUuid == null || sessionUuid.isBlank() || "system".equalsIgnoreCase(sessionUuid)) {
+            throw new IllegalArgumentException("Encryption file access requires a bound AI session");
+        }
+        if (relativePath == null || relativePath.isBlank()) {
+            throw new IllegalArgumentException("Configured encryption filePath is empty");
+        }
+
+        try (java.io.InputStream in = sessionFileSystem.read(FileArea.SESSION, sessionUuid, relativePath)) {
+            return in.readAllBytes();
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("Failed to read encryption file from session sandbox: " + relativePath);
+        }
+    }
+
+    private static String resolveSessionPathTemplate(String rawPath, Map<String, String> env) {
+        if (rawPath == null || rawPath.isBlank() || env == null || env.isEmpty()) {
+            return rawPath;
+        }
+
+        String resolved = rawPath;
+        for (Map.Entry<String, String> entry : env.entrySet()) {
+            String key = entry.getKey();
+            String value = entry.getValue();
+            if (key == null || key.isBlank() || value == null) {
+                continue;
+            }
+            resolved = resolved.replace("${" + key + "}", value);
+            resolved = resolved.replace("{{" + key + "}}", value);
+        }
+        return resolved;
+    }
+
+    private record SessionEncryptionConfig(String type,
+                                           String filePath,
+                                           String keystoreAlias,
+                                           String keystorePassword) {}
 
     @Bean
     @Restricted
@@ -2899,139 +3237,6 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
                 .build();
     }
 
-    /**
-     * {@code saveTypeInstance} tool — deserialises a JSON string into the named
-     * type
-     * and persists it via {@link TypeDatabaseService}.
-     */
-    @Bean
-    @ToolCategory("Schema & Types")
-    public ToolCallback saveTypeInstance() {
-        return FunctionToolCallback
-                .builder("saveTypeInstance", (SaveTypeInstanceRequest req) -> {
-                    try {
-                        Class<?> clazz = typeClassLoader.loadClass(req.fqn());
-                        Object instance = objectMapper.readValue(req.json(), clazz);
-                        typeDatabaseService.save(instance);
-                        String uuid = (String) clazz.getMethod("uuid").invoke(instance);
-                        return "{\"status\":\"ok\",\"uuid\":\"" + uuid + "\"}";
-                    } catch (ClassNotFoundException e) {
-                        return "{\"status\":\"error\",\"message\":\"Type not found: " + req.fqn() + "\"}";
-                    } catch (Exception e) {
-                        return "{\"status\":\"error\",\"message\":\"" + e.getMessage().replace("\"", "'") + "\"}";
-                    }
-                })
-                .description(
-                        """
-                                Save (create or update) a record instance. Provide the fully-qualified class name and a JSON string representing the record. The JSON must include a uuid field — generate a random UUID v4 string for new instances. Use getTypeSchema to discover the required fields first.
-                                """
-                                .stripIndent())
-                .inputType(SaveTypeInstanceRequest.class)
-                .build();
-    }
-
-    /**
-     * {@code getTypeInstance} tool — returns a single stored record instance by UUID.
-     */
-    @Bean
-    @ToolCategory("Schema & Types")
-    public ToolCallback getTypeInstance() {
-        return FunctionToolCallback
-                .builder("getTypeInstance", (GetTypeInstanceRequest req) -> {
-                    try {
-                        Class<?> clazz = typeClassLoader.loadClass(req.fqn());
-                        Object entity = typeDatabaseService.get(clazz, req.uuid());
-                        if (entity == null) {
-                            return "{\"status\":\"not_found\",\"message\":\"Record not found for uuid: "
-                                    + req.uuid().replace("\"", "'") + "\"}";
-                        }
-                        return objectMapper.writeValueAsString(entity);
-                    } catch (ClassNotFoundException e) {
-                        return "{\"status\":\"error\",\"message\":\"Type not found: " + req.fqn() + "\"}";
-                    } catch (Exception e) {
-                        return "{\"status\":\"error\",\"message\":\"" + e.getMessage().replace("\"", "'") + "\"}";
-                    }
-                })
-                .description(
-                        """
-                                Fetch a single stored record instance by fully-qualified class name and uuid.
-                                """
-                                .stripIndent())
-                .inputType(GetTypeInstanceRequest.class)
-                .build();
-    }
-
-    /**
-     * {@code listTypeInstances} tool — returns all persisted instances of a custom
-     * type
-     * as a JSON array.
-     */
-    @Bean
-    @ToolCategory("Schema & Types")
-    public ToolCallback listTypeInstances() {
-        return FunctionToolCallback
-                .builder("listTypeInstances", (ListTypeInstancesRequest req) -> {
-                    try {
-                        Class<?> clazz = typeClassLoader.loadClass(req.fqn());
-                        int page = req.page() != null ? req.page() : 0;
-                        int pageSize = req.pageSize() != null && req.pageSize() > 0 ? req.pageSize() : 20;
-                        List<Object> items = new ArrayList<>();
-                        try (var stream = typeDatabaseService.list(clazz, page, pageSize)) {
-                            stream.forEach(items::add);
-                        }
-                        return objectMapper.writeValueAsString(items);
-                    } catch (ClassNotFoundException e) {
-                        return "{\"status\":\"error\",\"message\":\"Type not found: " + req.fqn() + "\"}";
-                    } catch (Exception e) {
-                        return "{\"status\":\"error\",\"message\":\"" + e.getMessage().replace("\"", "'") + "\"}";
-                    }
-                })
-                .description(
-                        """
-                                List stored record instances by fully-qualified class name. Supports pagination via page (default 0) and pageSize (default 20).
-                                """
-                                .stripIndent())
-                .inputType(ListTypeInstancesRequest.class)
-                .build();
-    }
-
-    /**
-     * {@code countTypeInstances} tool — counts stored record instances, optionally filtered.
-     */
-    @Bean
-    @ToolCategory("Schema & Types")
-    public ToolCallback countTypeInstances() {
-        return FunctionToolCallback
-                .builder("countTypeInstances", (CountTypeInstancesRequest req) -> {
-                    try {
-                        Class<?> clazz = typeClassLoader.loadClass(req.fqn());
-                        String query = req.query();
-                        if (query == null || query.isBlank()) {
-                            return "{\"count\":" + typeDatabaseService.count(clazz) + "}";
-                        }
-                        String queryType = req.queryType() == null ? "SQL" : req.queryType().toUpperCase(Locale.ROOT);
-                        long count = "MONGO".equals(queryType)
-                                ? typeDatabaseService.searchCountByMongoFilter(clazz, query)
-                                : typeDatabaseService.searchCountBySql(clazz, query);
-                        return "{\"count\":" + count + "}";
-                    } catch (ClassNotFoundException e) {
-                        return "{\"status\":\"error\",\"message\":\"Type not found: " + req.fqn() + "\"}";
-                    } catch (SqlParseException e) {
-                        return "{\"status\":\"error\",\"message\":\"SQL parse error: "
-                                + e.getMessage().replace("\"", "'") + "\"}";
-                    } catch (Exception e) {
-                        return "{\"status\":\"error\",\"message\":\""
-                                + e.getMessage().replace("\"", "'") + "\"}";
-                    }
-                })
-                .description(
-                        """
-                                Count stored record instances for a class. Optionally provide a SQL or Mongo filter query to count matching records only.
-                                """
-                                .stripIndent())
-                .inputType(CountTypeInstancesRequest.class)
-                .build();
-    }
 
     /**
      * {@code listEnumValues} tool — returns all declared constants of an enum
@@ -3067,91 +3272,6 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
                                 """
                                 .stripIndent())
                 .inputType(ListEnumValuesRequest.class)
-                .build();
-    }
-
-    /**
-     * {@code deleteTypeInstance} tool — deletes a persisted instance by UUID.
-     */
-    @Bean
-    public ToolCallback deleteTypeInstance() {
-        return FunctionToolCallback
-                .builder("deleteTypeInstance", (DeleteTypeInstanceRequest req) -> {
-                    try {
-                        Class<?> clazz = typeClassLoader.loadClass(req.fqn());
-                        typeDatabaseService.delete(clazz, req.uuid());
-                        return "{\"status\":\"ok\"}";
-                    } catch (ClassNotFoundException e) {
-                        return "{\"status\":\"error\",\"message\":\"Type not found: " + req.fqn() + "\"}";
-                    }
-                })
-                .description(
-                        """
-                                Delete a stored record instance by UUID. Requires the fully-qualified class name and the instance UUID.
-                                """
-                                .stripIndent())
-                .inputType(DeleteTypeInstanceRequest.class)
-                .build();
-    }
-
-    /**
-     * {@code searchTypeInstances} tool — searches stored instances of a custom Java
-     * type using either a SQL-like WHERE clause or a raw MongoDB filter JSON.
-     */
-    @Bean
-    public ToolCallback searchTypeInstances() {
-        return FunctionToolCallback
-                .builder("searchTypeInstances", (SearchTypeInstancesRequest req) -> {
-                    try {
-                        Class<?> clazz = typeClassLoader.loadClass(req.fqn());
-                        int page = req.page() != null ? req.page() : 0;
-                        int pageSize = req.pageSize() != null && req.pageSize() > 0
-                                ? req.pageSize()
-                                : 20;
-                        String sortField = req.sortField() != null ? req.sortField() : "uuid";
-                        SortOrder order = "DESC".equalsIgnoreCase(req.sortOrder())
-                                ? SortOrder.DESC
-                                : SortOrder.ASC;
-                        String queryType = req.queryType() != null
-                                ? req.queryType().toUpperCase()
-                                : "SQL";
-
-                        List<Object> items = new ArrayList<>();
-                        long total;
-
-                        if ("MONGO".equals(queryType)) {
-                            try (var stream = typeDatabaseService.searchByMongoFilter(
-                                    clazz, req.query(), page, pageSize, sortField, order)) {
-                                stream.forEach(items::add);
-                            }
-                            total = typeDatabaseService.searchCountByMongoFilter(clazz, req.query());
-                        } else {
-                            try (var stream = typeDatabaseService.searchBySql(
-                                    clazz, req.query(), page, pageSize, sortField, order)) {
-                                stream.forEach(items::add);
-                            }
-                            total = typeDatabaseService.searchCountBySql(clazz, req.query());
-                        }
-
-                        String resultsJson = objectMapper.writeValueAsString(items);
-                        return "{\"total\":" + total + ",\"page\":" + page
-                                + ",\"pageSize\":" + pageSize + ",\"results\":" + resultsJson + "}";
-                    } catch (ClassNotFoundException e) {
-                        return "{\"status\":\"error\",\"message\":\"Type not found: " + req.fqn() + "\"}";
-                    } catch (SqlParseException e) {
-                        return "{\"status\":\"error\",\"message\":\"SQL parse error: "
-                                + e.getMessage().replace("\"", "'") + "\"}";
-                    } catch (Exception e) {
-                        return "{\"status\":\"error\",\"message\":\""
-                                + e.getMessage().replace("\"", "'") + "\"}";
-                    }
-                })
-                .description(
-                        """
-                                Search stored record instances using either a SQL-like WHERE clause (queryType: SQL, default) or a raw MongoDB JSON filter (queryType: MONGO). SQL examples: "name = 'Alice'", "age > 18 AND active = true", "address.city = 'London'", "status IN ('active', 'pending')", "name LIKE '%ali%'". MONGO example: {"status":"active","age":{"$gt":18}}. Supports pagination (page, pageSize) and sorting (sortField, sortOrder).
-                                """
-                                .stripIndent())
-                .inputType(SearchTypeInstancesRequest.class)
                 .build();
     }
 

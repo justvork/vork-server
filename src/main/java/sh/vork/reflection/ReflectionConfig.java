@@ -20,6 +20,11 @@ public class ReflectionConfig {
     }
 
     @Bean
+    public DatabaseRepository<MongoReflection> mongoReflectionRepository(RepositoryFactory factory) {
+        return factory.create(MongoReflection.class);
+    }
+
+    @Bean
     public DatabaseRepository<ReflectionGroup> reflectionGroupRepository(RepositoryFactory factory) {
         return factory.create(ReflectionGroup.class);
     }

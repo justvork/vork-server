@@ -5,6 +5,9 @@ import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.SortOrder;
+import sh.vork.reflection.ReflectionBinding;
+import sh.vork.reflection.ReflectionGroup;
+import sh.vork.reflection.ReflectionType;
 import sh.vork.typegen.DisplayField;
 import sh.vork.typegen.FormConversionException;
 import sh.vork.typegen.FormToObjectConverter;
@@ -88,6 +91,8 @@ public class TypeDatabaseController {
     private DatabaseRepository<AiSession> aiSessionRepository;
     private DatabaseRepository<AgentTemplate> agentTemplateRepository;
     private DatabaseRepository<Skill> skillRepository;
+    private DatabaseRepository<ReflectionBinding> reflectionBindingRepository;
+    private DatabaseRepository<ReflectionGroup> reflectionGroupRepository;
 
     public TypeDatabaseController(TypeDatabaseService typeDatabaseService,
                                   FormToObjectConverter formConverter,
@@ -119,6 +124,16 @@ public class TypeDatabaseController {
     @Autowired(required = false)
     public void setSkillRepository(DatabaseRepository<Skill> skillRepository) {
         this.skillRepository = skillRepository;
+    }
+
+    @Autowired(required = false)
+    public void setReflectionBindingRepository(DatabaseRepository<ReflectionBinding> reflectionBindingRepository) {
+        this.reflectionBindingRepository = reflectionBindingRepository;
+    }
+
+    @Autowired(required = false)
+    public void setReflectionGroupRepository(DatabaseRepository<ReflectionGroup> reflectionGroupRepository) {
+        this.reflectionGroupRepository = reflectionGroupRepository;
     }
 
     // -------------------------------------------------------------------------
@@ -395,7 +410,7 @@ public class TypeDatabaseController {
             List<Object> filtered = new ArrayList<>();
             try (Stream<Object> stream = typeDatabaseService.list(entityClass, 0, Integer.MAX_VALUE)) {
                 stream.forEach(entity -> {
-                    if (canAccessScopedRecord(fqn, uuidOf(entity), bindingContext.bindingUuid())) {
+                    if (canAccessScopedRecord(fqn, uuidOf(entity), bindingContext.bindingUuid(), bindingContext.bindingName())) {
                         filtered.add(entity);
                     }
                 });
@@ -445,7 +460,7 @@ public class TypeDatabaseController {
             }
             try (Stream<Object> stream = typeDatabaseService.list(entityClass, 0, Integer.MAX_VALUE)) {
                 count = stream
-                        .filter(entity -> canAccessScopedRecord(fqn, uuidOf(entity), bindingContext.bindingUuid()))
+                    .filter(entity -> canAccessScopedRecord(fqn, uuidOf(entity), bindingContext.bindingUuid(), bindingContext.bindingName()))
                         .count();
             }
         } else {
@@ -475,7 +490,7 @@ public class TypeDatabaseController {
             if (typeRecordBindingScopeRepository == null) {
                 return error("Record binding scope repository is not available.");
             }
-            if (!canAccessScopedRecord(fqn, uuid, bindingContext.bindingUuid())) {
+            if (!canAccessScopedRecord(fqn, uuid, bindingContext.bindingUuid(), bindingContext.bindingName())) {
                 return notFound("Entity not found: " + uuid);
             }
         }
@@ -589,7 +604,7 @@ public class TypeDatabaseController {
             if (typeRecordBindingScopeRepository == null) {
                 return error("Record binding scope repository is not available.");
             }
-            if (!canAccessScopedRecord(fqn, uuid, bindingContext.bindingUuid())) {
+            if (!canAccessScopedRecord(fqn, uuid, bindingContext.bindingUuid(), bindingContext.bindingName())) {
                 return notFound("Entity not found: " + uuid);
             }
         }
@@ -643,7 +658,7 @@ public class TypeDatabaseController {
                     try (Stream<Object> stream = typeDatabaseService.searchByMongoFilter(
                             entityClass, query, 0, Integer.MAX_VALUE, sortField, order)) {
                         stream.forEach(entity -> {
-                            if (canAccessScopedRecord(fqn, uuidOf(entity), bindingContext.bindingUuid())) {
+                            if (canAccessScopedRecord(fqn, uuidOf(entity), bindingContext.bindingUuid(), bindingContext.bindingName())) {
                                 filtered.add(entity);
                             }
                         });
@@ -652,7 +667,7 @@ public class TypeDatabaseController {
                     try (Stream<Object> stream = typeDatabaseService.searchBySql(
                             entityClass, query, 0, Integer.MAX_VALUE, sortField, order)) {
                         stream.forEach(entity -> {
-                            if (canAccessScopedRecord(fqn, uuidOf(entity), bindingContext.bindingUuid())) {
+                            if (canAccessScopedRecord(fqn, uuidOf(entity), bindingContext.bindingUuid(), bindingContext.bindingName())) {
                                 filtered.add(entity);
                             }
                         });
@@ -727,7 +742,7 @@ public class TypeDatabaseController {
                         ? typeDatabaseService.searchByMongoFilter(entityClass, query, 0, Integer.MAX_VALUE, "uuid", SortOrder.ASC)
                         : typeDatabaseService.searchBySql(entityClass, query, 0, Integer.MAX_VALUE, "uuid", SortOrder.ASC)) {
                     count = stream
-                            .filter(entity -> canAccessScopedRecord(fqn, uuidOf(entity), bindingContext.bindingUuid()))
+                            .filter(entity -> canAccessScopedRecord(fqn, uuidOf(entity), bindingContext.bindingUuid(), bindingContext.bindingName()))
                             .count();
                 }
             } else {
@@ -795,17 +810,27 @@ public class TypeDatabaseController {
             return BindingContext.unscoped();
         }
         String reflectionType = trimToEmpty(request.getHeader(REFLECTION_TYPE_HEADER));
-        if (!"RECORD".equalsIgnoreCase(reflectionType)) {
-            return BindingContext.unscoped();
-        }
         String bindingUuid = trimToEmpty(request.getHeader(REFLECTION_BINDING_UUID_HEADER));
         String bindingName = trimToEmpty(request.getHeader(REFLECTION_BINDING_NAME_HEADER));
+
+        boolean requestedRecordScope = "RECORD".equalsIgnoreCase(reflectionType);
+        ReflectionType resolvedBindingType = resolveBindingType(bindingUuid);
+        boolean bindingIsRecordScope = resolvedBindingType == ReflectionType.RECORD;
+        if (!requestedRecordScope && !bindingIsRecordScope) {
+            return BindingContext.unscoped();
+        }
+
         if (bindingUuid.isBlank()) {
             return BindingContext.invalid("Missing record binding context header: " + REFLECTION_BINDING_UUID_HEADER);
         }
+
+        if (!isKnownBinding(bindingUuid)) {
+            return BindingContext.invalid("Unknown reflection binding context: " + bindingUuid);
+        }
+
         String sessionUuid = trimToEmpty(request.getHeader(SESSION_UUID_HEADER));
         if (sessionUuid.isBlank()) {
-            return BindingContext.invalid("Missing record binding context header: " + SESSION_UUID_HEADER);
+            return BindingContext.recordScoped(bindingUuid, bindingName, "");
         }
 
         if (!isBindingAttachedToExecutionContext(sessionUuid, bindingUuid)) {
@@ -813,6 +838,31 @@ public class TypeDatabaseController {
         }
 
         return BindingContext.recordScoped(bindingUuid, bindingName, sessionUuid);
+    }
+
+    private boolean isKnownBinding(String bindingUuid) {
+        if (bindingUuid == null || bindingUuid.isBlank()) {
+            return false;
+        }
+        if (reflectionBindingRepository == null) {
+            return true;
+        }
+        return reflectionBindingRepository.get(bindingUuid) != null;
+    }
+
+    private ReflectionType resolveBindingType(String bindingUuid) {
+        if (bindingUuid == null || bindingUuid.isBlank()) {
+            return null;
+        }
+        if (reflectionBindingRepository == null || reflectionGroupRepository == null) {
+            return null;
+        }
+        ReflectionBinding binding = reflectionBindingRepository.get(bindingUuid);
+        if (binding == null || binding.reflectionUuid() == null || binding.reflectionUuid().isBlank()) {
+            return null;
+        }
+        ReflectionGroup group = reflectionGroupRepository.get(binding.reflectionUuid());
+        return group == null ? null : group.type();
     }
 
     private boolean isBindingAttachedToExecutionContext(String sessionUuid, String bindingUuid) {
@@ -907,7 +957,7 @@ public class TypeDatabaseController {
         return auth.getName();
     }
 
-    private boolean canAccessScopedRecord(String typeFqn, String recordUuid, String bindingUuid) {
+    private boolean canAccessScopedRecord(String typeFqn, String recordUuid, String bindingUuid, String bindingName) {
         if (typeRecordBindingScopeRepository == null) {
             return false;
         }
@@ -915,7 +965,16 @@ public class TypeDatabaseController {
             return false;
         }
         TypeRecordBindingScope scope = typeRecordBindingScopeRepository.get(scopeId(typeFqn, recordUuid));
-        return scope != null && bindingUuid.equals(scope.bindingUuid());
+        if (scope == null) {
+            return false;
+        }
+        if (bindingUuid.equals(scope.bindingUuid())) {
+            return true;
+        }
+        String normalizedBindingName = trimToEmpty(bindingName);
+        return !normalizedBindingName.isBlank()
+                && scope.bindingName() != null
+                && normalizedBindingName.equalsIgnoreCase(scope.bindingName().trim());
     }
 
     private static String scopeId(String typeFqn, String recordUuid) {

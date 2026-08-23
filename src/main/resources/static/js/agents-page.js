@@ -10,6 +10,8 @@ let allReflectionGroups = [];
 let allReflectionBindingOptions = [];
 let allUsers = [];
 let allJobs = [];
+let allApprovalPolicies = [];
+let agentPolicyAssignments = {};
 let providerGroups = [];
 let providerGroupByKey = {};
 let modalTools = [];
@@ -133,7 +135,9 @@ async function loadData() {
             fetch('/api/chat/mcp-bindings'),
             fetch('/api/users'),
             fetch('/api/jobs'),
-            fetch('/api/ai/providers')
+            fetch('/api/ai/providers'),
+            fetch('/api/approval-policies'),
+            fetch('/api/approval-policies/assignments?targetType=agent')
         ]);
         const agentsRes = results[0];
         const toolsRes = results[1];
@@ -144,6 +148,8 @@ async function loadData() {
         const usersRes = results[6];
         const jobsRes = results[7];
         const providerRes = results[8];
+        const policiesRes = results[9];
+        const policyAssignmentsRes = results[10];
         allAgents = agentsRes.ok ? await agentsRes.json() : [];
         allTools = toolsRes.ok ? await toolsRes.json() : [];
         allSkills = skillsRes.ok ? await skillsRes.json() : [];
@@ -162,6 +168,8 @@ async function loadData() {
         allUsers = usersRes.ok ? await usersRes.json() : [];
         allJobs = jobsRes.ok ? await jobsRes.json() : [];
         providerGroups = providerRes.ok ? await providerRes.json() : [];
+        allApprovalPolicies = policiesRes.ok ? await policiesRes.json() : [];
+        agentPolicyAssignments = policyAssignmentsRes.ok ? await policyAssignmentsRes.json() : {};
         providerGroupByKey = (providerGroups || []).reduce(function (acc, group) {
             if (group && group.providerKey) {
                 acc[group.providerKey.toUpperCase()] = group;
@@ -376,10 +384,12 @@ function openCreate() {
     autoArtifactIdEnabled = true;
     document.getElementById('agent-prompt').value = '';
     document.getElementById('agent-recommended-model').value = '';
+    populateAgentApprovalPolicySelect('');
     document.getElementById('agent-name').disabled = false;
     document.getElementById('agent-prompt').disabled = false;
     document.getElementById('agent-recommended-model').disabled = false;
     document.getElementById('agent-recommended-model-lookup').disabled = false;
+    document.getElementById('agent-approval-policy').disabled = false;
     const saveBtnCreate = document.getElementById('btn-save-agent');
     saveBtnCreate.disabled = false;
     saveBtnCreate.innerHTML = '<i class="fa-solid fa-save me-1"></i>Save Agent';
@@ -416,11 +426,13 @@ function openEdit(id) {
     autoArtifactIdEnabled = false;
     document.getElementById('agent-prompt').value = agent.systemPrompt || '';
     document.getElementById('agent-recommended-model').value = agent.recommendedModel || '';
+    populateAgentApprovalPolicySelect(agentPolicyAssignments[id] || '');
     const mutable = (agent.artifactStatus || 'SNAPSHOT') === 'SNAPSHOT';
     document.getElementById('agent-name').disabled = !mutable;
     document.getElementById('agent-prompt').disabled = !mutable;
     document.getElementById('agent-recommended-model').disabled = !mutable;
     document.getElementById('agent-recommended-model-lookup').disabled = !mutable;
+    document.getElementById('agent-approval-policy').disabled = !mutable;
     const saveBtn = document.getElementById('btn-save-agent');
     saveBtn.disabled = !mutable;
     saveBtn.innerHTML = mutable
@@ -963,6 +975,7 @@ async function saveAgent() {
         groupId: groupId,
         artifactId: artifactId
     };
+    const selectedPolicyId = document.getElementById('agent-approval-policy').value.trim();
 
     const btn = document.getElementById('btn-save-agent');
     btn.disabled = true;
@@ -985,6 +998,14 @@ async function saveAgent() {
             showAlert(data.error, 'danger');
             return;
         }
+        const savedId = data.uuid || id;
+        if (savedId) {
+            const assignmentErr = await persistAgentPolicyAssignment(savedId, selectedPolicyId);
+            if (assignmentErr) {
+                showAlert('Agent saved but policy assignment failed: ' + assignmentErr, 'warning');
+                return;
+            }
+        }
         agentModal.hide();
         showAlert(id ? 'Agent updated.' : 'Agent created.', 'success');
         setTimeout(function () { location.reload(); }, 800);
@@ -993,6 +1014,46 @@ async function saveAgent() {
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="fa-solid fa-save me-1"></i>Save Agent';
+    }
+}
+
+function populateAgentApprovalPolicySelect(selectedPolicyId) {
+    const select = document.getElementById('agent-approval-policy');
+    if (!select) return;
+
+    select.innerHTML = '<option value="">System Default</option>';
+    (allApprovalPolicies || []).forEach(function (policy) {
+        const option = document.createElement('option');
+        option.value = policy.uuid;
+        option.textContent = policy.name || policy.uuid;
+        select.appendChild(option);
+    });
+
+    if (selectedPolicyId) {
+        select.value = selectedPolicyId;
+    } else {
+        select.value = '';
+    }
+}
+
+async function persistAgentPolicyAssignment(agentId, policyId) {
+    try {
+        const res = await fetch('/api/approval-policies/assignments', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                targetType: 'agent',
+                targetId: agentId,
+                policyId: policyId
+            })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            return data.error || 'Unknown assignment error';
+        }
+        return null;
+    } catch (_e) {
+        return 'Network error while saving assignment';
     }
 }
 

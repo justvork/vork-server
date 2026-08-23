@@ -30,8 +30,11 @@
                 <i class="fa-solid fa-file-import mr-2"></i>Import
             </button>
             <input th:if="${canManageUsers}" id="import-reflections-input" type="file" accept="application/json" class="hidden">
+            <button th:if="${canManageUsers}" id="mongo-wizard-btn" class="rounded-lg border border-amber-500/40 px-3 py-2 text-sm font-medium text-amber-300 transition-colors hover:bg-amber-500/15">
+                <i class="fa-solid fa-database mr-2"></i>Mongo Wizard
+            </button>
             <button th:if="${canManageUsers}" id="new-group-btn" class="rounded-lg border border-cyan-500/40 px-3 py-2 text-sm font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15">
-                <i class="fa-solid fa-layer-group mr-2"></i>New Group
+                <i class="fa-solid fa-layer-group mr-2"></i>New REST/OAuth Group
             </button>
         </div>
     </div>
@@ -99,16 +102,16 @@
                 <label class="mb-1 block text-sm font-medium text-zinc-300" for="group-type">Type</label>
                 <select id="group-type" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
                     <option value="REST">REST</option>
-                    <option value="MONGO">MONGO (future)</option>
+                    <option value="MONGO">MONGO (wizard-managed)</option>
                 </select>
             </div>
-            <div>
+            <div id="group-base-url-wrap">
                 <label class="mb-1 block text-sm font-medium text-zinc-300" for="group-base-url">Base URL (optional)</label>
                 <input id="group-base-url" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="https://api.example.com">
                 <div class="mt-1 text-xs text-zinc-500">Used when a reflection URL is relative and a binding does not override it.</div>
             </div>
 
-            <div>
+            <div id="group-url-override-wrap">
                 <label class="inline-flex items-center gap-2 text-sm font-medium text-zinc-300" for="group-url-override-enabled">
                     <input id="group-url-override-enabled" type="checkbox" class="h-4 w-4 rounded border-zinc-700 bg-zinc-950 text-[#fdaa02]" checked>
                     URL Override Enabled
@@ -116,7 +119,7 @@
                 <div class="mt-1 text-xs text-zinc-500">When enabled, bindings can define an optional Base URL override.</div>
             </div>
 
-            <div>
+            <div id="group-auth-mode-wrap">
                 <label class="mb-1 block text-sm font-medium text-zinc-300" for="group-auth-mode">Authentication</label>
                 <select id="group-auth-mode" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
                     <option value="NONE">NONE</option>
@@ -156,6 +159,126 @@
         <div class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">
             <button id="group-modal-cancel" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm font-medium text-zinc-200">Cancel</button>
             <button id="group-modal-save" class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-sm font-semibold text-black">Save Group</button>
+        </div>
+    </div>
+</div>
+
+<div id="mongo-wizard-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div class="w-full max-w-4xl rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
+            <h3 class="text-lg font-semibold text-zinc-100">Mongo Reflection Wizard</h3>
+            <button id="mongo-wizard-modal-close" class="rounded-md border border-zinc-700 px-2 py-1 text-zinc-300 transition-colors hover:bg-zinc-800" aria-label="Close">x</button>
+        </div>
+        <div class="space-y-4 px-5 py-4">
+            <div id="mongo-wizard-alert"></div>
+
+            <div class="flex items-center gap-2 text-xs text-zinc-500">
+                <span id="mongo-wizard-step-indicator">Step 1 of 3</span>
+                <span class="text-zinc-700">|</span>
+                <span id="mongo-wizard-step-title">Connection</span>
+            </div>
+
+            <div id="mongo-wizard-stepper" class="grid grid-cols-3 gap-2">
+                <div id="mongo-step-chip-1" class="rounded-md border border-cyan-500/50 bg-cyan-500/10 px-2 py-1 text-center text-xs font-medium text-cyan-300">
+                    1. Connection
+                </div>
+                <div id="mongo-step-chip-2" class="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-center text-xs font-medium text-zinc-400">
+                    2. Database
+                </div>
+                <div id="mongo-step-chip-3" class="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-center text-xs font-medium text-zinc-400">
+                    3. Collections
+                </div>
+            </div>
+
+            <div id="mongo-wizard-step-1" class="space-y-4">
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-wizard-group-name">Name</label>
+                        <input id="mongo-wizard-group-name" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="Mongo orders and customers">
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-wizard-group-description">Description</label>
+                        <input id="mongo-wizard-group-description" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="Generated by Mongo wizard">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-wizard-group-id">Group ID <span class="text-rose-400">*</span></label>
+                        <input id="mongo-wizard-group-id" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="e.g. vork">
+                        <div class="mt-1 text-xs text-zinc-500">Alphanumeric only, 3-64 chars.</div>
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-wizard-artifact-id">Artifact ID <span class="text-rose-400">*</span></label>
+                        <input id="mongo-wizard-artifact-id" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="e.g. mongotools">
+                        <div class="mt-1 text-xs text-zinc-500">Alphanumeric only, 3-64 chars.</div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div class="md:col-span-2">
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-wizard-uri">Connection URI <span class="text-rose-400">*</span></label>
+                        <input id="mongo-wizard-uri" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="mongodb://localhost:27017">
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-wizard-username">Username (optional)</label>
+                        <input id="mongo-wizard-username" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="mongo user">
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-wizard-password">Password (optional)</label>
+                        <input id="mongo-wizard-password" type="password" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="password">
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-wizard-auth-db">Auth DB (optional)</label>
+                        <input id="mongo-wizard-auth-db" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="admin">
+                    </div>
+                    <div class="flex items-end">
+                        <label class="inline-flex items-center gap-2 text-sm font-medium text-zinc-300" for="mongo-wizard-tls">
+                            <input id="mongo-wizard-tls" type="checkbox" class="h-4 w-4 rounded border-zinc-700 bg-zinc-950 text-[#fdaa02]">
+                            Enable TLS
+                        </label>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    <button id="mongo-wizard-inspect-connection" class="rounded-lg border border-cyan-500/40 px-3 py-2 text-sm font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15">
+                        <i class="fa-solid fa-circle-check mr-2"></i>Inspect Connection
+                    </button>
+                    <span class="text-xs text-zinc-500">This must succeed before continuing.</span>
+                </div>
+            </div>
+
+            <div id="mongo-wizard-step-2" class="hidden space-y-4">
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-wizard-database">Database <span class="text-rose-400">*</span></label>
+                        <select id="mongo-wizard-database" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"></select>
+                    </div>
+                    <div class="flex items-end">
+                        <button id="mongo-wizard-inspect-database" class="rounded-lg border border-cyan-500/40 px-3 py-2 text-sm font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15">
+                            <i class="fa-solid fa-table-list mr-2"></i>Load Collections
+                        </button>
+                    </div>
+                </div>
+                <div class="text-xs text-zinc-500">Choose a database and load its collections before continuing.</div>
+            </div>
+
+            <div id="mongo-wizard-step-3" class="hidden space-y-4">
+                <div>
+                    <div class="mb-1 flex items-center justify-between">
+                        <label class="block text-sm font-medium text-zinc-300">Collections <span class="text-rose-400">*</span></label>
+                        <button id="mongo-wizard-select-all" type="button" class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200">Select All</button>
+                    </div>
+                    <div id="mongo-wizard-collections" class="max-h-52 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950 p-2 text-sm text-zinc-200"></div>
+                </div>
+                <div class="text-xs text-zinc-500">Select one or more collections and generate reflections.</div>
+            </div>
+        </div>
+        <div class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">
+            <button id="mongo-wizard-cancel" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm font-medium text-zinc-200">Cancel</button>
+            <button id="mongo-wizard-back" class="hidden rounded-lg border border-zinc-600 px-3 py-1.5 text-sm font-medium text-zinc-200">Back</button>
+            <button id="mongo-wizard-next" class="rounded-lg border border-cyan-500/40 px-3 py-1.5 text-sm font-medium text-cyan-300 transition-colors hover:bg-cyan-500/15">Next</button>
+            <button id="mongo-wizard-generate" class="hidden rounded-lg bg-[#fdaa02] px-3 py-1.5 text-sm font-semibold text-black">Generate Reflections</button>
         </div>
     </div>
 </div>
@@ -300,6 +423,162 @@
     </div>
 </div>
 
+<div id="mongo-tool-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div class="w-full max-w-3xl rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
+            <h3 id="mongo-tool-modal-title" class="text-lg font-semibold text-zinc-100">Mongo Tool</h3>
+            <button id="mongo-tool-modal-close" class="rounded-md border border-zinc-700 px-2 py-1 text-zinc-300 transition-colors hover:bg-zinc-800" aria-label="Close">x</button>
+        </div>
+        <div class="space-y-3 px-5 py-4">
+            <div id="mongo-tool-modal-alert"></div>
+            <input id="mongo-tool-uuid" type="hidden">
+
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-tool-id">Tool ID <span class="text-rose-400">*</span></label>
+                    <input id="mongo-tool-id" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="getOrdersMongo">
+                </div>
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-tool-name">Name <span class="text-rose-400">*</span></label>
+                    <input id="mongo-tool-name" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="Get Orders Mongo">
+                </div>
+            </div>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-tool-description">Description</label>
+                <input id="mongo-tool-description" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="Read documents from orders collection">
+            </div>
+
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-tool-group">Mongo Group <span class="text-rose-400">*</span></label>
+                    <select id="mongo-tool-group" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"></select>
+                </div>
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-tool-operation">Operation <span class="text-rose-400">*</span></label>
+                    <select id="mongo-tool-operation" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
+                        <option value="CREATE">CREATE</option>
+                        <option value="READ">READ</option>
+                        <option value="UPDATE">UPDATE</option>
+                        <option value="DELETE">DELETE</option>
+                        <option value="SEARCH">SEARCH</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-tool-database">Database</label>
+                    <input id="mongo-tool-database" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="vork">
+                </div>
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-tool-collection">Collection <span class="text-rose-400">*</span></label>
+                    <input id="mongo-tool-collection" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="orders">
+                </div>
+            </div>
+
+            <div id="mongo-tool-search-config" class="space-y-3 hidden rounded-lg border border-zinc-800 bg-zinc-950/60 p-3">
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-tool-query-type">Search Query Type</label>
+                    <select id="mongo-tool-query-type" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
+                        <option value="MONGO">MONGO</option>
+                        <option value="SQL">SQL</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-tool-query-template">Default Query Template (optional)</label>
+                    <textarea id="mongo-tool-query-template" class="min-h-20 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-100" placeholder='{"status":"ACTIVE"}'></textarea>
+                    <div class="mt-1 text-xs text-zinc-500">Used when runtime input does not provide query. Supports placeholders like {{status}}.</div>
+                </div>
+            </div>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="mongo-tool-inferred-schema">Inferred Schema (optional JSON Schema)</label>
+                <textarea id="mongo-tool-inferred-schema" class="min-h-24 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-100" placeholder='{"type":"object","properties":{"name":{"type":"string"}}}'></textarea>
+            </div>
+        </div>
+        <div class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">
+            <button id="mongo-tool-modal-cancel" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm font-medium text-zinc-200">Cancel</button>
+            <button id="mongo-tool-modal-save" class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-sm font-semibold text-black">Save Mongo Tool</button>
+        </div>
+    </div>
+</div>
+
+<div id="record-tool-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div class="w-full max-w-4xl rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
+            <h3 id="record-tool-modal-title" class="text-lg font-semibold text-zinc-100">Record Tool</h3>
+            <button id="record-tool-modal-close" class="rounded-md border border-zinc-700 px-2 py-1 text-zinc-300 transition-colors hover:bg-zinc-800" aria-label="Close">x</button>
+        </div>
+        <div class="space-y-3 px-5 py-4">
+            <div id="record-tool-modal-alert"></div>
+            <input id="record-tool-uuid" type="hidden">
+
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="record-tool-id">Tool ID <span class="text-rose-400">*</span></label>
+                    <input id="record-tool-id" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="searchCustomersByRegion">
+                </div>
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="record-tool-name">Name <span class="text-rose-400">*</span></label>
+                    <input id="record-tool-name" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="Search Customers By Region">
+                </div>
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="record-tool-group">Record Group <span class="text-rose-400">*</span></label>
+                    <select id="record-tool-group" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"></select>
+                </div>
+            </div>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="record-tool-description">Description</label>
+                <input id="record-tool-description" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="Search scoped records with SQL or Mongo query syntax">
+            </div>
+
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="record-tool-operation">Operation</label>
+                    <select id="record-tool-operation" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
+                        <option value="SEARCH">SEARCH</option>
+                        <option value="GET">GET</option>
+                        <option value="LIST">LIST</option>
+                    </select>
+                    <div class="mt-1 text-xs text-zinc-500">GET returns one object by uuid. LIST returns a safe capped result set.</div>
+                </div>
+            </div>
+
+            <div id="record-tool-search-config" class="space-y-3 rounded-lg border border-zinc-800 bg-zinc-950/60 p-3">
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="record-tool-query-type">Default Query Type</label>
+                    <select id="record-tool-query-type" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
+                        <option value="SQL">SQL</option>
+                    </select>
+                    <div class="mt-1 text-xs text-zinc-500">Record tools are SQL-first. Used when runtime input does not provide queryType.</div>
+                </div>
+
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="record-tool-query-template">Default Query Template (optional)</label>
+                    <textarea id="record-tool-query-template" class="min-h-24 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-100" placeholder="status = 'ACTIVE' AND region = '{{region}}'"></textarea>
+                    <div class="mt-1 text-xs text-zinc-500">If runtime input omits query, this template is used. Placeholder format: {{parameterName}}</div>
+                </div>
+            </div>
+
+            <div>
+                <div class="mb-1 flex items-center justify-between">
+                    <label class="block text-sm font-medium text-zinc-300">Input Parameters</label>
+                    <button id="add-record-param-btn" type="button" class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200">
+                        <i class="fa-solid fa-plus mr-1"></i>Add
+                    </button>
+                </div>
+                <div id="record-tool-params-list"></div>
+            </div>
+        </div>
+        <div class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">
+            <button id="record-tool-modal-cancel" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm font-medium text-zinc-200">Cancel</button>
+            <button id="record-tool-modal-save" class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-sm font-semibold text-black">Save Record Tool</button>
+        </div>
+    </div>
+</div>
+
 <div id="binding-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
     <div class="w-full max-w-3xl rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
         <div class="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
@@ -424,6 +703,6 @@
 
 <script src="/js/github-device-flow-ui.js?v=20260813.2" th:src="@{/js/github-device-flow-ui.js(v='20260813.2')}"></script>
 <script src="/js/contribution-dependency-precheck.js?v=20260813.3" th:src="@{/js/contribution-dependency-precheck.js(v='20260813.3')}"></script>
-<script src="/js/reflections.js?v=20260813.5" th:src="@{/js/reflections.js(v='20260813.5')}"></script>
+<script src="/js/reflections.js?v=20260813.6" th:src="@{/js/reflections.js(v='20260813.6')}"></script>
 </body>
 </html>

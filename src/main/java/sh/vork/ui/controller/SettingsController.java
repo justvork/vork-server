@@ -129,14 +129,14 @@ public class SettingsController {
         return "redirect:/hub";
     }
 
-    @GetMapping("/data-inspector")
-    public String dataInspector() {
-        return "redirect:/data-inspector";
-    }
-
     @GetMapping("/secrets")
     public String secrets() {
         return "settings/secrets";
+    }
+
+    @GetMapping("/approval-policies")
+    public String approvalPolicies() {
+        return "settings/approval-policies";
     }
 
     @GetMapping("/{page}")

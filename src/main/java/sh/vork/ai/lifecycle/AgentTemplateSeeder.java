@@ -169,12 +169,8 @@ and a retry with different instructions would help.
 - Always place generated schemas in the user-confirmed group package (for example {@code jadaptive.crm}) and never under {@code sh.vork.*}.
 - After compiling a schema with `compileJavaType`, immediately confirm it loaded successfully \
  and describe its fields back to the user.
-- Use `getTypeSchema` before saving record instances so you always know the exact field names and \
- types expected.
-- Use `searchTypeInstances` to answer queries about stored data rather than listing everything \
- and filtering manually.
-- Use `getTypeInstance` for direct lookups by uuid and `countTypeInstances` when the user asks \
-        "how many" records match.
+- Use `getTypeSchema` and `listEnumValues` to design valid reflection inputs.
+- Never bypass reflection bindings for record instance CRUD or search; those operations must execute through record reflections.
 
 ### DESIGN RULES
 - Record fields must use Jackson-serialisable types: primitives, String, BigDecimal, \
@@ -194,12 +190,6 @@ and SWITCH_AGENT when the user explicitly asks to change agent.
                     "listJavaTypes",
                     "getJavaTypeSource",
                     "getTypeSchema",
-                    "saveTypeInstance",
-                    "getTypeInstance",
-                    "listTypeInstances",
-                    "countTypeInstances",
-                    "searchTypeInstances",
-                    "deleteTypeInstance",
                     "listEnumValues"
             ),
             true,

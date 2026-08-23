@@ -15,6 +15,8 @@ let allCategories = [];
 let allReflections = [];
 let allReflectionGroups = [];
 let allReflectionBindingOptions = [];
+let allApprovalPolicies = [];
+let skillPolicyAssignments = {};
 let providerGroups = [];
 let providerGroupByKey = {};
 let githubConnection;
@@ -95,7 +97,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 async function loadData() {
     try {
-        const [skillsRes, groupsRes, toolsRes, typesRes, catsRes, reflectionsRes, reflectionGroupsRes, mcpBindingsRes, providersRes] = await Promise.all([
+        const [skillsRes, groupsRes, toolsRes, typesRes, catsRes, reflectionsRes, reflectionGroupsRes, mcpBindingsRes, providersRes, policiesRes, policyAssignmentsRes] = await Promise.all([
             fetch('/api/skills?includePrivate=true'),
             fetch('/api/skill-groups'),
             fetch('/api/management/tools'),
@@ -104,7 +106,9 @@ async function loadData() {
             fetch('/api/reflections'),
             fetch('/api/chat/bindings'),
             fetch('/api/chat/mcp-bindings'),
-            fetch('/api/ai/providers')
+            fetch('/api/ai/providers'),
+            fetch('/api/approval-policies'),
+            fetch('/api/approval-policies/assignments?targetType=skill')
         ]);
         allSkills     = skillsRes.ok ? await skillsRes.json() : [];
         allGroupViews = groupsRes.ok ? await groupsRes.json() : [];
@@ -125,6 +129,8 @@ async function loadData() {
             };
         }));
         providerGroups = providersRes.ok ? await providersRes.json() : [];
+        allApprovalPolicies = policiesRes.ok ? await policiesRes.json() : [];
+        skillPolicyAssignments = policyAssignmentsRes.ok ? await policyAssignmentsRes.json() : {};
         providerGroupByKey = (providerGroups || []).reduce(function (acc, group) {
             if (group && group.providerKey) {
                 acc[group.providerKey.toUpperCase()] = group;
@@ -465,6 +471,7 @@ function openCreate(groupUuid) {
     document.getElementById('skill-output-content-type').value  = 'none';
     document.getElementById('skill-output-schema').value        = '';
     document.getElementById('skill-recommended-model').value    = '';
+    populateSkillApprovalPolicySelect('');
     buildRecommendedModelLookupOptions('skill-recommended-model-lookup', '');
     toggleSkillOutputSchemaRequirement();
     document.getElementById('skill-instructions').value         = '';
@@ -498,6 +505,7 @@ function openCopy(id) {
     document.getElementById('skill-output-content-type').value  = (skill.outputContentType || 'none').toLowerCase();
     document.getElementById('skill-output-schema').value        = skill.outputSchema || '';
     document.getElementById('skill-recommended-model').value    = skill.recommendedModel || '';
+    populateSkillApprovalPolicySelect(skillPolicyAssignments[id] || '');
     buildRecommendedModelLookupOptions('skill-recommended-model-lookup', skill.recommendedModel || '');
     toggleSkillOutputSchemaRequirement();
     document.getElementById('skill-instructions').value         = skill.instructions || '';
@@ -547,6 +555,7 @@ function openEdit(id) {
     document.getElementById('skill-output-content-type').value  = (skill.outputContentType || 'none').toLowerCase();
     document.getElementById('skill-output-schema').value        = skill.outputSchema || '';
     document.getElementById('skill-recommended-model').value    = skill.recommendedModel || '';
+    populateSkillApprovalPolicySelect(skillPolicyAssignments[id] || '');
     buildRecommendedModelLookupOptions('skill-recommended-model-lookup', skill.recommendedModel || '');
     toggleSkillOutputSchemaRequirement();
     document.getElementById('skill-instructions').value         = skill.instructions || '';
@@ -1046,6 +1055,7 @@ async function saveSkill() {
     const outputContentType = (document.getElementById('skill-output-content-type').value || 'none').trim().toLowerCase();
     const outputSchema = (document.getElementById('skill-output-schema').value || '').trim();
     const recommendedModel = document.getElementById('skill-recommended-model').value.trim();
+    const selectedPolicyId = document.getElementById('skill-approval-policy').value.trim();
     const instructions   = document.getElementById('skill-instructions').value;
 
     if (!name) { showAlertIn('skill-modal-alert', 'Name is required.', 'warning'); return; }
@@ -1137,6 +1147,14 @@ async function saveSkill() {
         });
         const data = await res.json();
         if (data.error) { showAlertIn('skill-modal-alert', data.error, 'danger'); return; }
+        const savedId = data.uuid || id;
+        if (savedId) {
+            const assignmentErr = await persistSkillPolicyAssignment(savedId, selectedPolicyId);
+            if (assignmentErr) {
+                showAlertIn('skill-modal-alert', 'Skill saved but policy assignment failed: ' + assignmentErr, 'warning');
+                return;
+            }
+        }
         skillModal.hide();
         showAlert(id ? 'Skill updated.' : 'Skill created.', 'success');
         setTimeout(function () { location.reload(); }, 800);
@@ -1145,6 +1163,46 @@ async function saveSkill() {
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="fa-solid fa-save mr-1"></i>Save Skill';
+    }
+}
+
+function populateSkillApprovalPolicySelect(selectedPolicyId) {
+    const select = document.getElementById('skill-approval-policy');
+    if (!select) return;
+
+    select.innerHTML = '<option value="">System Default</option>';
+    (allApprovalPolicies || []).forEach(function (policy) {
+        const option = document.createElement('option');
+        option.value = policy.uuid;
+        option.textContent = policy.name || policy.uuid;
+        select.appendChild(option);
+    });
+
+    if (selectedPolicyId) {
+        select.value = selectedPolicyId;
+    } else {
+        select.value = '';
+    }
+}
+
+async function persistSkillPolicyAssignment(skillId, policyId) {
+    try {
+        const res = await fetch('/api/approval-policies/assignments', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                targetType: 'skill',
+                targetId: skillId,
+                policyId: policyId
+            })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            return data.error || 'Unknown assignment error';
+        }
+        return null;
+    } catch (_e) {
+        return 'Network error while saving assignment';
     }
 }
 

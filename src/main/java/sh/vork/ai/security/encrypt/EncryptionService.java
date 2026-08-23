@@ -4,13 +4,17 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyFactory;
+import java.security.PrivateKey;
 import java.security.SecureRandom;
+import java.security.interfaces.RSAPrivateCrtKey;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.RSAPublicKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 import javax.annotation.PostConstruct;
 import javax.crypto.Cipher;
@@ -96,6 +100,70 @@ public class EncryptionService {
 			return encryptWithLegacyKeys(value, privateKeyBytes, publicKeyBytes);
 		} catch (Exception e) {
 			throw new IllegalStateException("Failed to encrypt using custom key paths", e);
+		}
+	}
+
+	public String encryptWithLegacyPrivateKey(String value, byte[] privateKeyBytes) {
+		if (privateKeyBytes == null || privateKeyBytes.length == 0) {
+			throw new IllegalArgumentException("privateKeyBytes are required for legacy RSA mode");
+		}
+		try {
+			byte[] publicKeyBytes = derivePublicKey(privateKeyBytes);
+			return encryptWithLegacyKeys(value, privateKeyBytes, publicKeyBytes);
+		} catch (Exception e) {
+			throw new IllegalStateException("Failed to derive RSA public key from private key", e);
+		}
+	}
+
+	public String decryptWithLegacyPrivateKey(String value, byte[] privateKeyBytes) {
+		if (privateKeyBytes == null || privateKeyBytes.length == 0) {
+			throw new IllegalArgumentException("privateKeyBytes are required for legacy RSA mode");
+		}
+		try {
+			byte[] publicKeyBytes = derivePublicKey(privateKeyBytes);
+			return decryptWithLegacyKeys(value, privateKeyBytes, publicKeyBytes);
+		} catch (Exception e) {
+			throw new IllegalStateException("Failed to derive RSA public key from private key", e);
+		}
+	}
+
+	public String encryptWithSoftwareKeystore(String value,
+															 byte[] keystoreBytes,
+															 String keystoreAlias,
+															 String keystorePassword) {
+		if (keystoreBytes == null || keystoreBytes.length == 0) {
+			throw new IllegalArgumentException("keystoreBytes are required for software encryption mode");
+		}
+		SessionSoftwareProviderWithPath providerWithPath = null;
+		try {
+			providerWithPath = createSessionSoftwareProvider(keystoreBytes, keystoreAlias, keystorePassword);
+			return encryptAndTag(value, providerWithPath.provider());
+		} catch (Exception e) {
+			throw new IllegalStateException("Failed to encrypt using software keystore", e);
+		} finally {
+			cleanupTempDirectory(providerWithPath == null ? null : providerWithPath.tempDirectory());
+		}
+	}
+
+	public String decryptWithSoftwareKeystore(String value,
+															 byte[] keystoreBytes,
+															 String keystoreAlias,
+															 String keystorePassword) {
+		if (keystoreBytes == null || keystoreBytes.length == 0) {
+			throw new IllegalArgumentException("keystoreBytes are required for software encryption mode");
+		}
+		if(!isEncrypted(value) && !value.startsWith(LEGACY_RSA_TAG)) {
+			return value;
+		}
+
+		SessionSoftwareProviderWithPath providerWithPath = null;
+		try {
+			providerWithPath = createSessionSoftwareProvider(keystoreBytes, keystoreAlias, keystorePassword);
+			return decryptWithProvider(value, providerWithPath.provider());
+		} catch (Exception e) {
+			throw new IllegalStateException("Failed to decrypt using software keystore", e);
+		} finally {
+			cleanupTempDirectory(providerWithPath == null ? null : providerWithPath.tempDirectory());
 		}
 	}
 
@@ -301,6 +369,94 @@ private byte[] encryptAES(String value, byte[] key, byte[] iv) throws Exception 
 		@Override
 		public int getLength() {
 			return 128;
+		}
+	}
+
+	private static byte[] derivePublicKey(byte[] privateKeyBytes) throws Exception {
+		KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+		PrivateKey privateKey = keyFactory.generatePrivate(new PKCS8EncodedKeySpec(privateKeyBytes));
+		if (privateKey instanceof RSAPrivateCrtKey crtKey) {
+			RSAPublicKeySpec publicKeySpec = new RSAPublicKeySpec(crtKey.getModulus(), crtKey.getPublicExponent());
+			return keyFactory.generatePublic(publicKeySpec).getEncoded();
+		}
+		throw new IllegalArgumentException("Private key must be an instance of RSAPrivateCrtKey");
+	}
+
+	private SessionSoftwareProviderWithPath createSessionSoftwareProvider(byte[] keystoreBytes,
+																	 String keystoreAlias,
+																	 String keystorePassword) throws Exception {
+		Path tempDirectory = Files.createTempDirectory("vork-softenc-");
+		Path keystoreFile = tempDirectory.resolve("session-software-encryption.p12");
+		Files.write(keystoreFile, keystoreBytes);
+
+		com.jadaptive.hsm.encrypt.SoftwareEncryptionProvider.Builder builder =
+				com.jadaptive.hsm.encrypt.SoftwareEncryptionProvider.builder();
+		builder.setKeystoreDir(tempDirectory.toString());
+		builder.setKeystoreSubdir("");
+		builder.setKeystoreFilename(keystoreFile.getFileName().toString());
+		if (keystoreAlias != null && !keystoreAlias.isBlank()) {
+			builder.setKeystoreAlias(keystoreAlias.trim());
+		}
+		if (keystorePassword != null && !keystorePassword.isBlank()) {
+			builder.setKeystorePassword(keystorePassword);
+		}
+
+		com.jadaptive.hsm.encrypt.SoftwareEncryptionProvider delegate = builder.build();
+		delegate.init();
+		return new SessionSoftwareProviderWithPath(new SessionSoftwareEncryptionProvider(delegate), tempDirectory);
+	}
+
+	private static void cleanupTempDirectory(Path tempDirectory) {
+		if (tempDirectory == null) {
+			return;
+		}
+		try (Stream<Path> walk = Files.walk(tempDirectory)) {
+			walk.sorted((a, b) -> b.compareTo(a)).forEach(path -> {
+				try {
+					Files.deleteIfExists(path);
+				} catch (Exception ignored) {
+					// Best effort cleanup for temp keystore artifacts.
+				}
+			});
+		} catch (Exception ignored) {
+			// Best effort cleanup for temp keystore artifacts.
+		}
+	}
+
+	private record SessionSoftwareProviderWithPath(EncryptionProvider provider, Path tempDirectory) {
+	}
+
+	private static final class SessionSoftwareEncryptionProvider implements EncryptionProvider {
+
+		private final com.jadaptive.hsm.encrypt.SoftwareEncryptionProvider delegate;
+
+		private SessionSoftwareEncryptionProvider(com.jadaptive.hsm.encrypt.SoftwareEncryptionProvider delegate) {
+			this.delegate = delegate;
+		}
+
+		@Override
+		public int priority() {
+			return Integer.MAX_VALUE;
+		}
+
+		@Override
+		public void init() {
+			// Delegate already initialized by builder caller.
+		}
+
+		@Override
+		public String encrypt(String string) throws Exception {
+			return delegate.encrypt(string);
+		}
+
+		@Override
+		public String decrypt(String substring) throws Exception {
+			return delegate.decrypt(substring);
+		}
+
+		@Override
+		public String getTag() {
+			return LEGACY_RSA_TAG;
 		}
 	}
 }

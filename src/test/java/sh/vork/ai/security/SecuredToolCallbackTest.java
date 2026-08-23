@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -45,6 +46,29 @@ class SecuredToolCallbackTest {
         verify(delegate).call("{\"location\":\"London\"}");
     }
 
+        @Test
+        void restrictedTool_executesWhenMatchingPreAuthorizationTokenIsConsumed() {
+        AuthorizationRuleEngine rules = new AuthorizationRuleEngine(Set.of("compileJavaType"));
+        ToolCallback delegate = delegate("compileJavaType");
+        when(delegate.call("{\"source\":\"class A {}\"}")).thenReturn("ok");
+
+        PreAuthorizationTokenService preAuthorizationTokenService = mock(PreAuthorizationTokenService.class);
+        when(preAuthorizationTokenService.consumeMatchingToken("alice", null, "compileJavaType", "{\"source\":\"class A {}\"}"))
+            .thenReturn(true);
+
+        SecurityContextHolder.getContext().setAuthentication(
+            new TestingAuthenticationToken("alice", "pw"));
+
+        SecuredToolCallback secured = new SecuredToolCallback(delegate, rules, preAuthorizationTokenService, false);
+
+        String out = secured.call("{\"source\":\"class A {}\"}");
+
+        assertEquals("ok", out);
+        verify(preAuthorizationTokenService, times(1))
+            .consumeMatchingToken("alice", null, "compileJavaType", "{\"source\":\"class A {}\"}");
+        verify(delegate, times(1)).call("{\"source\":\"class A {}\"}");
+        }
+
     @Test
     void restrictedTool_throwsSuspensionBeforeDelegateCall() {
         AuthorizationRuleEngine rules = new AuthorizationRuleEngine(Set.of("compileJavaType"));
@@ -60,6 +84,10 @@ class SecuredToolCallbackTest {
 
         assertEquals("compileJavaType", ex.getToolName());
         assertEquals("{\"source\":\"class A {}\"}", ex.getArguments());
+        assertEquals("arguments", ex.getFormSchema().fields().get(0).name());
+        String rendered = ex.getFormSchema().fields().get(0).placeholder();
+        org.junit.jupiter.api.Assertions.assertTrue(rendered.contains("Exact arguments to be executed:"));
+        org.junit.jupiter.api.Assertions.assertTrue(rendered.contains("| source | class A {} |"));
         verify(delegate, never()).call("{\"source\":\"class A {}\"}");
     }
 

@@ -622,6 +622,19 @@ class SqlQueryParserTest {
         }
 
         @Test
+        void string_doubleQuotedLiteral() {
+            SearchQuery q = SqlQueryParser.parse("code = \"ABC123\"");
+            assertTrue(q.test(Map.of("code", "ABC123")));
+            assertFalse(q.test(Map.of("code", "XYZ")));
+        }
+
+        @Test
+        void string_doubleQuotedEscapedQuote() {
+            SearchQuery q = SqlQueryParser.parse("note = \"a \"\"quoted\"\" value\"");
+            assertTrue(q.test(Map.of("note", "a \"quoted\" value")));
+        }
+
+        @Test
         void string_emptyString() {
             SearchQuery q = SqlQueryParser.parse("name = ''");
             assertTrue(q.test(Map.of("name", "")));

@@ -71,14 +71,8 @@ public class AiOrchestrationService {
 
     private static final Logger log = LoggerFactory.getLogger(AiOrchestrationService.class);
         private static final int LOG_INPUT_PREVIEW_LIMIT = 240;
-        private static final List<String> SKILL_TYPE_CRUD_TOOL_NAMES = List.of(
+        private static final List<String> SKILL_TYPE_SCHEMA_TOOL_NAMES = List.of(
                 "getTypeSchema",
-                "saveTypeInstance",
-                "getTypeInstance",
-                "listTypeInstances",
-                "countTypeInstances",
-                "deleteTypeInstance",
-                "searchTypeInstances",
                 "listEnumValues");
         private static final String BACKGROUND_OPERATIONAL_PROTOCOL = """
 BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated background thread. You must perform all necessary analysis and tool calls across multiple message rounds without expecting further human input. If parallel or downstream processing is needed, you may call delegateTask(agentName, prompt) to spawn a separate one-time background job. delegateTask is fire-and-forget: do not wait for the child job to finish. Once you have validated that the requested objective is entirely satisfied (e.g., your types compile successfully and records are saved), you MUST invoke the completeBackgroundTask tool to cleanly finalize the run. You MUST provide a boolean 'success' value and a 'report' string summarising what was done and produced. Do not exit without invoking this tool.
@@ -1241,8 +1235,8 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
 
                 List<String> allowedTypes = frame.allowedTypes() != null ? frame.allowedTypes() : List.of();
                 if (!allowedTypes.isEmpty()) {
-                        requested.addAll(SKILL_TYPE_CRUD_TOOL_NAMES);
-                        log.debug("Auto-injected type CRUD tools for skill frame [skill={}, types={}]",
+                        requested.addAll(SKILL_TYPE_SCHEMA_TOOL_NAMES);
+                        log.debug("Auto-injected type schema tools for skill frame [skill={}, types={}]",
                                 frame.skillName(), allowedTypes.size());
                 }
 

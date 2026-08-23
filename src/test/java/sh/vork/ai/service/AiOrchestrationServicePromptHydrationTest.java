@@ -236,12 +236,6 @@ class AiOrchestrationServicePromptHydrationTest {
 
         Map<String, ToolCallback> securedToolMap = Map.of(
                 "getTypeSchema", namedTool("getTypeSchema"),
-                "saveTypeInstance", namedTool("saveTypeInstance"),
-                "getTypeInstance", namedTool("getTypeInstance"),
-                "listTypeInstances", namedTool("listTypeInstances"),
-                "countTypeInstances", namedTool("countTypeInstances"),
-                "deleteTypeInstance", namedTool("deleteTypeInstance"),
-                "searchTypeInstances", namedTool("searchTypeInstances"),
                 "listEnumValues", namedTool("listEnumValues"),
                 "compileJavaType", namedTool("compileJavaType"));
 
@@ -269,8 +263,7 @@ class AiOrchestrationServicePromptHydrationTest {
                 .toList();
 
         assertTrue(names.contains("getTypeSchema"));
-        assertTrue(names.contains("saveTypeInstance"));
-        assertTrue(names.contains("searchTypeInstances"));
+        assertTrue(names.contains("listEnumValues"));
         assertFalse(names.contains("compileJavaType"));
     }
 

@@ -173,8 +173,9 @@ public class ReflectionController {
 
     @DeleteMapping("/reflection-groups/{uuid}")
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
-    public ResponseEntity<?> deleteGroup(@PathVariable String uuid) {
-        ReflectionService.GroupDeleteResult result = reflectionService.deleteGroup(uuid);
+    public ResponseEntity<?> deleteGroup(@PathVariable String uuid,
+                                         @RequestParam(name = "purge", defaultValue = "false") boolean purge) {
+        ReflectionService.GroupDeleteResult result = reflectionService.deleteGroup(currentUsername(), uuid, purge);
         if (!result.ok()) {
             return ResponseEntity.badRequest().body(Map.of("error", result.message()));
         }
@@ -216,6 +217,62 @@ public class ReflectionController {
             return ResponseEntity.ok(result);
         }
         return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("/reflection-groups/mongo/inspect-connection")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> inspectMongoConnection(@RequestBody ReflectionService.MongoConnectionRequest request) {
+        try {
+            return ResponseEntity.ok(reflectionService.inspectMongoConnection(request));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
+    }
+
+    @PostMapping("/reflection-groups/mongo/inspect-database")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> inspectMongoDatabase(@RequestBody ReflectionService.MongoDatabaseInspectRequest request) {
+        try {
+            return ResponseEntity.ok(reflectionService.inspectMongoDatabase(request));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
+    }
+
+    @PostMapping("/reflection-groups/mongo/wizard-generate")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> generateMongoReflections(@RequestBody ReflectionService.MongoWizardGenerateRequest request) {
+        try {
+            return ResponseEntity.ok(reflectionService.generateMongoReflectionsFromWizard(currentUsername(), request));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
+    }
+
+    @PostMapping("/mongo-reflections")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> createMongoReflection(@RequestBody ReflectionService.MongoToolRequest request) {
+        try {
+            Reflection created = reflectionService.createMongoToolReflection(request);
+            return ResponseEntity.ok(created);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
+    }
+
+    @PutMapping("/mongo-reflections/{uuid}")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> updateMongoReflection(@PathVariable String uuid,
+                                                   @RequestBody ReflectionService.MongoToolRequest request) {
+        try {
+            Reflection updated = reflectionService.updateMongoToolReflection(uuid, request);
+            if (updated == null) {
+                return ResponseEntity.notFound().build();
+            }
+            return ResponseEntity.ok(updated);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
     }
 
     @GetMapping("/reflections")
@@ -284,6 +341,27 @@ public class ReflectionController {
         }
     }
 
+    @PostMapping("/reflections/search-execute")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> executeSearchReflection(@RequestBody SearchToolExecutionRequest request) {
+        try {
+            if (request == null || request.reflectionId() == null || request.reflectionId().isBlank()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "reflectionId is required."));
+            }
+            String raw = reflectionService.executeRestReflection(
+                    request.reflectionId().trim(),
+                    request.args() == null ? Map.of() : request.args(),
+                    request.bindingName(),
+                    currentUsername());
+            Object payload = EXPORT_OBJECT_MAPPER.readValue(raw, Object.class);
+            return ResponseEntity.ok(payload);
+        } catch (JsonProcessingException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Failed to parse reflection response."));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
+    }
+
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<?> handleMalformedImportJson(HttpMessageNotReadableException ex) {
         Throwable root = ex.getMostSpecificCause();
@@ -310,6 +388,11 @@ public class ReflectionController {
             ReflectionGroup group,
             List<Reflection> reflections,
             List<ReflectionBinding> bindings) {}
+
+    public record SearchToolExecutionRequest(
+            String reflectionId,
+            String bindingName,
+            Map<String, Object> args) {}
 
         public record OAuthBindingFlowRequest(
             String originalBindingName,
