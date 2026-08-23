@@ -356,9 +356,9 @@ Rules:
         log.debug("ENTER AgentTemplateSeeder.onReady: seeding built-in agent templates");
 
         seedOrUpdate(CONCIERGE);
-        seedOrUpdate(COMPUTER_ADMIN);
+        // seedOrUpdate(COMPUTER_ADMIN);
         seedOrUpdate(VORK_DEVELOPER);
-        seedOrUpdate(VORK_SKILL_DESIGNER);
+        // seedOrUpdate(VORK_SKILL_DESIGNER);
         seedOrUpdate(AUTOMATION_REPORTER);
         seedOrUpdate(SURFACE_DEVELOPER);
 
