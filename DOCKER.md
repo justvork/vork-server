@@ -49,8 +49,7 @@ docker buildx build \
   --file Dockerfile \
   --pull \
   --no-cache \
-  --tag yourusername/vork-server:latest \
-  --tag yourusername/vork-server:{version} \
+  --tag justvork/vork-server:latest \
   --push \
   .
 ```

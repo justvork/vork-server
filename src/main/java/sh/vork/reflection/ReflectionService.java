@@ -843,7 +843,6 @@ public class ReflectionService {
                 new SkillSecret("MONGO_USERNAME", "Mongo username"),
                 new SkillSecret("MONGO_PASSWORD", "Mongo password"));
         List<ReflectionBindingParameter> bindingParameters = List.of(
-            new ReflectionBindingParameter("mongoUri", "hidden", "Mongo connection URI", request.connectionUri().trim()),
                 new ReflectionBindingParameter("mongoDatabase", "string", "Mongo database name", request.database().trim()),
                 new ReflectionBindingParameter("mongoAuthDatabase", "string", "Mongo auth database", request.authDatabase() == null || request.authDatabase().isBlank() ? "admin" : request.authDatabase().trim()),
                 new ReflectionBindingParameter("mongoTls", "boolean", "Enable TLS for Mongo connection", String.valueOf(Boolean.TRUE.equals(request.tlsEnabled()))));
@@ -871,7 +870,6 @@ public class ReflectionService {
         }
 
         Map<String, String> parameterValues = new LinkedHashMap<>();
-        parameterValues.put("mongoUri", request.connectionUri().trim());
         parameterValues.put("mongoDatabase", request.database().trim());
         parameterValues.put("mongoAuthDatabase", request.authDatabase() == null || request.authDatabase().isBlank() ? "admin" : request.authDatabase().trim());
         parameterValues.put("mongoTls", String.valueOf(Boolean.TRUE.equals(request.tlsEnabled())));
