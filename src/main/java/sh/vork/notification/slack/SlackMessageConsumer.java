@@ -39,6 +39,7 @@ public interface SlackMessageConsumer {
      * @param userId        Slack member ID of the sending user (e.g. {@code U01ABCDE})
      * @param text          the plain-text body of the message
      * @param eventTs       Slack event timestamp (e.g. {@code "1609459200.000001"})
+     * @param threadTs      parent thread timestamp when this is a threaded reply, or {@code null}
      * @param voiceFileUrl  {@code url_private} of an attached audio file, or {@code null}
      * @param voiceMimeType MIME type of the audio file (e.g. {@code "audio/ogg"}); non-null when voiceFileUrl is non-null
          * @param fileUrl       {@code url_private} of a non-audio file attachment, or {@code null}
@@ -53,6 +54,7 @@ public interface SlackMessageConsumer {
             String userId,
             String text,
             String eventTs,
+            String threadTs,
             String voiceFileUrl,
             String voiceMimeType,
             String fileUrl,
@@ -74,6 +76,11 @@ public interface SlackMessageConsumer {
         /** Returns {@code true} when this message contains a non-audio file attachment. */
         public boolean isFile() {
             return fileUrl != null;
+        }
+
+        /** Returns the conversation thread anchor for channel replies. */
+        public String conversationThreadTs() {
+            return (threadTs != null && !threadTs.isBlank()) ? threadTs : eventTs;
         }
     }
 }

@@ -1,5 +1,7 @@
 package sh.vork.surface.service;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -87,7 +89,7 @@ class SurfaceServiceTest {
                 "vork",
                 "surface2",
                 "SNAPSHOT",
-                sh.vork.surface.ArtifactStatus.SNAPSHOT,
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT,
                 1L,
                 1L);
 
@@ -297,7 +299,7 @@ class SurfaceServiceTest {
                                 "vork",
                                 "surface1",
                                 "1.0",
-                                sh.vork.surface.ArtifactStatus.SUBMITTED,
+                                sh.vork.artifact.ArtifactStatus.SUBMITTED,
                                 1L,
                                 1L);
 
@@ -318,6 +320,6 @@ class SurfaceServiceTest {
 
                 ArgumentCaptor<Surface> captor = ArgumentCaptor.forClass(Surface.class);
                 verify(surfaceRepo).save(captor.capture());
-                assertEquals(sh.vork.surface.ArtifactStatus.SUBMITTED, captor.getValue().artifactStatus());
+                assertEquals(sh.vork.artifact.ArtifactStatus.SUBMITTED, captor.getValue().artifactStatus());
         }
 }

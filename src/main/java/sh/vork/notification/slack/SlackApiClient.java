@@ -47,19 +47,47 @@ public class SlackApiClient {
      * @param text      message body
      */
     public void sendMessage(String botToken, String channelId, String text) {
+        sendMessageWithTs(botToken, channelId, text, null);
+    }
+
+    /**
+     * Posts a plain-text message in an optional Slack thread.
+     */
+    public void sendMessage(String botToken, String channelId, String text, String threadTs) {
+        sendMessageWithTs(botToken, channelId, text, threadTs);
+    }
+
+    /**
+     * Posts a plain-text message and returns Slack's message timestamp.
+     */
+    public String sendMessageWithTs(String botToken, String channelId, String text) {
+        return sendMessageWithTs(botToken, channelId, text, null);
+    }
+
+    /**
+     * Posts a plain-text message, optionally anchored to a thread, and returns Slack's message timestamp.
+     */
+    public String sendMessageWithTs(String botToken, String channelId, String text, String threadTs) {
         log.debug("ENTER sendMessage: [channel={}]", channelId);
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("channel", channelId);
+        payload.put("text", text);
+        if (threadTs != null && !threadTs.isBlank()) {
+            payload.put("thread_ts", threadTs);
+        }
+
         String body;
         try {
-            body = objectMapper.writeValueAsString(Map.of(
-                    "channel", channelId,
-                    "text",    text));
+            body = objectMapper.writeValueAsString(payload);
         } catch (Exception e) {
             throw new SlackApiException("Failed to serialise sendMessage payload", e);
         }
 
         Map<String, Object> response = postJson(botToken, "chat.postMessage", body);
         requireOk(response, "chat.postMessage");
-        log.debug("EXIT sendMessage: [channel={}, ts={}]", channelId, response.get("ts"));
+        String ts = String.valueOf(response.getOrDefault("ts", ""));
+        log.debug("EXIT sendMessage: [channel={}, ts={}]", channelId, ts);
+        return ts;
     }
 
     /**

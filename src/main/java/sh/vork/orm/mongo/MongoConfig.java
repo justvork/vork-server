@@ -1,9 +1,8 @@
 package sh.vork.orm.mongo;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mongodb.ConnectionString;
 import com.mongodb.MongoClientSettings;
-import com.mongodb.MongoCredential;
-import com.mongodb.ServerAddress;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoDatabase;
@@ -12,51 +11,37 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import java.util.List;
-
 /**
  * Loads MongoDB connection settings from {@code conf.d/database.properties}
  * (relative to the working directory at startup) and exposes the necessary
  * Spring beans.
  *
- * <p>Active only when {@code db.backend=mongo}.
+ * <p>Active only when {@code db.backend=mongo}. The connection is configured
+ * with a single {@code mongo.uri} value, which can point to a local server or
+ * a managed service such as MongoDB Atlas.
  */
 @Configuration
 @ConditionalOnProperty(name = "db.backend", havingValue = "mongo")
 public class MongoConfig {
 
-    @Value("${mongo.host:localhost}")
-    private String host;
-
-    @Value("${mongo.port:27017}")
-    private int port;
-
-    @Value("${mongo.database:vork}")
-    private String databaseName;
-
-    @Value("${mongo.username:}")
-    private String username;
-
-    @Value("${mongo.password:}")
-    private String password;
+    @Value("${mongo.uri:mongodb://localhost:27017/vork}")
+    private String uri;
 
     @Bean(destroyMethod = "close")
     public MongoClient mongoClient() {
-        MongoClientSettings.Builder builder = MongoClientSettings.builder()
-                .applyToClusterSettings(cs ->
-                        cs.hosts(List.of(new ServerAddress(host, port))));
-
-        if (!username.isBlank() && !password.isBlank()) {
-            MongoCredential credential = MongoCredential.createCredential(
-                    username, databaseName, password.toCharArray());
-            builder.credential(credential);
-        }
-
-        return MongoClients.create(builder.build());
+        MongoClientSettings settings = MongoClientSettings.builder()
+                .applyConnectionString(new ConnectionString(uri))
+                .build();
+        return MongoClients.create(settings);
     }
 
     @Bean
     public MongoDatabase mongoDatabase(MongoClient mongoClient) {
+        ConnectionString connectionString = new ConnectionString(uri);
+        String databaseName = connectionString.getDatabase();
+        if (databaseName == null || databaseName.isBlank()) {
+            databaseName = "vork";
+        }
         return mongoClient.getDatabase(databaseName);
     }
 

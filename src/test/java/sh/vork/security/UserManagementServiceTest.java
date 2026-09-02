@@ -10,10 +10,13 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import sh.vork.channel.ChannelService;
 import sh.vork.channel.UserChannelProvider;
+import sh.vork.scheduling.service.BackgroundNotificationService;
 import java.util.List;
 
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.mock.MapDatabaseRepository;
+
+import static org.mockito.Mockito.mock;
 
 class UserManagementServiceTest {
 
@@ -25,7 +28,8 @@ class UserManagementServiceTest {
     void setUp() {
         userRepository = new MapDatabaseRepository<>(VorkUser.class);
         passwordEncoder = new BCryptPasswordEncoder();
-        ChannelService channelService = new ChannelService(List.of(new UserChannelProvider(userRepository)));
+        BackgroundNotificationService backgroundNotificationService = mock(BackgroundNotificationService.class);
+        ChannelService channelService = new ChannelService(List.of(new UserChannelProvider(userRepository, backgroundNotificationService)));
         userManagementService = new UserManagementService(userRepository, passwordEncoder, channelService);
 
         long now = System.currentTimeMillis();

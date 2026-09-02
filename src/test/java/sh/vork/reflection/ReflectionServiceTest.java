@@ -1,5 +1,7 @@
 package sh.vork.reflection;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -40,6 +42,9 @@ import org.bson.Document;
 import org.bson.conversions.Bson;
 
 import sh.vork.ai.security.SkillSecretSubstitutor;
+import sh.vork.binding.contract.BindingContract;
+import sh.vork.binding.contract.BindingContractService;
+import sh.vork.binding.contract.BindingContractToolDefinition;
 import sh.vork.oauth.OAuthTemplate;
 import sh.vork.oauth.OAuthClientService;
 import sh.vork.oauth.OAuthTemplateService;
@@ -59,6 +64,7 @@ class ReflectionServiceTest {
         private SecureCredentialStore secureCredentialStore;
         private OAuthClientService oauthClientService;
         private OAuthTemplateService oauthTemplateService;
+        private BindingContractService bindingContractService;
         private OAuthTemplate oauthTemplate;
 
     @BeforeEach
@@ -77,7 +83,7 @@ class ReflectionServiceTest {
 
         oauthTemplateService = mock(OAuthTemplateService.class);
         oauthTemplate = new OAuthTemplate(
-                UUID.randomUUID(),
+                "oauth-github-SNAPSHOT",
                 "GitHub Work",
                 "github",
                 "GitHub OAuth",
@@ -85,13 +91,14 @@ class ReflectionServiceTest {
                 URI.create("https://github.com/login/oauth/access_token"),
                 List.of("repo"),
                 Map.of(),
-                sh.vork.oauth.ArtifactStatus.SNAPSHOT);
-        when(oauthTemplateService.getTemplate(any(UUID.class))).thenReturn(oauthTemplate);
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT);
+        when(oauthTemplateService.getTemplate(any())).thenReturn(oauthTemplate);
 
         SkillSecretSubstitutor skillSecretSubstitutor = mock(SkillSecretSubstitutor.class);
         when(skillSecretSubstitutor.substitute(any(), any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         secureCredentialStore = mock(SecureCredentialStore.class);
+        bindingContractService = mock(BindingContractService.class);
 
         httpClient = mock(HttpClient.class);
 
@@ -104,6 +111,7 @@ class ReflectionServiceTest {
                 pendingOauthBindingActionRepository,
                 oauthClientService,
                 oauthTemplateService,
+                bindingContractService,
                 skillSecretSubstitutor,
                 secureCredentialStore,
                 new ObjectMapper(),
@@ -307,6 +315,152 @@ class ReflectionServiceTest {
     }
 
     @Test
+    void createGroupWithBindingContractCreatesPrototypeReflections() {
+        BindingContract contract = new BindingContract(
+                "binding-weather-SNAPSHOT",
+                "Weather Contract",
+                "desc",
+                List.of(new BindingContractToolDefinition(
+                        "getWeather",
+                        "Fetch weather",
+                        List.of(new ReflectionInputParameter("city", "string", "City", true)))),
+                "binding",
+                "weather",
+                "SNAPSHOT",
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT,
+                0L,
+                0L);
+        when(bindingContractService.getContract(contract.uuid())).thenReturn(contract);
+
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group",
+                "desc",
+                "REST",
+                "",
+                true,
+                List.of(),
+                List.of(),
+                "NONE",
+                "",
+                List.of(contract.uuid()),
+                "restgroup",
+                "weatherapi"));
+
+        Reflection prototype = reflectionService.getReflectionById("getWeather");
+        assertNotNull(prototype);
+        assertEquals(group.uuid(), prototype.groupUuid());
+        assertEquals(1, prototype.inputParameters().size());
+        assertEquals("city", prototype.inputParameters().getFirst().name());
+    }
+
+    @Test
+        void createReflectionAllowsAdditionalToolIdsWhenGroupHasAttachedContract() {
+        BindingContract contract = new BindingContract(
+                "binding-weather-SNAPSHOT",
+                "Weather Contract",
+                "desc",
+                List.of(new BindingContractToolDefinition(
+                        "getWeather",
+                        "Fetch weather",
+                        List.of(new ReflectionInputParameter("city", "string", "City", true)))),
+                "binding",
+                "weather",
+                "SNAPSHOT",
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT,
+                0L,
+                0L);
+        when(bindingContractService.getContract(contract.uuid())).thenReturn(contract);
+
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group",
+                "desc",
+                "REST",
+                "",
+                true,
+                List.of(),
+                List.of(),
+                "NONE",
+                "",
+                List.of(contract.uuid()),
+                "restgroup",
+                "weatherapi"));
+
+        Reflection extra = reflectionService.createReflection(
+                new ReflectionService.ReflectionRequest(
+                        "getForecast",
+                        "Get Forecast",
+                        "desc",
+                        group.uuid(),
+                        List.of(new ReflectionInputParameter("city", "string", "City", true)),
+                        "GET",
+                        "https://example.com/weather",
+                        Map.of(),
+                        Map.of(),
+                        "",
+                        "application/json",
+                        "application/json",
+                                                ""));
+
+                assertNotNull(extra);
+                assertEquals("getForecast", extra.id());
+    }
+
+    @Test
+    void updateReflectionRejectsContractParameterChanges() {
+        BindingContract contract = new BindingContract(
+                "binding-weather-SNAPSHOT",
+                "Weather Contract",
+                "desc",
+                List.of(new BindingContractToolDefinition(
+                        "getWeather",
+                        "Fetch weather",
+                        List.of(new ReflectionInputParameter("city", "string", "City", true)))),
+                "binding",
+                "weather",
+                "SNAPSHOT",
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT,
+                0L,
+                0L);
+        when(bindingContractService.getContract(contract.uuid())).thenReturn(contract);
+
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group",
+                "desc",
+                "REST",
+                "",
+                true,
+                List.of(),
+                List.of(),
+                "NONE",
+                "",
+                List.of(contract.uuid()),
+                "restgroup",
+                "weatherapi"));
+
+        Reflection prototype = reflectionService.getReflectionById("getWeather");
+        assertNotNull(prototype);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> reflectionService.updateReflection(
+                prototype.uuid(),
+                new ReflectionService.ReflectionRequest(
+                        "getWeather",
+                        "Get Weather",
+                        "desc",
+                        group.uuid(),
+                        List.of(new ReflectionInputParameter("postalCode", "string", "Postal", true)),
+                        "GET",
+                        "https://example.com/weather",
+                        Map.of(),
+                        Map.of(),
+                        "",
+                        "application/json",
+                        "application/json",
+                        "")));
+
+        assertTrue(ex.getMessage().contains("must exactly match"));
+    }
+
+    @Test
     void executeRestReflectionReturnsMissingParametersWhenRequiredInputNotProvided() {
         ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
                 "REST Group", "desc", "REST", "", List.of(), List.of()));
@@ -332,6 +486,60 @@ class ReflectionServiceTest {
 
         assertTrue(result.contains("missing_parameters"));
         assertTrue(result.contains("city"));
+    }
+
+    @Test
+    void executeRestReflectionRejectsInvalidDateParameterFormat() {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group", "desc", "REST", "", List.of(), List.of()));
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+        reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                "DateLookup",
+                "Date Lookup",
+                "desc",
+                group.uuid(),
+                List.of(new ReflectionInputParameter("runDate", "date", "Run date", true)),
+                "GET",
+                "https://example.com/weather",
+                Map.of(),
+                Map.of(),
+                "",
+                "application/json",
+                "application/json",
+                ""));
+
+        String result = reflectionService.executeRestReflection("DateLookup", Map.of("runDate", "01-31-2025"), null, "alice");
+
+        assertTrue(result.contains("Invalid value for parameter 'runDate'"), result);
+    }
+
+    @Test
+    void executeRestReflectionRejectsInvalidTimestampParameterFormat() {
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group", "desc", "REST", "", List.of(), List.of()));
+        reflectionService.createBinding("alice", group.uuid(),
+                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+        reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                "TimestampLookup",
+                "Timestamp Lookup",
+                "desc",
+                group.uuid(),
+                List.of(new ReflectionInputParameter("runAt", "timestamp", "Run timestamp", true)),
+                "GET",
+                "https://example.com/weather",
+                Map.of(),
+                Map.of(),
+                "",
+                "application/json",
+                "application/json",
+                ""));
+
+        String result = reflectionService.executeRestReflection("TimestampLookup", Map.of("runAt", "2025-01-31T10:15:30"), null, "alice");
+
+                assertTrue(result.contains("Invalid value for parameter 'runAt'"), result);
     }
 
     @Test

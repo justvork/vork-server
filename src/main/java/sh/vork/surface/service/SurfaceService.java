@@ -1,5 +1,7 @@
 package sh.vork.surface.service;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -102,7 +104,7 @@ public class SurfaceService {
             groupId,
             artifactId,
             SNAPSHOT_VERSION,
-            sh.vork.surface.ArtifactStatus.SNAPSHOT,
+            sh.vork.artifact.ArtifactStatus.SNAPSHOT,
                 now,
                 now);
         surfaceRepository.save(surface);

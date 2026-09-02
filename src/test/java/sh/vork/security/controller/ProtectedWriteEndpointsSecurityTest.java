@@ -284,7 +284,7 @@ class ProtectedWriteEndpointsSecurityTest {
         Mockito.when(chatService.listAgentTemplates()).thenReturn(List.of(agentTemplate));
         Mockito.when(chatService.getSessionReflectionBindingUuids(session)).thenReturn(List.of());
         Mockito.when(reflectionService.getBindingByUuid("b1")).thenReturn(binding);
-        Mockito.when(reflectionService.getGroup("g1")).thenReturn(group);
+        Mockito.when(reflectionService.getBindingGroup(binding)).thenReturn(group);
         Mockito.when(toolRegistry.getAvailableTools()).thenReturn(List.of());
 
         mockMvc.perform(get("/api/chat/session/s1/agent-config")

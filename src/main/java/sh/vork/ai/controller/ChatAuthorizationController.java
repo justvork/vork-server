@@ -56,6 +56,7 @@ import sh.vork.ai.protocol.interaction.FormField;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
 import sh.vork.ai.security.AuthorizationRuleEngine;
 import sh.vork.ai.security.AuthorizationArgumentsFormatter;
+import sh.vork.ai.security.SecuredToolCallback;
 import sh.vork.ai.security.VisualizableTool;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
@@ -206,7 +207,7 @@ public class ChatAuthorizationController {
 
                 String token;
                 try {
-                token = toolResponseDataForAction(action, conversationFields, toolName, executionArgumentsJson);
+                token = toolResponseDataForAction(action, conversationFields, toolName, toolCallId, executionArgumentsJson);
                 } catch (ToolSuspensionException ex) {
                 return handleSuspendedToolExecution(sessionUuid, session, toolCallId, argumentsJson, ex);
                 }
@@ -436,8 +437,9 @@ public class ChatAuthorizationController {
                     finalText = sanitizeUserFacingText(finalText);
                 } catch (ToolSuspensionException ex) {
                 String simulatedToolCallId = "pending-" + UUID.randomUUID();
+                String suspendedArguments = resolveSuspendedArguments(executionArgumentsJson, ex.getArguments());
                 List<AiChatMessage.ToolCallRef> pendingToolCalls = List.of(
-                    new AiChatMessage.ToolCallRef(simulatedToolCallId, "FUNCTION", ex.getToolName(), ex.getArguments()));
+                    new AiChatMessage.ToolCallRef(simulatedToolCallId, "FUNCTION", ex.getToolName(), suspendedArguments));
 
                 String justification = ex.getJustification();
                 if (justification == null || justification.isBlank()) {
@@ -481,6 +483,8 @@ public class ChatAuthorizationController {
 
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, suspendedPromptEvent);
                 log.info("Resumed call suspended again [tool={}, session={}]", ex.getToolName(), sessionUuid);
+                log.debug("Resuspended tool arguments [tool={}, session={}]: {}",
+                    ex.getToolName(), sessionUuid, abbreviate(suspendedArguments, 4000));
 
                 ToolExecutionContext.remove(GENERATED_ATTACHMENTS_CONTEXT_KEY);
                 ToolExecutionContext.clear();
@@ -539,9 +543,6 @@ public class ChatAuthorizationController {
                 ));
                 }
             }
-
-            // Clean up any leftover pending-id use-once rule before returning
-            authorizationRuleEngine.removeUseOnceRule("pending-id");
 
             // Detect skill frames that were popped during the resume loop (e.g. by completeSkillExecution)
             // and broadcast the corresponding "Skill completed" UI events.
@@ -1063,8 +1064,6 @@ public class ChatAuthorizationController {
                                           String toolCallId) {
         switch (action) {
             case "ONCE", "ALLOW_ONCE" -> {
-                // SecuredToolCallback currently uses a synthetic fixed call ID.
-                authorizationRuleEngine.addUseOnceRule("pending-id");
                 authorizationRuleEngine.addUseOnceRule(toolCallId);
             }
             case "SESSION", "ALLOW_SESSION" -> authorizationRuleEngine.addTemporaryUserRule(username, toolName);
@@ -1079,10 +1078,11 @@ public class ChatAuthorizationController {
     private String toolResponseDataForAction(String action,
                                              Map<String, String> fields,
                                              String toolName,
+                                             String toolCallId,
                                              String argumentsJson) {
         switch (action) {
             case "ONCE", "ALLOW_ONCE", "SESSION", "ALLOW_SESSION", "ALWAYS", "ALLOW_ALWAYS", "SAVE", "CONTINUE", "SUBMIT" -> {
-                String toolResult = executeTool(toolName, argumentsJson);
+                String toolResult = executeTool(toolName, toolCallId, argumentsJson);
                 if ("executeTerminalCommand".equals(toolName)) {
                     return buildTerminalToolResponse(argumentsJson, toolResult);
                 }
@@ -1267,7 +1267,7 @@ public class ChatAuthorizationController {
         return normalized;
     }
 
-    private String executeTool(String toolName, String argumentsJson) {
+    private String executeTool(String toolName, String toolCallId, String argumentsJson) {
         ToolCallback callback = toolCallbacksByName.get(toolName);
         if (callback == null) {
             callback = aiService.resolveDynamicToolCallbackForSession(ToolExecutionContext.getSessionUuid(), toolName);
@@ -1279,6 +1279,11 @@ public class ChatAuthorizationController {
                 argumentsJson == null ? 0 : argumentsJson.length());
         log.debug("Tool arguments [tool={}]: {}", toolName, abbreviate(argumentsJson, 4000));
 
+        Object previousToolCallId = ToolExecutionContext.get(SecuredToolCallback.CURRENT_TOOL_CALL_ID_CONTEXT_KEY);
+        if (toolCallId != null && !toolCallId.isBlank()) {
+            ToolExecutionContext.put(SecuredToolCallback.CURRENT_TOOL_CALL_ID_CONTEXT_KEY, toolCallId);
+        }
+
         String result;
         try {
             result = callback.call(argumentsJson);
@@ -1288,6 +1293,12 @@ public class ChatAuthorizationController {
                 throw suspension;
             }
             throw ex;
+        } finally {
+            if (previousToolCallId == null) {
+                ToolExecutionContext.remove(SecuredToolCallback.CURRENT_TOOL_CALL_ID_CONTEXT_KEY);
+            } else {
+                ToolExecutionContext.put(SecuredToolCallback.CURRENT_TOOL_CALL_ID_CONTEXT_KEY, previousToolCallId);
+            }
         }
 
         log.info("Tool execution completed [tool={}, resultSize={}]", toolName,

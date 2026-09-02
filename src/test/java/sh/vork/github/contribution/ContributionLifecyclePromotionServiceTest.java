@@ -17,7 +17,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.agent.AgentType;
-import sh.vork.ai.agent.ArtifactStatus;
+import sh.vork.artifact.ArtifactStatus;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.oauth.OAuthTemplateEntity;
 import sh.vork.reflection.ReflectionGroup;
@@ -139,7 +139,7 @@ class ContributionLifecyclePromotionServiceTest {
                 "ops",
                 "maint",
                 "1.2",
-                sh.vork.scheduling.domain.ArtifactStatus.STAGED);
+                sh.vork.artifact.ArtifactStatus.STAGED);
 
         when(jobRepository.count()).thenReturn(1L);
         when(jobRepository.list(0, 200)).thenReturn(Stream.of(staged));
@@ -157,7 +157,7 @@ class ContributionLifecyclePromotionServiceTest {
 
         ArgumentCaptor<ScheduledJob> captor = ArgumentCaptor.forClass(ScheduledJob.class);
         verify(jobRepository).save(captor.capture());
-        assertEquals(sh.vork.scheduling.domain.ArtifactStatus.PUBLISHED, captor.getValue().artifactStatus());
+        assertEquals(sh.vork.artifact.ArtifactStatus.PUBLISHED, captor.getValue().artifactStatus());
     }
 
     @Test
@@ -189,7 +189,7 @@ class ContributionLifecyclePromotionServiceTest {
                 "ux",
                 "shell",
                 "2.0",
-                sh.vork.surface.ArtifactStatus.SUBMITTED,
+                sh.vork.artifact.ArtifactStatus.SUBMITTED,
                 1L,
                 2L);
 
@@ -238,7 +238,7 @@ class ContributionLifecyclePromotionServiceTest {
                 "ux",
                 "shell",
                 "2.0",
-                sh.vork.surface.ArtifactStatus.SUBMITTED,
+                sh.vork.artifact.ArtifactStatus.SUBMITTED,
                 1L,
                 2L);
 
@@ -266,7 +266,7 @@ class ContributionLifecyclePromotionServiceTest {
         assertEquals(0, summary.surfacesPromotedToStaged());
         ArgumentCaptor<Surface> captor = ArgumentCaptor.forClass(Surface.class);
         verify(surfaceRepository).save(captor.capture());
-        assertEquals(sh.vork.surface.ArtifactStatus.REJECTED, captor.getValue().artifactStatus());
+        assertEquals(sh.vork.artifact.ArtifactStatus.REJECTED, captor.getValue().artifactStatus());
     }
 
         @Test
@@ -290,7 +290,7 @@ class ContributionLifecyclePromotionServiceTest {
                                 "demo",
                                 "skillset",
                                 "1.0",
-                                sh.vork.skill.ArtifactStatus.SUBMITTED,
+                                sh.vork.artifact.ArtifactStatus.SUBMITTED,
                                 1L,
                                 2L);
 
@@ -309,7 +309,7 @@ class ContributionLifecyclePromotionServiceTest {
                 assertEquals(0, summary.skillsPromotedToPublished());
                 ArgumentCaptor<SkillGroup> captor = ArgumentCaptor.forClass(SkillGroup.class);
                 verify(skillGroupRepository).save(captor.capture());
-                assertEquals(sh.vork.skill.ArtifactStatus.STAGED, captor.getValue().artifactStatus());
+                assertEquals(sh.vork.artifact.ArtifactStatus.STAGED, captor.getValue().artifactStatus());
         }
 
     @Test
@@ -333,7 +333,7 @@ class ContributionLifecyclePromotionServiceTest {
                 "https://oauth2.googleapis.com/token",
                 List.of("openid"),
                 java.util.Map.of(),
-                sh.vork.oauth.ArtifactStatus.SUBMITTED,
+                sh.vork.artifact.ArtifactStatus.SUBMITTED,
                 1L,
                 2L);
 
@@ -351,6 +351,6 @@ class ContributionLifecyclePromotionServiceTest {
         assertEquals(1, summary.oauthTemplatesPromotedToPublished());
         ArgumentCaptor<OAuthTemplateEntity> captor = ArgumentCaptor.forClass(OAuthTemplateEntity.class);
         verify(oauthTemplateRepository).save(captor.capture());
-        assertEquals(sh.vork.oauth.ArtifactStatus.PUBLISHED, captor.getValue().artifactStatus());
+        assertEquals(sh.vork.artifact.ArtifactStatus.PUBLISHED, captor.getValue().artifactStatus());
     }
 }

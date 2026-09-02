@@ -47,7 +47,7 @@ public class McpRediscoveryScheduler {
             }
         }
 
-        log.debug("MCP rediscovery sweep complete [attempted={}, succeeded={}, failed={}]",
+        log.trace("MCP rediscovery sweep complete [attempted={}, succeeded={}, failed={}]",
                 attempted, succeeded, failed);
     }
 
@@ -77,7 +77,7 @@ public class McpRediscoveryScheduler {
         }
 
         if (attempted > 0) {
-            log.debug("MCP error recovery sweep complete [attempted={}, recovered={}, failed={}]",
+                log.trace("MCP error recovery sweep complete [attempted={}, recovered={}, failed={}]",
                     attempted, recovered, failed);
         }
     }
@@ -92,13 +92,13 @@ public class McpRediscoveryScheduler {
                 return true;
             } catch (RuntimeException ex) {
                 last = ex;
-                log.warn("MCP rediscovery attempt failed [bindingUuid={}, attempt={}, maxAttempts={}, error={}]",
+                log.trace("MCP rediscovery attempt failed [bindingUuid={}, attempt={}, maxAttempts={}, error={}]",
                         binding.uuid(), attempts, maxRetries + 1, ex.getMessage());
             }
         }
 
         if (last != null) {
-            log.warn("MCP rediscovery failed after retries [bindingUuid={}, error={}]",
+            log.trace("MCP rediscovery failed after retries [bindingUuid={}, error={}]",
                     binding.uuid(), last.getMessage());
         }
         return false;

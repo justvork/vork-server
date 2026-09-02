@@ -3,6 +3,7 @@ package sh.vork.ai.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.List;
 import java.util.Map;
@@ -17,12 +18,13 @@ import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
+import sh.vork.ai.exception.CriticalTurnFailureException;
 import sh.vork.orm.mock.MapDatabaseRepository;
 
 class ChatServiceNoCandidateFallbackTest {
 
     @Test
-    void sendMessage_whenModelReturnsNoCandidate_retriesWithSimplifiedPath() {
+    void sendMessage_whenModelReturnsNoCandidate_failsFastWithCriticalTurnFailure() {
         MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
         FallbackAiService aiService = new FallbackAiService();
 
@@ -54,22 +56,18 @@ class ChatServiceNoCandidateFallbackTest {
             null,
             null);
 
-        AiChatMessage out = chatService.sendMessage(sessionId, "schedule a task", null, AiProvider.GEMINI);
-
-        assertNotNull(out);
-        assertEquals("fallback-generated", out.content());
+        assertThrows(CriticalTurnFailureException.class,
+            () -> chatService.sendMessage(sessionId, "schedule a task", null, AiProvider.GEMINI));
         assertTrue(aiService.historyCalls >= 1);
-        assertTrue(aiService.simpleCalls >= 1);
+        assertEquals(0, aiService.simpleCalls);
 
         AiSession saved = sessionRepo.get(sessionId);
         assertNotNull(saved);
-        assertEquals(2, saved.messages().size());
-        assertEquals("USER", saved.messages().get(0).role());
-        assertEquals("ASSISTANT", saved.messages().get(1).role());
+        assertEquals(0, saved.messages().size());
     }
 
         @Test
-        void sendMessage_whenBothPrimaryAndFallbackFail_returnsSafeMessage() {
+        void sendMessage_whenBothPrimaryAndFallbackFail_throwsCriticalTurnFailure() {
         MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
         DoubleFailureAiService aiService = new DoubleFailureAiService();
 
@@ -101,19 +99,14 @@ class ChatServiceNoCandidateFallbackTest {
             null,
             null);
 
-        AiChatMessage out = chatService.sendMessage(sessionId, "schedule a task", null, AiProvider.GEMINI);
-
-        assertNotNull(out);
-        assertEquals(
-            "I couldn't produce a model response right now due to a transient provider issue. Please try again.",
-            out.content());
+        assertThrows(CriticalTurnFailureException.class,
+            () -> chatService.sendMessage(sessionId, "schedule a task", null, AiProvider.GEMINI));
         assertTrue(aiService.historyCalls >= 1);
-        assertTrue(aiService.simpleCalls >= 1);
+        assertEquals(0, aiService.simpleCalls);
 
         AiSession saved = sessionRepo.get(sessionId);
         assertNotNull(saved);
-        assertEquals(2, saved.messages().size());
-        assertEquals("ASSISTANT", saved.messages().get(1).role());
+        assertEquals(0, saved.messages().size());
         }
 
     @Test
@@ -363,6 +356,14 @@ class ChatServiceNoCandidateFallbackTest {
         }
 
         @Override
+        public String generateWithHistoryStrict(List<org.springframework.ai.chat.messages.Message> conversationHistory,
+                                                String newUserMessage,
+                                                AiProvider provider,
+                                                String modelOverride) {
+            return generateWithHistory(conversationHistory, newUserMessage, provider);
+        }
+
+        @Override
         public String generate(String userPrompt, AiProvider provider) {
             simpleCalls++;
             return "fallback-generated";
@@ -390,6 +391,14 @@ class ChatServiceNoCandidateFallbackTest {
                                           String newUserMessage,
                                           AiProvider provider,
                                           String modelOverride) {
+            return generateWithHistory(conversationHistory, newUserMessage, provider);
+        }
+
+        @Override
+        public String generateWithHistoryStrict(List<org.springframework.ai.chat.messages.Message> conversationHistory,
+                                                String newUserMessage,
+                                                AiProvider provider,
+                                                String modelOverride) {
             return generateWithHistory(conversationHistory, newUserMessage, provider);
         }
 
@@ -436,6 +445,14 @@ class ChatServiceNoCandidateFallbackTest {
                                           String modelOverride) {
             return generateWithHistory(conversationHistory, newUserMessage, provider);
         }
+
+        @Override
+        public String generateWithHistoryStrict(List<org.springframework.ai.chat.messages.Message> conversationHistory,
+                                                String newUserMessage,
+                                                AiProvider provider,
+                                                String modelOverride) {
+            return generateWithHistory(conversationHistory, newUserMessage, provider);
+        }
     }
 
     private static final class RecordingHistoryAiService extends AiOrchestrationService {
@@ -460,6 +477,14 @@ class ChatServiceNoCandidateFallbackTest {
                                           String modelOverride) {
             return generateWithHistory(conversationHistory, newUserMessage, provider);
         }
+
+        @Override
+        public String generateWithHistoryStrict(List<org.springframework.ai.chat.messages.Message> conversationHistory,
+                                                String newUserMessage,
+                                                AiProvider provider,
+                                                String modelOverride) {
+            return generateWithHistory(conversationHistory, newUserMessage, provider);
+        }
     }
 
     private static final class BackgroundFinishedTurnAiService extends AiOrchestrationService {
@@ -479,6 +504,14 @@ class ChatServiceNoCandidateFallbackTest {
                                           String newUserMessage,
                                           AiProvider provider,
                                           String modelOverride) {
+            return generateWithHistory(conversationHistory, newUserMessage, provider);
+        }
+
+        @Override
+        public String generateWithHistoryStrict(List<org.springframework.ai.chat.messages.Message> conversationHistory,
+                                                String newUserMessage,
+                                                AiProvider provider,
+                                                String modelOverride) {
             return generateWithHistory(conversationHistory, newUserMessage, provider);
         }
     }

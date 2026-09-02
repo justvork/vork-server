@@ -1,5 +1,8 @@
 package sh.vork.oauth;
 
+import sh.vork.artifact.ArtifactStatus;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -16,7 +19,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,6 +38,10 @@ public class OAuthTemplateService {
     private static final Logger log = LoggerFactory.getLogger(OAuthTemplateService.class);
     private static final URI DEFAULT_SYNC_ROOT =
             URI.create("https://raw.githubusercontent.com/justvork/vork-central/main");
+        private static final String OAUTH_VID_GROUP = "oauth";
+        private static final String OAUTH_VID_VERSION = "SNAPSHOT";
+        private static final Pattern GENERIC_UUID_PATTERN = Pattern.compile(
+                "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
 
     private final DatabaseRepository<OAuthTemplateEntity> templateRepository;
     private final HubRepositoryRegistryService hubRepositoryRegistryService;
@@ -64,7 +71,7 @@ public class OAuthTemplateService {
         }
     }
 
-    public OAuthTemplateExportPackage exportTemplate(UUID id) {
+    public OAuthTemplateExportPackage exportTemplate(String id) {
         log.debug("ENTER exportTemplate: id={}", id);
         OAuthTemplate template = getTemplate(id);
         if (template == null) {
@@ -96,14 +103,15 @@ public class OAuthTemplateService {
 
         for (OAuthTemplate template : pkg.templates()) {
             OAuthTemplate normalized = normalizeAndValidate(template);
-            UUID id = normalized.id() == null ? UUID.randomUUID() : normalized.id();
-            ensureUniqueClientName(normalized.clientName(), id);
+            String id = resolveCanonicalVidId(normalized.id(), normalized.clientName());
 
-            OAuthTemplateEntity existing = templateRepository.get(id.toString());
+            OAuthTemplateEntity existingById = templateRepository.get(id);
+            OAuthTemplateEntity existingByClientName = findEntityByClientName(normalized.clientName());
+            OAuthTemplateEntity existing = existingById != null ? existingById : existingByClientName;
             if (existing == null) {
                 long now = System.currentTimeMillis();
                 OAuthTemplateEntity createdEntity = new OAuthTemplateEntity(
-                        id.toString(),
+                        id,
                         normalized.name(),
                         normalized.clientName(),
                         normalized.description(),
@@ -118,7 +126,7 @@ public class OAuthTemplateService {
                 created++;
             } else {
                 OAuthTemplateEntity updatedEntity = new OAuthTemplateEntity(
-                        existing.uuid(),
+                        id,
                         normalized.name(),
                         normalized.clientName(),
                         normalized.description(),
@@ -130,6 +138,11 @@ public class OAuthTemplateService {
                         existing.createdAt(),
                         System.currentTimeMillis());
                 templateRepository.save(updatedEntity);
+                if (!id.equals(existing.uuid())) {
+                    templateRepository.delete(existing.uuid());
+                    log.info("OAuth template import migrated legacy id to VID [legacyId={}, vidId={}]",
+                            existing.uuid(), id);
+                }
                 updated++;
             }
         }
@@ -143,12 +156,12 @@ public class OAuthTemplateService {
                 updated);
     }
 
-    public OAuthTemplate getTemplate(UUID id) {
+    public OAuthTemplate getTemplate(String id) {
         log.debug("ENTER getTemplate: id={}", id);
-        if (id == null) {
+        if (id == null || id.isBlank()) {
             return null;
         }
-        OAuthTemplateEntity entity = templateRepository.get(id.toString());
+        OAuthTemplateEntity entity = templateRepository.get(id.trim());
         OAuthTemplate result = entity == null ? null : toModel(entity);
         log.debug("EXIT getTemplate: found={}", result != null);
         return result;
@@ -157,12 +170,15 @@ public class OAuthTemplateService {
     public OAuthTemplate createTemplate(OAuthTemplate template) {
         log.debug("ENTER createTemplate: name={}", template == null ? "null" : template.name());
         OAuthTemplate normalized = normalizeAndValidate(template);
+        String id = resolveCanonicalVidId(normalized.id(), normalized.clientName());
+        if (templateRepository.get(id) != null) {
+            throw new IllegalArgumentException("Template already exists for deterministic VID: " + id);
+        }
         ensureUniqueClientName(normalized.clientName(), null);
-        UUID id = normalized.id() == null ? UUID.randomUUID() : normalized.id();
         long now = System.currentTimeMillis();
 
         OAuthTemplateEntity entity = new OAuthTemplateEntity(
-                id.toString(),
+            id,
                 normalized.name(),
                 normalized.clientName(),
                 normalized.description(),
@@ -181,13 +197,15 @@ public class OAuthTemplateService {
         return result;
     }
 
-    public OAuthTemplate updateTemplate(UUID id, OAuthTemplate template) {
+    public OAuthTemplate updateTemplate(String id, OAuthTemplate template) {
         log.debug("ENTER updateTemplate: id={}", id);
-        if (id == null) {
+        if (id == null || id.isBlank()) {
             return null;
         }
 
-        OAuthTemplateEntity existing = templateRepository.get(id.toString());
+        String normalizedId = id.trim();
+
+        OAuthTemplateEntity existing = templateRepository.get(normalizedId);
         if (existing == null) {
             log.debug("EXIT updateTemplate: template not found [id={}]", id);
             return null;
@@ -198,7 +216,11 @@ public class OAuthTemplateService {
         }
 
         OAuthTemplate normalized = normalizeAndValidate(template);
-        ensureUniqueClientName(normalized.clientName(), id);
+        String expectedVidId = vidIdForClientName(normalized.clientName());
+        if (!expectedVidId.equals(normalizedId)) {
+            throw new IllegalArgumentException("Template id is immutable and must match deterministic VID: " + expectedVidId);
+        }
+        ensureUniqueClientName(normalized.clientName(), normalizedId);
         long now = System.currentTimeMillis();
 
         OAuthTemplateEntity updated = new OAuthTemplateEntity(
@@ -221,12 +243,13 @@ public class OAuthTemplateService {
         return result;
     }
 
-    public boolean deleteTemplate(UUID id) {
+    public boolean deleteTemplate(String id) {
         log.debug("ENTER deleteTemplate: id={}", id);
-        if (id == null) {
+        if (id == null || id.isBlank()) {
             return false;
         }
-        OAuthTemplateEntity existing = templateRepository.get(id.toString());
+        String normalizedId = id.trim();
+        OAuthTemplateEntity existing = templateRepository.get(normalizedId);
         if (existing == null) {
             log.debug("EXIT deleteTemplate: template not found [id={}]", id);
             return false;
@@ -235,15 +258,15 @@ public class OAuthTemplateService {
                 && existing.artifactStatus() != ArtifactStatus.REJECTED) {
             throw new IllegalArgumentException("Only SNAPSHOT or REJECTED OAuth templates can be deleted.");
         }
-        templateRepository.delete(id.toString());
+        templateRepository.delete(normalizedId);
         log.info("OAuth template deleted [id={}, name={}]", id, existing.name());
         log.debug("EXIT deleteTemplate: id={}", id);
         return true;
     }
 
-    public OAuthTemplate markSubmitted(UUID id) {
+    public OAuthTemplate markSubmitted(String id) {
         log.debug("ENTER markSubmitted: id={}", id);
-        OAuthTemplateEntity existing = id == null ? null : templateRepository.get(id.toString());
+        OAuthTemplateEntity existing = id == null || id.isBlank() ? null : templateRepository.get(id.trim());
         if (existing == null) {
             log.debug("EXIT markSubmitted: template not found [id={}]", id);
             return null;
@@ -318,7 +341,7 @@ public class OAuthTemplateService {
             if (existing == null) {
                 long now = System.currentTimeMillis();
                 OAuthTemplateEntity createdEntity = new OAuthTemplateEntity(
-                        UUID.randomUUID().toString(),
+                        vidIdForClientName(normalized.clientName()),
                         normalized.name(),
                         normalized.clientName(),
                         normalized.description(),
@@ -394,7 +417,7 @@ public class OAuthTemplateService {
         Map<String, String> authorizationParameters = sanitizeParams(template.authorizationParameters());
 
         return new OAuthTemplate(
-                template.id(),
+            template.id(),
                 name,
                 clientName,
                 description,
@@ -405,15 +428,44 @@ public class OAuthTemplateService {
                 template.artifactStatus() == null ? ArtifactStatus.SNAPSHOT : template.artifactStatus());
     }
 
-    private void ensureUniqueClientName(String clientName, UUID currentId) {
+    private void ensureUniqueClientName(String clientName, String currentId) {
         OAuthTemplateEntity existing = findEntityByClientName(clientName);
         if (existing == null) {
             return;
         }
-        if (currentId != null && currentId.toString().equals(existing.uuid())) {
+        if (currentId != null && currentId.equals(existing.uuid())) {
             return;
         }
         throw new IllegalArgumentException("clientName already exists: " + clientName);
+    }
+
+    private String resolveCanonicalVidId(String incomingId, String clientName) {
+        String expected = vidIdForClientName(clientName);
+        String candidate = incomingId == null ? "" : incomingId.trim();
+        if (candidate.isBlank()) {
+            return expected;
+        }
+        if (isGenericUuid(candidate)) {
+            log.debug("OAuth template import/create upgrading UUID id to VID [incomingId={}, expectedVid={}]",
+                    candidate, expected);
+            return expected;
+        }
+        if (!expected.equals(candidate)) {
+            throw new IllegalArgumentException("Template id must match deterministic VID: " + expected);
+        }
+        return expected;
+    }
+
+    private String vidIdForClientName(String clientName) {
+        String artifact = OAuthClientService.normalizeClientName(clientName);
+        if (artifact == null || artifact.isBlank()) {
+            throw new IllegalArgumentException("Template clientName is required.");
+        }
+        return OAUTH_VID_GROUP + "-" + artifact + "-" + OAUTH_VID_VERSION;
+    }
+
+    private boolean isGenericUuid(String value) {
+        return value != null && GENERIC_UUID_PATTERN.matcher(value.trim()).matches();
     }
 
     private OAuthTemplateEntity findEntityByClientName(String clientName) {
@@ -727,7 +779,7 @@ public class OAuthTemplateService {
 
     private OAuthTemplate toModel(OAuthTemplateEntity entity) {
         return new OAuthTemplate(
-                UUID.fromString(entity.uuid()),
+                entity.uuid(),
                 entity.name(),
                 entity.clientName(),
                 entity.description(),
@@ -738,6 +790,7 @@ public class OAuthTemplateService {
                 entity.artifactStatus());
     }
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public record OAuthTemplateExportPackage(
             String vorkOAuthTemplateExport,
             int version,

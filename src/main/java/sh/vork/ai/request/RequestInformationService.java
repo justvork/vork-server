@@ -27,7 +27,6 @@ import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.RepositoryFactory;
 import sh.vork.orm.SearchQuery;
 import sh.vork.orm.SortOrder;
-import sh.vork.scheduling.service.BackgroundNotificationService;
 import sh.vork.web.RequestOriginContext;
 import sh.vork.setup.SystemSettings;
 import sh.vork.setup.SystemSettingsService;
@@ -57,7 +56,6 @@ public class RequestInformationService {
     private final DatabaseRepository<AiSession> sessionRepository;
     private final ChannelService channelService;
     private final AttentionAlertService attentionAlertService;
-    private final BackgroundNotificationService backgroundNotificationService;
     private final SystemSettingsService systemSettingsService;
     private final ObjectMapper objectMapper;
     private final String configuredRelayHost;
@@ -68,7 +66,6 @@ public class RequestInformationService {
     public RequestInformationService(RepositoryFactory repositoryFactory,
                                      ChannelService channelService,
                                      AttentionAlertService attentionAlertService,
-                                     BackgroundNotificationService backgroundNotificationService,
                                      SystemSettingsService systemSettingsService,
                                      ObjectMapper objectMapper,
                                      @Value("${vork.relay.host:}") String configuredRelayHost) {
@@ -77,7 +74,6 @@ public class RequestInformationService {
         this.sessionRepository = repositoryFactory.create(AiSession.class);
         this.channelService = channelService;
         this.attentionAlertService = attentionAlertService;
-        this.backgroundNotificationService = backgroundNotificationService;
         this.systemSettingsService = systemSettingsService;
         this.objectMapper = objectMapper;
         this.configuredRelayHost = configuredRelayHost;
@@ -171,10 +167,13 @@ public class RequestInformationService {
         }
 
         if (command.sendNotifications()) {
-            backgroundNotificationService.notifyUsersWithUrls(
-                    channelUrls,
-                    "Request Information",
-                    "A background task is requesting your input.");
+            String notificationMessage = (command.alertDescription() != null && !command.alertDescription().isBlank())
+                ? command.alertDescription().trim()
+                : command.promptText().trim();
+            channelService.notifyChannelsWithUrls(
+                channelUrls,
+                "Request Information",
+                notificationMessage);
         }
 
         log.info("Request-information campaign created [campaign={}, session={}, event={}, channels={}, policy={}, requiredResponses={}, notifications={}]",
@@ -955,10 +954,13 @@ public class RequestInformationService {
         }
 
         if (sendNotifications) {
-            backgroundNotificationService.notifyUsersWithUrls(
+            String notificationMessage = (alertDescription == null || alertDescription.isBlank())
+                    ? campaign.promptText()
+                    : alertDescription.trim();
+            channelService.notifyChannelsWithUrls(
                     channelUrls,
                     "Request Information",
-                    "A background task is requesting your input.");
+                    notificationMessage);
         }
     }
 

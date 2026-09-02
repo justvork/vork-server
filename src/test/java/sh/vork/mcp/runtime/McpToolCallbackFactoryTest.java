@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.tool.ToolCallback;
 import sh.vork.ai.exception.ToolSuspensionException;
+import sh.vork.ai.context.ToolExecutionContext;
+import sh.vork.ai.security.SecuredToolCallback;
 import sh.vork.ai.security.AuthorizationRuleEngine;
 import sh.vork.mcp.client.McpClient;
 import sh.vork.mcp.client.McpClientFactory;
@@ -14,7 +16,7 @@ import sh.vork.mcp.model.McpBindingTool;
 import sh.vork.mcp.model.McpToolParameterConfig;
 import sh.vork.mcp.model.McpToolParameterInputMode;
 import sh.vork.mcp.model.McpTransportMode;
-import sh.vork.reflection.ArtifactStatus;
+import sh.vork.artifact.ArtifactStatus;
 import sh.vork.security.SecureCredentialStore;
 
 import java.util.List;
@@ -170,10 +172,15 @@ class McpToolCallbackFactoryTest {
 
                 assertThrows(ToolSuspensionException.class, () -> callback.call("{}"));
 
-                authorizationRuleEngine.addUseOnceRule("pending-id");
-                String result = callback.call("{}");
+                try {
+                        ToolExecutionContext.put(SecuredToolCallback.CURRENT_TOOL_CALL_ID_CONTEXT_KEY, "pending-id");
+                        authorizationRuleEngine.addUseOnceRule("pending-id");
+                        String result = callback.call("{}");
 
-                assertEquals("{\"status\":\"ok\"}", result);
-                verify(client).invokeTool(any(), eq("search"), eq(Map.of()));
+                        assertEquals("{\"status\":\"ok\"}", result);
+                        verify(client).invokeTool(any(), eq("search"), eq(Map.of()));
+                } finally {
+                        ToolExecutionContext.clear();
+                }
         }
 }

@@ -20,7 +20,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.security.UserManagementService;
-import sh.vork.scheduling.domain.ArtifactStatus;
+import sh.vork.artifact.ArtifactStatus;
 import sh.vork.scheduling.domain.DurationType;
 import sh.vork.scheduling.domain.InvocationType;
 import sh.vork.scheduling.domain.ScheduledJob;

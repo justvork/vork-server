@@ -202,7 +202,7 @@ import sh.vork.orm.SortOrder;
 import sh.vork.scheduling.domain.DurationType;
 import sh.vork.scheduling.domain.InvocationType;
 import sh.vork.scheduling.domain.JobResult;
-import sh.vork.scheduling.domain.ArtifactStatus;
+import sh.vork.artifact.ArtifactStatus;
 import sh.vork.scheduling.domain.ScheduledJob;
 import sh.vork.scheduling.domain.ScheduledJobStatus;
 import sh.vork.scheduling.service.AiSchedulerService;

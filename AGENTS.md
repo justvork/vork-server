@@ -138,17 +138,17 @@ Connection properties live in `conf.d/database.properties` relative to the
 working directory at startup (typically the project root):
 
 ```properties
-mongo.host=localhost
-mongo.port=27017
-mongo.database=vork
-
-# Optional — remove comment hashes to enable authentication
-# mongo.username=admin
-# mongo.password=secret
+mongo.uri=mongodb://localhost:27017/vork
 ```
 
-If the file is absent, the defaults (`localhost:27017`, database `vork`,
-no authentication) are used.
+The URI can include username, password, database, replica set, and TLS options.
+For MongoDB Atlas, use a connection string such as:
+
+```properties
+mongo.uri=mongodb+srv://user:password@cluster0.xxxxx.mongodb.net/vork
+```
+
+If the file is absent, the default `mongodb://localhost:27017/vork` is used.
 
 ---
 

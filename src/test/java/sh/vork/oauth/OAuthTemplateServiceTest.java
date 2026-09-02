@@ -1,5 +1,7 @@
 package sh.vork.oauth;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -10,7 +12,6 @@ import static org.mockito.Mockito.when;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -86,7 +87,7 @@ class OAuthTemplateServiceTest {
                 Map.of("access_type", "offline", "prompt", "consent"),
                 ArtifactStatus.SNAPSHOT));
 
-        assertNotNull(created.id());
+        assertEquals("oauth-google_oauth-SNAPSHOT", created.id());
         assertEquals("Google OAuth", created.name());
         assertEquals("google_oauth", created.clientName());
         assertEquals(2, created.scopes().size());
@@ -114,7 +115,7 @@ class OAuthTemplateServiceTest {
         OAuthTemplate updated = service.updateTemplate(created.id(), new OAuthTemplate(
                 created.id(),
                 "GitHub OAuth Updated",
-                "github_oauth_updated",
+                "github_oauth",
                 "Updated description",
                 URI.create("https://github.com/login/oauth/authorize"),
                 URI.create("https://github.com/login/oauth/access_token"),
@@ -125,7 +126,7 @@ class OAuthTemplateServiceTest {
         assertNotNull(updated);
         assertEquals(created.id(), updated.id());
         assertEquals("GitHub OAuth Updated", updated.name());
-        assertEquals("github_oauth_updated", updated.clientName());
+        assertEquals("github_oauth", updated.clientName());
         assertEquals(2, updated.scopes().size());
         assertEquals("true", updated.authorizationParameters().get("allow_signup"));
     }
@@ -176,20 +177,20 @@ class OAuthTemplateServiceTest {
 
         @Test
         void exportTemplateReturnsNullWhenTemplateMissing() {
-                OAuthTemplateService.OAuthTemplateExportPackage pkg = service.exportTemplate(UUID.randomUUID());
+                        OAuthTemplateService.OAuthTemplateExportPackage pkg = service.exportTemplate("oauth-missing-SNAPSHOT");
                 assertNull(pkg);
         }
 
     @Test
-    void importTemplatesCreatesAndUpdatesById() {
-        UUID sharedId = UUID.randomUUID();
+            void importTemplatesConvertsUuidToVidAndUpdatesByDeterministicId() {
+                String legacyUuid = "8c5f2094-3103-60d9-a8e4-6c22de802020";
 
         OAuthTemplateService.OAuthTemplateImportResult first = service.importTemplates(
                 new OAuthTemplateService.OAuthTemplateExportPackage(
                         "vorkOAuthTemplateExport",
                         1,
                         List.of(new OAuthTemplate(
-                                sharedId,
+                                        legacyUuid,
                                 "Shared Template",
                                 "shared_template",
                                 "First",
@@ -208,9 +209,9 @@ class OAuthTemplateServiceTest {
                         "vorkOAuthTemplateExport",
                         1,
                         List.of(new OAuthTemplate(
-                                sharedId,
+                                legacyUuid,
                                 "Shared Template Updated",
-                                "shared_template_updated",
+                                "shared_template",
                                 "Second",
                                 URI.create("https://example.com/auth"),
                                 URI.create("https://example.com/token"),
@@ -222,10 +223,11 @@ class OAuthTemplateServiceTest {
         assertEquals(0, second.created());
         assertEquals(1, second.updated());
 
-        OAuthTemplate saved = service.getTemplate(sharedId);
+        OAuthTemplate saved = service.getTemplate("oauth-shared_template-SNAPSHOT");
         assertNotNull(saved);
+        assertEquals("oauth-shared_template-SNAPSHOT", saved.id());
         assertEquals("Shared Template Updated", saved.name());
-                assertEquals("shared_template_updated", saved.clientName());
+                assertEquals("shared_template", saved.clientName());
         assertEquals(2, saved.scopes().size());
         assertEquals("login", saved.authorizationParameters().get("prompt"));
     }
@@ -272,6 +274,6 @@ class OAuthTemplateServiceTest {
                                                 Map.of(),
                                                 ArtifactStatus.SNAPSHOT)));
 
-                assertTrue(error.getMessage().contains("clientName already exists"));
+                assertTrue(error.getMessage().contains("deterministic VID"));
         }
 }

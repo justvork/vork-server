@@ -477,6 +477,7 @@ function renderAttachmentsHtml(attachments) {
 
 function renderMessage(msg) {
     const isUser    = msg.role === 'USER';
+    const isAssistant = msg.role === 'ASSISTANT';
     const content   = isUser
         ? (msg.content || '')
         : normalizeAssistantContent(msg.content);
@@ -491,12 +492,34 @@ function renderMessage(msg) {
         : '<i class="fa-solid fa-robot"></i>';
 
     const attachHtml = renderAttachmentsHtml(msg.attachments);
+    const copyButtonHtml = isAssistant
+        ? '<button class="bubble-copy-btn" type="button" aria-label="Copy assistant message" title="Copy message">'
+            + '<i class="fa-regular fa-copy" aria-hidden="true"></i>'
+          + '</button>'
+        : '';
 
     const row = document.createElement('div');
     row.className = 'message-row' + (isUser ? ' user' : '');
     row.innerHTML =
         '<div class="avatar ' + avatarCls + '">' + avatarIcon + '</div>' +
-        '<div class="bubble ' + bubbleCls + '">' + attachHtml + textHtml + '</div>';
+        '<div class="bubble ' + bubbleCls + '">' + copyButtonHtml + '<div class="bubble-content">' + attachHtml + textHtml + '</div></div>';
+
+    const copyBtn = row.querySelector('.bubble-copy-btn');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', async function () {
+            const copyTarget = row.querySelector('.bubble-content');
+            const text = copyTarget ? (copyTarget.innerText || '').trim() : '';
+            if (!text) return;
+            const copied = await copyTextToClipboard(text);
+            if (!copied) return;
+            copyBtn.classList.add('copied');
+            copyBtn.innerHTML = '<i class="fa-solid fa-check" aria-hidden="true"></i>';
+            window.setTimeout(function () {
+                copyBtn.classList.remove('copied');
+                copyBtn.innerHTML = '<i class="fa-regular fa-copy" aria-hidden="true"></i>';
+            }, 1200);
+        });
+    }
 
     // Wire up lightbox on image thumbnails
     row.querySelectorAll('.bubble-img-thumb').forEach(function (img) {
@@ -524,6 +547,34 @@ function normalizeAssistantContent(content) {
         }
     }
     return content;
+}
+
+async function copyTextToClipboard(text) {
+    try {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch (err) {
+        // Fall back to legacy copy path.
+    }
+
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', 'readonly');
+        ta.style.position = 'fixed';
+        ta.style.top = '-9999px';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return !!ok;
+    } catch (err) {
+        return false;
+    }
 }
 
 function renderAgentTransition(text) {

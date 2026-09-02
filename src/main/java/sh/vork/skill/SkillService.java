@@ -1,14 +1,21 @@
 package sh.vork.skill;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,9 +27,14 @@ import sh.vork.binding.BindingCatalogService;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.entity.AiSession;
+import sh.vork.binding.contract.BindingContract;
+import sh.vork.binding.contract.BindingContractService;
 import sh.vork.mcp.model.McpBindingStatus;
 import sh.vork.mcp.service.McpBindingService;
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.reflection.ReflectionBinding;
+import sh.vork.reflection.ReflectionGroup;
+import sh.vork.reflection.ReflectionService;
 import sh.vork.typegen.JavaType;
 import sh.vork.typegen.TypeGeneratorService;
 
@@ -35,12 +47,21 @@ public class SkillService {
 
     private static final Logger log = LoggerFactory.getLogger(SkillService.class);
     private static final java.util.regex.Pattern IDENTITY_PATTERN = java.util.regex.Pattern.compile("^[A-Za-z0-9]{3,64}$");
+    private static final String LEGACY_CONTRACT_TYPE_PREFIX = "binding_contract:";
+    private static final String SESSION_REFLECTION_BINDING_UUIDS_ENV = "SESSION_REFLECTION_BINDING_UUIDS";
 
     private final DatabaseRepository<Skill> skillRepo;
     private final DatabaseRepository<SkillGroup> skillGroupRepo;
     private final DatabaseRepository<AiSession> aiSessionRepo;
 
-    private static final Set<String> PARAMETER_TYPES = Set.of("string", "text", "int", "double", "boolean");
+    private static final Set<String> PARAMETER_TYPES = Set.of(
+            "string",
+            "text",
+            "int",
+            "double",
+            "boolean",
+            "date",
+            "timestamp");
 
     @Lazy
     @Autowired
@@ -61,6 +82,14 @@ public class SkillService {
     @Lazy
     @Autowired
     private McpBindingService mcpBindingService;
+
+    @Lazy
+    @Autowired(required = false)
+    private BindingContractService bindingContractService;
+
+    @Lazy
+    @Autowired(required = false)
+    private ReflectionService reflectionService;
 
     public SkillService(DatabaseRepository<Skill> skillRepo,
                         DatabaseRepository<SkillGroup> skillGroupRepo,
@@ -325,6 +354,15 @@ public class SkillService {
                     + ". Please collect these values from the user and retry.\"}";
         }
 
+        List<String> invalid = validateTypedParameterValues(skill.parameters(), params);
+        if (!invalid.isEmpty()) {
+            log.info("Skill invocation invalid parameters [skill={}, invalid={}]", skillUuid, invalid);
+            return "{\"status\":\"invalid_parameters\"," +
+                "\"invalid\":" + toJsonArray(invalid) + "," +
+                "\"message\":\"Invalid typed parameter values: " + String.join("; ", invalid)
+                + ".\"}";
+        }
+
         String callerSessionUuid = ToolExecutionContext.getSessionUuid();
         if (callerSessionUuid == null || callerSessionUuid.isBlank()) {
             return "{\"status\":\"error\",\"message\":\"executeSkill must be called from within an active session\"}";
@@ -386,10 +424,22 @@ public class SkillService {
             }
         }
 
+            ContractBindingResolution contractBindingResolution = resolveContractBindingInputs(skill, params, callerSession);
+            if (!contractBindingResolution.invalidReasons().isEmpty()) {
+                String details = String.join("; ", contractBindingResolution.invalidReasons());
+                log.info("Skill invocation invalid binding-contract parameters [skill={}, invalid={}]", skillUuid,
+                    contractBindingResolution.invalidReasons());
+                return "{\"status\":\"invalid_parameters\"," +
+                    "\"invalid\":" + toJsonArray(contractBindingResolution.invalidReasons()) + "," +
+                    "\"message\":\"Invalid binding-contract parameters: " + details
+                    + ".\"}";
+            }
+
         String resolvedInstructions = substituteNonSecretParams(skill.instructions(), skill.parameters(), params);
         SkillFrame frame = new SkillFrame(
                 skillUuid, skill.name(), resolvedInstructions,
                 skill.allowedTools(), skill.allowedTypes(), params,
+                contractBindingResolution.runtimeBindingUuids(),
                 callerSession.messages().size() + 1);
 
         List<SkillFrame> newStack = new ArrayList<>(callerSession.skillStack());
@@ -778,7 +828,7 @@ public class SkillService {
         return result;
     }
 
-    private static List<SkillParameter> normalizeParameters(List<SkillParameter> parameters) {
+    private List<SkillParameter> normalizeParameters(List<SkillParameter> parameters) {
         if (parameters == null || parameters.isEmpty()) {
             return List.of();
         }
@@ -789,11 +839,11 @@ public class SkillService {
                 continue;
             }
 
-            String type = parameter.type() == null ? "string" : parameter.type().trim().toLowerCase();
+            String type = normalizeParameterType(parameter.type());
             if ("secret".equals(type)) {
                 throw new IllegalArgumentException("Parameter type 'secret' is not supported. Use the Secrets section instead.");
             }
-            if (!PARAMETER_TYPES.contains(type)) {
+            if (type == null || type.isBlank()) {
                 throw new IllegalArgumentException("Unsupported parameter type: " + parameter.type());
             }
 
@@ -805,6 +855,170 @@ public class SkillService {
         }
 
         return List.copyOf(normalized);
+    }
+
+    private String normalizeParameterType(String rawType) {
+        String candidate = rawType == null || rawType.isBlank() ? "string" : rawType.trim();
+        String normalized = candidate.toLowerCase(Locale.ROOT);
+        if (PARAMETER_TYPES.contains(normalized) || "secret".equals(normalized)) {
+            return normalized;
+        }
+
+        String contractVid = resolveBindingContractType(candidate);
+        if (contractVid != null) {
+            return contractVid;
+        }
+
+        if (normalized.startsWith(LEGACY_CONTRACT_TYPE_PREFIX)) {
+            String trimmedContract = candidate.substring(candidate.indexOf(':') + 1).trim();
+            if (!trimmedContract.isBlank()) {
+                String resolved = resolveBindingContractType(trimmedContract);
+                return resolved != null ? resolved : null;
+            }
+        }
+
+        return null;
+    }
+
+    private String resolveBindingContractType(String contractIdCandidate) {
+        if (contractIdCandidate == null || contractIdCandidate.isBlank() || bindingContractService == null) {
+            return null;
+        }
+        BindingContract contract = bindingContractService.getContract(contractIdCandidate.trim());
+        if (contract == null) {
+            String lowered = contractIdCandidate.trim().toLowerCase(Locale.ROOT);
+            if (!lowered.equals(contractIdCandidate.trim())) {
+                contract = bindingContractService.getContract(lowered);
+            }
+        }
+        return contract == null ? null : contract.uuid();
+    }
+
+    private ContractBindingResolution resolveContractBindingInputs(Skill skill,
+                                                                   Map<String, String> params,
+                                                                   AiSession callerSession) {
+        if (skill == null || skill.parameters() == null || skill.parameters().isEmpty()) {
+            return new ContractBindingResolution(List.of(), List.of());
+        }
+
+        List<String> invalidReasons = new ArrayList<>();
+        LinkedHashSet<String> runtimeBindingUuids = new LinkedHashSet<>();
+        Set<String> accessibleBindingUuids = collectAccessibleBindingUuids(callerSession);
+
+        for (SkillParameter parameter : skill.parameters()) {
+            if (parameter == null) {
+                continue;
+            }
+
+            String expectedContractVid = resolveBindingContractType(parameter.type());
+            if (expectedContractVid == null) {
+                continue;
+            }
+
+            String rawValue = params.get(parameter.name());
+            if (rawValue == null || rawValue.isBlank()) {
+                continue;
+            }
+
+            String bindingUuid = rawValue.trim();
+            if (!accessibleBindingUuids.contains(bindingUuid)) {
+                invalidReasons.add(parameter.name() + " must reference an attached binding VID");
+                continue;
+            }
+
+            if (reflectionService == null) {
+                invalidReasons.add(parameter.name() + " cannot be validated because reflection services are unavailable");
+                continue;
+            }
+
+            ReflectionBinding binding = reflectionService.getBindingByUuid(bindingUuid);
+            if (binding == null) {
+                invalidReasons.add(parameter.name() + " must reference a reflection binding implementing contract '"
+                        + expectedContractVid + "'");
+                continue;
+            }
+
+            ReflectionGroup bindingGroup = reflectionService.getBindingGroup(binding);
+            if (bindingGroup == null || bindingGroup.bindingContractUuids() == null) {
+                invalidReasons.add(parameter.name() + " binding has no associated reflection group contracts");
+                continue;
+            }
+
+            boolean implementsContract = bindingGroup.bindingContractUuids().stream()
+                    .anyMatch(contractVid -> contractVid != null && contractVid.equalsIgnoreCase(expectedContractVid));
+            if (!implementsContract) {
+                invalidReasons.add(parameter.name() + " binding does not implement contract '" + expectedContractVid + "'");
+                continue;
+            }
+
+            runtimeBindingUuids.add(bindingUuid);
+        }
+
+        return new ContractBindingResolution(List.copyOf(runtimeBindingUuids), List.copyOf(invalidReasons));
+    }
+
+    private Set<String> collectAccessibleBindingUuids(AiSession callerSession) {
+        LinkedHashSet<String> resolved = new LinkedHashSet<>();
+
+        if (callerSession == null) {
+            return Set.of();
+        }
+
+        resolved.addAll(parseDelimitedUuids(
+                callerSession.environmentVariables() == null ? null
+                        : callerSession.environmentVariables().get(SESSION_REFLECTION_BINDING_UUIDS_ENV)));
+
+        String agentTemplateId = callerSession.getActiveAgentTemplateId();
+        if (agentTemplateId != null && !agentTemplateId.isBlank() && agentTemplateRepo != null) {
+            AgentTemplate template = agentTemplateRepo.get(agentTemplateId);
+            if (template != null && template.bindingUuids() != null) {
+                for (String bindingUuid : template.bindingUuids()) {
+                    if (bindingUuid != null && !bindingUuid.isBlank()) {
+                        resolved.add(bindingUuid.trim());
+                    }
+                }
+            }
+        }
+
+        if (callerSession.skillStack() != null && !callerSession.skillStack().isEmpty()) {
+            SkillFrame topFrame = callerSession.skillStack().getLast();
+            if (topFrame != null && topFrame.runtimeBindingUuids() != null) {
+                for (String bindingUuid : topFrame.runtimeBindingUuids()) {
+                    if (bindingUuid != null && !bindingUuid.isBlank()) {
+                        resolved.add(bindingUuid.trim());
+                    }
+                }
+            }
+            if (topFrame != null && topFrame.skillUuid() != null && !topFrame.skillUuid().isBlank()) {
+                Skill topSkill = skillRepo.get(topFrame.skillUuid());
+                if (topSkill != null && topSkill.bindingUuids() != null) {
+                    for (String bindingUuid : topSkill.bindingUuids()) {
+                        if (bindingUuid != null && !bindingUuid.isBlank()) {
+                            resolved.add(bindingUuid.trim());
+                        }
+                    }
+                }
+            }
+        }
+
+        return Set.copyOf(resolved);
+    }
+
+    private static List<String> parseDelimitedUuids(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        LinkedHashSet<String> parsed = new LinkedHashSet<>();
+        for (String token : raw.split("[,;\\n\\r\\t ]+")) {
+            if (token == null) {
+                continue;
+            }
+            String trimmed = token.trim();
+            if (!trimmed.isBlank()) {
+                parsed.add(trimmed);
+            }
+        }
+        return List.copyOf(parsed);
     }
 
     private static String buildInitialPrompt(Skill skill, Map<String, String> params) {
@@ -857,6 +1071,50 @@ public class SkillService {
 
         String result = sb.toString();
         return result.isBlank() ? "Begin." : result;
+    }
+
+    private static List<String> validateTypedParameterValues(List<SkillParameter> parameterDefs,
+                                                             Map<String, String> params) {
+        if (parameterDefs == null || parameterDefs.isEmpty() || params == null || params.isEmpty()) {
+            return List.of();
+        }
+
+        List<String> invalid = new ArrayList<>();
+        for (SkillParameter parameter : parameterDefs) {
+            if (parameter == null || parameter.isSecret()) {
+                continue;
+            }
+            String rawValue = params.get(parameter.name());
+            if (rawValue == null || rawValue.isBlank()) {
+                continue;
+            }
+
+            String type = parameter.type() == null ? "string" : parameter.type().trim().toLowerCase(Locale.ROOT);
+            if ("date".equals(type) && !isIsoDate(rawValue.trim())) {
+                invalid.add(parameter.name() + " expects YYYY-MM-DD");
+            } else if ("timestamp".equals(type) && !isIsoOffsetTimestamp(rawValue.trim())) {
+                invalid.add(parameter.name() + " expects ISO 8601 date-time with timezone/offset");
+            }
+        }
+        return List.copyOf(invalid);
+    }
+
+    private static boolean isIsoDate(String value) {
+        try {
+            LocalDate parsed = LocalDate.parse(value, DateTimeFormatter.ISO_LOCAL_DATE);
+            return DateTimeFormatter.ISO_LOCAL_DATE.format(parsed).equals(value);
+        } catch (DateTimeParseException ex) {
+            return false;
+        }
+    }
+
+    private static boolean isIsoOffsetTimestamp(String value) {
+        try {
+            OffsetDateTime.parse(value, DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+            return true;
+        } catch (DateTimeParseException ex) {
+            return false;
+        }
     }
 
     private static String jsonString(String value) {
@@ -971,4 +1229,8 @@ public class SkillService {
             String outputSchema,
             List<SkillSecret> secrets,
             List<String> bindingUuids) {}
+
+    private record ContractBindingResolution(
+            List<String> runtimeBindingUuids,
+            List<String> invalidReasons) {}
 }

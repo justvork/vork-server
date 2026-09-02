@@ -1,5 +1,7 @@
 package sh.vork.reflection;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import java.util.List;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -23,6 +25,7 @@ public record ReflectionGroup(
         List<ReflectionBindingParameter> bindingParameters,
         ReflectionAuthenticationMode authenticationMode,
         String oauthTemplateId,
+        List<String> bindingContractUuids,
         String groupId,
         String artifactId,
         String version,
@@ -69,6 +72,18 @@ public record ReflectionGroup(
         } else {
             oauthTemplateId = oauthTemplateId.trim();
         }
+        if (bindingContractUuids == null) {
+            bindingContractUuids = List.of();
+        } else {
+            java.util.LinkedHashSet<String> normalized = new java.util.LinkedHashSet<>();
+            for (String contractId : bindingContractUuids) {
+                if (contractId == null || contractId.isBlank()) {
+                    continue;
+                }
+                normalized.add(contractId.trim());
+            }
+            bindingContractUuids = List.copyOf(normalized);
+        }
         if (groupId == null || groupId.isBlank()) {
             groupId = "legacy";
         }
@@ -108,9 +123,31 @@ public record ReflectionGroup(
                            long createdAt,
                            long updatedAt) {
         this(uuid, toolId, name, description, type, baseUrl, urlOverrideEnabled, bindingSecrets, bindingParameters,
-                authenticationMode, oauthTemplateId, "legacy", "reflectiongroup", "SNAPSHOT", ArtifactStatus.SNAPSHOT,
+                    authenticationMode, oauthTemplateId, List.of(), "legacy", "reflectiongroup", "SNAPSHOT", ArtifactStatus.SNAPSHOT,
                 createdAt, updatedAt);
     }
+
+                public ReflectionGroup(String uuid,
+                           String toolId,
+                           String name,
+                           String description,
+                           ReflectionType type,
+                           String baseUrl,
+                           Boolean urlOverrideEnabled,
+                           List<SkillSecret> bindingSecrets,
+                           List<ReflectionBindingParameter> bindingParameters,
+                           ReflectionAuthenticationMode authenticationMode,
+                           String oauthTemplateId,
+                           String groupId,
+                           String artifactId,
+                           String version,
+                           ArtifactStatus artifactStatus,
+                           long createdAt,
+                           long updatedAt) {
+                this(uuid, toolId, name, description, type, baseUrl, urlOverrideEnabled, bindingSecrets, bindingParameters,
+                    authenticationMode, oauthTemplateId, List.of(), groupId, artifactId, version, artifactStatus,
+                    createdAt, updatedAt);
+                }
 
     private static String normalizeToolId(String source) {
         StringBuilder sb = new StringBuilder();

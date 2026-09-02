@@ -33,7 +33,7 @@ import sh.vork.reflection.ReflectionBinding;
 import sh.vork.reflection.ReflectionService;
 import sh.vork.skill.Skill;
 import sh.vork.skill.SkillVisibility;
-import sh.vork.surface.ArtifactStatus;
+import sh.vork.artifact.ArtifactStatus;
 import sh.vork.surface.Surface;
 import sh.vork.surface.service.SurfaceReflectionContractService;
 import sh.vork.surface.service.SurfaceService;
@@ -91,7 +91,7 @@ class SurfaceControllerTest {
             "vork",
             "surface1",
             "SNAPSHOT",
-            sh.vork.surface.ArtifactStatus.SNAPSHOT,
+            sh.vork.artifact.ArtifactStatus.SNAPSHOT,
             1L,
             1L));
 
@@ -568,7 +568,7 @@ class SurfaceControllerTest {
             "vork",
             "importedsurface",
             "SNAPSHOT",
-            sh.vork.surface.ArtifactStatus.SNAPSHOT);
+            sh.vork.artifact.ArtifactStatus.SNAPSHOT);
         SurfaceController.SurfaceExportPackage pkg = new SurfaceController.SurfaceExportPackage("1.0", incoming);
 
         Map<String, byte[]> zipEntries = Map.of(
@@ -594,7 +594,7 @@ class SurfaceControllerTest {
             "vork",
             "importedsurface",
             "SNAPSHOT",
-            sh.vork.surface.ArtifactStatus.SNAPSHOT,
+            sh.vork.artifact.ArtifactStatus.SNAPSHOT,
             2L,
             2L);
         when(surfaceService.create("Imported Surface", "desc", "admin", "vork", "importedsurface")).thenReturn(created);
@@ -1238,7 +1238,7 @@ class SurfaceControllerTest {
         when(reflectionService.getGroupByToolId("openroutedistancecalculator")).thenReturn(null);
         when(reflectionService.getBindingByUuid("binding-1")).thenReturn(new ReflectionBinding(
             "binding-1", "group-1", "default", "", Map.of(), 1L, 1L, 1L));
-        when(reflectionService.getGroup("group-1")).thenReturn(new sh.vork.reflection.ReflectionGroup(
+        when(reflectionService.getBindingGroup(ArgumentMatchers.any(ReflectionBinding.class))).thenReturn(new sh.vork.reflection.ReflectionGroup(
             "group-1", "ordersgroup", "Orders Group", "", sh.vork.reflection.ReflectionType.REST,
             "", true, List.of(), List.of(), sh.vork.reflection.ReflectionAuthenticationMode.NONE, "", 1L, 1L, 1L));
 

@@ -50,6 +50,7 @@ public class ReflectionToolCallbackFactory {
 
     public ToolCallback create(Reflection reflection, List<ReflectionBinding> assignedBindings) {
         List<ReflectionBinding> effectiveBindings = assignedBindings == null ? List.of() : List.copyOf(assignedBindings);
+        String aiToolName = buildAiToolName(reflection);
         String baseDescription = reflection.description() == null || reflection.description().isBlank()
                 ? reflection.name()
                 : reflection.description();
@@ -64,7 +65,7 @@ public class ReflectionToolCallbackFactory {
         String inputSchema = buildInputSchema(reflection.inputParameters(), effectiveBindings);
 
         ToolDefinition definition = DefaultToolDefinition.builder()
-                .name(reflection.id())
+            .name(aiToolName)
                 .description(description)
                 .inputSchema(inputSchema)
                 .build();
@@ -108,19 +109,58 @@ public class ReflectionToolCallbackFactory {
                 }
 
                 String username = resolveUsername();
-                log.debug("ENTER reflectionToolCall [id={}, username={}, bindingName={}, params={}]",
-                        reflection.id(), username, resolvedBindingName, sanitizeForLogs(params));
-                String result = reflectionService.executeRestReflection(reflection.id(), params, resolvedBindingName, username);
+                log.debug("ENTER reflectionToolCall [toolName={}, reflectionId={}, reflectionUuid={}, username={}, bindingName={}, params={}]",
+                        aiToolName, reflection.id(), reflection.uuid(), username, resolvedBindingName, sanitizeForLogs(params));
+                String result = reflectionService.executeRestReflectionByUuid(reflection.uuid(), params, resolvedBindingName, username);
                 String status = extractStatus(result);
-                log.debug("EXIT reflectionToolCall [id={}, username={}, bindingName={}, status={}]",
-                        reflection.id(), username, resolvedBindingName, status);
+                log.debug("EXIT reflectionToolCall [toolName={}, reflectionId={}, reflectionUuid={}, username={}, bindingName={}, status={}]",
+                        aiToolName, reflection.id(), reflection.uuid(), username, resolvedBindingName, status);
                 if ("error".equalsIgnoreCase(status)) {
-                    log.warn("Reflection tool failed [id={}, bindingName={}]. AI should report the error and stop without retrying alternative profiles.",
-                            reflection.id(), resolvedBindingName);
+                    log.warn("Reflection tool failed [toolName={}, reflectionId={}, bindingName={}]. AI should report the error and stop without retrying alternative profiles.",
+                            aiToolName, reflection.id(), resolvedBindingName);
                 }
                 return result;
             }
         };
+    }
+
+    private String buildAiToolName(Reflection reflection) {
+        String fallbackId = reflection == null || reflection.id() == null || reflection.id().isBlank()
+                ? "reflection"
+                : reflection.id().trim();
+        if (reflection == null || reflection.groupUuid() == null || reflection.groupUuid().isBlank()) {
+            return fallbackId;
+        }
+
+        ReflectionGroup group = reflectionService == null ? null : reflectionService.getGroup(reflection.groupUuid());
+        if (group == null) {
+            return fallbackId;
+        }
+
+        String groupId = normalizeNamespaceSegment(group.groupId(), true);
+        String artifactId = normalizeNamespaceSegment(group.artifactId(), true);
+        String toolId = normalizeNamespaceSegment(fallbackId, false);
+        if (groupId.isBlank() || artifactId.isBlank() || toolId.isBlank()) {
+            return fallbackId;
+        }
+        return groupId + "." + artifactId + "." + toolId;
+    }
+
+    private static String normalizeNamespaceSegment(String value, boolean lowerCase) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder();
+        String raw = lowerCase ? value.trim().toLowerCase(Locale.ROOT) : value.trim();
+        for (int i = 0; i < raw.length(); i++) {
+            char ch = raw.charAt(i);
+            if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) {
+                out.append(ch);
+            } else if (!lowerCase && ch >= 'A' && ch <= 'Z') {
+                out.append(ch);
+            }
+        }
+        return out.toString();
     }
 
     private String resolveBindingName(String requestedBindingName, List<ReflectionBinding> assignedBindings) {
@@ -233,13 +273,21 @@ public class ReflectionToolCallbackFactory {
                 properties.append(',');
             }
             String schemaType = mapType(parameter.type());
+            String schemaFormat = mapFormat(parameter.type());
             properties.append('"').append(parameter.name()).append('"').append(":{");
             if (parameter.array()) {
                 properties.append("\"type\":\"array\",\"items\":{\"type\":\"")
                         .append(schemaType)
-                        .append("\"}");
+                        .append("\"");
+                if (schemaFormat != null) {
+                    properties.append(",\"format\":\"").append(schemaFormat).append("\"");
+                }
+                properties.append("}");
             } else {
                 properties.append("\"type\":\"").append(schemaType).append("\"");
+                if (schemaFormat != null) {
+                    properties.append(",\"format\":\"").append(schemaFormat).append("\"");
+                }
             }
             if (parameter.description() != null && !parameter.description().isBlank()) {
                 String escaped = parameter.description()
@@ -289,6 +337,17 @@ public class ReflectionToolCallbackFactory {
             case "double", "float", "number" -> "number";
             case "boolean", "bool" -> "boolean";
             default -> "string";
+        };
+    }
+
+    private static String mapFormat(String type) {
+        if (type == null) {
+            return null;
+        }
+        return switch (type.toLowerCase()) {
+            case "date" -> "date";
+            case "timestamp" -> "date-time";
+            default -> null;
         };
     }
 

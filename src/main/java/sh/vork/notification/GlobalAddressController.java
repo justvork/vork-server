@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import sh.vork.channel.ChannelService;
 
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.SearchQuery;
@@ -58,6 +59,7 @@ public class GlobalAddressController {
     private final DatabaseRepository<GlobalAddress>              globalAddressRepo;
     private final DatabaseRepository<NotificationProviderConfig> configRepo;
     private final ApplicationContext                             appContext;
+    private final ChannelService                                 channelService;
     private final TelegramGroupRegistrationService               telegramGroupRegService;
     private final SlackChannelRegistrationService                slackChannelRegService;
 
@@ -65,11 +67,13 @@ public class GlobalAddressController {
             DatabaseRepository<GlobalAddress> globalAddressRepo,
             DatabaseRepository<NotificationProviderConfig> configRepo,
             ApplicationContext appContext,
+            ChannelService channelService,
             TelegramGroupRegistrationService telegramGroupRegService,
             SlackChannelRegistrationService slackChannelRegService) {
         this.globalAddressRepo     = globalAddressRepo;
         this.configRepo            = configRepo;
         this.appContext             = appContext;
+        this.channelService         = channelService;
         this.telegramGroupRegService = telegramGroupRegService;
         this.slackChannelRegService  = slackChannelRegService;
     }
@@ -142,6 +146,11 @@ public class GlobalAddressController {
         // Validate the label
         if (req.label() == null || req.label().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Label is required."));
+        }
+        try {
+            channelService.assertChannelNameAvailable(req.label().trim());
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
         }
 
         // Validate the address via the provider

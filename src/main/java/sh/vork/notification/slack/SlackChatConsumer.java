@@ -19,6 +19,9 @@ import sh.vork.ai.service.ChatService;
 import sh.vork.ai.slack.SlackSessionRegistry;
 import sh.vork.ai.slack.SlackSuspensionRenderer;
 import sh.vork.ai.telegram.TelegramChatResumptionService;
+import sh.vork.ai.request.RequestCampaignStatus;
+import sh.vork.ai.request.RequestInformationService;
+import sh.vork.ai.request.RequestInformationCampaign;
 import sh.vork.filesystem.FileArea;
 import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.notification.NotificationMediaType;
@@ -65,6 +68,7 @@ public class SlackChatConsumer implements SlackMessageConsumer {
     private final TelegramChatResumptionService           resumptionService;
     private final SlackSuspensionRenderer                 suspensionRenderer;
     private final SlackApiClient                          slackApiClient;
+    private final RequestInformationService               requestInformationService;
     private final AudioTranscriptionService               audioTranscriptionService;
     private final SessionFileSystem                       sessionFileSystem;
 
@@ -80,6 +84,7 @@ public class SlackChatConsumer implements SlackMessageConsumer {
                               TelegramChatResumptionService resumptionService,
                               SlackSuspensionRenderer suspensionRenderer,
                               SlackApiClient slackApiClient,
+                              RequestInformationService requestInformationService,
                               ObjectMapper objectMapper,
                               AudioTranscriptionService audioTranscriptionService,
                               SessionFileSystem sessionFileSystem) {
@@ -90,6 +95,7 @@ public class SlackChatConsumer implements SlackMessageConsumer {
         this.resumptionService        = resumptionService;
         this.suspensionRenderer       = suspensionRenderer;
         this.slackApiClient           = slackApiClient;
+        this.requestInformationService = requestInformationService;
         this.audioTranscriptionService = audioTranscriptionService;
         this.sessionFileSystem = sessionFileSystem;
     }
@@ -98,7 +104,12 @@ public class SlackChatConsumer implements SlackMessageConsumer {
 
     @Override
     public boolean accepts(IncomingSlackMessage message) {
-        return message.isDirectMessage();
+        if (message.isDirectMessage()) {
+            return true;
+        }
+        SlackSessionRegistry.CampaignChannelBinding binding =
+                sessionRegistry.findCampaignChannelBinding(message.channelId(), message.conversationThreadTs());
+        return binding != null;
     }
 
     @Override
@@ -108,6 +119,8 @@ public class SlackChatConsumer implements SlackMessageConsumer {
         String configId  = message.configId();
         String text      = message.text();
         List<String> attachmentRefs = new ArrayList<>();
+        SlackSessionRegistry.CampaignChannelBinding campaignBinding = null;
+        String replyThreadTs = null;
 
         log.debug("ENTER SlackChatConsumer.process: [channel={}, userId={}]",
                 channelId, message.userId());
@@ -123,8 +136,11 @@ public class SlackChatConsumer implements SlackMessageConsumer {
                 return true;
             }
 
-            // /new — reset session
-            if ("/new".equalsIgnoreCase(text.trim())) {
+            campaignBinding = sessionRegistry.findCampaignChannelBinding(channelId, message.conversationThreadTs());
+            replyThreadTs = campaignBinding == null ? null : campaignBinding.threadTs();
+
+            // /new — reset session (DM sessions only)
+            if ("/new".equalsIgnoreCase(text.trim()) && message.isDirectMessage()) {
                 sessionRegistry.reset(channelId);
                 pendingCaptures.remove(channelId);
                 pendingActions.remove(channelId);
@@ -149,10 +165,16 @@ public class SlackChatConsumer implements SlackMessageConsumer {
             }
 
             // Normal message — look up user by Slack member ID
-            String username = resolveUsername(message.userId(), channelId, botToken);
-            if (username == null) return true; // not registered — message sent
-
-            String sessionUuid = sessionRegistry.getOrCreate(username, configId, channelId, botToken);
+            String username;
+            String sessionUuid;
+            if (campaignBinding != null) {
+                username = campaignBinding.username();
+                sessionUuid = campaignBinding.sessionUuid();
+            } else {
+                username = resolveUsername(message.userId(), channelId, botToken);
+                if (username == null) return true; // not registered — message sent
+                sessionUuid = sessionRegistry.getOrCreate(username, configId, channelId, botToken);
+            }
             log.debug("Sending Slack message to session [sessionUuid={}, user={}]",
                     sessionUuid, username);
 
@@ -180,16 +202,46 @@ public class SlackChatConsumer implements SlackMessageConsumer {
             } else {
                 String reply = response.content();
                 if (reply != null && !reply.isBlank()) {
-                    slackApiClient.sendMessage(botToken, channelId, reply);
+                    slackApiClient.sendMessage(botToken, channelId, reply, replyThreadTs);
                 }
                 sendAiAttachments(response, sessionUuid, botToken, channelId);
+            }
+
+            if (campaignBinding != null) {
+                maybeUnbindClosedCampaign(campaignBinding);
             }
         } catch (Exception e) {
             log.warn("Error processing Slack message [channel={}]: {}", channelId, e.getMessage(), e);
             slackApiClient.sendMessage(botToken, channelId,
-                    "Sorry, an error occurred. Please try again.");
+                    "Sorry, an error occurred. Please try again.", replyThreadTs);
         }
         return true;
+    }
+
+    private void maybeUnbindClosedCampaign(SlackSessionRegistry.CampaignChannelBinding binding) {
+        if (binding == null) {
+            return;
+        }
+        AiSession session = sessionRepo.get(binding.sessionUuid());
+        if (session == null || session.environmentVariables() == null) {
+            sessionRegistry.unbindCampaignChannelSession(binding.channelId(), binding.threadTs());
+            return;
+        }
+
+        String campaignUuid = session.environmentVariables().get("REQUEST_CAMPAIGN_ID");
+        if (campaignUuid == null || campaignUuid.isBlank()) {
+            sessionRegistry.unbindCampaignChannelSession(binding.channelId(), binding.threadTs());
+            return;
+        }
+
+        try {
+            RequestInformationCampaign campaign = requestInformationService.getCampaign(campaignUuid);
+            if (campaign.status() != RequestCampaignStatus.OPEN) {
+                sessionRegistry.unbindCampaignChannelSession(binding.channelId(), binding.threadTs());
+            }
+        } catch (Exception ex) {
+            sessionRegistry.unbindCampaignChannelSession(binding.channelId(), binding.threadTs());
+        }
     }
 
     private void sendAiAttachments(AiChatMessage response,

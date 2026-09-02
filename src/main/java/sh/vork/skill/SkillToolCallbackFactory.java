@@ -274,8 +274,19 @@ public class SkillToolCallbackFactory {
             if (!first) props.append(",");
             props.append("\"").append(p.name()).append("\":{");
             props.append("\"type\":\"").append(mapType(p.type())).append("\"");
-            if (!p.description().isBlank()) {
-                String escaped = p.description().replace("\\", "\\\\").replace("\"", "\\\"");
+            String format = mapFormat(p.type());
+            if (format != null) {
+                props.append(",\"format\":\"").append(format).append("\"");
+            }
+            String description = p.description();
+            if (isBindingContractType(p.type())) {
+                String contractHint = "Binding VID implementing contract '" + p.type() + "'";
+                description = description == null || description.isBlank()
+                        ? contractHint
+                        : description + " | " + contractHint;
+            }
+            if (description != null && !description.isBlank()) {
+                String escaped = description.replace("\\", "\\\\").replace("\"", "\\\"");
                 props.append(",\"description\":\"").append(escaped).append("\"");
             }
             props.append("}");
@@ -296,6 +307,33 @@ public class SkillToolCallbackFactory {
             case "boolean"         -> "boolean";
             default                -> "string"; // string, secret, or unknown
         };
+    }
+
+    private static String mapFormat(String type) {
+        if (type == null) {
+            return null;
+        }
+        return switch (type.toLowerCase()) {
+            case "date" -> "date";
+            case "timestamp" -> "date-time";
+            default -> null;
+        };
+    }
+
+    private static boolean isBindingContractType(String type) {
+        if (type == null || type.isBlank()) {
+            return false;
+        }
+        String normalized = type.trim().toLowerCase();
+        return !("string".equals(normalized)
+                || "text".equals(normalized)
+                || "int".equals(normalized)
+                || "double".equals(normalized)
+                || "float".equals(normalized)
+                || "boolean".equals(normalized)
+                || "date".equals(normalized)
+                || "timestamp".equals(normalized)
+                || "secret".equals(normalized));
     }
 
     private static boolean requiresUserPrompt(Skill skill) {
@@ -472,6 +510,7 @@ public class SkillToolCallbackFactory {
             case "text" -> "textarea";
             case "int", "double", "float" -> "number";
             case "boolean" -> "checkbox";
+            case "date" -> "date";
             default -> "text";
         };
     }

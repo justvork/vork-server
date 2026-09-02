@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -63,6 +64,58 @@ public class ChannelService {
         }
 
         return new ArrayList<>(deduped.values());
+    }
+
+    public void notifyChannelsWithUrls(Map<String, String> channelToUrl,
+                                       String subject,
+                                       String message) {
+        if (channelToUrl == null || channelToUrl.isEmpty()) {
+            return;
+        }
+
+        Map<String, ChannelProvider> providerByKey = new HashMap<>();
+        for (ChannelProvider provider : providers) {
+            if (provider == null || provider.providerKey() == null || provider.providerKey().isBlank()) {
+                continue;
+            }
+            providerByKey.putIfAbsent(normalize(provider.providerKey()), provider);
+        }
+
+        Map<ChannelProvider, Map<ChannelRef, String>> grouped = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : channelToUrl.entrySet()) {
+            String channelName = entry.getKey();
+            String url = entry.getValue();
+            if (channelName == null || channelName.isBlank() || url == null || url.isBlank()) {
+                continue;
+            }
+
+            ChannelRef ref = resolveByChannelName(channelName).orElse(null);
+            if (ref == null) {
+                log.warn("Skipping campaign notification for unresolved channel [channelName={}]", channelName);
+                continue;
+            }
+
+            ChannelProvider provider = providerByKey.get(normalize(ref.providerKey()));
+            if (provider == null) {
+                log.warn("Skipping campaign notification because provider is unavailable [channelName={}, provider={}]",
+                        ref.channelName(), ref.providerKey());
+                continue;
+            }
+
+            grouped.computeIfAbsent(provider, ignored -> new LinkedHashMap<>()).put(ref, url);
+        }
+
+        for (Map.Entry<ChannelProvider, Map<ChannelRef, String>> entry : grouped.entrySet()) {
+            ChannelProvider provider = entry.getKey();
+            Map<ChannelRef, String> channelRefsToUrl = entry.getValue();
+            if (channelRefsToUrl.isEmpty()) {
+                continue;
+            }
+
+            provider.notifyChannelsWithUrls(channelRefsToUrl, subject, message);
+            log.debug("Campaign notifications dispatched through channel provider [provider={}, count={}]",
+                    provider.providerKey(), channelRefsToUrl.size());
+        }
     }
 
     public void assertChannelNameAvailable(String channelName) {

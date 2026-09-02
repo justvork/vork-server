@@ -29,7 +29,6 @@ import sh.vork.channel.ChannelRef;
 import sh.vork.channel.ChannelService;
 import sh.vork.orm.RepositoryFactory;
 import sh.vork.orm.mock.MapDatabaseRepository;
-import sh.vork.scheduling.service.BackgroundNotificationService;
 import sh.vork.setup.SystemSettings;
 import sh.vork.setup.SystemSettingsService;
 import sh.vork.web.RequestOriginContext;
@@ -57,7 +56,6 @@ class RequestInformationServiceTest {
                 .thenReturn(Optional.of(new ChannelRef("bob", "Bob", "local")));
 
         AttentionAlertService attentionAlertService = mock(AttentionAlertService.class);
-        BackgroundNotificationService backgroundNotificationService = mock(BackgroundNotificationService.class);
         SystemSettingsService systemSettingsService = mock(SystemSettingsService.class);
         when(systemSettingsService.getGlobal())
                 .thenReturn(new SystemSettings("global", "GEMINI", "gemini-2.5-flash", null, 15));
@@ -66,7 +64,6 @@ class RequestInformationServiceTest {
                 repositoryFactory,
                 channelService,
                 attentionAlertService,
-                backgroundNotificationService,
                 systemSettingsService,
                 new ObjectMapper().findAndRegisterModules(),
                 "");
@@ -144,8 +141,6 @@ class RequestInformationServiceTest {
                     System.currentTimeMillis());
         });
 
-        BackgroundNotificationService backgroundNotificationService = mock(BackgroundNotificationService.class);
-
         SystemSettingsService systemSettingsService = mock(SystemSettingsService.class);
         when(systemSettingsService.getGlobal())
                 .thenReturn(new SystemSettings("global", "GEMINI", "gemini-2.5-flash", "https://ignored.example", 15));
@@ -154,7 +149,6 @@ class RequestInformationServiceTest {
                 repositoryFactory,
                 channelService,
                 attentionAlertService,
-                backgroundNotificationService,
                 systemSettingsService,
                 new ObjectMapper().findAndRegisterModules(),
                 "https://relay.vork.sh");
@@ -252,8 +246,6 @@ class RequestInformationServiceTest {
                     System.currentTimeMillis());
         });
 
-        BackgroundNotificationService backgroundNotificationService = mock(BackgroundNotificationService.class);
-
         SystemSettingsService systemSettingsService = mock(SystemSettingsService.class);
         when(systemSettingsService.getGlobal())
                 .thenReturn(new SystemSettings("global", "GEMINI", "gemini-2.5-flash", null, 15));
@@ -262,7 +254,6 @@ class RequestInformationServiceTest {
                 repositoryFactory,
                 channelService,
                 attentionAlertService,
-                backgroundNotificationService,
                 systemSettingsService,
                 new ObjectMapper().findAndRegisterModules(),
                 "");
@@ -360,8 +351,6 @@ class RequestInformationServiceTest {
                     System.currentTimeMillis());
         });
 
-        BackgroundNotificationService backgroundNotificationService = mock(BackgroundNotificationService.class);
-
         SystemSettingsService systemSettingsService = mock(SystemSettingsService.class);
         when(systemSettingsService.getGlobal())
                 .thenReturn(new SystemSettings("global", "GEMINI", "gemini-2.5-flash", null, 15));
@@ -370,7 +359,6 @@ class RequestInformationServiceTest {
                 repositoryFactory,
                 channelService,
                 attentionAlertService,
-                backgroundNotificationService,
                 systemSettingsService,
                 new ObjectMapper().findAndRegisterModules(),
                 "");
@@ -491,8 +479,6 @@ class RequestInformationServiceTest {
                     System.currentTimeMillis());
         });
 
-        BackgroundNotificationService backgroundNotificationService = mock(BackgroundNotificationService.class);
-
         SystemSettingsService systemSettingsService = mock(SystemSettingsService.class);
         when(systemSettingsService.getGlobal())
                 .thenReturn(new SystemSettings("global", "GEMINI", "gemini-2.5-flash", null, 15));
@@ -501,7 +487,6 @@ class RequestInformationServiceTest {
                 repositoryFactory,
                 channelService,
                 attentionAlertService,
-                backgroundNotificationService,
                 systemSettingsService,
                 new ObjectMapper().findAndRegisterModules(),
                 "");

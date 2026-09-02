@@ -30,7 +30,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.agent.AgentType;
-import sh.vork.ai.agent.ArtifactStatus;
+import sh.vork.artifact.ArtifactStatus;
 import sh.vork.filesystem.FileArea;
 import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.orm.DatabaseRepository;
@@ -170,7 +170,7 @@ class ContributionControllerTest {
                 "demo",
                 "reflection",
                 "SNAPSHOT",
-                sh.vork.reflection.ArtifactStatus.SNAPSHOT,
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT,
                 System.currentTimeMillis(),
                 System.currentTimeMillis());
 
@@ -302,7 +302,7 @@ class ContributionControllerTest {
                 "ops",
                 "maint",
                 "SNAPSHOT",
-                sh.vork.scheduling.domain.ArtifactStatus.SNAPSHOT);
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT);
 
         when(jobRepository.get("ops-maint-SNAPSHOT")).thenReturn(snapshot);
         when(jobRepository.get("ops-maint-1.2")).thenReturn(null);
@@ -360,7 +360,7 @@ class ContributionControllerTest {
                 "ux",
                 "shell",
                 "SNAPSHOT",
-                sh.vork.surface.ArtifactStatus.SNAPSHOT,
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT,
                 System.currentTimeMillis(),
                 System.currentTimeMillis());
 
@@ -494,7 +494,7 @@ class ContributionControllerTest {
                                 "ops",
                                 "maint",
                                 "1.2",
-                                sh.vork.scheduling.domain.ArtifactStatus.SUBMITTED);
+                                sh.vork.artifact.ArtifactStatus.SUBMITTED);
 
                 when(jobRepository.get("ops-maint-1.2")).thenReturn(immutable);
                 when(jobRepository.get("ops-maint-SNAPSHOT")).thenReturn(null);
@@ -507,7 +507,7 @@ class ContributionControllerTest {
                 ScheduledJob cloned = (ScheduledJob) response.getBody();
                 assertEquals("ops-maint-SNAPSHOT", cloned.id());
                 assertEquals("SNAPSHOT", cloned.version());
-                assertEquals(sh.vork.scheduling.domain.ArtifactStatus.SNAPSHOT, cloned.artifactStatus());
+                assertEquals(sh.vork.artifact.ArtifactStatus.SNAPSHOT, cloned.artifactStatus());
                 verify(jobRepository).save(any(ScheduledJob.class));
         }
 
@@ -530,7 +530,7 @@ class ContributionControllerTest {
                                 "ux",
                                 "shell",
                                 "2.0",
-                                sh.vork.surface.ArtifactStatus.SUBMITTED,
+                                sh.vork.artifact.ArtifactStatus.SUBMITTED,
                                 System.currentTimeMillis(),
                                 System.currentTimeMillis());
 
@@ -543,7 +543,7 @@ class ContributionControllerTest {
                 Surface cloned = (Surface) response.getBody();
                 assertEquals("ux-shell-SNAPSHOT", cloned.uuid());
                 assertEquals("SNAPSHOT", cloned.version());
-                assertEquals(sh.vork.surface.ArtifactStatus.SNAPSHOT, cloned.artifactStatus());
+                assertEquals(sh.vork.artifact.ArtifactStatus.SNAPSHOT, cloned.artifactStatus());
                 verify(surfaceRepository).save(any(Surface.class));
         }
 
@@ -630,7 +630,7 @@ class ContributionControllerTest {
                 "demo",
                 "skillset",
                 "SNAPSHOT",
-                sh.vork.skill.ArtifactStatus.SNAPSHOT,
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT,
                 1L,
                 1L);
 
@@ -707,7 +707,7 @@ class ContributionControllerTest {
                 "demo",
                 "skillset",
                 "1.0",
-                sh.vork.skill.ArtifactStatus.PUBLISHED,
+                sh.vork.artifact.ArtifactStatus.PUBLISHED,
                 1L,
                 1L);
 
@@ -720,7 +720,7 @@ class ContributionControllerTest {
         SkillGroup cloned = (SkillGroup) response.getBody();
         assertEquals("demo-skillset-SNAPSHOT", cloned.uuid());
         assertEquals("SNAPSHOT", cloned.version());
-        assertEquals(sh.vork.skill.ArtifactStatus.SNAPSHOT, cloned.artifactStatus());
+        assertEquals(sh.vork.artifact.ArtifactStatus.SNAPSHOT, cloned.artifactStatus());
         verify(skillRepository).save(any(Skill.class));
         verify(skillGroupRepository).save(any(SkillGroup.class));
     }
@@ -736,7 +736,7 @@ class ContributionControllerTest {
                 "https://oauth2.googleapis.com/token",
                 List.of("openid", "email"),
                 Map.of("access_type", "offline"),
-                sh.vork.oauth.ArtifactStatus.SNAPSHOT,
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT,
                 1L,
                 1L);
         when(oauthTemplateRepository.get("oauth-template-1")).thenReturn(snapshot);
@@ -846,7 +846,7 @@ class ContributionControllerTest {
                 "https://oauth2.googleapis.com/token",
                 List.of("openid", "email"),
                 Map.of("access_type", "offline"),
-                sh.vork.oauth.ArtifactStatus.SNAPSHOT,
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT,
                 1L,
                 1L);
         when(oauthTemplateRepository.get("oauth-template-1")).thenReturn(snapshot);

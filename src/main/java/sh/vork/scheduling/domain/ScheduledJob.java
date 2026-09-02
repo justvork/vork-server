@@ -1,5 +1,7 @@
 package sh.vork.scheduling.domain;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 

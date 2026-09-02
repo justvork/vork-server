@@ -12,12 +12,13 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  * (so the AI knows how to interpret each value).
  *
  * <p>Valid {@code type} values: {@code string}, {@code text}, {@code int},
- * {@code double}, {@code boolean}, {@code secret}. The {@code text} type is
+ * {@code double}, {@code boolean}, {@code date}, {@code timestamp},
+ * {@code secret}. The {@code text} type is
  * treated as a string value but rendered as a multi-line user input prompt.
  * Secret values are masked in logs and not echoed back in tool responses.
  *
  * @param name        parameter identifier (used as the map key in the tool call)
- * @param type        one of: string | text | int | double | boolean | secret
+ * @param type        one of: string | text | int | double | boolean | date | timestamp | secret
  * @param description optional human-readable hint passed into the skill prompt
  */
 @JsonIgnoreProperties(ignoreUnknown = true)

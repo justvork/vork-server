@@ -53,6 +53,7 @@ import sh.vork.ai.entity.AiChatMessage.ToolCallRef;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
+import sh.vork.ai.exception.CriticalTurnFailureException;
 import sh.vork.ai.exception.ToolSuspensionException;
 import sh.vork.ai.function.RequestInformationToolRequest;
 import sh.vork.ai.lifecycle.AgentTemplateSeeder;
@@ -2580,20 +2581,19 @@ public class ChatService {
                                            String modelId) {
         ToolExecutionContext.remove(LoggedToolCallback.PENDING_TOOL_SUSPENSION_CONTEXT_KEY);
         try {
-            return aiService.generateWithHistory(history, effectiveContent, provider, modelId);
+            return aiService.generateWithHistoryStrict(history, effectiveContent, provider, modelId);
         } catch (NoSuchElementException ex) {
-            // Guard against occasional provider responses without candidates.
-            log.warn("Model returned no candidate for history call; retrying with simplified prompt path [provider={}]", provider);
-            try {
-                return aiService.generate(effectiveContent, provider);
-            } catch (NoSuchElementException ex2) {
-                log.error("Model returned no candidate for simplified prompt path [provider={}]", provider);
-                return modelUnavailableMessage();
-            }
+            log.error("Critical model failure: no candidate for history call [provider={}]", provider);
+            throw new CriticalTurnFailureException(
+                    "Critical AI turn failure: model returned no candidate response. Processing stopped.",
+                    ex);
         } catch (RuntimeException ex) {
             ToolSuspensionException pendingSuspension = consumePendingToolSuspension();
             if (pendingSuspension != null) {
                 throw pendingSuspension;
+            }
+            if (ex instanceof CriticalTurnFailureException) {
+                throw ex;
             }
             throw ex;
         }
@@ -2606,26 +2606,22 @@ public class ChatService {
                                                    String modelId) {
         ToolExecutionContext.remove(LoggedToolCallback.PENDING_TOOL_SUSPENSION_CONTEXT_KEY);
         try {
-            return aiService.generateWithHistoryAndMedia(history, effectiveContent, media, provider, modelId);
+            return aiService.generateWithHistoryAndMediaStrict(history, effectiveContent, media, provider, modelId);
         } catch (NoSuchElementException ex) {
-            log.warn("Model returned no candidate for media call; retrying with text-only fallback [provider={}]", provider);
-            try {
-                return aiService.generate(effectiveContent, provider);
-            } catch (NoSuchElementException ex2) {
-                log.error("Model returned no candidate for text-only fallback after media call [provider={}]", provider);
-                return modelUnavailableMessage();
-            }
+            log.error("Critical model failure: no candidate for media call [provider={}]", provider);
+            throw new CriticalTurnFailureException(
+                    "Critical AI turn failure: model returned no candidate response. Processing stopped.",
+                    ex);
         } catch (RuntimeException ex) {
             ToolSuspensionException pendingSuspension = consumePendingToolSuspension();
             if (pendingSuspension != null) {
                 throw pendingSuspension;
             }
+            if (ex instanceof CriticalTurnFailureException) {
+                throw ex;
+            }
             throw ex;
         }
-    }
-
-    private static String modelUnavailableMessage() {
-        return "I couldn't produce a model response right now due to a transient provider issue. Please try again.";
     }
 
     private ToolSuspensionException consumePendingToolSuspension() {

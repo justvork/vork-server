@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -145,6 +146,58 @@ class SkillToolCallbackFactoryTest {
 
         assertEquals("textarea", queryField.type());
     }
+
+    @Test
+    void toolSchemaIncludesDateAndTimestampFormats() {
+        Skill skill = new Skill(
+                "skill-1",
+                "Calendar Skill",
+                "desc",
+                "group-1",
+                SkillVisibility.PUBLIC,
+                List.of(
+                        new SkillParameter("day", "date", "Day", SkillParameterInputMode.AI_REQUIRED),
+                        new SkillParameter("startsAt", "timestamp", "Start timestamp", SkillParameterInputMode.AI_REQUIRED)),
+                "instructions",
+                List.of(),
+                List.of(),
+                List.of(),
+                1L,
+                System.currentTimeMillis(),
+                System.currentTimeMillis(),
+                List.of());
+
+        ToolCallback callback = factory.create(skill);
+        String schema = callback.getToolDefinition().inputSchema();
+
+        assertTrue(schema.contains("\"day\":{\"type\":\"string\",\"format\":\"date\""));
+        assertTrue(schema.contains("\"startsAt\":{\"type\":\"string\",\"format\":\"date-time\""));
+    }
+
+        @Test
+        void toolSchemaAnnotatesBindingContractParameterType() {
+                Skill skill = new Skill(
+                                "skill-1",
+                                "Mail Skill",
+                                "desc",
+                                "group-1",
+                                SkillVisibility.PUBLIC,
+                                List.of(new SkillParameter("emailBinding", "mail-email-SNAPSHOT", "", SkillParameterInputMode.AI_REQUIRED)),
+                                "instructions",
+                                List.of(),
+                                List.of(),
+                                List.of(),
+                                1L,
+                                System.currentTimeMillis(),
+                                System.currentTimeMillis(),
+                                List.of());
+
+                ToolCallback callback = factory.create(skill);
+                String schema = callback.getToolDefinition().inputSchema();
+
+                assertTrue(schema.contains("\"emailBinding\":{\"type\":\"string\""));
+                assertTrue(schema.contains("Binding VID implementing contract 'mail-email-SNAPSHOT'"));
+        }
 
     @SuppressWarnings("unchecked")
     private static DatabaseRepository<SkillGroup> mockSkillGroupRepository() {

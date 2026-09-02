@@ -72,7 +72,7 @@
 </div>
 
 <div id="group-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-    <div class="w-full max-w-lg rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
+    <div class="w-full max-w-4xl rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
         <div class="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
             <h3 id="group-modal-title" class="text-lg font-semibold text-zinc-100">New Reflection Group</h3>
             <button id="group-modal-close" class="rounded-md border border-zinc-700 px-2 py-1 text-zinc-300 transition-colors hover:bg-zinc-800" aria-label="Close">x</button>
@@ -80,6 +80,23 @@
         <div class="space-y-3 px-5 py-4">
             <div id="group-modal-alert"></div>
             <input id="group-id" type="hidden">
+            <input id="group-kind" type="hidden" value="REST">
+
+            <div class="border-b border-zinc-800">
+                <div class="-mb-px flex flex-wrap gap-1">
+                    <button id="group-tab-general" type="button" data-tab="general" class="group-tab-btn inline-flex items-center rounded-t-md border border-zinc-700 border-b-transparent bg-zinc-900 px-3 py-1.5 text-sm font-medium text-zinc-100">
+                        General
+                    </button>
+                    <button id="group-tab-authentication" type="button" data-tab="authentication" class="group-tab-btn inline-flex items-center rounded-t-md border border-zinc-700 border-b-transparent bg-zinc-950 px-3 py-1.5 text-sm font-medium text-zinc-400 hover:text-zinc-200">
+                        Authentication
+                    </button>
+                    <button id="group-tab-bindings" type="button" data-tab="bindings" class="group-tab-btn inline-flex items-center rounded-t-md border border-zinc-700 border-b-transparent bg-zinc-950 px-3 py-1.5 text-sm font-medium text-zinc-400 hover:text-zinc-200">
+                        Bindings
+                    </button>
+                </div>
+            </div>
+
+            <div id="group-tab-panel-general" class="space-y-3">
             <div>
                 <label class="mb-1 block text-sm font-medium text-zinc-300" for="group-name">Name <span class="text-rose-400">*</span></label>
                 <input id="group-name" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="e.g. Weather API">
@@ -98,13 +115,6 @@
                 <label class="mb-1 block text-sm font-medium text-zinc-300" for="group-description">Description</label>
                 <input id="group-description" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="Short description">
             </div>
-            <div>
-                <label class="mb-1 block text-sm font-medium text-zinc-300" for="group-type">Type</label>
-                <select id="group-type" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
-                    <option value="REST">REST</option>
-                    <option value="MONGO">MONGO (wizard-managed)</option>
-                </select>
-            </div>
             <div id="group-base-url-wrap">
                 <label class="mb-1 block text-sm font-medium text-zinc-300" for="group-base-url">Base URL (optional)</label>
                 <input id="group-base-url" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="https://api.example.com">
@@ -118,7 +128,9 @@
                 </label>
                 <div class="mt-1 text-xs text-zinc-500">When enabled, bindings can define an optional Base URL override.</div>
             </div>
+            </div>
 
+            <div id="group-tab-panel-authentication" class="hidden space-y-3">
             <div id="group-auth-mode-wrap">
                 <label class="mb-1 block text-sm font-medium text-zinc-300" for="group-auth-mode">Authentication</label>
                 <select id="group-auth-mode" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
@@ -131,7 +143,19 @@
             <div id="group-oauth-template-wrap" class="hidden">
                 <label class="mb-1 block text-sm font-medium text-zinc-300" for="group-oauth-template">OAuth Template</label>
                 <select id="group-oauth-template" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"></select>
-                <div class="mt-1 text-xs text-zinc-500">Binding name is used as OAuth profile name for this template's client.</div>
+                <div class="mt-1 text-xs text-zinc-500">Set Authentication to OAUTH to enable selection. Binding name is used as OAuth profile name for this template's client.</div>
+            </div>
+            </div>
+
+            <div id="group-tab-panel-bindings" class="hidden space-y-3">
+            <div id="group-binding-contracts-wrap">
+                <label class="mb-1 block text-sm font-medium text-zinc-300" for="group-binding-contract-search">Binding Contracts (optional)</label>
+                <div class="relative">
+                    <input id="group-binding-contract-search" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="Search contracts by name, id, or tool...">
+                    <div id="group-binding-contract-results" class="skills-search-dropdown absolute z-20 mt-1 hidden w-full"></div>
+                </div>
+                <div id="group-binding-contract-selected" class="mt-2 flex min-h-9 flex-wrap gap-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2"></div>
+                <div class="mt-1 text-xs text-zinc-500">For REST groups only. Attached contracts auto-generate prototype tools and enforce tool ID/input parameter compliance.</div>
             </div>
 
             <div>
@@ -142,7 +166,7 @@
                     </button>
                 </div>
                 <div id="group-binding-params-list"></div>
-                <div class="mt-1 text-xs text-zinc-500">Defines per-binding values. Supported types: string, int, double, boolean, hidden.</div>
+                <div class="mt-1 text-xs text-zinc-500">Defines per-binding values. Supported types: string, int, double, boolean, date, timestamp, hidden.</div>
             </div>
 
             <div>
@@ -154,6 +178,7 @@
                 </div>
                 <div id="group-binding-secrets-list"></div>
                 <div class="mt-1 text-xs text-zinc-500">Secrets are stored securely per user and per binding.</div>
+            </div>
             </div>
         </div>
         <div class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">

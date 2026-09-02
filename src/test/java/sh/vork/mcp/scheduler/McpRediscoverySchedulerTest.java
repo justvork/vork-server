@@ -5,7 +5,7 @@ import sh.vork.mcp.model.McpBinding;
 import sh.vork.mcp.model.McpBindingStatus;
 import sh.vork.mcp.model.McpTransportMode;
 import sh.vork.mcp.service.McpBindingService;
-import sh.vork.reflection.ArtifactStatus;
+import sh.vork.artifact.ArtifactStatus;
 
 import java.util.List;
 

@@ -8,6 +8,7 @@ const isReadOnly = document.body.getAttribute('data-reflections-read-only') === 
 let groups = [];
 let reflections = [];
 let oauthTemplates = [];
+let bindingContracts = [];
 let modalParameters = [];
 let recordModalParameters = [];
 let modalHeaders = [];
@@ -16,12 +17,14 @@ let modalGroupBindingParameters = [];
 let modalGroupBindingSecrets = [];
 let modalBindingParameterValues = {};
 let modalBindingSecretValues = {};
+let modalSelectedBindingContractUuids = [];
 let oauthConnectDefaults = null;
 let githubConnection = null;
 let mongoWizardCollections = [];
 let mongoWizardStep = 1;
 let mongoWizardConnectionValidated = false;
 let mongoWizardCollectionsLoaded = false;
+let activeContractTool = null;
 
 function isValidIdentity(value) {
     return /^[A-Za-z0-9]{3,64}$/.test(String(value || '').trim());
@@ -106,8 +109,14 @@ function bindEvents() {
     document.getElementById('group-modal-close').addEventListener('click', closeGroupModal);
     document.getElementById('group-modal-cancel').addEventListener('click', closeGroupModal);
     document.getElementById('group-modal-save').addEventListener('click', saveGroup);
-    document.getElementById('group-type').addEventListener('change', syncGroupAuthVisibility);
     document.getElementById('group-auth-mode').addEventListener('change', syncGroupAuthVisibility);
+    document.getElementById('group-oauth-template').addEventListener('change', syncGroupAuthVisibility);
+    document.querySelectorAll('.group-tab-btn').forEach(function (button) {
+        button.addEventListener('click', function () {
+            setGroupModalTab(button.getAttribute('data-tab') || 'general');
+        });
+    });
+    setupGroupBindingContractSearch();
     document.getElementById('add-group-binding-param-btn').addEventListener('click', function () {
         modalGroupBindingParameters.push({ name: '', type: 'string', description: '', defaultValue: '' });
         renderGroupBindingParameters();
@@ -120,6 +129,8 @@ function bindEvents() {
     document.getElementById('reflection-modal-close').addEventListener('click', closeReflectionModal);
     document.getElementById('reflection-modal-cancel').addEventListener('click', closeReflectionModal);
     document.getElementById('reflection-modal-save').addEventListener('click', saveReflection);
+    document.getElementById('reflection-group').addEventListener('change', onReflectionGroupChanged);
+    document.getElementById('reflection-id').addEventListener('input', onReflectionIdentityChanged);
 
     const mongoToolModalClose = document.getElementById('mongo-tool-modal-close');
     const mongoToolModalCancel = document.getElementById('mongo-tool-modal-cancel');
@@ -271,7 +282,7 @@ function bindEvents() {
 }
 
 async function loadAll() {
-    await Promise.all([loadGroups(), loadReflections(), loadOAuthTemplates()]);
+    await Promise.all([loadGroups(), loadReflections(), loadOAuthTemplates(), loadBindingContracts()]);
     renderGroups();
 }
 
@@ -286,6 +297,19 @@ async function loadOAuthTemplates() {
         oauthTemplates = [];
     }
     populateGroupOAuthTemplateSelect();
+}
+
+async function loadBindingContracts() {
+    try {
+        const response = await fetch('/api/binding-contracts');
+        if (!response.ok) {
+            throw new Error('HTTP ' + response.status);
+        }
+        bindingContracts = await response.json();
+    } catch (_error) {
+        bindingContracts = [];
+    }
+    populateGroupBindingContractSelect();
 }
 
 async function loadGroups() {
@@ -867,27 +891,32 @@ async function refreshReflectionGroupContributionStatus(id) {
     }
 }
 
-function openCreateGroupModal() {
+async function openCreateGroupModal() {
+    await Promise.all([loadOAuthTemplates(), loadBindingContracts()]);
     document.getElementById('group-modal-title').textContent = 'New REST/OAuth Reflection Group';
     document.getElementById('group-id').value = '';
+    document.getElementById('group-kind').value = 'REST';
     document.getElementById('group-name').value = '';
     document.getElementById('group-group-id').value = '';
     document.getElementById('group-artifact-id').value = '';
     document.getElementById('group-group-id').disabled = false;
     document.getElementById('group-artifact-id').disabled = false;
     document.getElementById('group-description').value = '';
-    document.getElementById('group-type').value = 'REST';
-    document.getElementById('group-type').disabled = true;
     document.getElementById('group-base-url').value = '';
     document.getElementById('group-url-override-enabled').checked = true;
-    document.getElementById('group-auth-mode').value = 'NONE';
+    document.getElementById('group-auth-mode').value = 'OAUTH';
     populateGroupOAuthTemplateSelect('');
+    populateGroupBindingContractSelect([]);
     modalGroupBindingParameters = [];
     modalGroupBindingSecrets = [];
     renderGroupBindingParameters();
     renderGroupBindingSecrets();
+    setGroupModalTab('general');
     syncGroupAuthVisibility();
     clearGroupModalAlert();
+    if (!oauthTemplates || oauthTemplates.length === 0) {
+        showGroupModalAlert('No OAuth templates are available. Create/import an OAuth template first, then select it here.', 'warning');
+    }
     showModal('group-modal');
 }
 
@@ -900,18 +929,18 @@ function openEditGroupModal(uuid) {
     const group = entry.group || entry;
     document.getElementById('group-modal-title').textContent = 'Edit Reflection Group';
     document.getElementById('group-id').value = group.uuid;
+    document.getElementById('group-kind').value = group.type || 'REST';
     document.getElementById('group-name').value = group.name || '';
     document.getElementById('group-group-id').value = group.groupId || '';
     document.getElementById('group-artifact-id').value = group.artifactId || '';
     document.getElementById('group-group-id').disabled = true;
     document.getElementById('group-artifact-id').disabled = true;
     document.getElementById('group-description').value = group.description || '';
-    document.getElementById('group-type').value = group.type || 'REST';
-    document.getElementById('group-type').disabled = true;
     document.getElementById('group-base-url').value = group.baseUrl || '';
     document.getElementById('group-url-override-enabled').checked = group.urlOverrideEnabled !== false;
     document.getElementById('group-auth-mode').value = group.authenticationMode || 'NONE';
     populateGroupOAuthTemplateSelect(group.oauthTemplateId || '');
+    populateGroupBindingContractSelect(group.bindingContractUuids || []);
     modalGroupBindingParameters = (group.bindingParameters || []).map(function (parameter) {
         return {
             name: parameter.name || '',
@@ -928,6 +957,7 @@ function openEditGroupModal(uuid) {
     });
     renderGroupBindingParameters();
     renderGroupBindingSecrets();
+    setGroupModalTab('general');
     syncGroupAuthVisibility();
     clearGroupModalAlert();
     showModal('group-modal');
@@ -1271,7 +1301,7 @@ function clearMongoWizardAlert() {
 }
 
 async function saveGroup() {
-    const groupType = document.getElementById('group-type').value;
+    const groupType = (document.getElementById('group-kind').value || 'REST').trim().toUpperCase();
     const authenticationMode = document.getElementById('group-auth-mode').value;
     const oauthTemplateId = document.getElementById('group-oauth-template').value;
     const groupId = document.getElementById('group-id').value.trim();
@@ -1287,6 +1317,7 @@ async function saveGroup() {
         bindingSecrets: sanitizeBindingSecretSchema(modalGroupBindingSecrets),
         authenticationMode: authenticationMode,
         oauthTemplateId: authenticationMode === 'OAUTH' ? oauthTemplateId : '',
+        bindingContractUuids: selectedGroupBindingContractIds(),
         groupId: vidGroupId,
         artifactId: artifactId
     };
@@ -1301,10 +1332,6 @@ async function saveGroup() {
     }
     if (!payload.artifactId || !/^[A-Za-z0-9]{3,64}$/.test(payload.artifactId)) {
         showGroupModalAlert('Artifact ID must be alphanumeric and 3-64 characters.', 'warning');
-        return;
-    }
-    if (authenticationMode === 'OAUTH' && groupType !== 'REST') {
-        showGroupModalAlert('OAuth authentication is supported only for REST groups.', 'warning');
         return;
     }
     if (authenticationMode === 'OAUTH' && !oauthTemplateId) {
@@ -1355,15 +1382,224 @@ function populateGroupOAuthTemplateSelect(selectedTemplateId) {
     });
 
     select.value = previousValue;
+    syncGroupAuthVisibility();
+}
+
+function populateGroupBindingContractSelect(selectedContractIds) {
+    const selected = new Set((selectedContractIds || []).map(function (id) {
+        return String(id || '').trim();
+    }).filter(function (id) { return !!id; }));
+
+    modalSelectedBindingContractUuids = (bindingContracts || [])
+        .map(function (contract) { return String(contract.uuid || '').trim(); })
+        .filter(function (id) { return selected.has(id); });
+
+    const input = document.getElementById('group-binding-contract-search');
+    const results = document.getElementById('group-binding-contract-results');
+    if (input) {
+        input.value = '';
+    }
+    if (results) {
+        results.classList.add('hidden');
+    }
+
+    renderGroupBindingContractPills();
+    renderGroupBindingContractSearchResults('');
+}
+
+function selectedGroupBindingContractIds() {
+    return (modalSelectedBindingContractUuids || [])
+        .map(function (id) { return String(id || '').trim(); })
+        .filter(function (id) { return !!id; });
+}
+
+function setupGroupBindingContractSearch() {
+    const input = document.getElementById('group-binding-contract-search');
+    const results = document.getElementById('group-binding-contract-results');
+    if (!input || !results) {
+        return;
+    }
+
+    input.addEventListener('input', function () {
+        renderGroupBindingContractSearchResults(input.value || '');
+    });
+    input.addEventListener('focus', function () {
+        renderGroupBindingContractSearchResults(input.value || '');
+    });
+
+    document.addEventListener('click', function (event) {
+        const target = event.target;
+        if (!(target instanceof Element)) {
+            return;
+        }
+        if (input.contains(target) || results.contains(target)) {
+            return;
+        }
+        results.classList.add('hidden');
+    });
+}
+
+function renderGroupBindingContractSearchResults(query) {
+    const input = document.getElementById('group-binding-contract-search');
+    const results = document.getElementById('group-binding-contract-results');
+    if (!input || !results) {
+        return;
+    }
+
+    const term = String(query || '').trim().toLowerCase();
+    const selectedSet = new Set(selectedGroupBindingContractIds());
+    const available = (bindingContracts || []).filter(function (contract) {
+        const uuid = String(contract.uuid || '').trim();
+        if (!uuid || selectedSet.has(uuid)) {
+            return false;
+        }
+        if (!term) {
+            return true;
+        }
+        const name = String(contract.name || '').toLowerCase();
+        const id = String(contract.id || '').toLowerCase();
+        const groupId = String(contract.groupId || '').toLowerCase();
+        const artifactId = String(contract.artifactId || '').toLowerCase();
+        const tools = Array.isArray(contract.tools)
+            ? contract.tools.map(function (tool) {
+                return [tool.id, tool.name, tool.description].join(' ').toLowerCase();
+            }).join(' ')
+            : '';
+        return name.includes(term)
+            || id.includes(term)
+            || groupId.includes(term)
+            || artifactId.includes(term)
+            || tools.includes(term);
+    }).slice(0, 12);
+
+    results.innerHTML = '';
+    if (available.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'skills-search-item text-zinc-500';
+        empty.textContent = term ? 'No matching contracts.' : 'No more contracts to add.';
+        results.appendChild(empty);
+        results.classList.remove('hidden');
+        return;
+    }
+
+    available.forEach(function (contract) {
+        const item = document.createElement('div');
+        item.className = 'skills-search-item';
+        const toolCount = Array.isArray(contract.tools) ? contract.tools.length : 0;
+        const status = contract.artifactStatus ? (' [' + contract.artifactStatus + ']') : '';
+        item.textContent = (contract.name || contract.uuid || 'Unnamed contract')
+            + ' (' + toolCount + ' tool' + (toolCount === 1 ? '' : 's') + ')' + status;
+        item.title = [contract.uuid, contract.groupId, contract.artifactId].filter(Boolean).join(' / ');
+        item.addEventListener('click', function () {
+            addGroupBindingContractSelection(contract.uuid);
+            input.value = '';
+            renderGroupBindingContractSearchResults('');
+            input.focus();
+        });
+        results.appendChild(item);
+    });
+
+    results.classList.remove('hidden');
+}
+
+function renderGroupBindingContractPills() {
+    const container = document.getElementById('group-binding-contract-selected');
+    if (!container) {
+        return;
+    }
+
+    const selectedIds = selectedGroupBindingContractIds();
+    container.innerHTML = '';
+    if (selectedIds.length === 0) {
+        const empty = document.createElement('span');
+        empty.className = 'text-xs text-zinc-500';
+        empty.textContent = 'No contracts selected.';
+        container.appendChild(empty);
+        return;
+    }
+
+    selectedIds.forEach(function (uuid) {
+        const contract = (bindingContracts || []).find(function (entry) {
+            return String(entry.uuid || '').trim() === uuid;
+        });
+        const pill = document.createElement('span');
+        pill.className = 'extra-pill tool-pill';
+        const label = contract ? (contract.name || contract.uuid || uuid) : uuid;
+        const toolCount = contract && Array.isArray(contract.tools) ? contract.tools.length : 0;
+        pill.textContent = label + (toolCount > 0 ? (' (' + toolCount + ')') : '');
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'pill-remove';
+        remove.setAttribute('aria-label', 'Remove contract ' + label);
+        remove.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+        remove.addEventListener('click', function () {
+            removeGroupBindingContractSelection(uuid);
+        });
+
+        pill.appendChild(remove);
+        container.appendChild(pill);
+    });
+}
+
+function addGroupBindingContractSelection(contractUuid) {
+    const normalized = String(contractUuid || '').trim();
+    if (!normalized) {
+        return;
+    }
+    if (!modalSelectedBindingContractUuids.includes(normalized)) {
+        modalSelectedBindingContractUuids.push(normalized);
+    }
+    renderGroupBindingContractPills();
+}
+
+function removeGroupBindingContractSelection(contractUuid) {
+    const normalized = String(contractUuid || '').trim();
+    modalSelectedBindingContractUuids = (modalSelectedBindingContractUuids || []).filter(function (id) {
+        return id !== normalized;
+    });
+    renderGroupBindingContractPills();
+    const input = document.getElementById('group-binding-contract-search');
+    if (input) {
+        renderGroupBindingContractSearchResults(input.value || '');
+    }
+}
+
+function setGroupModalTab(tab) {
+    const normalized = String(tab || 'general').toLowerCase();
+    const allowed = ['general', 'authentication', 'bindings'];
+    const active = allowed.includes(normalized) ? normalized : 'general';
+
+    allowed.forEach(function (name) {
+        const button = document.getElementById('group-tab-' + name);
+        const panel = document.getElementById('group-tab-panel-' + name);
+        const isActive = name === active;
+        if (button) {
+            button.classList.toggle('bg-zinc-900', isActive);
+            button.classList.toggle('text-zinc-100', isActive);
+            button.classList.toggle('bg-zinc-950', !isActive);
+            button.classList.toggle('text-zinc-400', !isActive);
+        }
+        if (panel) {
+            panel.classList.toggle('hidden', !isActive);
+        }
+    });
+}
+
+function getActiveGroupTab() {
+    const active = document.querySelector('.group-tab-btn.bg-zinc-900');
+    return active ? String(active.getAttribute('data-tab') || 'general').toLowerCase() : 'general';
 }
 
 function syncGroupAuthVisibility() {
-    const typeValue = document.getElementById('group-type').value;
+    const typeValue = (document.getElementById('group-kind').value || 'REST').trim().toUpperCase();
     const modeSelect = document.getElementById('group-auth-mode');
     const oauthWrap = document.getElementById('group-oauth-template-wrap');
     const baseUrlWrap = document.getElementById('group-base-url-wrap');
     const urlOverrideWrap = document.getElementById('group-url-override-wrap');
     const authModeWrap = document.getElementById('group-auth-mode-wrap');
+    const contractsWrap = document.getElementById('group-binding-contracts-wrap');
+    const authTabButton = document.getElementById('group-tab-authentication');
 
     if (!modeSelect || !oauthWrap) {
         return;
@@ -1385,14 +1621,48 @@ function syncGroupAuthVisibility() {
         document.getElementById('group-base-url').value = '';
         document.getElementById('group-url-override-enabled').checked = false;
         modeSelect.value = 'NONE';
+        if (authTabButton) {
+            authTabButton.classList.add('hidden');
+        }
+        if (getActiveGroupTab() === 'authentication') {
+            setGroupModalTab('general');
+        }
+    } else if (authTabButton) {
+        authTabButton.classList.remove('hidden');
     }
 
     if (typeValue !== 'REST' && modeSelect.value === 'OAUTH') {
         modeSelect.value = 'NONE';
     }
 
-    const showOAuth = typeValue === 'REST' && modeSelect.value === 'OAUTH';
-    oauthWrap.classList.toggle('hidden', !showOAuth);
+    const isRest = typeValue === 'REST';
+    const usesOAuth = modeSelect.value === 'OAUTH';
+    oauthWrap.classList.toggle('hidden', !isRest);
+    if (contractsWrap) {
+        contractsWrap.classList.toggle('hidden', !isRest);
+    }
+    if (!isRest) {
+        modalSelectedBindingContractUuids = [];
+        renderGroupBindingContractPills();
+    }
+
+    const oauthSelect = document.getElementById('group-oauth-template');
+    if (oauthSelect) {
+        oauthSelect.disabled = !isRest || !usesOAuth;
+    }
+
+    const saveButton = document.getElementById('group-modal-save');
+    if (saveButton) {
+        const oauthMissingSelection = isRest && usesOAuth && (!oauthSelect || !oauthSelect.value);
+        saveButton.disabled = oauthMissingSelection;
+        if (oauthMissingSelection) {
+            saveButton.classList.add('opacity-60', 'cursor-not-allowed');
+            saveButton.title = 'Select an OAuth template to save this group.';
+        } else {
+            saveButton.classList.remove('opacity-60', 'cursor-not-allowed');
+            saveButton.title = '';
+        }
+    }
 }
 
 function renderGroupBindingParameters() {
@@ -1427,6 +1697,8 @@ function renderGroupBindingParameters() {
             + '  <option value="int">int</option>'
             + '  <option value="double">double</option>'
             + '  <option value="boolean">boolean</option>'
+            + '  <option value="date">date</option>'
+            + '  <option value="timestamp">timestamp</option>'
             + '  <option value="hidden">hidden</option>'
             + '</select>'
             + '<input class="col-span-3 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 group-binding-param-description" data-index="' + index + '" value="' + escapeHtml(parameter.description || '') + '" placeholder="Tenant identifier">'
@@ -2000,6 +2272,7 @@ function openCreateReflectionModal(defaultGroupUuid) {
     document.getElementById('reflection-response-content-type').value = 'application/json';
     document.getElementById('reflection-output-schema').value = '';
     document.getElementById('reflection-body').value = '';
+    activeContractTool = null;
     modalParameters = [];
     modalHeaders = [];
     modalQueryParameters = [];
@@ -2009,6 +2282,18 @@ function openCreateReflectionModal(defaultGroupUuid) {
     setReflectionTab('request');
     renderKeyValueRows('headers-list', modalHeaders, 'header');
     renderKeyValueRows('query-params-list', modalQueryParameters, 'query');
+
+    const selectedGroupUuid = document.getElementById('reflection-group').value;
+    const pendingContractTools = missingContractToolsForGroup(selectedGroupUuid);
+    const hasContracts = contractsForGroup(selectedGroupUuid).length > 0;
+    if (hasContracts && pendingContractTools.length === 0) {
+        showAlert('All contract tools for this group already exist. Contract-bound groups do not allow non-contract REST tools.', 'warning');
+        return;
+    }
+    if (pendingContractTools.length > 0) {
+        applyContractToolToModal(pendingContractTools[0], true);
+    }
+
     renderParameters();
     clearReflectionModalAlert();
     showModal('reflection-modal');
@@ -2086,7 +2371,14 @@ function populateReflectionModalFromReflection(reflection, asCopy) {
     setReflectionTab('request');
     renderKeyValueRows('headers-list', modalHeaders, 'header');
     renderKeyValueRows('query-params-list', modalQueryParameters, 'query');
-    renderParameters();
+    const contractTool = contractToolForReflection(reflection.groupUuid || '', reflection.id || '');
+    if (contractTool) {
+        applyContractToolToModal(contractTool, true);
+    } else {
+        activeContractTool = null;
+        renderParameters();
+        updateReflectionContractUiLock(false, null);
+    }
     clearReflectionModalAlert();
 }
 
@@ -2254,6 +2546,192 @@ function populateGroupSelect(selectedUuid) {
     if (select.options.length > 0 && select.selectedIndex < 0) {
         select.selectedIndex = 0;
     }
+}
+
+function contractsForGroup(groupUuid) {
+    const entry = findGroupEntry(groupUuid);
+    const group = entry ? (entry.group || entry) : null;
+    const ids = (group && Array.isArray(group.bindingContractUuids)) ? group.bindingContractUuids : [];
+    if (!ids || ids.length === 0) {
+        return [];
+    }
+    const idSet = new Set(ids.map(function (id) {
+        return String(id || '').trim();
+    }).filter(function (id) { return !!id; }));
+    return (bindingContracts || []).filter(function (contract) {
+        return idSet.has(String(contract.uuid || '').trim());
+    });
+}
+
+function contractToolForReflection(groupUuid, reflectionId) {
+    const normalizedSuffix = canonicalContractToolSuffix(reflectionId);
+    if (!normalizedSuffix) {
+        return null;
+    }
+    const contracts = contractsForGroup(groupUuid);
+    for (let i = 0; i < contracts.length; i += 1) {
+        const tools = Array.isArray(contracts[i].tools) ? contracts[i].tools : [];
+        for (let j = 0; j < tools.length; j += 1) {
+            const tool = tools[j] || {};
+            const toolName = canonicalContractToolId(tool.name || '');
+            if (canonicalContractToolSuffix(toolName) === normalizedSuffix) {
+                return tool;
+            }
+        }
+    }
+    return null;
+}
+
+function missingContractToolsForGroup(groupUuid) {
+    const contractTools = [];
+    contractsForGroup(groupUuid).forEach(function (contract) {
+        const tools = Array.isArray(contract.tools) ? contract.tools : [];
+        tools.forEach(function (tool) {
+            if (tool && tool.name) {
+                contractTools.push(tool);
+            }
+        });
+    });
+
+    const existingIds = new Set(reflectionsForGroupUuid(groupUuid).map(function (reflection) {
+        const suffix = canonicalContractToolSuffix(reflection.id || '');
+        if (!suffix) {
+            return [];
+        }
+        return suffix;
+    }).filter(function (value) {
+        return !!value;
+    }));
+
+    return contractTools.filter(function (tool) {
+        const toolSuffix = canonicalContractToolSuffix(tool.name || '');
+        if (!toolSuffix) {
+            return false;
+        }
+        return !existingIds.has(toolSuffix);
+    });
+}
+
+function canonicalContractToolId(toolId) {
+    return String(toolId || '').trim().toLowerCase();
+}
+
+function canonicalContractToolSuffix(toolId) {
+    const normalized = canonicalContractToolId(toolId);
+    if (!normalized) {
+        return '';
+    }
+    const dot = normalized.lastIndexOf('.');
+    if (dot <= -1 || dot >= normalized.length - 1) {
+        return normalized;
+    }
+    return normalized.substring(dot + 1);
+}
+
+function applyContractToolToModal(contractTool, lockFields) {
+    if (!contractTool) {
+        activeContractTool = null;
+        renderParameters();
+        updateReflectionContractUiLock(false, null);
+        return;
+    }
+
+    activeContractTool = contractTool;
+    document.getElementById('reflection-id').value = contractTool.name || '';
+    if (!document.getElementById('reflection-name').value.trim()) {
+        document.getElementById('reflection-name').value = contractTool.name || '';
+    }
+    modalParameters = (contractTool.inputParameters || []).map(function (parameter) {
+        return {
+            name: parameter.name || '',
+            type: parameter.type || 'string',
+            description: parameter.description || '',
+            required: !!parameter.required,
+            array: !!parameter.array
+        };
+    });
+    renderParameters();
+    updateReflectionContractUiLock(lockFields, contractTool.name || null);
+}
+
+function updateReflectionContractUiLock(locked, toolId) {
+    const idInput = document.getElementById('reflection-id');
+    const addParamButton = document.getElementById('add-param-btn');
+    const hintId = 'reflection-contract-lock-hint';
+    let hint = document.getElementById(hintId);
+
+    if (idInput) {
+        idInput.readOnly = !!locked;
+        idInput.classList.toggle('opacity-70', !!locked);
+    }
+    if (addParamButton) {
+        addParamButton.disabled = !!locked;
+        addParamButton.classList.toggle('opacity-60', !!locked);
+        addParamButton.classList.toggle('cursor-not-allowed', !!locked);
+    }
+
+    if (!hint) {
+        hint = document.createElement('div');
+        hint.id = hintId;
+        hint.className = 'mt-1 text-xs';
+        const paramsList = document.getElementById('params-list');
+        if (paramsList && paramsList.parentElement) {
+            paramsList.parentElement.appendChild(hint);
+        }
+    }
+
+    if (hint) {
+        if (locked) {
+            hint.className = 'mt-1 text-xs text-amber-300';
+            if (toolId) {
+                hint.textContent = 'Contract-enforced tool: ' + toolId + '. Tool ID and input parameters are locked by the group binding contract.';
+            } else {
+                hint.textContent = 'This group has attached binding contracts. Tool ID must match a contract tool and input parameters are contract-enforced.';
+            }
+        } else {
+            if (toolId === 'optional-extra-tool') {
+                hint.className = 'mt-1 text-xs text-zinc-500';
+                hint.textContent = 'This group has attached binding contracts. Contract tools are required and schema-locked; additional non-contract tools are allowed.';
+            } else {
+                hint.className = 'mt-1 text-xs text-zinc-500';
+                hint.textContent = '';
+            }
+        }
+    }
+}
+
+function onReflectionGroupChanged() {
+    const groupUuid = document.getElementById('reflection-group').value;
+    const reflectionUuid = document.getElementById('reflection-uuid').value.trim();
+    const reflectionId = document.getElementById('reflection-id').value.trim();
+    if (!reflectionUuid && !reflectionId) {
+        const pendingContractTools = missingContractToolsForGroup(groupUuid);
+        if (pendingContractTools.length > 0) {
+            applyContractToolToModal(pendingContractTools[0], true);
+            return;
+        }
+    }
+    const tool = contractToolForReflection(groupUuid, reflectionId);
+    if (tool) {
+        applyContractToolToModal(tool, true);
+        return;
+    }
+    const hasContracts = contractsForGroup(groupUuid).length > 0;
+    activeContractTool = null;
+    updateReflectionContractUiLock(false, hasContracts ? 'optional-extra-tool' : null);
+}
+
+function onReflectionIdentityChanged() {
+    const groupUuid = document.getElementById('reflection-group').value;
+    const reflectionId = document.getElementById('reflection-id').value.trim();
+    const tool = contractToolForReflection(groupUuid, reflectionId);
+    if (tool) {
+        applyContractToolToModal(tool, true);
+        return;
+    }
+    const hasContracts = contractsForGroup(groupUuid).length > 0;
+    activeContractTool = null;
+    updateReflectionContractUiLock(false, hasContracts ? 'optional-extra-tool' : null);
 }
 
 function populateRecordGroupSelect(selectedUuid) {
@@ -2471,6 +2949,8 @@ function renderRecordToolParameters() {
             + '  <option value="int">int</option>'
             + '  <option value="double">double</option>'
             + '  <option value="boolean">boolean</option>'
+            + '  <option value="date">date</option>'
+            + '  <option value="timestamp">timestamp</option>'
             + '</select>'
             + '<input class="col-span-3 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 record-param-description" data-index="' + index + '" value="' + escapeHtml(parameter.description || '') + '" placeholder="parameter purpose">'
             + '<label class="col-span-1 inline-flex items-center justify-center text-xs text-zinc-300"><input type="checkbox" class="record-param-array" data-index="' + index + '" ' + (parameter.array ? 'checked' : '') + '></label>'
@@ -2821,6 +3301,7 @@ async function saveMongoToolReflection() {
 function renderParameters() {
     const container = document.getElementById('params-list');
     container.innerHTML = '';
+    const contractLocked = !!activeContractTool;
 
     if (!modalParameters || modalParameters.length === 0) {
         container.innerHTML = '<p class="text-xs text-zinc-500">No explicit parameters. Runtime input is still accepted.</p>';
@@ -2842,17 +3323,19 @@ function renderParameters() {
         const row = document.createElement('div');
         row.className = 'grid grid-cols-12 gap-2 mb-2';
         row.innerHTML = ''
-            + '<input class="col-span-3 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 param-name" data-index="' + index + '" value="' + escapeHtml(parameter.name || '') + '" placeholder="city">'
-            + '<select class="col-span-2 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 param-type" data-index="' + index + '">'
+            + '<input class="col-span-3 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 param-name" data-index="' + index + '" value="' + escapeHtml(parameter.name || '') + '" placeholder="city" ' + (contractLocked ? 'readonly' : '') + '>'
+            + '<select class="col-span-2 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 param-type" data-index="' + index + '" ' + (contractLocked ? 'disabled' : '') + '>'
             + '  <option value="string">string</option>'
             + '  <option value="int">int</option>'
             + '  <option value="double">double</option>'
             + '  <option value="boolean">boolean</option>'
+            + '  <option value="date">date</option>'
+            + '  <option value="timestamp">timestamp</option>'
             + '</select>'
-            + '<input class="col-span-3 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 param-description" data-index="' + index + '" value="' + escapeHtml(parameter.description || '') + '" placeholder="parameter purpose">'
-            + '<label class="col-span-1 inline-flex items-center justify-center text-xs text-zinc-300"><input type="checkbox" class="param-array" data-index="' + index + '" ' + (parameter.array ? 'checked' : '') + '></label>'
-            + '<label class="col-span-2 inline-flex items-center gap-1 text-xs text-zinc-300"><input type="checkbox" class="param-required" data-index="' + index + '" ' + (parameter.required ? 'checked' : '') + '>Required</label>'
-            + '<button type="button" class="col-span-1 rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 remove-param" data-index="' + index + '" title="Remove"><i class="fa-solid fa-xmark"></i></button>';
+            + '<input class="col-span-3 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 param-description" data-index="' + index + '" value="' + escapeHtml(parameter.description || '') + '" placeholder="parameter purpose" ' + (contractLocked ? 'readonly' : '') + '>'
+            + '<label class="col-span-1 inline-flex items-center justify-center text-xs text-zinc-300"><input type="checkbox" class="param-array" data-index="' + index + '" ' + (parameter.array ? 'checked' : '') + ' ' + (contractLocked ? 'disabled' : '') + '></label>'
+            + '<label class="col-span-2 inline-flex items-center gap-1 text-xs text-zinc-300"><input type="checkbox" class="param-required" data-index="' + index + '" ' + (parameter.required ? 'checked' : '') + ' ' + (contractLocked ? 'disabled' : '') + '>Required</label>'
+            + '<button type="button" class="col-span-1 rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 remove-param" data-index="' + index + '" title="Remove" ' + (contractLocked ? 'disabled' : '') + '><i class="fa-solid fa-xmark"></i></button>';
         container.appendChild(row);
 
         const typeSelect = row.querySelector('.param-type');
@@ -2863,36 +3346,54 @@ function renderParameters() {
 
     container.querySelectorAll('.param-name').forEach(function (input) {
         input.addEventListener('input', function () {
+            if (contractLocked) {
+                return;
+            }
             const index = Number(input.getAttribute('data-index'));
             modalParameters[index].name = input.value;
         });
     });
     container.querySelectorAll('.param-type').forEach(function (input) {
         input.addEventListener('change', function () {
+            if (contractLocked) {
+                return;
+            }
             const index = Number(input.getAttribute('data-index'));
             modalParameters[index].type = input.value;
         });
     });
     container.querySelectorAll('.param-description').forEach(function (input) {
         input.addEventListener('input', function () {
+            if (contractLocked) {
+                return;
+            }
             const index = Number(input.getAttribute('data-index'));
             modalParameters[index].description = input.value;
         });
     });
     container.querySelectorAll('.param-array').forEach(function (input) {
         input.addEventListener('change', function () {
+            if (contractLocked) {
+                return;
+            }
             const index = Number(input.getAttribute('data-index'));
             modalParameters[index].array = input.checked;
         });
     });
     container.querySelectorAll('.param-required').forEach(function (input) {
         input.addEventListener('change', function () {
+            if (contractLocked) {
+                return;
+            }
             const index = Number(input.getAttribute('data-index'));
             modalParameters[index].required = input.checked;
         });
     });
     container.querySelectorAll('.remove-param').forEach(function (button) {
         button.addEventListener('click', function () {
+            if (contractLocked) {
+                return;
+            }
             const index = Number(button.getAttribute('data-index'));
             modalParameters.splice(index, 1);
             renderParameters();

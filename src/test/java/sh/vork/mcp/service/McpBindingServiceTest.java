@@ -20,7 +20,7 @@ import sh.vork.mcp.model.McpToolParameterInputMode;
 import sh.vork.mcp.model.McpTransportMode;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.mock.MapDatabaseRepository;
-import sh.vork.reflection.ArtifactStatus;
+import sh.vork.artifact.ArtifactStatus;
 import sh.vork.security.SecureCredentialStore;
 
 import java.nio.charset.StandardCharsets;

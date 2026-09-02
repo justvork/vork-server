@@ -102,10 +102,7 @@ public class SetupController {
                     "port",     s.port());
             default -> Map.of(
                     "backend",  s.backend(),
-                    "host",     s.host(),
-                    "port",     s.port(),
-                    "database", s.database() != null ? s.database() : "",
-                    "username", s.username() != null ? s.username() : "");
+                    "uri",      s.uri() != null ? s.uri() : "");
         };
         return Map.of("configured", configured, "settings", settingsMap);
     }
@@ -114,11 +111,11 @@ public class SetupController {
     @PostMapping("/api/setup/database/test")
     @ResponseBody
     public Map<String, Object> testDatabase(@RequestBody DatabaseRequest req) {
-        log.debug("ENTER testDatabase: backend={}, host={}, port={}",
-                req.backend(), req.host(), req.port());
+        log.debug("ENTER testDatabase: backend={}, uri={}",
+                req.backend(), req.uri());
         DatabaseSettings settings = new DatabaseSettings(
                 req.backend(), req.host(), req.port(),
-                req.database(), req.username(), req.password());
+                req.database(), req.username(), req.password(), req.uri());
         DatabaseSetupService.TestResult result = databaseSetupService.testConnection(settings);
         if (!result.ok()) {
             return Map.of("error", result.error());
@@ -138,11 +135,11 @@ public class SetupController {
     @PostMapping("/api/setup/database")
     @ResponseBody
     public Map<String, Object> configureDatabase(@RequestBody DatabaseRequest req) {
-        log.debug("ENTER configureDatabase: backend={}, host={}, port={}",
-                req.backend(), req.host(), req.port());
+        log.debug("ENTER configureDatabase: backend={}, uri={}",
+                req.backend(), req.uri());
         DatabaseSettings settings = new DatabaseSettings(
                 req.backend(), req.host(), req.port(),
-                req.database(), req.username(), req.password());
+                req.database(), req.username(), req.password(), req.uri());
 
         // Test the connection before persisting anything
         DatabaseSetupService.TestResult test = databaseSetupService.testConnection(settings);
@@ -270,7 +267,13 @@ public class SetupController {
     record AccountRequest(String username, String password, String confirmPassword) {}
 
     record DatabaseRequest(String backend, String host, int port,
-                           String database, String username, String password) {}
+                           String database, String username, String password,
+                           String uri) {
+        DatabaseRequest(String backend, String host, int port,
+                        String database, String username, String password) {
+            this(backend, host, port, database, username, password, null);
+        }
+    }
 
     record ProviderValidateRequest(String provider, String apiKey, String baseUrl) {}
 

@@ -17,7 +17,7 @@ import org.springframework.http.ResponseEntity;
 
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.agent.AgentType;
-import sh.vork.ai.agent.ArtifactStatus;
+import sh.vork.artifact.ArtifactStatus;
 import sh.vork.ai.service.AgentAssignmentService;
 import sh.vork.binding.BindingCatalogService;
 import sh.vork.orm.DatabaseRepository;
@@ -401,7 +401,7 @@ class AgentControllerTest {
                                 "vork",
                                 "dailySummary",
                                 "SNAPSHOT",
-                                sh.vork.scheduling.domain.ArtifactStatus.SNAPSHOT);
+                                sh.vork.artifact.ArtifactStatus.SNAPSHOT);
                 when(jobRepo.get("vork-dailySummary-SNAPSHOT")).thenReturn(job);
 
                 AgentController controller = new AgentController(agentRepo, jobRepo, skillRepo, reflectionService, bindingCatalogService, agentAssignmentService);
@@ -454,7 +454,7 @@ class AgentControllerTest {
                                 "vork",
                                 "report",
                                 "SNAPSHOT",
-                                sh.vork.scheduling.domain.ArtifactStatus.SNAPSHOT);
+                                sh.vork.artifact.ArtifactStatus.SNAPSHOT);
 
                 ScheduledJob v2 = new ScheduledJob(
                                 "vork-report-v2",
@@ -480,7 +480,7 @@ class AgentControllerTest {
                                 "vork",
                                 "report",
                                 "v2",
-                                sh.vork.scheduling.domain.ArtifactStatus.SNAPSHOT);
+                                sh.vork.artifact.ArtifactStatus.SNAPSHOT);
 
                 when(jobRepo.get("vork-report-SNAPSHOT")).thenReturn(v1);
                 when(jobRepo.get("vork-report-v2")).thenReturn(v2);

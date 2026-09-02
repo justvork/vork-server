@@ -1,5 +1,7 @@
 package sh.vork.ai.config;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -98,7 +100,7 @@ class AiConfigDelegateTaskToolTest {
                 "vork",
                 "assignedTemplate",
                 "SNAPSHOT",
-                sh.vork.scheduling.domain.ArtifactStatus.SNAPSHOT);
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT);
 
         when(agentRepo.list(0, Integer.MAX_VALUE)).thenReturn(List.of(triage).stream());
             when(jobRepo.get("job-template-1")).thenReturn(assignedJob);

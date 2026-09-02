@@ -1,5 +1,7 @@
 package sh.vork.mcp.controller;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
 import sh.vork.mcp.client.dto.McpDiscoverResult;
@@ -157,7 +159,7 @@ class McpBindingControllerTest {
                                 "",
                                 "",
                                 "SNAPSHOT",
-                                sh.vork.reflection.ArtifactStatus.SNAPSHOT);
+                                sh.vork.artifact.ArtifactStatus.SNAPSHOT);
 
                 when(service.createOrUpdate(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.isNull()))
                                 .thenThrow(new IllegalStateException("MCP endpoint not found"));

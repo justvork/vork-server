@@ -558,6 +558,50 @@ body.sidebar-collapsed .sidebar-tab-btn {
     padding: 0.55rem 0.9rem;
     line-height: 1.55;
     word-break: break-word;
+    position: relative;
+}
+
+.bubble-content {
+    min-width: 0;
+}
+
+.bubble-copy-btn {
+    position: absolute;
+    top: 0.45rem;
+    right: 0.45rem;
+    width: 1.55rem;
+    height: 1.55rem;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 0.45rem;
+    background: rgba(0, 0, 0, 0.16);
+    color: var(--vork-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.78rem;
+    opacity: 0;
+    cursor: pointer;
+    transition: opacity 0.14s ease, color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+
+.bubble.assistant:hover .bubble-copy-btn,
+.bubble.assistant:focus-within .bubble-copy-btn,
+.bubble-copy-btn.copied {
+    opacity: 1;
+}
+
+.bubble-copy-btn:hover,
+.bubble-copy-btn:focus-visible {
+    color: var(--vork-text);
+    border-color: rgba(253, 170, 2, 0.52);
+    background: rgba(253, 170, 2, 0.14);
+    outline: none;
+}
+
+.bubble-copy-btn.copied {
+    color: #8df0b1;
+    border-color: rgba(141, 240, 177, 0.6);
+    background: rgba(141, 240, 177, 0.16);
 }
 
 .bubble.user {
@@ -569,6 +613,7 @@ body.sidebar-collapsed .sidebar-tab-btn {
 .bubble.assistant {
     background-color: var(--vork-surface);
     border-bottom-left-radius: 0.3rem;
+    padding-right: 2.35rem;
 }
 
 .bubble.error {

@@ -1,8 +1,6 @@
 package sh.vork.setup;
 
-import com.mongodb.MongoClientSettings;
-import com.mongodb.MongoCredential;
-import com.mongodb.ServerAddress;
+import com.mongodb.ConnectionString;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.couchbase.client.java.Bucket;
@@ -13,6 +11,8 @@ import org.dizitart.no2.mvstore.MVStoreModule;
 import org.bson.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
@@ -26,7 +26,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Properties;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Manages the database backend configuration written to
@@ -42,6 +41,9 @@ public class DatabaseSetupService {
     private static final Logger log = LoggerFactory.getLogger(DatabaseSetupService.class);
     private static final Path DB_PROPS = Path.of("conf.d/database.properties");
 
+    @Autowired(required = false)
+    private Environment environment;
+
     // -------------------------------------------------------------------------
     // State queries
     // -------------------------------------------------------------------------
@@ -51,7 +53,7 @@ public class DatabaseSetupService {
      * indicating that the setup wizard has already run the database step.
      */
     public boolean isDatabaseConfigured() {
-        return Files.exists(DB_PROPS);
+        return Files.exists(DB_PROPS) || hasExternalConfiguration();
     }
 
     /**
@@ -61,33 +63,31 @@ public class DatabaseSetupService {
     public DatabaseSettings getCurrentSettings() {
         log.debug("ENTER getCurrentSettings");
         Properties props = loadPropertiesFile();
-        String backend = props.getProperty("db.backend", "nitrite");
+        String backend = resolveProperty(props, "db.backend", "nitrite");
 
         DatabaseSettings result = switch (backend) {
             case "couchbase" -> new DatabaseSettings(
                 "couchbase",
-                props.getProperty("couchbase.host", "localhost"),
-                parsePort(props.getProperty("couchbase.port"), 8091),
-                props.getProperty("couchbase.bucket", "vork"),
-                props.getProperty("couchbase.username", "Administrator"),
-                props.getProperty("couchbase.password", "password"));
+            resolveProperty(props, "couchbase.host", "localhost"),
+            parsePort(resolveProperty(props, "couchbase.port", "8091"), 8091),
+            resolveProperty(props, "couchbase.bucket", "vork"),
+            resolveProperty(props, "couchbase.username", "Administrator"),
+            resolveProperty(props, "couchbase.password", "password"));
             case "redis" -> new DatabaseSettings(
                     "redis",
-                    props.getProperty("redis.host", "localhost"),
-                    parsePort(props.getProperty("redis.port"), 6379),
+                resolveProperty(props, "redis.host", "localhost"),
+                parsePort(resolveProperty(props, "redis.port", "6379"), 6379),
                     null, null,
-                    props.getProperty("redis.password", ""));
+                resolveProperty(props, "redis.password", ""),
+                    null);
             case "nitrite" -> new DatabaseSettings(
                     "nitrite", null, 0,
-                    props.getProperty("nitrite.file.path", "conf.d/vork.db"),
-                    null, null);
+                resolveProperty(props, "nitrite.file.path", "conf.d/vork.db"),
+                    null, null, null);
             default -> new DatabaseSettings(
                     "mongo",
-                    props.getProperty("mongo.host", "localhost"),
-                    parsePort(props.getProperty("mongo.port"), 27017),
-                    props.getProperty("mongo.database", "vork"),
-                    props.getProperty("mongo.username", ""),
-                    props.getProperty("mongo.password", ""));
+                    null, 0, null, null, null,
+                resolveProperty(props, "mongo.uri", "mongodb://localhost:27017/vork"));
         };
         log.debug("EXIT getCurrentSettings: backend={}", result.backend());
         return result;
@@ -98,7 +98,8 @@ public class DatabaseSetupService {
      * defaulting to {@code "nitrite"} when the file is absent.
      */
     public String getCurrentBackend() {
-        return loadPropertiesFile().getProperty("db.backend", "nitrite");
+        Properties props = loadPropertiesFile();
+        return resolveProperty(props, "db.backend", "nitrite");
     }
 
     // -------------------------------------------------------------------------
@@ -163,8 +164,13 @@ public class DatabaseSetupService {
     }
 
     private TestResult testMongo(DatabaseSettings s) {
-        try (MongoClient client = buildMongoClient(s)) {
-            String db = (s.database() != null && !s.database().isBlank()) ? s.database() : "vork";
+        String uri = (s.uri() != null && !s.uri().isBlank()) ? s.uri() : "mongodb://localhost:27017/vork";
+        try (MongoClient client = MongoClients.create(uri)) {
+            ConnectionString connectionString = new ConnectionString(uri);
+            String db = connectionString.getDatabase();
+            if (db == null || db.isBlank()) {
+                db = "vork";
+            }
             client.getDatabase(db).runCommand(new Document("ping", 1));
             return TestResult.success();
         } catch (Exception e) {
@@ -244,16 +250,9 @@ public class DatabaseSetupService {
         } else if ("nitrite".equals(settings.backend())) {
             props.setProperty("nitrite.file.path", dbFilePath(settings));
         } else {
-            props.setProperty("mongo.host", settings.host());
-            props.setProperty("mongo.port", String.valueOf(settings.port()));
-            props.setProperty("mongo.database",
-                    settings.database() != null && !settings.database().isBlank()
-                            ? settings.database() : "vork");
-            if (settings.username() != null && !settings.username().isBlank()) {
-                props.setProperty("mongo.username", settings.username());
-                props.setProperty("mongo.password",
-                        settings.password() != null ? settings.password() : "");
-            }
+            props.setProperty("mongo.uri",
+                    settings.uri() != null && !settings.uri().isBlank()
+                            ? settings.uri() : "mongodb://localhost:27017/vork");
         }
 
         try (OutputStream os = Files.newOutputStream(DB_PROPS)) {
@@ -313,26 +312,35 @@ public class DatabaseSetupService {
         }
     }
 
-    private static MongoClient buildMongoClient(DatabaseSettings s) {
-        MongoClientSettings.Builder builder = MongoClientSettings.builder()
-                .applyToClusterSettings(cs ->
-                        cs.hosts(List.of(new ServerAddress(s.host(), s.port()))))
-                .applyToSocketSettings(sc -> sc
-                        .connectTimeout(3, TimeUnit.SECONDS)
-                        .readTimeout(3, TimeUnit.SECONDS))
-                .applyToConnectionPoolSettings(cp -> cp
-                        .maxSize(1)
-                        .maxWaitTime(3, TimeUnit.SECONDS));
-
-        if (s.username() != null && !s.username().isBlank()) {
-            MongoCredential cred = MongoCredential.createCredential(
-                    s.username(),
-                    s.database() != null ? s.database() : "admin",
-                    s.password() != null ? s.password().toCharArray() : new char[0]);
-            builder.credential(cred);
+    private boolean hasExternalConfiguration() {
+        if (environment == null || !environment.containsProperty("db.backend")) {
+            return false;
         }
-        return MongoClients.create(builder.build());
+        String backend = environment.getProperty("db.backend", "").trim().toLowerCase();
+        if (backend.isBlank()) {
+            return false;
+        }
+        if ("mongo".equals(backend)) {
+            String uri = environment.getProperty("mongo.uri", "");
+            return uri != null && !uri.isBlank();
+        }
+        return true;
     }
+
+    private String resolveProperty(Properties props, String key, String defaultValue) {
+        String fromFile = props.getProperty(key);
+        if (fromFile != null && !fromFile.isBlank()) {
+            return fromFile;
+        }
+        if (environment != null) {
+            String fromEnv = environment.getProperty(key);
+            if (fromEnv != null && !fromEnv.isBlank()) {
+                return fromEnv;
+            }
+        }
+        return defaultValue;
+    }
+
 
     // -------------------------------------------------------------------------
     // Result type

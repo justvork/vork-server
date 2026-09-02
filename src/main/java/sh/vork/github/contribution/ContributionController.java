@@ -33,7 +33,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import sh.vork.ai.agent.AgentTemplate;
-import sh.vork.ai.agent.ArtifactStatus;
+import sh.vork.artifact.ArtifactStatus;
 import sh.vork.ai.AiProvider;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.filesystem.FileArea;
@@ -238,7 +238,7 @@ public class ContributionController {
         if (existing == null) {
             return ResponseEntity.notFound().build();
         }
-        if (existing.artifactStatus() != sh.vork.skill.ArtifactStatus.SNAPSHOT) {
+        if (existing.artifactStatus() != sh.vork.artifact.ArtifactStatus.SNAPSHOT) {
             return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT skill groups can be published."));
         }
 
@@ -268,7 +268,7 @@ public class ContributionController {
         if (existing == null) {
             return ResponseEntity.notFound().build();
         }
-        if (existing.artifactStatus() != sh.vork.reflection.ArtifactStatus.SNAPSHOT) {
+        if (existing.artifactStatus() != sh.vork.artifact.ArtifactStatus.SNAPSHOT) {
             return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT reflection groups can be published."));
         }
 
@@ -297,8 +297,8 @@ public class ContributionController {
         if (existing == null) {
             return ResponseEntity.notFound().build();
         }
-        if (existing.artifactStatus() != sh.vork.oauth.ArtifactStatus.SNAPSHOT
-                && existing.artifactStatus() != sh.vork.oauth.ArtifactStatus.REJECTED) {
+        if (existing.artifactStatus() != sh.vork.artifact.ArtifactStatus.SNAPSHOT
+                && existing.artifactStatus() != sh.vork.artifact.ArtifactStatus.REJECTED) {
             return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT or REJECTED OAuth templates can be published."));
         }
         if (existing.clientName() == null || existing.clientName().isBlank()) {
@@ -494,7 +494,7 @@ public class ContributionController {
                 existing.groupId(),
                 existing.artifactId(),
                 nextVersion,
-                sh.vork.scheduling.domain.ArtifactStatus.SUBMITTED);
+                sh.vork.artifact.ArtifactStatus.SUBMITTED);
 
         String jobJson;
         try {
@@ -619,7 +619,7 @@ public class ContributionController {
                 existing.groupId(),
                 existing.artifactId(),
                 nextVersion,
-                sh.vork.surface.ArtifactStatus.SUBMITTED,
+                sh.vork.artifact.ArtifactStatus.SUBMITTED,
                 existing.createdAt(),
                 System.currentTimeMillis());
 
@@ -730,7 +730,7 @@ public class ContributionController {
         if (existing == null) {
             return ResponseEntity.notFound().build();
         }
-        if (existing.artifactStatus() != sh.vork.skill.ArtifactStatus.SNAPSHOT) {
+        if (existing.artifactStatus() != sh.vork.artifact.ArtifactStatus.SNAPSHOT) {
             return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT skill groups can be published."));
         }
 
@@ -764,7 +764,7 @@ public class ContributionController {
                 existing.groupId(),
                 existing.artifactId(),
                 nextVersion,
-                sh.vork.skill.ArtifactStatus.SUBMITTED,
+                sh.vork.artifact.ArtifactStatus.SUBMITTED,
                 existing.createdAt(),
                 System.currentTimeMillis());
 
@@ -855,7 +855,7 @@ public class ContributionController {
         if (existing == null) {
             return ResponseEntity.notFound().build();
         }
-        if (existing.artifactStatus() != sh.vork.reflection.ArtifactStatus.SNAPSHOT) {
+        if (existing.artifactStatus() != sh.vork.artifact.ArtifactStatus.SNAPSHOT) {
             return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT reflection groups can be published."));
         }
 
@@ -902,7 +902,7 @@ public class ContributionController {
                 existing.groupId(),
                 existing.artifactId(),
                 nextVersion,
-                sh.vork.reflection.ArtifactStatus.SUBMITTED,
+                sh.vork.artifact.ArtifactStatus.SUBMITTED,
                 existing.createdAt(),
                 now);
 
@@ -994,8 +994,8 @@ public class ContributionController {
         if (existing == null) {
             return ResponseEntity.notFound().build();
         }
-        if (existing.artifactStatus() != sh.vork.oauth.ArtifactStatus.SNAPSHOT
-                && existing.artifactStatus() != sh.vork.oauth.ArtifactStatus.REJECTED) {
+        if (existing.artifactStatus() != sh.vork.artifact.ArtifactStatus.SNAPSHOT
+                && existing.artifactStatus() != sh.vork.artifact.ArtifactStatus.REJECTED) {
             return ResponseEntity.status(403).body(Map.of("error", "Only SNAPSHOT or REJECTED OAuth templates can be published."));
         }
         if (existing.clientName() == null || existing.clientName().isBlank()) {
@@ -1056,7 +1056,7 @@ public class ContributionController {
                 existing.tokenEndpoint(),
                 existing.scopes(),
                 existing.authorizationParameters(),
-                sh.vork.oauth.ArtifactStatus.SUBMITTED,
+                sh.vork.artifact.ArtifactStatus.SUBMITTED,
                 existing.createdAt(),
                 System.currentTimeMillis());
         oauthTemplateRepository.save(submitted);
@@ -1412,7 +1412,7 @@ public class ContributionController {
                 existing.groupId(),
                 existing.artifactId(),
                 "SNAPSHOT",
-                sh.vork.scheduling.domain.ArtifactStatus.SNAPSHOT);
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT);
         jobRepository.save(snapshot);
         log.info("Job snapshot created [sourceId={}, snapshotId={}]", existing.id(), snapshot.id());
         return ResponseEntity.ok(snapshot);
@@ -1452,7 +1452,7 @@ public class ContributionController {
                 existing.groupId(),
                 existing.artifactId(),
                 "SNAPSHOT",
-                sh.vork.surface.ArtifactStatus.SNAPSHOT,
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT,
                 existing.createdAt(),
                 System.currentTimeMillis());
         surfaceRepository.save(snapshot);
@@ -1468,7 +1468,7 @@ public class ContributionController {
         if (existing == null) {
             return ResponseEntity.notFound().build();
         }
-        if (existing.artifactStatus() == sh.vork.skill.ArtifactStatus.SNAPSHOT) {
+        if (existing.artifactStatus() == sh.vork.artifact.ArtifactStatus.SNAPSHOT) {
             return ResponseEntity.badRequest().body(Map.of("error", "Only immutable skill groups can be cloned to SNAPSHOT."));
         }
 
@@ -1495,7 +1495,7 @@ public class ContributionController {
                 existing.groupId(),
                 existing.artifactId(),
                 "SNAPSHOT",
-                sh.vork.skill.ArtifactStatus.SNAPSHOT,
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT,
                 now,
                 now);
 
@@ -1514,7 +1514,7 @@ public class ContributionController {
         if (existing == null) {
             return ResponseEntity.notFound().build();
         }
-        if (existing.artifactStatus() == sh.vork.reflection.ArtifactStatus.SNAPSHOT) {
+        if (existing.artifactStatus() == sh.vork.artifact.ArtifactStatus.SNAPSHOT) {
             return ResponseEntity.badRequest().body(Map.of("error", "Only immutable reflection groups can be cloned to SNAPSHOT."));
         }
 
@@ -1549,7 +1549,7 @@ public class ContributionController {
                 existing.groupId(),
                 existing.artifactId(),
                 "SNAPSHOT",
-                sh.vork.reflection.ArtifactStatus.SNAPSHOT,
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT,
                 now,
                 now);
 

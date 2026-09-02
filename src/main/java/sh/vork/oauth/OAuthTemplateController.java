@@ -2,7 +2,6 @@ package sh.vork.oauth;
 
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -52,7 +51,7 @@ public class OAuthTemplateController {
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<?> getTemplate(@PathVariable UUID id) {
+    public ResponseEntity<?> getTemplate(@PathVariable String id) {
         log.debug("ENTER getTemplate: id={}", id);
         OAuthTemplate template = templateService.getTemplate(id);
         if (template == null) {
@@ -75,7 +74,7 @@ public class OAuthTemplateController {
 
     @PutMapping("/{id}")
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
-    public ResponseEntity<?> updateTemplate(@PathVariable UUID id,
+    public ResponseEntity<?> updateTemplate(@PathVariable String id,
                                             @RequestBody OAuthTemplate template) {
         log.debug("ENTER updateTemplate: id={}", id);
         try {
@@ -91,7 +90,7 @@ public class OAuthTemplateController {
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
-    public ResponseEntity<?> deleteTemplate(@PathVariable UUID id) {
+    public ResponseEntity<?> deleteTemplate(@PathVariable String id) {
         log.debug("ENTER deleteTemplate: id={}", id);
         try {
             boolean deleted = templateService.deleteTemplate(id);
@@ -106,7 +105,7 @@ public class OAuthTemplateController {
 
     @GetMapping("/{id}/export")
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
-    public ResponseEntity<?> exportTemplate(@PathVariable UUID id) {
+    public ResponseEntity<?> exportTemplate(@PathVariable String id) {
         log.debug("ENTER exportTemplate: id={}", id);
         OAuthTemplateService.OAuthTemplateExportPackage pkg = templateService.exportTemplate(id);
         if (pkg == null || pkg.templates() == null || pkg.templates().isEmpty()) {
@@ -151,7 +150,7 @@ public class OAuthTemplateController {
     }
 
     @PostMapping("/{id}/connect")
-    public ResponseEntity<?> connectTemplate(@PathVariable UUID id,
+    public ResponseEntity<?> connectTemplate(@PathVariable String id,
                                              @RequestBody OAuthTemplateConnectRequest request) {
         log.debug("ENTER connectTemplate: id={}", id);
         String username = resolveUsername();

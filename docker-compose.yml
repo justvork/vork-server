@@ -39,10 +39,9 @@ services:
       - "8080:8080"
       - "8443:8443"
     environment:
-      # MongoDB — these env vars override conf.d/database.properties
-      MONGO_HOST: mongodb
-      MONGO_PORT: 27017
-      MONGO_DATABASE: vork
+      DB_BACKEND: mongo
+      # MongoDB — this env var overrides conf.d/database.properties
+      MONGO_URI: mongodb://mongodb:27017/vork
 
       # AI provider API keys — set whichever provider(s) you want to use.
       # These can also be configured through the Settings UI after first login.

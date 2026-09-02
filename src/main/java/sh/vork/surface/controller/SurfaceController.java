@@ -29,7 +29,7 @@ import sh.vork.reflection.ReflectionService;
 import sh.vork.filesystem.FileArea;
 import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.skill.Skill;
-import sh.vork.surface.ArtifactStatus;
+import sh.vork.artifact.ArtifactStatus;
 import sh.vork.surface.Surface;
 import sh.vork.surface.service.SurfaceReflectionContractService;
 import sh.vork.surface.service.SurfaceService;

@@ -4,6 +4,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import sh.vork.ai.AiProvider;
@@ -25,11 +26,13 @@ public class SlackSessionRegistry {
 
     /** DM channelId -> sessionUuid */
     private final ConcurrentHashMap<String, String> activeSessions = new ConcurrentHashMap<>();
+    /** Campaign mapping: channelId::threadTs -> child session routing */
+    private final ConcurrentHashMap<String, CampaignChannelBinding> campaignSessions = new ConcurrentHashMap<>();
 
     private final ChatService           chatService;
     private final SystemSettingsService systemSettingsService;
 
-    public SlackSessionRegistry(ChatService chatService,
+    public SlackSessionRegistry(@Lazy ChatService chatService,
                                  SystemSettingsService systemSettingsService) {
         this.chatService           = chatService;
         this.systemSettingsService = systemSettingsService;
@@ -67,6 +70,37 @@ public class SlackSessionRegistry {
         log.info("Slack session reset [channelId={}, removedSession={}]", channelId, removed);
     }
 
+    public void bindCampaignChannelSession(String channelId,
+                                           String threadTs,
+                                           String sessionUuid,
+                                           String username) {
+        if (isBlank(channelId) || isBlank(threadTs) || isBlank(sessionUuid) || isBlank(username)) {
+            return;
+        }
+        String key = campaignKey(channelId, threadTs);
+        campaignSessions.put(key, new CampaignChannelBinding(channelId, threadTs, sessionUuid, username));
+        log.debug("Slack campaign channel binding created [channelId={}, threadTs={}, sessionUuid={}, username={}]",
+                channelId, threadTs, sessionUuid, username);
+    }
+
+    public CampaignChannelBinding findCampaignChannelBinding(String channelId, String threadTs) {
+        if (isBlank(channelId) || isBlank(threadTs)) {
+            return null;
+        }
+        return campaignSessions.get(campaignKey(channelId, threadTs));
+    }
+
+    public void unbindCampaignChannelSession(String channelId, String threadTs) {
+        if (isBlank(channelId) || isBlank(threadTs)) {
+            return;
+        }
+        CampaignChannelBinding removed = campaignSessions.remove(campaignKey(channelId, threadTs));
+        if (removed != null) {
+            log.debug("Slack campaign channel binding removed [channelId={}, threadTs={}, sessionUuid={}]",
+                    removed.channelId(), removed.threadTs(), removed.sessionUuid());
+        }
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private String createSession(String username, String configId,
@@ -85,5 +119,21 @@ public class SlackSessionRegistry {
             return gs.defaultProvider();
         }
         return AiProvider.GEMINI.name();
+    }
+
+    private static String campaignKey(String channelId, String threadTs) {
+        return channelId + "::" + threadTs;
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    public record CampaignChannelBinding(
+            String channelId,
+            String threadTs,
+            String sessionUuid,
+            String username
+    ) {
     }
 }

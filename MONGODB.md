@@ -7,6 +7,7 @@ Use this guide when you want Vork to run with MongoDB instead of the default emb
 - Multi-container deployment
 - Shared datastore across environments
 - External backup/replication strategy
+- Managed MongoDB services such as MongoDB Atlas
 
 ## Docker Compose Example
 
@@ -35,12 +36,8 @@ services:
       - "8080:8080"
       - "8443:8443"
     environment:
-      MONGO_HOST: mongodb
-      MONGO_PORT: 27017
-      MONGO_DATABASE: vork
-      # Optional auth
-      # MONGO_USERNAME: your-user
-      # MONGO_PASSWORD: your-password
+      DB_BACKEND: mongo
+      MONGO_URI: mongodb://mongodb:27017/vork
     volumes:
       - vork_conf:/app/conf.d
 
@@ -62,12 +59,15 @@ During first-run setup:
 1. Open https://localhost:8443
 2. Complete admin user creation
 3. In the setup wizard database step, select MongoDB
-4. Enter host, port, database, and optional credentials
+4. Enter your MongoDB connection URI, for example:
+   - Local container: `mongodb://mongodb:27017/vork`
+   - MongoDB Atlas: `mongodb+srv://user:password@cluster0.xxxxx.mongodb.net/vork`
 5. Save and continue
 
-If you already completed setup, you can switch database settings from the settings UI and restart the container.
+Database choice is made during setup. If you want to use MongoDB, start a fresh setup flow and choose MongoDB there.
 
 ## Notes
 
 - Keep conf.d mounted as a volume so your settings persist.
-- If MongoDB auth is enabled, set both username and password.
+- The connection URI can include username, password, database, replica sets, and TLS options.
+- For MongoDB Atlas, make sure your cluster's network access list allows connections from your Vork host.

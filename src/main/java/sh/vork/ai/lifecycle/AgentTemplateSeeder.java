@@ -1,5 +1,7 @@
 package sh.vork.ai.lifecycle;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import sh.vork.orm.DatabaseRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,7 +32,7 @@ public class AgentTemplateSeeder {
     public static final String UUID_CONCIERGE            = "agent-tpl-concierge-001";
     public static final String UUID_COMPUTER_ADMIN        = "agent-tpl-computer-admin-001";
     public static final String UUID_VORK_DEVELOPER        = "agent-tpl-vork-developer-001";
-        public static final String UUID_VORK_SKILL_DESIGNER   = "agent-tpl-vork-skill-designer-001";
+    public static final String UUID_VORK_SKILL_DESIGNER   = "agent-tpl-vork-skill-designer-001";
     public static final String UUID_AUTOMATION_REPORTER   = "agent-tpl-automation-reporter-001";
     public static final String UUID_SURFACE_DEVELOPER     = "agent-tpl-surface-developer-001";
 
@@ -134,7 +136,8 @@ and a retry with different instructions would help.
             user will see a confirmation; you do NOT need to do any work for the new agent.
             """;
 
-    private static final AgentTemplate COMPUTER_ADMIN = new AgentTemplate(
+    @SuppressWarnings("unused")
+private static final AgentTemplate COMPUTER_ADMIN = new AgentTemplate(
             UUID_COMPUTER_ADMIN,
             "Computer Administrator",
             COMPUTER_ADMIN_PROMPT,
@@ -197,7 +200,8 @@ and SWITCH_AGENT when the user explicitly asks to change agent.
             AgentType.INTERACTIVE
     );
 
-    private static final AgentTemplate VORK_SKILL_DESIGNER = new AgentTemplate(
+    @SuppressWarnings("unused")
+private static final AgentTemplate VORK_SKILL_DESIGNER = new AgentTemplate(
             UUID_VORK_SKILL_DESIGNER,
             "Vork Skill Designer",
             """
@@ -405,7 +409,7 @@ Rules:
                     null,
                     null,
                     null,
-                    template.systemAgent() ? null : sh.vork.ai.agent.ArtifactStatus.SNAPSHOT,
+                    template.systemAgent() ? null : sh.vork.artifact.ArtifactStatus.SNAPSHOT,
                     template.hidden());
             agentTemplateRepository.save(updated);
             log.info("Step update: refreshed built-in agent template [uuid={}, name={}, tools={}, preservedSkills={}]",

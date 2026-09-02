@@ -58,7 +58,7 @@ class ChatServiceSessionAttachmentRawUrlTest {
         when(sessionFileSystem.read(eq(FileArea.SESSION), eq(sessionUuid), eq("images/photo.png")))
                 .thenReturn(new ByteArrayInputStream("img-bytes".getBytes(StandardCharsets.UTF_8)));
 
-        when(aiService.generateWithHistoryAndMedia(anyList(), any(String.class), anyList(), eq(AiProvider.GEMINI), any(String.class)))
+        when(aiService.generateWithHistoryAndMediaStrict(anyList(), any(String.class), anyList(), eq(AiProvider.GEMINI), any(String.class)))
                 .thenReturn("{\"status\":\"FINISHED_TURN\",\"textResponse\":\"ok\"}");
 
         ChatService chatService = new ChatService(
@@ -79,7 +79,7 @@ class ChatServiceSessionAttachmentRawUrlTest {
         chatService.sendMessageAsUser("alice", sessionUuid, "describe image", List.of(rawUrl), AiProvider.GEMINI);
 
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
-                verify(aiService).generateWithHistoryAndMedia(anyList(), promptCaptor.capture(), anyList(), eq(AiProvider.GEMINI), any(String.class));
+                                verify(aiService).generateWithHistoryAndMediaStrict(anyList(), promptCaptor.capture(), anyList(), eq(AiProvider.GEMINI), any(String.class));
         assertTrue(promptCaptor.getValue().contains("describe image"));
     }
 }

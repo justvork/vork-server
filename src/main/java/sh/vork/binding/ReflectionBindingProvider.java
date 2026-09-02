@@ -128,6 +128,10 @@ public class ReflectionBindingProvider implements BindingProvider {
             String type = normalizeSchemaType(param.type());
             Map<String, Object> schema = new LinkedHashMap<>();
             schema.put("type", type);
+            String format = normalizeSchemaFormat(param.type());
+            if (format != null) {
+                schema.put("format", format);
+            }
             if (param.description() != null && !param.description().isBlank()) {
                 schema.put("description", param.description());
             }
@@ -163,6 +167,15 @@ public class ReflectionBindingProvider implements BindingProvider {
             case "bool", "boolean" -> "boolean";
             case "object", "array", "string" -> type;
             default -> "string";
+        };
+    }
+
+    private static String normalizeSchemaFormat(String value) {
+        String type = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+        return switch (type) {
+            case "date" -> "date";
+            case "timestamp" -> "date-time";
+            default -> null;
         };
     }
 }

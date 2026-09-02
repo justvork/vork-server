@@ -232,11 +232,7 @@ async function configureDatabase() {
         database: document.getElementById('db-nitrite-path').value.trim() || 'conf.d/vork.db'
     } : {
         backend: 'mongo',
-        host: document.getElementById('db-mongo-host').value.trim(),
-        port: parseInt(document.getElementById('db-mongo-port').value, 10) || 27017,
-        database: document.getElementById('db-mongo-database').value.trim() || 'vork',
-        username: document.getElementById('db-mongo-username').value.trim(),
-        password: document.getElementById('db-mongo-password').value
+        uri: document.getElementById('db-mongo-uri').value.trim() || 'mongodb://localhost:27017/vork'
     };
 
     const btn = document.getElementById('btn-configure-db');
@@ -323,32 +319,34 @@ function prefillDbForm(s) {
         if (s.database) document.getElementById('db-nitrite-path').value = s.database;
         return;
     }
+    if (s.uri && !isRedis && !isCouchbase && !isNitrite) {
+        const el = document.getElementById('db-mongo-uri');
+        if (el) el.value = s.uri;
+    }
     if (s.host) {
         const hostId = isRedis
             ? 'db-redis-host'
-            : isCouchbase
-                ? 'db-couchbase-host'
-                : 'db-mongo-host';
+            : 'db-couchbase-host';
         const el = document.getElementById(hostId);
         if (el) el.value = s.host;
     }
     if (s.port) {
         const portId = isRedis
             ? 'db-redis-port'
-            : isCouchbase
-                ? 'db-couchbase-port'
-                : 'db-mongo-port';
+            : 'db-couchbase-port';
         const el = document.getElementById(portId);
         if (el) el.value = s.port;
     }
-    if (!isRedis && s.database) {
-        const dbId = isCouchbase ? 'db-couchbase-bucket' : 'db-mongo-database';
-        const el = document.getElementById(dbId);
+    if (isNitrite && s.database) {
+        const el = document.getElementById('db-nitrite-path');
         if (el) el.value = s.database;
     }
-    if (!isRedis && s.username) {
-        const userId = isCouchbase ? 'db-couchbase-username' : 'db-mongo-username';
-        const el = document.getElementById(userId);
+    if (isCouchbase && s.database) {
+        const el = document.getElementById('db-couchbase-bucket');
+        if (el) el.value = s.database;
+    }
+    if (isCouchbase && s.username) {
+        const el = document.getElementById('db-couchbase-username');
         if (el) el.value = s.username;
     }
 }

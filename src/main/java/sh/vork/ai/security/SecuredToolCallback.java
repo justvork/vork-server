@@ -16,6 +16,8 @@ import org.slf4j.MDC;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.exception.ToolSuspensionException;
 import sh.vork.ai.protocol.interaction.FieldSource;
@@ -29,6 +31,8 @@ import sh.vork.ai.protocol.interaction.InteractionFormSchema;
 public class SecuredToolCallback implements ToolCallback {
 
     private static final Logger log = LoggerFactory.getLogger(SecuredToolCallback.class);
+    private static final ObjectMapper JSON = new ObjectMapper().findAndRegisterModules();
+    public static final String CURRENT_TOOL_CALL_ID_CONTEXT_KEY = "__current_tool_call_id__";
 
     private final ToolCallback delegate;
     private final AuthorizationRuleEngine ruleEngine;
@@ -83,11 +87,11 @@ public class SecuredToolCallback implements ToolCallback {
         return delegate.getToolMetadata();
     }
 
-    private void enforce(String arguments, ToolContext toolContext) {
+    private void enforce(String effectiveArguments, ToolContext toolContext) {
         String username = resolveUsername();
         String toolName = delegate.getToolDefinition().name();
-        String effectiveArguments = resolveArguments(arguments, toolContext);
         String sessionUuid = ToolExecutionContext.getSessionUuid();
+        String toolCallId = resolveToolCallId(toolContext);
 
         if (preAuthorizationTokenService != null
                 && preAuthorizationTokenService.consumeMatchingToken(username, sessionUuid, toolName, effectiveArguments)) {
@@ -95,7 +99,7 @@ public class SecuredToolCallback implements ToolCallback {
             return;
         }
 
-        if (ruleEngine.requiresAuthorization(toolName, username, "pending-id", forceAuthorization)) {
+        if (ruleEngine.requiresAuthorization(toolName, username, toolCallId, forceAuthorization)) {
             String reasoning = extractReasoning(toolContext);
             String displayArguments = formatForDisplay(effectiveArguments);
             String toolDisplayName = formatToolDisplayName(toolName);
@@ -146,9 +150,13 @@ public class SecuredToolCallback implements ToolCallback {
             ToolExecutionContext.bindSessionUuid(sessionUuid);
         }
 
+        String effectiveArguments = resolveArguments(arguments, toolContext);
+
         try {
-            enforce(arguments, toolContext);
-            return toolContext == null ? delegate.call(arguments) : delegate.call(arguments, toolContext);
+            enforce(effectiveArguments, toolContext);
+            return toolContext == null
+                    ? delegate.call(effectiveArguments)
+                    : delegate.call(effectiveArguments, toolContext);
         } catch (ToolSuspensionException ex) {
             suspended = true;
             throw ex;
@@ -187,18 +195,19 @@ public class SecuredToolCallback implements ToolCallback {
                     context.get("arguments"),
                     context.get("toolArguments"),
                     context.get("tool_arguments"),
+                    context.get("toolCallArguments"),
+                    context.get("tool_call_arguments"),
                     context.get("input"),
                     context.get("toolInput"),
-                    context.get("tool_input"));
+                    context.get("tool_input"),
+                    context.get("payload"),
+                    context.get("request"));
             if (fromMap == null) {
                 return normalized;
             }
-            if (fromMap instanceof String str) {
-                String candidate = normalizeArguments(str);
-                return candidate.isBlank() ? normalized : candidate;
-            }
-            if (fromMap instanceof Map<?, ?> mapValue) {
-                return toJsonLike(mapValue);
+            String candidate = normalizeContextArgumentsCandidate(fromMap);
+            if (candidate != null && !candidate.isBlank() && !"{}".equals(candidate.trim())) {
+                return candidate;
             }
         } catch (Exception ignored) {
             // Best-effort extraction only.
@@ -232,6 +241,80 @@ public class SecuredToolCallback implements ToolCallback {
         return arguments;
     }
 
+    private String resolveToolCallId(ToolContext toolContext) {
+        if (toolContext != null) {
+            try {
+                Object contextObj = toolContext.getClass().getMethod("getContext").invoke(toolContext);
+                if (contextObj instanceof Map<?, ?> context) {
+                    Object candidate = firstNonNull(
+                            context.get("toolCallId"),
+                            context.get("tool_call_id"),
+                            context.get("toolExecutionId"),
+                            context.get("tool_execution_id"),
+                            context.get("toolUseId"),
+                            context.get("tool_use_id"),
+                            context.get("id"));
+                    String fromContext = normalizeToolCallIdCandidate(candidate);
+                    if (fromContext != null) {
+                        return fromContext;
+                    }
+                }
+            } catch (Exception ignored) {
+                // Best-effort extraction only.
+            }
+        }
+
+        Object fromExecutionContext = ToolExecutionContext.get(CURRENT_TOOL_CALL_ID_CONTEXT_KEY);
+        return normalizeToolCallIdCandidate(fromExecutionContext);
+    }
+
+    private static String normalizeToolCallIdCandidate(Object candidate) {
+        if (candidate == null) {
+            return null;
+        }
+        String value = String.valueOf(candidate).trim();
+        return value.isBlank() ? null : value;
+    }
+
+    private static String normalizeContextArgumentsCandidate(Object candidate) {
+        if (candidate == null) {
+            return null;
+        }
+
+        if (candidate instanceof String str) {
+            String trimmed = str.trim();
+            if (trimmed.isEmpty()) {
+                return null;
+            }
+            return trimmed;
+        }
+
+        if (candidate instanceof Map<?, ?> mapValue) {
+            Object nested = firstNonNull(
+                    mapValue.get("arguments"),
+                    mapValue.get("toolArguments"),
+                    mapValue.get("tool_arguments"),
+                    mapValue.get("toolCallArguments"),
+                    mapValue.get("tool_call_arguments"),
+                    mapValue.get("input"),
+                    mapValue.get("toolInput"),
+                    mapValue.get("tool_input"));
+            if (nested != null && nested != candidate) {
+                String nestedCandidate = normalizeContextArgumentsCandidate(nested);
+                if (nestedCandidate != null && !nestedCandidate.isBlank() && !"{}".equals(nestedCandidate.trim())) {
+                    return nestedCandidate;
+                }
+            }
+            return toJson(mapValue);
+        }
+
+        if (candidate instanceof Iterable<?> iterable) {
+            return toJson(iterable);
+        }
+
+        return toJson(candidate);
+    }
+
     private static Object firstNonNull(Object... values) {
         for (Object value : values) {
             if (value != null) {
@@ -259,26 +342,12 @@ public class SecuredToolCallback implements ToolCallback {
         return sb.toString();
     }
 
-    private static String toJsonLike(Map<?, ?> map) {
-        StringBuilder sb = new StringBuilder();
-        sb.append('{');
-        boolean first = true;
-        for (Map.Entry<?, ?> entry : map.entrySet()) {
-            if (!first) {
-                sb.append(',');
-            }
-            first = false;
-            sb.append('"').append(String.valueOf(entry.getKey()).replace("\"", "\\\"")).append('"');
-            sb.append(':');
-            Object value = entry.getValue();
-            if (value == null) {
-                sb.append("null");
-            } else {
-                sb.append('"').append(String.valueOf(value).replace("\"", "\\\"")).append('"');
-            }
+    private static String toJson(Object value) {
+        try {
+            return JSON.writeValueAsString(value);
+        } catch (Exception ignored) {
+            return String.valueOf(value);
         }
-        sb.append('}');
-        return sb.toString();
     }
 
     private static String extractReasoning(ToolContext toolContext) {

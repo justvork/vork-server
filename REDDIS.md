@@ -64,7 +64,7 @@ During first-run setup:
 4. Enter host, port, and optional password
 5. Save and continue
 
-If you already completed setup, you can switch database settings from the settings UI and restart the container.
+Database choice is made during setup. If you want to use Redis, start a fresh setup flow and choose Redis there.
 
 ## Notes
 

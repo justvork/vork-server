@@ -1,5 +1,7 @@
 package sh.vork.github.contribution;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -84,7 +86,7 @@ class ContributionDependencyValidatorTest {
                 "demo",
                 "rg",
                 "SNAPSHOT",
-                sh.vork.reflection.ArtifactStatus.SNAPSHOT,
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT,
                 1L,
                 1L);
 
@@ -97,7 +99,7 @@ class ContributionDependencyValidatorTest {
                 "https://token.example.test",
                 List.of("read"),
                 Map.of(),
-                sh.vork.oauth.ArtifactStatus.SNAPSHOT,
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT,
                 1L,
                 1L);
 
@@ -175,7 +177,7 @@ class ContributionDependencyValidatorTest {
                 "demo",
                 "skills",
                 "SNAPSHOT",
-                sh.vork.skill.ArtifactStatus.SNAPSHOT,
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT,
                 1L,
                 1L);
 
@@ -218,7 +220,7 @@ class ContributionDependencyValidatorTest {
                 "demo",
                 "agent",
                 "SNAPSHOT",
-                sh.vork.ai.agent.ArtifactStatus.SNAPSHOT);
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT);
 
         Skill skill = new Skill(
                 "skill-1",

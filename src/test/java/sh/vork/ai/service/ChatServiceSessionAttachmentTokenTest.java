@@ -64,7 +64,7 @@ class ChatServiceSessionAttachmentTokenTest {
 
         when(sessionFileSystem.read(eq(FileArea.SESSION), eq(sessionUuid), eq("docs/note.txt")))
                 .thenReturn(new ByteArrayInputStream(attachedText.getBytes(StandardCharsets.UTF_8)));
-        when(aiService.generateWithHistory(anyList(), any(String.class), eq(AiProvider.GEMINI), nullable(String.class)))
+        when(aiService.generateWithHistoryStrict(anyList(), any(String.class), eq(AiProvider.GEMINI), nullable(String.class)))
                 .thenReturn("{\"status\":\"FINISHED_TURN\",\"textResponse\":\"ok\"}");
 
         ChatService chatService = new ChatService(
@@ -93,7 +93,7 @@ class ChatServiceSessionAttachmentTokenTest {
         assertEquals("ok", response.content());
 
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
-        verify(aiService).generateWithHistory(anyList(), promptCaptor.capture(), eq(AiProvider.GEMINI), nullable(String.class));
+        verify(aiService).generateWithHistoryStrict(anyList(), promptCaptor.capture(), eq(AiProvider.GEMINI), nullable(String.class));
         String effectivePrompt = promptCaptor.getValue();
         assertTrue(effectivePrompt.contains("[Attached file: note.txt]"));
         assertTrue(effectivePrompt.contains(attachedText));

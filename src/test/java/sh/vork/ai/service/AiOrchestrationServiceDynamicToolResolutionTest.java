@@ -185,7 +185,7 @@ class AiOrchestrationServiceDynamicToolResolutionTest {
     when(reflectionService.bindingsForGroup(groupUuid)).thenReturn(List.of(binding));
     when(reflectionService.getBindingByUuid(bindingName)).thenReturn(null);
     when(reflectionService.getBindingByUuid(bindingUuid)).thenReturn(binding);
-    when(reflectionService.getReflectionById(reflectionToolName)).thenReturn(reflection);
+    when(reflectionService.getReflection(reflection.uuid())).thenReturn(reflection);
     when(reflectionToolCallbackFactory.create(reflection, List.of(binding))).thenReturn(reflectionCallback);
 
     ToolCallback resolved = service.resolveDynamicToolCallbackForSession(sessionUuid, reflectionToolName);
@@ -378,7 +378,7 @@ class AiOrchestrationServiceDynamicToolResolutionTest {
             System.currentTimeMillis(),
             System.currentTimeMillis()));
     when(reflectionService.listReflections()).thenReturn(List.of(reflection));
-    when(reflectionService.getReflectionById(reflectionToolName)).thenReturn(reflection);
+    when(reflectionService.getReflection(reflection.uuid())).thenReturn(reflection);
     when(reflectionService.getGroup(oldGroupUuid)).thenReturn(oldGroup);
     when(reflectionService.getGroup(newGroupUuid)).thenReturn(newGroup);
     when(reflectionService.listGroups()).thenReturn(List.of(oldGroup, newGroup));
@@ -577,7 +577,7 @@ class AiOrchestrationServiceDynamicToolResolutionTest {
             System.currentTimeMillis(),
             System.currentTimeMillis()));
     when(reflectionService.listReflections()).thenReturn(List.of(reflection));
-    when(reflectionService.getReflectionById(reflectionToolName)).thenReturn(reflection);
+    when(reflectionService.getReflection(reflection.uuid())).thenReturn(reflection);
     when(reflectionService.getGroup(staleGroupUuid)).thenReturn(staleGroup);
     when(reflectionService.getGroup(activeGroupUuid)).thenReturn(activeGroup);
     when(reflectionService.getGroup("binding-reflection-uuid-stale")).thenReturn(staleGroup);

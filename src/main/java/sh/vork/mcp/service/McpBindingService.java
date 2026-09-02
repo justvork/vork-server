@@ -27,7 +27,7 @@ import sh.vork.mcp.controller.dto.McpToolUpdateRequest;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.SearchQuery;
 import sh.vork.orm.SortOrder;
-import sh.vork.reflection.ArtifactStatus;
+import sh.vork.artifact.ArtifactStatus;
 import sh.vork.security.SecureCredentialStore;
 
 import java.nio.charset.StandardCharsets;

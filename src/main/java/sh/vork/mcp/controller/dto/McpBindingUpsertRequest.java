@@ -1,7 +1,7 @@
 package sh.vork.mcp.controller.dto;
 
 import sh.vork.mcp.model.McpTransportMode;
-import sh.vork.reflection.ArtifactStatus;
+import sh.vork.artifact.ArtifactStatus;
 
 public record McpBindingUpsertRequest(
         String name,

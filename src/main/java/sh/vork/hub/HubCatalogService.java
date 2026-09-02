@@ -102,11 +102,11 @@ public class HubCatalogService {
                 }
                 try {
                     loadCatalogWithCache(repository, true);
-                } catch (RuntimeException ex) {
+                } catch (RuntimeException | LinkageError ex) {
                     log.warn("Catalog refresh failed for repository {}: {}", repository.name(), ex.getMessage());
                 }
             }
-        } catch (RuntimeException ex) {
+        } catch (RuntimeException | LinkageError ex) {
             log.warn("refreshCatalogCache failed: {}", ex.getMessage());
         }
         log.debug("EXIT refreshCatalogCache: cacheSize={}", cacheByRepository.size());

@@ -20,9 +20,7 @@ If you want to override infrastructure settings for local compose, create a `.en
 file in `vork-server/` (next to `docker-compose.yml`) with values such as:
 
 ```
-MONGO_HOST=mongodb
-MONGO_PORT=27017
-MONGO_DATABASE=vork
+MONGO_URI=mongodb://mongodb:27017/vork
 ```
 
 ---
@@ -100,8 +98,8 @@ that exact tag.
   user-defined types on the fly, so a JRE-only image will not work.
 - **First multi-platform build is slow** — `amd64` runs under QEMU on Apple Silicon;
   expect roughly twice the normal build time.
-- **MongoDB connection** — `MONGO_HOST`, `MONGO_PORT`, and `MONGO_DATABASE` environment
-  variables override `conf.d/database.properties`. The compose file sets these
-  automatically to point at the bundled `mongodb` service.
+- **MongoDB connection** — `MONGO_URI` environment variable overrides
+  `conf.d/database.properties`. The compose file sets this automatically to point
+  at the bundled `mongodb` service.
 - **Custom config** — mount your local `conf.d/` as a volume (see `docker-compose.yml`)
   to preserve settings across container rebuilds.

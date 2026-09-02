@@ -2,8 +2,10 @@ package sh.vork.ai.security;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -14,8 +16,11 @@ import java.util.Set;
 import java.util.Map;
 import java.util.List;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
@@ -108,6 +113,49 @@ class SecuredToolCallbackTest {
         verify(delegate, never()).call(anyString(), any());
         assertEquals("I need to compile this class so it can be stored and used in later steps.",
             ex.getJustification());
+    }
+
+    @Test
+    void callWithToolContext_recoversArgumentsFromToolCallArgumentsMap() {
+        AuthorizationRuleEngine rules = new AuthorizationRuleEngine(Set.of("compileJavaType"));
+        ToolCallback delegate = delegate("compileJavaType");
+        ToolContext toolContext = mock(ToolContext.class);
+        when(toolContext.getContext()).thenReturn(Map.of(
+                "toolCallArguments", Map.of("source", "class A {}")
+        ));
+
+        SecuredToolCallback secured = new SecuredToolCallback(delegate, rules);
+
+        ToolSuspensionException ex = assertThrows(ToolSuspensionException.class,
+                () -> secured.call("{}", toolContext));
+
+        verify(delegate, never()).call(anyString(), any());
+        assertTrue(ex.getArguments().contains("\"source\":\"class A {}\""));
+    }
+
+    @Test
+    void callWithToolContext_unrestrictedTool_usesRecoveredArgumentsForDelegateInvocation() throws Exception {
+        AuthorizationRuleEngine rules = new AuthorizationRuleEngine(Set.of());
+        ToolCallback delegate = delegate("customTool");
+        ToolContext toolContext = mock(ToolContext.class);
+        when(toolContext.getContext()).thenReturn(Map.of(
+                "toolCallArguments", Map.of("group", "jadaptive.crm", "source", "public record Demo(String uuid) {}")
+        ));
+        when(delegate.call(anyString(), any())).thenReturn("ok");
+
+        SecuredToolCallback secured = new SecuredToolCallback(delegate, rules);
+
+        String out = secured.call("{}", toolContext);
+
+        assertEquals("ok", out);
+        ArgumentCaptor<String> forwarded = ArgumentCaptor.forClass(String.class);
+        verify(delegate, times(1)).call(forwarded.capture(), same(toolContext));
+
+        Map<String, Object> payload = new ObjectMapper().readValue(
+            forwarded.getValue(),
+            new TypeReference<Map<String, Object>>() {});
+        assertEquals("jadaptive.crm", payload.get("group"));
+        assertEquals("public record Demo(String uuid) {}", payload.get("source"));
     }
 
     @Test

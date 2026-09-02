@@ -953,6 +953,7 @@
 
     function renderTable(schema, items) {
         var columns = tableColumns(schema);
+        var showEditableActions = canEditReflectionRows();
 
         // thead
         tableHead.innerHTML = '';
@@ -961,7 +962,7 @@
             var th = buildHeaderCell(col.label, col.name);
             headerRow.appendChild(th);
         });
-        if (!hasReflectionGroupContext()) {
+        if (!hasReflectionGroupContext() || showEditableActions) {
             var thActions = document.createElement('th');
             thActions.className = 'col-actions';
             headerRow.appendChild(thActions);
@@ -988,12 +989,18 @@
             });
 
             // Actions
-            if (!hasReflectionGroupContext()) {
+            if (!hasReflectionGroupContext() || showEditableActions) {
                 var tdAct = document.createElement('td');
                 tdAct.className = 'col-actions';
-                tdAct.appendChild(buildEditBtn(item));
-                tdAct.appendChild(document.createTextNode(' '));
-                tdAct.appendChild(buildDeleteBtn(item));
+                if (!hasReflectionGroupContext()) {
+                    tdAct.appendChild(buildEditBtn(item));
+                    tdAct.appendChild(document.createTextNode(' '));
+                    tdAct.appendChild(buildDeleteBtn(item));
+                } else {
+                    tdAct.appendChild(buildEditBtn(item));
+                    tdAct.appendChild(document.createTextNode(' '));
+                    tdAct.appendChild(buildDeleteBtn(item));
+                }
                 tr.appendChild(tdAct);
             }
 
@@ -1002,6 +1009,7 @@
     }
 
     function renderDynamicTable(items) {
+        var showEditableActions = canEditReflectionRows();
         var columns = [];
         var seen = Object.create(null);
         (items || []).forEach(function (item) {
@@ -1025,6 +1033,11 @@
             var th = buildHeaderCell(col, col);
             headerRow.appendChild(th);
         });
+        if (showEditableActions) {
+            var thActions = document.createElement('th');
+            thActions.className = 'col-actions';
+            headerRow.appendChild(thActions);
+        }
         tableHead.appendChild(headerRow);
 
         tableBody.innerHTML = '';
@@ -1038,8 +1051,20 @@
                 td.textContent = display;
                 tr.appendChild(td);
             });
+            if (showEditableActions) {
+                var tdAct = document.createElement('td');
+                tdAct.className = 'col-actions';
+                tdAct.appendChild(buildEditBtn(item));
+                tdAct.appendChild(document.createTextNode(' '));
+                tdAct.appendChild(buildDeleteBtn(item));
+                tr.appendChild(tdAct);
+            }
             tableBody.appendChild(tr);
         });
+    }
+
+    function canEditReflectionRows() {
+        return hasReflectionGroupContext() && isRecordReflectionContext() && !!currentFqn;
     }
 
     function tableColumns(schema) {
@@ -1080,8 +1105,34 @@
         btn.className = 'rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800';
         btn.title = 'Edit';
         btn.innerHTML = '<i class="fa-solid fa-pen"></i>';
-        btn.addEventListener('click', function () { openModal(item); });
+        if (hasReflectionGroupContext() && isRecordReflectionContext() && (!item || !item.uuid)) {
+            btn.disabled = true;
+            btn.title = 'Edit unavailable: row has no uuid';
+            btn.classList.add('opacity-60', 'cursor-not-allowed');
+            return btn;
+        }
+        btn.addEventListener('click', function () {
+            openEditRow(item);
+        });
         return btn;
+    }
+
+    function openEditRow(item) {
+        if (!item) {
+            return;
+        }
+        if (hasReflectionGroupContext() && isRecordReflectionContext() && !currentSchema) {
+            loadSchema(currentFqn)
+                .then(function (schema) {
+                    currentSchema = schema;
+                    openModal(item);
+                })
+                .catch(function (err) {
+                    showError('Failed to load schema for edit: ' + err);
+                });
+            return;
+        }
+        openModal(item);
     }
 
     function buildDeleteBtn(item) {
@@ -1092,6 +1143,13 @@
         btn.className = 'rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15';
         btn.title = 'Delete';
         btn.innerHTML = '<i class="fa-solid fa-trash"></i>';
+
+        if (!uuid) {
+            btn.disabled = true;
+            btn.title = 'Delete unavailable: row has no uuid';
+            btn.classList.add('opacity-60', 'cursor-not-allowed');
+            return btn;
+        }
 
         btn.addEventListener('click', function () {
             if (btn.dataset.confirming) {

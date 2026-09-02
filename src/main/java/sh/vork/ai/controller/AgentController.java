@@ -31,7 +31,7 @@ import sh.vork.orm.DatabaseRepository;
 import sh.vork.ai.AiProvider;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.agent.AgentType;
-import sh.vork.ai.agent.ArtifactStatus;
+import sh.vork.artifact.ArtifactStatus;
 import sh.vork.ai.service.AgentAssignmentService;
 import sh.vork.ai.lifecycle.AgentTemplateSeeder;
 import sh.vork.binding.BindingCatalogService;

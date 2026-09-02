@@ -28,6 +28,7 @@ import sh.vork.ai.agent.AgentType;
 import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
+import sh.vork.ai.exception.CriticalTurnFailureException;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.registry.ToolRegistry;
 import sh.vork.ai.request.RequestInformationService;
@@ -709,11 +710,14 @@ public class ChatController {
             }
             } catch (Exception ex) {
             log.error("Chat error: {}", ex.getMessage(), ex);
+            String message = (ex instanceof CriticalTurnFailureException)
+                    ? ex.getMessage()
+                    : "Sorry, something went wrong: " + ex.getMessage();
             UiEventFrame frame = new UiEventFrame(
                 UUID.randomUUID().toString(),
                 "ERROR",
                 "CHAT_ERROR",
-                "Sorry, something went wrong: " + ex.getMessage(),
+                message,
                 null);
             messaging.convertAndSend("/topic/chat/" + request.sessionUuid(), frame);
             }

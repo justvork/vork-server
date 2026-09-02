@@ -3,11 +3,14 @@ package sh.vork.channel;
 import org.springframework.stereotype.Component;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.security.VorkUser;
+import sh.vork.scheduling.service.BackgroundNotificationService;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -18,9 +21,12 @@ import java.util.Optional;
 public class UserChannelProvider implements ChannelProvider {
 
     private final DatabaseRepository<VorkUser> userRepository;
+    private final BackgroundNotificationService backgroundNotificationService;
 
-    public UserChannelProvider(DatabaseRepository<VorkUser> userRepository) {
+    public UserChannelProvider(DatabaseRepository<VorkUser> userRepository,
+                               BackgroundNotificationService backgroundNotificationService) {
         this.userRepository = userRepository;
+        this.backgroundNotificationService = backgroundNotificationService;
     }
 
     @Override
@@ -74,6 +80,29 @@ public class UserChannelProvider implements ChannelProvider {
             return result;
         }
         return new ArrayList<>(result.subList(0, limit));
+    }
+
+    @Override
+    public void notifyChannelsWithUrls(Map<ChannelRef, String> channelRefsToUrl,
+                                       String subject,
+                                       String message) {
+        if (channelRefsToUrl == null || channelRefsToUrl.isEmpty()) {
+            return;
+        }
+
+        Map<String, String> userToUrl = new LinkedHashMap<>();
+        for (Map.Entry<ChannelRef, String> entry : channelRefsToUrl.entrySet()) {
+            ChannelRef ref = entry.getKey();
+            String url = entry.getValue();
+            if (ref == null || ref.channelName() == null || ref.channelName().isBlank() || url == null || url.isBlank()) {
+                continue;
+            }
+            userToUrl.put(ref.channelName(), url);
+        }
+
+        if (!userToUrl.isEmpty()) {
+            backgroundNotificationService.notifyUsersWithUrls(userToUrl, subject, message);
+        }
     }
 
     private ChannelRef toChannelRef(VorkUser user) {

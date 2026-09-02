@@ -8,6 +8,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import sh.vork.channel.ChannelService;
 
 import sh.vork.orm.DatabaseRepository;
 
@@ -44,12 +45,15 @@ public class TelegramGroupRegistrationService {
 
     private final DatabaseRepository<NotificationProviderConfig> configRepo;
     private final DatabaseRepository<GlobalAddress>              globalAddressRepo;
+    private final ChannelService                                 channelService;
 
     public TelegramGroupRegistrationService(
             DatabaseRepository<NotificationProviderConfig> configRepo,
-            DatabaseRepository<GlobalAddress> globalAddressRepo) {
+            DatabaseRepository<GlobalAddress> globalAddressRepo,
+            ChannelService channelService) {
         this.configRepo        = configRepo;
         this.globalAddressRepo = globalAddressRepo;
+        this.channelService = channelService;
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -118,6 +122,7 @@ public class TelegramGroupRegistrationService {
         }
 
         String label = (chatTitle != null && !chatTitle.isBlank()) ? chatTitle : "Telegram Group";
+        channelService.assertChannelNameAvailable(label);
         GlobalAddress address = new GlobalAddress(
                 UUID.randomUUID().toString(),
                 pending.providerConfigId(),

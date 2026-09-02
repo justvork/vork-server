@@ -1,5 +1,7 @@
 package sh.vork.reflection;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -7,6 +9,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -50,6 +56,9 @@ import org.bson.types.ObjectId;
 import sh.vork.ai.security.SkillSecretSubstitutor;
 import sh.vork.ai.function.OAuthConnectRequest;
 import sh.vork.ai.context.ToolExecutionContext;
+import sh.vork.binding.contract.BindingContract;
+import sh.vork.binding.contract.BindingContractService;
+import sh.vork.binding.contract.BindingContractToolDefinition;
 import sh.vork.oauth.OAuthTemplate;
 import sh.vork.oauth.OAuthClientService;
 import sh.vork.oauth.OAuthTemplateService;
@@ -57,11 +66,13 @@ import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.RepositoryFactory;
 import sh.vork.orm.SearchQuery;
 import sh.vork.orm.SortOrder;
+import sh.vork.ssh.command.SelectStatement;
 import sh.vork.security.SecureCredentialStore;
 import sh.vork.skill.SkillSecret;
 import sh.vork.typegen.JavaTypeClassLoader;
 import sh.vork.typegen.JavaType;
 import sh.vork.typegen.SqlQueryParser;
+import sh.vork.typegen.SqlParseException;
 import sh.vork.typegen.TypeDatabaseService;
 import sh.vork.typegen.TypeRecordBindingScope;
 import sh.vork.typegen.TypeRecordVersionMetadata;
@@ -95,6 +106,8 @@ public class ReflectionService {
             "int",
             "double",
             "boolean",
+            "date",
+            "timestamp",
             "hidden");
     private static final long PENDING_OAUTH_BINDING_TTL_MS = 15 * 60 * 1000L;
     private static final boolean DEV_UNREDACTED_LOGS = resolveDevUnredactedLogsFlag();
@@ -107,6 +120,7 @@ public class ReflectionService {
     private final DatabaseRepository<PendingOAuthBindingAction> pendingOAuthBindingActionRepository;
     private final OAuthClientService oauthClientService;
     private final OAuthTemplateService oauthTemplateService;
+    private final BindingContractService bindingContractService;
     private final SkillSecretSubstitutor skillSecretSubstitutor;
     private final SecureCredentialStore secureCredentialStore;
     private final ObjectMapper objectMapper;
@@ -121,6 +135,7 @@ public class ReflectionService {
     public ReflectionService(RepositoryFactory factory,
                              OAuthClientService oauthClientService,
                      OAuthTemplateService oauthTemplateService,
+                     BindingContractService bindingContractService,
                              SkillSecretSubstitutor skillSecretSubstitutor,
                              SecureCredentialStore secureCredentialStore,
                              ObjectMapper objectMapper) {
@@ -132,7 +147,8 @@ public class ReflectionService {
                 factory.create(ReflectionBinding.class),
                 factory.create(PendingOAuthBindingAction.class),
                 oauthClientService,
-            oauthTemplateService,
+                oauthTemplateService,
+                bindingContractService,
                 skillSecretSubstitutor,
                 secureCredentialStore,
                 objectMapper,
@@ -184,6 +200,7 @@ public class ReflectionService {
             pendingOAuthBindingActionRepository,
             oauthClientService,
             null,
+            null,
             skillSecretSubstitutor,
             secureCredentialStore,
             objectMapper,
@@ -197,7 +214,8 @@ public class ReflectionService {
                       DatabaseRepository<ReflectionBinding> reflectionBindingRepository,
                       DatabaseRepository<PendingOAuthBindingAction> pendingOAuthBindingActionRepository,
                       OAuthClientService oauthClientService,
-                  OAuthTemplateService oauthTemplateService,
+                      OAuthTemplateService oauthTemplateService,
+                      BindingContractService bindingContractService,
                       SkillSecretSubstitutor skillSecretSubstitutor,
                       SecureCredentialStore secureCredentialStore,
                       ObjectMapper objectMapper,
@@ -210,6 +228,7 @@ public class ReflectionService {
         this.pendingOAuthBindingActionRepository = pendingOAuthBindingActionRepository;
         this.oauthClientService = oauthClientService;
         this.oauthTemplateService = oauthTemplateService;
+        this.bindingContractService = bindingContractService;
         this.skillSecretSubstitutor = skillSecretSubstitutor;
         this.secureCredentialStore = secureCredentialStore;
         this.objectMapper = objectMapper;
@@ -257,6 +276,7 @@ public class ReflectionService {
         ReflectionType type = parseGroupType(request.type());
         ReflectionAuthenticationMode authenticationMode = parseAuthenticationMode(request.authenticationMode());
         String oauthTemplateId = normalizeAndValidateOAuthSettings(type, authenticationMode, request.oauthTemplateId());
+        List<String> bindingContractUuids = normalizeBindingContractUuids(type, request.bindingContractUuids());
         String groupId = identityOrDefault(request.groupId(), request.name(), "group");
         String artifactId = identityOrDefault(request.artifactId(), request.name(), "reflectiongroup");
         String version = "SNAPSHOT";
@@ -274,10 +294,11 @@ public class ReflectionService {
                 type,
             request.baseUrl() == null ? "" : request.baseUrl().trim(),
             request.urlOverrideEnabled(),
-            normalizeBindingSecrets(request.bindingSecrets()),
-            normalizeBindingParameters(request.bindingParameters()),
+                normalizeBindingSecrets(request.bindingSecrets()),
+                normalizeBindingParameters(request.bindingParameters()),
                 authenticationMode,
                 oauthTemplateId,
+                bindingContractUuids,
                 groupId,
                 artifactId,
                 version,
@@ -285,6 +306,7 @@ public class ReflectionService {
                 now,
                 now);
         reflectionGroupRepository.save(group);
+            ensureContractPrototypeReflections(group);
         log.info("Reflection group created [uuid={}, name={}, type={}]", group.uuid(), group.name(), group.type());
         return group;
     }
@@ -301,6 +323,7 @@ public class ReflectionService {
         ReflectionType type = parseGroupType(request.type());
         ReflectionAuthenticationMode authenticationMode = parseAuthenticationMode(request.authenticationMode());
         String oauthTemplateId = normalizeAndValidateOAuthSettings(type, authenticationMode, request.oauthTemplateId());
+        List<String> bindingContractUuids = normalizeBindingContractUuids(type, request.bindingContractUuids());
         String toolId = uniqueGroupToolId(request.name(), existing.uuid());
         ReflectionGroup updated = new ReflectionGroup(
                 existing.uuid(),
@@ -310,17 +333,20 @@ public class ReflectionService {
                 type,
             request.baseUrl() == null ? "" : request.baseUrl().trim(),
             request.urlOverrideEnabled(),
-            normalizeBindingSecrets(request.bindingSecrets()),
-            normalizeBindingParameters(request.bindingParameters()),
+                normalizeBindingSecrets(request.bindingSecrets()),
+                normalizeBindingParameters(request.bindingParameters()),
                 authenticationMode,
                 oauthTemplateId,
+                bindingContractUuids,
                 existing.groupId(),
                 existing.artifactId(),
                 existing.version(),
                 existing.artifactStatus(),
                 existing.createdAt(),
                 System.currentTimeMillis());
+            enforceGroupContractCompliance(updated, reflectionsForGroup(updated.uuid()));
         reflectionGroupRepository.save(updated);
+            ensureContractPrototypeReflections(updated);
         log.info("Reflection group updated [uuid={}, name={}, type={}, version={}]",
                 updated.uuid(), updated.name(), updated.type(), updated.version());
         return updated;
@@ -706,6 +732,16 @@ public class ReflectionService {
                 .orElse(null);
     }
 
+    public Reflection getReflectionByIdInGroup(String reflectionId, String groupUuid) {
+        if (reflectionId == null || reflectionId.isBlank() || groupUuid == null || groupUuid.isBlank()) {
+            return null;
+        }
+        return reflectionsForGroup(groupUuid).stream()
+                .filter(reflection -> reflectionId.equalsIgnoreCase(reflection.id()))
+                .findFirst()
+                .orElse(null);
+    }
+
     public Reflection createReflection(ReflectionRequest request) {
         log.debug("ENTER createReflection: [id={}]", request == null ? "null" : request.id());
         Reflection normalized = normalizeAndValidate(null, request);
@@ -857,6 +893,7 @@ public class ReflectionService {
                 bindingParameters,
                 "NONE",
                 "",
+                List.of(),
                 request.groupId().trim(),
                 request.artifactId().trim()));
 
@@ -1084,7 +1121,7 @@ public class ReflectionService {
             "Search " + simpleName,
             "Search " + simpleName + " records using SQL-like query syntax.",
             List.of(
-                new ReflectionInputParameter("query", "string", "SQL-like query string.", true),
+                new ReflectionInputParameter("query", "string", "SQL-like query string.", false),
                 new ReflectionInputParameter("queryType", "string", "Query parser mode (SQL or MONGO).", false),
                 new ReflectionInputParameter("sortField", "string", "Sort field.", false),
                 new ReflectionInputParameter("sortOrder", "string", "Sort direction (ASC or DESC).", false),
@@ -1203,6 +1240,7 @@ public class ReflectionService {
             group.bindingParameters(),
                 group.authenticationMode(),
                 group.oauthTemplateId(),
+                group.bindingContractUuids(),
                 group.groupId(),
                 group.artifactId(),
                 group.version(),
@@ -1235,7 +1273,7 @@ public class ReflectionService {
         for (Reflection reflection : incomingReflections) {
             Reflection existingByUuid = reflectionRepository.get(reflection.uuid());
 
-            Reflection conflictById = getReflectionById(reflection.id());
+            Reflection conflictById = getReflectionByIdInGroup(reflection.id(), incomingGroup.uuid());
             if (existingByUuid != null && conflictById != null && !existingByUuid.uuid().equals(conflictById.uuid())) {
                 return new ReflectionGroupImportResult(
                         "error",
@@ -1285,6 +1323,7 @@ public class ReflectionService {
             normalizeBindingParameters(incomingGroup.bindingParameters()),
             normalizedAuthMode,
             normalizedOauthTemplateId,
+                normalizeBindingContractUuids(normalizedType, incomingGroup.bindingContractUuids()),
                 normalizedGroupId,
                 normalizedArtifactId,
                 normalizedVersion,
@@ -1300,6 +1339,7 @@ public class ReflectionService {
                     return normalizeImportedReflection(reflection, normalizedGroup.uuid(), targetUuid, existingTarget);
                 })
                 .toList();
+        enforceGroupContractCompliance(normalizedGroup, normalizedReflections);
         for (Reflection reflection : normalizedReflections) {
             if (normalizedGroup.type() == ReflectionType.MONGO) {
                 mongoReflectionRepository.save(reflectionToMongo(reflection));
@@ -1326,6 +1366,26 @@ public class ReflectionService {
         if (reflection == null) {
             return jsonError("Reflection not found: " + reflectionId);
         }
+        return executeReflectionInternal(reflection, runtimeInputs, bindingName, username);
+    }
+
+    public String executeRestReflectionByUuid(String reflectionUuid,
+                                              Map<String, Object> runtimeInputs,
+                                              String bindingName,
+                                              String username) {
+        log.debug("ENTER executeRestReflectionByUuid: [reflectionUuid={}, bindingName={}, username={}]",
+                reflectionUuid, bindingName, username);
+        Reflection reflection = getReflection(reflectionUuid);
+        if (reflection == null) {
+            return jsonError("Reflection not found: " + reflectionUuid);
+        }
+        return executeReflectionInternal(reflection, runtimeInputs, bindingName, username);
+    }
+
+    private String executeReflectionInternal(Reflection reflection,
+                                             Map<String, Object> runtimeInputs,
+                                             String bindingName,
+                                             String username) {
 
         ReflectionGroup group = reflectionGroupRepository.get(reflection.groupUuid());
         ReflectionType type = group == null ? ReflectionType.REST : group.type();
@@ -1366,6 +1426,11 @@ public class ReflectionService {
         }
         if (!missing.isEmpty()) {
             return jsonMissing(missing);
+        }
+
+        String inputFormatError = validateInputParameterFormats(reflection.inputParameters(), mergedInputs);
+        if (inputFormatError != null) {
+            return jsonError(inputFormatError);
         }
 
         try {
@@ -1478,7 +1543,7 @@ public class ReflectionService {
             result.put("body", responseBody);
             return objectMapper.writeValueAsString(result);
         } catch (Exception ex) {
-            log.warn("Reflection execution failed [id={}]: {}", reflectionId, ex.getMessage());
+            log.warn("Reflection execution failed [id={}]: {}", reflection.id(), ex.getMessage());
             return jsonError(ex.getMessage());
         }
     }
@@ -1527,9 +1592,10 @@ public class ReflectionService {
             throw new IllegalArgumentException("URL is required.");
         }
 
-        validateUniqueId(id, existing == null ? null : existing.uuid());
+        validateUniqueId(id, groupUuid, existing == null ? null : existing.uuid());
 
         List<ReflectionInputParameter> parameters = normalizeInputParameters(request.inputParameters());
+        enforceContractToolForReflection(group, id, parameters);
         Map<String, String> headers = normalizeStringMap(request.headers());
         Map<String, String> queryParameters = normalizeStringMap(request.queryParameters());
         String requestContentType = normalizeRequestContentType(request.requestContentType());
@@ -1537,6 +1603,7 @@ public class ReflectionService {
         String outputSchema = normalizeOutputSchema(request.outputSchema(), responseContentType);
 
         long now = System.currentTimeMillis();
+
         if (existing == null) {
             return new Reflection(
                     UUID.randomUUID().toString(),
@@ -1578,8 +1645,8 @@ public class ReflectionService {
                 now);
     }
 
-    private void validateUniqueId(String id, String allowedUuid) {
-        Reflection duplicate = listReflections().stream()
+    private void validateUniqueId(String id, String groupUuid, String allowedUuid) {
+        Reflection duplicate = reflectionsForGroup(groupUuid).stream()
                 .filter(reflection -> id.equalsIgnoreCase(reflection.id()))
                 .findFirst()
                 .orElse(null);
@@ -1589,7 +1656,7 @@ public class ReflectionService {
         if (allowedUuid != null && allowedUuid.equals(duplicate.uuid())) {
             return;
         }
-        throw new IllegalArgumentException("A reflection with id '" + id + "' already exists.");
+        throw new IllegalArgumentException("A reflection with id '" + id + "' already exists in this reflection group.");
     }
 
     private static List<ReflectionInputParameter> normalizeInputParameters(List<ReflectionInputParameter> inputParameters) {
@@ -1611,6 +1678,236 @@ public class ReflectionService {
                     parameter.array()));
         }
         return List.copyOf(normalized);
+    }
+
+    private List<String> normalizeBindingContractUuids(ReflectionType groupType, List<String> bindingContractUuids) {
+        if (bindingContractUuids == null || bindingContractUuids.isEmpty()) {
+            return List.of();
+        }
+        if (groupType != ReflectionType.REST) {
+            throw new IllegalArgumentException("Binding contracts can only be attached to REST reflection groups.");
+        }
+        if (bindingContractService == null) {
+            throw new IllegalArgumentException("Binding contract service is unavailable.");
+        }
+
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (String contractUuid : bindingContractUuids) {
+            if (contractUuid == null || contractUuid.isBlank()) {
+                continue;
+            }
+            String trimmed = contractUuid.trim();
+            BindingContract contract = bindingContractService.getContract(trimmed);
+            if (contract == null) {
+                throw new IllegalArgumentException("Binding contract not found: " + trimmed);
+            }
+            normalized.add(contract.uuid());
+        }
+        return List.copyOf(normalized);
+    }
+
+    private void ensureContractPrototypeReflections(ReflectionGroup group) {
+        if (group == null || group.type() != ReflectionType.REST) {
+            return;
+        }
+        Map<String, BindingContractToolDefinition> contractTools = resolveContractToolsForGroup(group);
+        if (contractTools.isEmpty()) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        for (BindingContractToolDefinition tool : contractTools.values()) {
+            Reflection existing = findExistingContractToolReflectionInGroup(group.uuid(), tool.name());
+            if (existing != null) {
+                if (!parametersMatchContract(existing.inputParameters(), tool.inputParameters())) {
+                    throw new IllegalArgumentException("Tool '" + tool.name()
+                            + "' already exists but its input parameters do not match the attached contract.");
+                }
+                continue;
+            }
+
+            Reflection prototype = new Reflection(
+                    UUID.randomUUID().toString(),
+                    tool.name(),
+                    tool.name(),
+                    tool.description() == null ? "" : tool.description(),
+                    group.uuid(),
+                    normalizeInputParameters(tool.inputParameters()),
+                    "GET",
+                    "",
+                    Map.of(),
+                    Map.of(),
+                    "",
+                    CONTENT_TYPE_JSON,
+                    CONTENT_TYPE_JSON,
+                    "",
+                    1L,
+                    now,
+                    now);
+            reflectionRepository.save(prototype);
+            log.info("Contract prototype reflection created [groupUuid={}, toolId={}]", group.uuid(), prototype.id());
+        }
+    }
+
+    private void enforceGroupContractCompliance(ReflectionGroup group, List<Reflection> candidateReflections) {
+        if (group == null || group.type() != ReflectionType.REST) {
+            return;
+        }
+        Map<String, BindingContractToolDefinition> contractTools = resolveContractToolsForGroup(group);
+        if (contractTools.isEmpty()) {
+            return;
+        }
+        List<Reflection> reflectionsToCheck = candidateReflections == null ? List.of() : candidateReflections;
+        for (Reflection reflection : reflectionsToCheck) {
+            if (reflection == null) {
+                continue;
+            }
+            enforceContractToolForReflection(group, reflection.id(), reflection.inputParameters());
+        }
+    }
+
+    private void enforceContractToolForReflection(ReflectionGroup group,
+                                                  String reflectionId,
+                                                  List<ReflectionInputParameter> parameters) {
+        if (group == null || group.type() != ReflectionType.REST) {
+            return;
+        }
+        Map<String, BindingContractToolDefinition> contractTools = resolveContractToolsForGroup(group);
+        if (contractTools.isEmpty()) {
+            return;
+        }
+
+        BindingContractToolDefinition contractTool = resolveContractToolForReflectionId(contractTools, reflectionId);
+        if (contractTool == null) {
+            // Groups with binding contracts may define additional non-contract tools.
+            // Only contract-defined tool IDs are schema-locked.
+            return;
+        }
+
+        List<ReflectionInputParameter> normalized = normalizeInputParameters(parameters);
+        List<ReflectionInputParameter> contractParams = normalizeInputParameters(contractTool.inputParameters());
+        if (!parametersMatchContract(normalized, contractParams)) {
+            throw new IllegalArgumentException("Input parameters for tool '" + contractTool.name()
+                    + "' must exactly match the attached binding contract definition.");
+        }
+    }
+
+    private Reflection findExistingContractToolReflectionInGroup(String groupUuid, String contractToolId) {
+        if (groupUuid == null || groupUuid.isBlank() || contractToolId == null || contractToolId.isBlank()) {
+            return null;
+        }
+        String target = normalizeContractToolSuffix(contractToolId);
+        if (target.isBlank()) {
+            return null;
+        }
+
+        return reflectionsForGroup(groupUuid).stream()
+                .filter(Objects::nonNull)
+                .filter(reflection -> normalizeContractToolSuffix(reflection.id()).equals(target))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private BindingContractToolDefinition resolveContractToolForReflectionId(Map<String, BindingContractToolDefinition> contractTools,
+                                                                             String reflectionId) {
+        if (contractTools == null || contractTools.isEmpty()) {
+            return null;
+        }
+        String suffix = normalizeContractToolSuffix(reflectionId);
+        if (suffix.isBlank()) {
+            return null;
+        }
+        return contractTools.get(suffix);
+    }
+
+    private static String normalizeContractToolLookupKey(String id) {
+        if (id == null) {
+            return "";
+        }
+        return id.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String normalizeContractToolSuffix(String id) {
+        String normalized = normalizeContractToolLookupKey(id);
+        if (normalized.isBlank()) {
+            return "";
+        }
+        int idx = normalized.lastIndexOf('.');
+        if (idx < 0 || idx >= normalized.length() - 1) {
+            return normalized;
+        }
+        return normalized.substring(idx + 1);
+    }
+
+    private Map<String, BindingContractToolDefinition> resolveContractToolsForGroup(ReflectionGroup group) {
+        if (group == null || group.bindingContractUuids() == null || group.bindingContractUuids().isEmpty()) {
+            return Map.of();
+        }
+        if (bindingContractService == null) {
+            throw new IllegalArgumentException("Binding contract service is unavailable.");
+        }
+
+        Map<String, BindingContractToolDefinition> tools = new LinkedHashMap<>();
+        for (String contractUuid : group.bindingContractUuids()) {
+            BindingContract contract = bindingContractService.getContract(contractUuid);
+            if (contract == null) {
+                throw new IllegalArgumentException("Attached binding contract not found: " + contractUuid);
+            }
+            for (BindingContractToolDefinition tool : contract.tools()) {
+                if (tool == null || tool.name() == null || tool.name().isBlank()) {
+                    continue;
+                }
+                String name = tool.name().trim();
+                if (!REFLECTION_ID_PATTERN.matcher(name).matches()) {
+                    throw new IllegalArgumentException("Contract tool name must be alphanumeric to map to reflection tool ID: " + name);
+                }
+                String key = name.toLowerCase(Locale.ROOT);
+                BindingContractToolDefinition existing = tools.get(key);
+                if (existing == null) {
+                    tools.put(key, new BindingContractToolDefinition(
+                            name,
+                            tool.description() == null ? "" : tool.description(),
+                            normalizeInputParameters(tool.inputParameters())));
+                    continue;
+                }
+                if (!parametersMatchContract(existing.inputParameters(), normalizeInputParameters(tool.inputParameters()))) {
+                    throw new IllegalArgumentException("Attached contracts define conflicting input schemas for tool ID: " + name);
+                }
+            }
+        }
+        return Map.copyOf(tools);
+    }
+
+    private static boolean parametersMatchContract(List<ReflectionInputParameter> actual,
+                                                   List<ReflectionInputParameter> expected) {
+        List<ReflectionInputParameter> left = actual == null ? List.of() : actual;
+        List<ReflectionInputParameter> right = expected == null ? List.of() : expected;
+        if (left.size() != right.size()) {
+            return false;
+        }
+        for (int i = 0; i < left.size(); i++) {
+            ReflectionInputParameter a = left.get(i);
+            ReflectionInputParameter b = right.get(i);
+            if (a == null || b == null) {
+                return false;
+            }
+            if (!Objects.equals(a.name(), b.name())) {
+                return false;
+            }
+            if (!Objects.equals(a.type(), b.type())) {
+                return false;
+            }
+            if (!Objects.equals(a.description(), b.description())) {
+                return false;
+            }
+            if (a.required() != b.required()) {
+                return false;
+            }
+            if (a.array() != b.array()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static Map<String, String> normalizeStringMap(Map<String, String> input) {
@@ -1664,13 +1961,7 @@ public class ReflectionService {
         if (oauthTemplateService == null) {
             return normalized;
         }
-        UUID templateId;
-        try {
-            templateId = UUID.fromString(normalized);
-        } catch (IllegalArgumentException ex) {
-            throw new IllegalArgumentException("Invalid OAuth template id.");
-        }
-        OAuthTemplate template = oauthTemplateService.getTemplate(templateId);
+        OAuthTemplate template = oauthTemplateService.getTemplate(normalized);
         if (template == null) {
             throw new IllegalArgumentException("Selected OAuth template was not found.");
         }
@@ -1704,7 +1995,7 @@ public class ReflectionService {
             throw new IllegalArgumentException("Reflection name is required.");
         }
 
-        validateUniqueId(id, existing == null ? null : existing.uuid());
+        validateUniqueId(id, group.uuid(), existing == null ? null : existing.uuid());
 
         RecordToolMetadata baseMetadata = resolveGroupRecordMetadata(group);
         if (baseMetadata == null || baseMetadata.recordFqn() == null || baseMetadata.recordFqn().isBlank()) {
@@ -1742,6 +2033,10 @@ public class ReflectionService {
         if (method.isBlank()) {
             method = "POST";
         }
+        String bodyTemplate = request.bodyTemplate() == null ? "" : request.bodyTemplate().trim();
+        if ("SEARCH".equals(operation) && !bodyTemplate.isBlank()) {
+            bodyTemplate = canonicalizeRecordSelectQuery(bodyTemplate, recordFqn);
+        }
 
         if (existing == null) {
             return new Reflection(
@@ -1755,7 +2050,7 @@ public class ReflectionService {
                     "",
                     Map.of(),
                     Map.of(),
-                    request.bodyTemplate() == null ? "" : request.bodyTemplate(),
+                    bodyTemplate,
                     CONTENT_TYPE_JSON,
                     CONTENT_TYPE_JSON,
                     outputSchema,
@@ -1775,7 +2070,7 @@ public class ReflectionService {
                 "",
                 Map.of(),
                 Map.of(),
-                request.bodyTemplate() == null ? "" : request.bodyTemplate(),
+                bodyTemplate,
                 CONTENT_TYPE_JSON,
                 CONTENT_TYPE_JSON,
                 outputSchema,
@@ -1950,19 +2245,11 @@ public class ReflectionService {
         if (oauthTemplateId == null || oauthTemplateId.isBlank()) {
             throw new IllegalArgumentException("OAuth template is required for OAUTH authentication mode.");
         }
-        try {
-            UUID templateId = UUID.fromString(oauthTemplateId.trim());
-            OAuthTemplate template = oauthTemplateService.getTemplate(templateId);
-            if (template == null) {
-                throw new IllegalArgumentException("Selected OAuth template was not found.");
-            }
-            return template;
-        } catch (IllegalArgumentException ex) {
-            if ("Selected OAuth template was not found.".equals(ex.getMessage())) {
-                throw ex;
-            }
-            throw new IllegalArgumentException("Invalid OAuth template id.");
+        OAuthTemplate template = oauthTemplateService.getTemplate(oauthTemplateId.trim());
+        if (template == null) {
+            throw new IllegalArgumentException("Selected OAuth template was not found.");
         }
+        return template;
     }
 
     private URI buildUri(String rawUrl,
@@ -2158,6 +2445,73 @@ public class ReflectionService {
         }
 
         return List.of(coerceScalar(value, type));
+    }
+
+    private static String validateInputParameterFormats(List<ReflectionInputParameter> parameters,
+                                                        Map<String, Object> mergedInputs) {
+        if (parameters == null || parameters.isEmpty() || mergedInputs == null || mergedInputs.isEmpty()) {
+            return null;
+        }
+
+        for (ReflectionInputParameter parameter : parameters) {
+            if (parameter == null || parameter.name() == null || parameter.name().isBlank()) {
+                continue;
+            }
+            String type = parameter.type() == null ? "string" : parameter.type().trim().toLowerCase(Locale.ROOT);
+            if (!"date".equals(type) && !"timestamp".equals(type)) {
+                continue;
+            }
+
+            Object rawValue = mergedInputs.get(parameter.name());
+            if (rawValue == null) {
+                continue;
+            }
+
+            List<Object> values = parameter.array() ? coerceToArray(rawValue, type) : List.of(rawValue);
+            for (Object value : values) {
+                if (value == null) {
+                    continue;
+                }
+                String raw = String.valueOf(value).trim();
+                if (raw.isBlank()) {
+                    continue;
+                }
+                if ("date".equals(type) && !isIsoDate(raw)) {
+                    return "Invalid value for parameter '" + parameter.name()
+                            + "'. Expected ISO 8601 date format YYYY-MM-DD.";
+                }
+                if ("timestamp".equals(type) && !isIsoOffsetTimestamp(raw)) {
+                    return "Invalid value for parameter '" + parameter.name()
+                            + "'. Expected ISO 8601 timestamp with timezone/offset, e.g. 2026-08-26T14:30:00Z.";
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static boolean isIsoDate(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        try {
+            LocalDate parsed = LocalDate.parse(value, DateTimeFormatter.ISO_LOCAL_DATE);
+            return DateTimeFormatter.ISO_LOCAL_DATE.format(parsed).equals(value);
+        } catch (DateTimeParseException ex) {
+            return false;
+        }
+    }
+
+    private static boolean isIsoOffsetTimestamp(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        try {
+            OffsetDateTime.parse(value, DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+            return true;
+        } catch (DateTimeParseException ex) {
+            return false;
+        }
     }
 
     private static String applyBodyTemplate(String template,
@@ -3607,6 +3961,8 @@ public class ReflectionService {
                 default -> jsonError("Unsupported record operation: " + metadata.operation());
             };
         } catch (Exception ex) {
+            log.warn("Record reflection execution failed [reflectionId={}, operation={}, recordFqn={}, error={}]",
+                    reflection.id(), metadata.operation(), metadata.recordFqn(), ex.getMessage());
             return jsonError(ex.getMessage());
         }
     }
@@ -4205,8 +4561,32 @@ public class ReflectionService {
             }
         }
         if (query.isBlank()) {
-            return jsonError("query is required.");
+            query = "uuid IS NOT NULL";
+            log.debug("Record reflection search query omitted; applying default predicate [recordFqn={}]", recordFqn);
         }
+
+        SelectStatement selectStatement = null;
+        if (query.trim().toUpperCase(Locale.ROOT).startsWith("SELECT ")) {
+            try {
+            query = canonicalizeRecordSelectQuery(query, recordFqn);
+                selectStatement = SelectStatement.parse(query);
+                if (selectStatement.fqn() != null
+                        && !selectStatement.fqn().isBlank()
+                        && !recordFqn.equals(selectStatement.fqn().trim())) {
+                    log.warn("Record reflection search rejected SELECT with mismatched FQN [recordFqn={}, queryFqn={}, query={}]",
+                            recordFqn, selectStatement.fqn(), sanitizeBodyForLog(query, CONTENT_TYPE_TEXT));
+                    return jsonError("Configured SELECT query targets a different record type. Expected "
+                            + recordFqn + " but got " + selectStatement.fqn() + ".");
+                }
+                query = selectStatement.whereClause() == null ? "" : selectStatement.whereClause();
+            } catch (IllegalArgumentException ex) {
+                log.warn("Record reflection search failed to parse SELECT query [recordFqn={}, query={}, error={}]",
+                    recordFqn, sanitizeBodyForLog(query, CONTENT_TYPE_TEXT), ex.getMessage());
+                return jsonError("Invalid SELECT query: " + ex.getMessage());
+            }
+        }
+
+        query = normalizeRecordSearchPredicate(query, recordFqn);
 
         String queryType = asString(inputs.get("queryType"));
         if (queryType.isBlank()) {
@@ -4220,12 +4600,23 @@ public class ReflectionService {
         }
         String sortField = asString(inputs.get("sortField"));
         if (sortField.isBlank()) {
-            sortField = "uuid";
+            sortField = selectStatement != null
+                    && selectStatement.orderByField() != null
+                    && !selectStatement.orderByField().isBlank()
+                    ? selectStatement.orderByField().trim()
+                    : "uuid";
         }
         String sortOrderRaw = asString(inputs.get("sortOrder"));
+        if (sortOrderRaw.isBlank() && selectStatement != null && selectStatement.orderByDir() != null) {
+            sortOrderRaw = selectStatement.orderByDir();
+        }
         SortOrder sortOrder = "DESC".equalsIgnoreCase(sortOrderRaw) ? SortOrder.DESC : SortOrder.ASC;
+        int pageSize = asInt(inputs.get("pageSize"),
+                selectStatement != null && selectStatement.limit() > 0 ? selectStatement.limit() : 20);
         int page = asInt(inputs.get("page"), 0);
-        int pageSize = asInt(inputs.get("pageSize"), 20);
+        if (page == 0 && selectStatement != null && selectStatement.offset() > 0 && pageSize > 0) {
+            page = selectStatement.offset() / pageSize;
+        }
 
         List<Object> filtered = new ArrayList<>();
         try (var stream = typeDatabaseService.searchBySql(entityClass, query, 0, Integer.MAX_VALUE, sortField, sortOrder)) {
@@ -4235,6 +4626,11 @@ public class ReflectionService {
                     filtered.add(entity);
                 }
             });
+        } catch (SqlParseException ex) {
+            log.warn("Record reflection search SQL parse failure [recordFqn={}, query={}, error={}]",
+                recordFqn, sanitizeBodyForLog(query, CONTENT_TYPE_TEXT), ex.getMessage());
+            return jsonError("Invalid SQL query: " + ex.getMessage()
+                    + ". Use WHERE-style syntax only, for example: status = 'ACTIVE'.");
         }
 
         int from = Math.max(0, page * pageSize);
@@ -4253,6 +4649,84 @@ public class ReflectionService {
                 "page", page,
                 "pageSize", pageSize,
                 "results", pageItems));
+    }
+
+    private String canonicalizeRecordSelectQuery(String query, String recordFqn) {
+        String trimmed = query == null ? "" : query.trim();
+        if (trimmed.isBlank() || !trimmed.toUpperCase(Locale.ROOT).startsWith("SELECT ")) {
+            return trimmed;
+        }
+
+        SelectStatement statement = SelectStatement.parse(trimmed);
+        String queryFqn = statement.fqn() == null ? "" : statement.fqn().trim();
+        if (queryFqn.isBlank()) {
+            throw new IllegalArgumentException("SELECT query must include a record type in FROM clause.");
+        }
+
+        if (!recordFqn.equals(queryFqn)) {
+            if (!simpleTypeName(recordFqn).equals(simpleTypeName(queryFqn))) {
+                throw new IllegalArgumentException("Configured SELECT query targets a different record type. Expected "
+                        + recordFqn + " but got " + queryFqn + ".");
+            }
+            log.debug("Canonicalizing record SELECT FQN [expected={}, actual={}]", recordFqn, queryFqn);
+        }
+
+        StringBuilder canonical = new StringBuilder("SELECT * FROM ").append(recordFqn);
+        if (statement.whereClause() != null && !statement.whereClause().isBlank()) {
+            canonical.append(" WHERE ").append(statement.whereClause().trim());
+        }
+        if (statement.orderByField() != null && !statement.orderByField().isBlank()) {
+            canonical.append(" ORDER BY ").append(statement.orderByField().trim());
+            if (statement.orderByDir() != null && !statement.orderByDir().isBlank()) {
+                canonical.append(' ').append(statement.orderByDir().trim().toUpperCase(Locale.ROOT));
+            }
+        }
+        if (statement.limit() > 0) {
+            canonical.append(" LIMIT ").append(statement.limit());
+        }
+        if (statement.offset() > 0) {
+            canonical.append(" OFFSET ").append(statement.offset());
+        }
+        return canonical.toString();
+    }
+
+    private String simpleTypeName(String fqn) {
+        if (fqn == null) {
+            return "";
+        }
+        String trimmed = fqn.trim();
+        int dot = trimmed.lastIndexOf('.');
+        if (dot < 0 || dot >= trimmed.length() - 1) {
+            return trimmed;
+        }
+        return trimmed.substring(dot + 1);
+    }
+
+    private String normalizeRecordSearchPredicate(String query, String recordFqn) {
+        String trimmed = query == null ? "" : query.trim();
+        if (trimmed.isBlank()) {
+            return "uuid IS NOT NULL";
+        }
+
+        String normalized = trimmed
+                .replaceAll("(?i)^\\(*\\s*1\\s*=\\s*1\\s*\\)*\\s*(AND\\s+)?", "")
+                .replaceAll("(?i)\\s+(AND\\s+)?\\(*\\s*1\\s*=\\s*1\\s*\\)*$", "")
+                .trim();
+
+        if (normalized.isBlank() || "true".equalsIgnoreCase(normalized)) {
+            log.debug("Record reflection search normalized tautology predicate to default [recordFqn={}, originalQuery={}]",
+                    recordFqn, sanitizeBodyForLog(trimmed, CONTENT_TYPE_TEXT));
+            return "uuid IS NOT NULL";
+        }
+
+        if (!normalized.equals(trimmed)) {
+            log.debug("Record reflection search normalized predicate [recordFqn={}, originalQuery={}, normalizedQuery={}]",
+                    recordFqn,
+                    sanitizeBodyForLog(trimmed, CONTENT_TYPE_TEXT),
+                    sanitizeBodyForLog(normalized, CONTENT_TYPE_TEXT));
+        }
+
+        return normalized;
     }
 
     private boolean canAccessRecordScope(String recordFqn, String recordUuid, ReflectionBinding binding) {
@@ -5209,6 +5683,7 @@ public class ReflectionService {
             List<ReflectionBindingParameter> bindingParameters,
             String authenticationMode,
             String oauthTemplateId,
+            List<String> bindingContractUuids,
             String groupId,
             String artifactId) {
 
@@ -5216,13 +5691,28 @@ public class ReflectionService {
                                           String description,
                                           String type,
                                           String baseUrl,
+                              Boolean urlOverrideEnabled,
+                              List<ReflectionBindingParameter> bindingParameters,
+                              List<SkillSecret> bindingSecrets,
+                              String authenticationMode,
+                              String oauthTemplateId,
+                              String groupId,
+                              String artifactId) {
+                this(name, description, type, baseUrl, urlOverrideEnabled, bindingSecrets, bindingParameters,
+                    authenticationMode, oauthTemplateId, List.of(), groupId, artifactId);
+                }
+
+                public ReflectionGroupRequest(String name,
+                              String description,
+                              String type,
+                              String baseUrl,
                                           Boolean urlOverrideEnabled,
                                           List<ReflectionBindingParameter> bindingParameters,
                                           List<SkillSecret> bindingSecrets,
                                           String authenticationMode,
                                           String oauthTemplateId) {
                 this(name, description, type, baseUrl, urlOverrideEnabled, bindingSecrets, bindingParameters,
-                        authenticationMode, oauthTemplateId, "", "");
+                                authenticationMode, oauthTemplateId, List.of(), "", "");
             }
 
             public ReflectionGroupRequest(String name,
@@ -5232,7 +5722,7 @@ public class ReflectionService {
                                           Boolean urlOverrideEnabled,
                                           List<SkillSecret> bindingSecrets,
                                           List<ReflectionBindingParameter> bindingParameters) {
-                this(name, description, type, baseUrl, urlOverrideEnabled, bindingSecrets, bindingParameters, "NONE", "", "", "");
+                this(name, description, type, baseUrl, urlOverrideEnabled, bindingSecrets, bindingParameters, "NONE", "", List.of(), "", "");
             }
 
             public ReflectionGroupRequest(String name,
@@ -5241,7 +5731,7 @@ public class ReflectionService {
                                           String baseUrl,
                                           List<SkillSecret> bindingSecrets,
                                           List<ReflectionBindingParameter> bindingParameters) {
-                this(name, description, type, baseUrl, true, bindingSecrets, bindingParameters, "NONE", "", "", "");
+                this(name, description, type, baseUrl, true, bindingSecrets, bindingParameters, "NONE", "", List.of(), "", "");
             }
         }
 

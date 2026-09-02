@@ -1,7 +1,7 @@
 /* skills.js — Vork Skills management page */
 /* jshint esversion: 6 */
 
-const PARAM_TYPES = ['string', 'text', 'int', 'double', 'boolean'];
+const PARAM_TYPES = ['string', 'text', 'int', 'double', 'boolean', 'date', 'timestamp'];
 
 let skillModal;
 let groupModal;
@@ -17,6 +17,7 @@ let allReflectionGroups = [];
 let allReflectionBindingOptions = [];
 let allApprovalPolicies = [];
 let skillPolicyAssignments = {};
+let allBindingContracts = [];
 let providerGroups = [];
 let providerGroupByKey = {};
 let githubConnection;
@@ -97,7 +98,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 async function loadData() {
     try {
-        const [skillsRes, groupsRes, toolsRes, typesRes, catsRes, reflectionsRes, reflectionGroupsRes, mcpBindingsRes, providersRes, policiesRes, policyAssignmentsRes] = await Promise.all([
+        const [skillsRes, groupsRes, toolsRes, typesRes, catsRes, reflectionsRes, reflectionGroupsRes, mcpBindingsRes, providersRes, policiesRes, policyAssignmentsRes, bindingContractsRes] = await Promise.all([
             fetch('/api/skills?includePrivate=true'),
             fetch('/api/skill-groups'),
             fetch('/api/management/tools'),
@@ -108,7 +109,8 @@ async function loadData() {
             fetch('/api/chat/mcp-bindings'),
             fetch('/api/ai/providers'),
             fetch('/api/approval-policies'),
-            fetch('/api/approval-policies/assignments?targetType=skill')
+            fetch('/api/approval-policies/assignments?targetType=skill'),
+            fetch('/api/binding-contracts')
         ]);
         allSkills     = skillsRes.ok ? await skillsRes.json() : [];
         allGroupViews = groupsRes.ok ? await groupsRes.json() : [];
@@ -131,6 +133,7 @@ async function loadData() {
         providerGroups = providersRes.ok ? await providersRes.json() : [];
         allApprovalPolicies = policiesRes.ok ? await policiesRes.json() : [];
         skillPolicyAssignments = policyAssignmentsRes.ok ? await policyAssignmentsRes.json() : {};
+        allBindingContracts = bindingContractsRes.ok ? await bindingContractsRes.json() : [];
         providerGroupByKey = (providerGroups || []).reduce(function (acc, group) {
             if (group && group.providerKey) {
                 acc[group.providerKey.toUpperCase()] = group;
@@ -632,8 +635,15 @@ function renderParams() {
         const row = document.createElement('div');
         row.className = 'param-row';
 
-        const typeOptions = PARAM_TYPES.map(function (t) {
-            return '<option value="' + t + '"' + (p.type === t ? ' selected' : '') + '>' + t + '</option>';
+        const availableTypes = getAvailableParamTypes();
+        const currentType = p.type || 'string';
+        if (availableTypes.indexOf(currentType) === -1) {
+            availableTypes.push(currentType);
+        }
+
+        const typeOptionsWithLabels = availableTypes.map(function (t) {
+            const label = isBindingContractParamType(t) ? ('contract: ' + t) : t;
+            return '<option value="' + t + '"' + (p.type === t ? ' selected' : '') + '>' + label + '</option>';
         }).join('');
 
         const forceOptions = [
@@ -652,7 +662,7 @@ function renderParams() {
                    'data-idx="' + idx + '" oninput="updateParam(this)">' +
             '<select class="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/20 param-type" ' +
                     'data-idx="' + idx + '" onchange="updateParam(this)">' +
-            typeOptions +
+                typeOptionsWithLabels +
             '</select>' +
                 '<select class="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 focus:border-[#fdaa02] focus:outline-none focus:ring-2 focus:ring-[#fdaa02]/20 param-input-mode" ' +
                     'data-idx="' + idx + '" onchange="updateParam(this)">' +
@@ -667,6 +677,30 @@ function renderParams() {
             '</button>';
 
         list.appendChild(row);
+    });
+}
+
+function getAvailableParamTypes() {
+    const types = PARAM_TYPES.slice();
+    const contractTypes = (allBindingContracts || [])
+        .map(function (contract) { return contract && contract.uuid ? String(contract.uuid).trim() : ''; })
+        .filter(function (uuid) { return uuid.length > 0; })
+        .sort(function (a, b) { return a.localeCompare(b); });
+
+    contractTypes.forEach(function (contractType) {
+        if (types.indexOf(contractType) === -1) {
+            types.push(contractType);
+        }
+    });
+    return types;
+}
+
+function isBindingContractParamType(typeName) {
+    if (!typeName) {
+        return false;
+    }
+    return (allBindingContracts || []).some(function (contract) {
+        return contract && contract.uuid === typeName;
     });
 }
 

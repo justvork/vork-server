@@ -1,5 +1,7 @@
 package sh.vork.typegen.controller;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -115,7 +117,7 @@ class TypeDatabaseControllerRecordBindingScopeTest {
                 "grp",
                 "agent",
                 "SNAPSHOT",
-                sh.vork.ai.agent.ArtifactStatus.SNAPSHOT));
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT));
 
         HttpServletRequest requestA = mock(HttpServletRequest.class);
         when(requestA.getHeader("X-Vork-Reflection-Type")).thenReturn("RECORD");
@@ -221,7 +223,7 @@ class TypeDatabaseControllerRecordBindingScopeTest {
                 "grp",
                 "agent",
                 "SNAPSHOT",
-                sh.vork.ai.agent.ArtifactStatus.SNAPSHOT));
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT));
 
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.addHeader("X-Vork-Reflection-Type", "RECORD");
@@ -314,7 +316,7 @@ class TypeDatabaseControllerRecordBindingScopeTest {
                                 "grp",
                                 "agent",
                                 "SNAPSHOT",
-                                sh.vork.ai.agent.ArtifactStatus.SNAPSHOT));
+                                sh.vork.artifact.ArtifactStatus.SNAPSHOT));
 
                 HttpServletRequest request = mock(HttpServletRequest.class);
                 when(request.getHeader("X-Vork-Reflection-Type")).thenReturn("RECORD");
@@ -467,7 +469,7 @@ class TypeDatabaseControllerRecordBindingScopeTest {
                         "record",
                         "Customer",
                         "SNAPSHOT",
-                        sh.vork.reflection.ArtifactStatus.SNAPSHOT,
+                        sh.vork.artifact.ArtifactStatus.SNAPSHOT,
                         1L,
                         1L));
 

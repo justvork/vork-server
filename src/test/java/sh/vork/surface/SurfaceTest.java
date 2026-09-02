@@ -1,5 +1,7 @@
 package sh.vork.surface;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

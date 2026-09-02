@@ -1,5 +1,7 @@
 package sh.vork.reflection;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -48,11 +50,12 @@ class ReflectionToolCallbackFactoryTest {
     }
 
     @Test
-    void usesReflectionIdAsToolName() {
+    void namespacesToolNameWithGroupAndArtifact() {
         Reflection reflection = sampleReflection();
+        when(reflectionService.getGroup("group-1")).thenReturn(sampleGroup());
         ToolCallback callback = factory.create(reflection);
 
-        assertEquals("getWeather", callback.getToolDefinition().name());
+        assertEquals("google.gmail.getWeather", callback.getToolDefinition().name());
     }
 
     @Test
@@ -77,6 +80,7 @@ class ReflectionToolCallbackFactoryTest {
     @Test
     void delegatesExecutionWithSessionUsername() {
         Reflection reflection = sampleReflection();
+        when(reflectionService.getGroup("group-1")).thenReturn(sampleGroup());
         ReflectionBinding binding = new ReflectionBinding(
             "binding-1",
             "group-1",
@@ -105,18 +109,19 @@ class ReflectionToolCallbackFactoryTest {
                 List.of(),
                 List.of(),
                 List.of()));
-        when(reflectionService.executeRestReflection(eq("getWeather"), any(), eq("default"), eq("alice")))
+        when(reflectionService.executeRestReflectionByUuid(eq("uuid-1"), any(), eq("default"), eq("alice")))
                 .thenReturn("{\"status\":\"ok\"}");
 
         String result = callback.call("{\"city\":\"London\"}");
 
         assertEquals("{\"status\":\"ok\"}", result);
-        verify(reflectionService).executeRestReflection(eq("getWeather"), any(), eq("default"), eq("alice"));
+        verify(reflectionService).executeRestReflectionByUuid(eq("uuid-1"), any(), eq("default"), eq("alice"));
     }
 
         @Test
         void requiresBindingNameWhenMultipleBindingsAreAssigned() {
         Reflection reflection = sampleReflection();
+        when(reflectionService.getGroup("group-1")).thenReturn(sampleGroup());
         ReflectionBinding defaultBinding = new ReflectionBinding(
             "binding-1",
             "group-1",
@@ -145,6 +150,7 @@ class ReflectionToolCallbackFactoryTest {
         @Test
         void acceptsBindingUuidWhenMultipleBindingsAreAssigned() {
         Reflection reflection = sampleReflection();
+        when(reflectionService.getGroup("group-1")).thenReturn(sampleGroup());
         ReflectionBinding defaultBinding = new ReflectionBinding(
             "binding-1",
             "group-1",
@@ -182,14 +188,37 @@ class ReflectionToolCallbackFactoryTest {
             List.of(),
             List.of(),
             List.of()));
-        when(reflectionService.executeRestReflection(eq("getWeather"), any(), eq("sandbox"), eq("alice")))
+        when(reflectionService.executeRestReflectionByUuid(eq("uuid-1"), any(), eq("sandbox"), eq("alice")))
             .thenReturn("{\"status\":\"ok\"}");
 
         String result = callback.call("{\"city\":\"London\",\"bindingName\":\"binding-2\"}");
 
         assertEquals("{\"status\":\"ok\"}", result);
-        verify(reflectionService).executeRestReflection(eq("getWeather"), any(), eq("sandbox"), eq("alice"));
+        verify(reflectionService).executeRestReflectionByUuid(eq("uuid-1"), any(), eq("sandbox"), eq("alice"));
         }
+
+    private static ReflectionGroup sampleGroup() {
+        long now = System.currentTimeMillis();
+        return new ReflectionGroup(
+                "group-1",
+                "emailgroup",
+                "Email Group",
+                "",
+                ReflectionType.REST,
+                "",
+                true,
+                List.of(),
+                List.of(),
+                ReflectionAuthenticationMode.NONE,
+                "",
+                List.of(),
+                "google",
+                "gmail",
+                "SNAPSHOT",
+                ArtifactStatus.SNAPSHOT,
+                now,
+                now);
+    }
 
     private static Reflection sampleReflection() {
         return new Reflection(

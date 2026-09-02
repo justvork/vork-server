@@ -6,6 +6,7 @@ import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiChatMessage.AttachmentRef;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.service.ChatService;
+import sh.vork.ai.request.RequestInformationService;
 import sh.vork.ai.slack.SlackSessionRegistry;
 import sh.vork.ai.slack.SlackSuspensionRenderer;
 import sh.vork.ai.telegram.TelegramChatResumptionService;
@@ -40,6 +41,7 @@ class SlackChatConsumerAttachmentForwardingTest {
         TelegramChatResumptionService resumptionService = mock(TelegramChatResumptionService.class);
         SlackSuspensionRenderer suspensionRenderer = mock(SlackSuspensionRenderer.class);
         SlackApiClient slackApiClient = mock(SlackApiClient.class);
+        RequestInformationService requestInformationService = mock(RequestInformationService.class);
         AudioTranscriptionService audioTranscriptionService = mock(AudioTranscriptionService.class);
         SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
 
@@ -51,6 +53,7 @@ class SlackChatConsumerAttachmentForwardingTest {
                 resumptionService,
                 suspensionRenderer,
                 slackApiClient,
+                requestInformationService,
                 new ObjectMapper(),
                 audioTranscriptionService,
                 sessionFileSystem);
@@ -83,7 +86,7 @@ class SlackChatConsumerAttachmentForwardingTest {
 
         SlackMessageConsumer.IncomingSlackMessage incoming = new SlackMessageConsumer.IncomingSlackMessage(
                 "cfg-1", "xoxb-token", "D123", "im", "U123", "zip", "1700000",
-                null, null, null, null, null);
+                null, null, null, null, null, null);
 
         consumer.process(incoming);
 
@@ -106,6 +109,7 @@ class SlackChatConsumerAttachmentForwardingTest {
         TelegramChatResumptionService resumptionService = mock(TelegramChatResumptionService.class);
         SlackSuspensionRenderer suspensionRenderer = mock(SlackSuspensionRenderer.class);
         SlackApiClient slackApiClient = mock(SlackApiClient.class);
+        RequestInformationService requestInformationService = mock(RequestInformationService.class);
         AudioTranscriptionService audioTranscriptionService = mock(AudioTranscriptionService.class);
         SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
 
@@ -117,6 +121,7 @@ class SlackChatConsumerAttachmentForwardingTest {
                 resumptionService,
                 suspensionRenderer,
                 slackApiClient,
+                requestInformationService,
                 new ObjectMapper(),
                 audioTranscriptionService,
                 sessionFileSystem);
@@ -143,7 +148,7 @@ class SlackChatConsumerAttachmentForwardingTest {
 
         SlackMessageConsumer.IncomingSlackMessage incoming = new SlackMessageConsumer.IncomingSlackMessage(
                 "cfg-1", "xoxb-token", "D123", "im", "U123", "", "1700000",
-                null, null, "https://slack.example/file", "text/plain", "test.txt");
+                null, null, null, "https://slack.example/file", "text/plain", "test.txt");
 
         consumer.process(incoming);
 

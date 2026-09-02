@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import sh.vork.channel.ChannelService;
 import sh.vork.notification.GlobalAddress;
 import sh.vork.notification.NotificationMediaType;
 import sh.vork.notification.NotificationProviderConfig;
@@ -40,6 +41,7 @@ public class SlackChannelRegistrationService {
 
     private final DatabaseRepository<NotificationProviderConfig> configRepo;
     private final DatabaseRepository<GlobalAddress>              globalAddressRepo;
+    private final ChannelService                                 channelService;
     
     /** registrationId → pending */
     private final ConcurrentHashMap<String, PendingChannelRegistration> byId   = new ConcurrentHashMap<>();
@@ -49,9 +51,11 @@ public class SlackChannelRegistrationService {
     public SlackChannelRegistrationService(
             DatabaseRepository<NotificationProviderConfig> configRepo,
             DatabaseRepository<GlobalAddress> globalAddressRepo,
+            ChannelService channelService,
             SlackApiClient slackApiClient) {
         this.configRepo       = configRepo;
         this.globalAddressRepo = globalAddressRepo;
+        this.channelService = channelService;
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -117,6 +121,7 @@ public class SlackChannelRegistrationService {
         if (pending.complete) return true; // idempotent
 
         String label = (channelName != null && !channelName.isBlank()) ? channelName : channelId;
+        channelService.assertChannelNameAvailable(label);
         GlobalAddress address = new GlobalAddress(
                 UUID.randomUUID().toString(),
                 configId,

@@ -18,6 +18,7 @@ public record SkillFrame(
         List<String> allowedTools,
         List<String> allowedTypes,
         Map<String, String> params,
+                List<String> runtimeBindingUuids,
         /**
          * Number of messages in the parent session at the moment this skill frame was pushed.
          * Used to slice the session history so the skill AI only sees messages from its own
@@ -25,4 +26,20 @@ public record SkillFrame(
          * before this field was introduced (treated as "use empty history").
          */
         Integer startMessageCount
-) {}
+) {
+        public SkillFrame {
+                if (runtimeBindingUuids == null) {
+                        runtimeBindingUuids = List.of();
+                }
+        }
+
+        public SkillFrame(String skillUuid,
+                                          String skillName,
+                                          String instructions,
+                                          List<String> allowedTools,
+                                          List<String> allowedTypes,
+                                          Map<String, String> params,
+                                          Integer startMessageCount) {
+                this(skillUuid, skillName, instructions, allowedTools, allowedTypes, params, List.of(), startMessageCount);
+        }
+}

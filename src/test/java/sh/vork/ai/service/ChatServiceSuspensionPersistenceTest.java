@@ -491,7 +491,7 @@ class ChatServiceSuspensionPersistenceTest {
         null);
     sessionRepo.save(initial);
 
-    when(aiService.generateWithHistory(org.mockito.ArgumentMatchers.<org.springframework.ai.chat.messages.Message>anyList(),
+    when(aiService.generateWithHistoryStrict(org.mockito.ArgumentMatchers.<org.springframework.ai.chat.messages.Message>anyList(),
         anyString(), any(AiProvider.class), anyString()))
         .thenAnswer(invocation -> {
             ToolExecutionContext.put(
@@ -564,12 +564,12 @@ class ChatServiceSuspensionPersistenceTest {
             null);
         sessionRepo.save(initial);
 
-        when(aiService.generateWithHistory(org.mockito.ArgumentMatchers.<org.springframework.ai.chat.messages.Message>anyList(),
+        when(aiService.generateWithHistoryStrict(org.mockito.ArgumentMatchers.<org.springframework.ai.chat.messages.Message>anyList(),
             anyString(), any(AiProvider.class), anyString()))
                 .thenThrow(new ToolSuspensionException("compileJavaType", "{\"source\":\"class Demo {}\"}"));
 
         // Ensure media path is not accidentally used in this scenario.
-        when(aiService.generateWithHistoryAndMedia(
+        when(aiService.generateWithHistoryAndMediaStrict(
             org.mockito.ArgumentMatchers.<org.springframework.ai.chat.messages.Message>anyList(),
             anyString(),
             org.mockito.ArgumentMatchers.<org.springframework.ai.content.Media>anyList(),

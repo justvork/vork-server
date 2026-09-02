@@ -1,5 +1,7 @@
 package sh.vork.oauth;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import java.util.List;
 import java.util.Map;
 import sh.vork.orm.DatabaseEntity;

@@ -35,6 +35,7 @@ import sh.vork.ai.config.AiConfig;
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.SessionOriginMode;
+import sh.vork.ai.exception.CriticalTurnFailureException;
 import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.ai.provider.AiChatClientFactory;
 import sh.vork.ai.registry.Hidden;
@@ -460,10 +461,25 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 return generateWithHistory(conversationHistory, newUserMessage, provider, null);
         }
 
+        public String generateWithHistoryStrict(List<Message> conversationHistory,
+                                                String newUserMessage,
+                                                AiProvider provider,
+                                                String modelOverride) {
+                return generateWithHistory(conversationHistory, newUserMessage, provider, modelOverride, false);
+        }
+
         public String generateWithHistory(List<Message> conversationHistory,
                                                                           String newUserMessage,
                                                                           AiProvider provider,
                                                                           String modelOverride) {
+                return generateWithHistory(conversationHistory, newUserMessage, provider, modelOverride, true);
+        }
+
+        public String generateWithHistory(List<Message> conversationHistory,
+                                          String newUserMessage,
+                                          AiProvider provider,
+                                          String modelOverride,
+                                          boolean allowModelFallback) {
         ChatClient base = resolveClient(provider);
 
         String promptPreview = sanitizeInputForLog(newUserMessage);
@@ -481,7 +497,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         String effectiveUser   = withBackgroundDirective(newUserMessage, provider);
         String response = callWithFallback(
                 builder -> builder.build().prompt().messages(historyArray).user(effectiveUser).call().content(),
-                base, provider, modelOverride);
+                base, provider, modelOverride, allowModelFallback);
 
         log.info("Chat response received [provider={}, length={}]",
                 provider, response == null ? 0 : response.length());
@@ -512,11 +528,28 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 return generateWithHistoryAndMedia(conversationHistory, userText, media, provider, null);
         }
 
+        public String generateWithHistoryAndMediaStrict(List<Message> conversationHistory,
+                                                        String userText,
+                                                        List<Media> media,
+                                                        AiProvider provider,
+                                                        String modelOverride) {
+                return generateWithHistoryAndMedia(conversationHistory, userText, media, provider, modelOverride, false);
+        }
+
         public String generateWithHistoryAndMedia(List<Message> conversationHistory,
                                                                                           String userText,
                                                                                           List<Media> media,
                                                                                           AiProvider provider,
                                                                                           String modelOverride) {
+                return generateWithHistoryAndMedia(conversationHistory, userText, media, provider, modelOverride, true);
+        }
+
+        public String generateWithHistoryAndMedia(List<Message> conversationHistory,
+                                                  String userText,
+                                                  List<Media> media,
+                                                  AiProvider provider,
+                                                  String modelOverride,
+                                                  boolean allowModelFallback) {
         ChatClient base = resolveClient(provider);
 
         String effectiveUserText = (userText == null || userText.isBlank())
@@ -541,7 +574,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         Message[] allMsgsArray = allMessages.toArray(Message[]::new);
         String response = callWithFallback(
                 builder -> builder.build().prompt().messages(allMsgsArray).call().content(),
-                base, provider, modelOverride);
+                base, provider, modelOverride, allowModelFallback);
 
         log.info("Chat response with media received [provider={}, length={}]",
                 provider, response == null ? 0 : response.length());
@@ -984,8 +1017,13 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 log.debug("Merged {} session-scoped tool(s) [session={}]", added, sessionUuid);
                         }
                 }
-                // Strict visibility mode: utility callbacks (recordProgress/memory/getDateTime/think)
-                // are not auto-injected. They must be attached via agent allowedTools or session tools.
+
+                // Hidden utility tools are global and must always be available in every session.
+                addUtilityToolIfMissing(merged, presentNames, thinkCallback);
+                addUtilityToolIfMissing(merged, presentNames, recordProgressCallback);
+                addUtilityToolIfMissing(merged, presentNames, memoryCallback);
+                addUtilityToolIfMissing(merged, presentNames, getDateTimeCallback);
+
                 tools = merged.toArray(ToolCallback[]::new);
 
                 // Wrap every tool callback with the secret substitutor so that {{KEY}} tokens
@@ -1054,13 +1092,14 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         private String callWithFallback(Function<ChatClient.Builder, String> callFn,
                                         ChatClient base,
                                         AiProvider provider) {
-                return callWithFallback(callFn, base, provider, null);
+                return callWithFallback(callFn, base, provider, null, true);
         }
 
         private String callWithFallback(Function<ChatClient.Builder, String> callFn,
                                         ChatClient base,
                                         AiProvider provider,
-                                        String modelOverride) {
+                                        String modelOverride,
+                                        boolean allowModelFallback) {
                 try {
                         if (modelOverride != null && !modelOverride.isBlank()) {
                                 return callFn.apply(buildMutatedClientWithModel(base, modelOverride));
@@ -1071,6 +1110,13 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         String fallback = STABLE_FALLBACK_MODELS.getOrDefault(provider, "");
                         String reason = isThoughtSignatureError(e) ? "thought_signature not preserved (thinking model)"
                                                                     : "model unavailable/deprecated";
+                        if (!allowModelFallback) {
+                                log.error("Critical model compatibility failure (fallback disabled) [provider={}, reason={}, originalError={}]",
+                                        provider, reason, e.getMessage());
+                                throw new CriticalTurnFailureException(
+                                        "Critical AI turn failure: model compatibility error. Processing stopped.",
+                                        e);
+                        }
                         log.warn("Model fallback triggered for provider {} [reason={}, fallback=\"{}\", originalError={}]",
                                 provider, reason, fallback, e.getMessage());
                         if (fallback.isBlank()) throw e;
@@ -1136,11 +1182,13 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         // Skills exit via FINISHED_TURN — completeSkillExecution is no longer injected.
                         // Resolve hard tools from the secured map
                         List<ToolCallback> frameTools = new ArrayList<>();
+                        java.util.Set<String> frameNames = new java.util.HashSet<>();
                         List<String> unresolved = new ArrayList<>();
                         for (String name : skillToolNames) {
                                 ToolCallback cb = securedToolCallbackMap.get(name);
                                 if (cb != null) {
                                         frameTools.add(cb);
+                                        frameNames.add(cb.getToolDefinition().name());
                                 } else {
                                         unresolved.add(name);
                                 }
@@ -1151,9 +1199,6 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 frameSkill,
                                 activeSkillStackUuids(session));
                         if (!subSkills.isEmpty()) {
-                                java.util.Set<String> frameNames = frameTools.stream()
-                                        .map(t -> t.getToolDefinition().name())
-                                        .collect(Collectors.toCollection(java.util.HashSet::new));
                                 int subInjected = 0;
                                 for (sh.vork.skill.Skill subSkill : subSkills) {
                                         ToolCallback subTool = skillToolCallbackFactory.create(subSkill);
@@ -1172,8 +1217,35 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 log.warn("Skill frame has unresolved hard tools [session={}, skill={}, unresolved={}]",
                                         sessionUuid, topFrame.skillName(), unresolved);
                         }
+
+                        int reflectionInjected = 0;
+                        for (ResolvedReflectionBindings resolvedBinding : resolveEffectiveReflectionBindings(session, true)) {
+                                ToolCallback reflectionTool = reflectionToolCallbackFactory.create(
+                                        resolvedBinding.reflection(),
+                                        resolvedBinding.bindings());
+                                if (frameNames.add(reflectionTool.getToolDefinition().name())) {
+                                        frameTools.add(reflectionTool);
+                                        reflectionInjected++;
+                                }
+                        }
+
+                        int mcpInjected = 0;
+                        if (mcpRuntimeToolService != null) {
+                                List<String> effectiveMcpBindingUuids = resolveEffectiveMcpBindingUuids(session, true);
+                                if (!effectiveMcpBindingUuids.isEmpty()) {
+                                        for (ToolCallback mcpTool : mcpRuntimeToolService.listToolCallbacksForBindings(effectiveMcpBindingUuids)) {
+                                                if (frameNames.add(mcpTool.getToolDefinition().name())) {
+                                                        frameTools.add(mcpTool);
+                                                        mcpInjected++;
+                                                }
+                                        }
+                                }
+                        }
+
                         log.debug("Skill frame tool filtering [session={}, allowed={}, resolved={}]",
                                 sessionUuid, skillToolNames.size(), frameTools.size());
+                        log.debug("Skill frame dynamic tools injected [session={}, skill={}, reflections={}, mcp={}]",
+                                sessionUuid, topFrame.skillName(), reflectionInjected, mcpInjected);
                         return frameTools.toArray(ToolCallback[]::new);
                 }
 
@@ -1354,6 +1426,9 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 skillBindingCount += activeSkill.bindingUuids() == null ? 0 : activeSkill.bindingUuids().size();
                                 mergeBindingUuids(assignmentMap, allReflections, allBindings, activeSkill.bindingUuids());
                         }
+                        if (top != null && top.runtimeBindingUuids() != null && !top.runtimeBindingUuids().isEmpty()) {
+                                mergeBindingUuids(assignmentMap, allReflections, allBindings, top.runtimeBindingUuids());
+                        }
                 } else {
                         LinkedHashSet<String> rootSkillUuids = new LinkedHashSet<>();
                         if (template != null && template.skillUuids() != null) {
@@ -1387,9 +1462,9 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
 
                 List<ResolvedReflectionBindings> resolved = new ArrayList<>();
                 for (Map.Entry<String, LinkedHashSet<String>> entry : assignmentMap.entrySet()) {
-                        Reflection reflection = reflectionService.getReflectionById(entry.getKey());
+                        Reflection reflection = reflectionService.getReflection(entry.getKey());
                         if (reflection == null) {
-                                log.warn("Skipping reflection assignment: unknown reflection ID [id={}]", entry.getKey());
+                                log.warn("Skipping reflection assignment: unknown reflection UUID [uuid={}]", entry.getKey());
                                 continue;
                         }
 
@@ -1502,6 +1577,13 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                         }
                                 }
                         }
+                        if (top != null && top.runtimeBindingUuids() != null) {
+                                for (String bindingUuid : top.runtimeBindingUuids()) {
+                                        if (bindingUuid != null && !bindingUuid.isBlank()) {
+                                                resolved.add(bindingUuid.trim());
+                                        }
+                                }
+                        }
                 }
 
                 return List.copyOf(resolved);
@@ -1601,11 +1683,11 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         }
 
                         for (Reflection reflection : targetReflections) {
-                                if (reflection == null || reflection.id() == null || reflection.id().isBlank()) {
+                                if (reflection == null || reflection.uuid() == null || reflection.uuid().isBlank()) {
                                         continue;
                                 }
                                 target
-                                        .computeIfAbsent(reflection.id(), ignored -> new LinkedHashSet<>())
+                                        .computeIfAbsent(reflection.uuid(), ignored -> new LinkedHashSet<>())
                                         .add(binding.uuid());
                         }
                 }
@@ -1834,10 +1916,26 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
 
                 // think is always available.
                 names.add("think");
+                names.add("recordProgress");
                 names.add("memory");
                 names.add("getDateTime");
 
                 return Set.copyOf(names);
+        }
+
+        private static void addUtilityToolIfMissing(List<ToolCallback> merged,
+                                                    Set<String> presentNames,
+                                                    ToolCallback utilityCallback) {
+                if (utilityCallback == null) {
+                        return;
+                }
+                String name = utilityCallback.getToolDefinition().name();
+                if (name == null || name.isBlank()) {
+                        return;
+                }
+                if (presentNames.add(name)) {
+                        merged.add(utilityCallback);
+                }
         }
 
         private ToolCallback resolveAssignableToolCallback(String toolId) {
@@ -1914,8 +2012,10 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         }
                 }
 
+                boolean inSkillFrame = session.skillStack() != null && !session.skillStack().isEmpty();
+
                 // Skill-frame context: dynamic sub-skill tools are visible.
-                if (session.skillStack() != null && !session.skillStack().isEmpty()) {
+                if (inSkillFrame) {
                         sh.vork.skill.SkillFrame topFrame = session.skillStack().getLast();
                         sh.vork.skill.Skill frameSkill = skillRepo.get(topFrame.skillUuid());
                         for (sh.vork.skill.Skill sub : resolveEffectiveSubSkills(
@@ -1927,30 +2027,29 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                         return callback;
                                 }
                         }
-                        return null;
                 }
 
                 // Parent-agent context: root attached skills + effective sub-skills are visible.
-                LinkedHashSet<String> roots = new LinkedHashSet<>();
-                if (session.getActiveAgentTemplateId() != null) {
-                        AgentTemplate template = agentTemplateRepo.get(session.getActiveAgentTemplateId());
-                        if (template != null && template.skillUuids() != null) {
-                                roots.addAll(template.skillUuids());
+                if (!inSkillFrame) {
+                        LinkedHashSet<String> roots = new LinkedHashSet<>();
+                        if (session.getActiveAgentTemplateId() != null) {
+                                AgentTemplate template = agentTemplateRepo.get(session.getActiveAgentTemplateId());
+                                if (template != null && template.skillUuids() != null) {
+                                        roots.addAll(template.skillUuids());
+                                }
+                        }
+                        if (session.sessionSkillUuids() != null) {
+                                roots.addAll(session.sessionSkillUuids());
+                        }
+
+                        for (sh.vork.skill.Skill skill : expandRootSkillsWithEffectiveSubs(List.copyOf(roots))) {
+                                if (skill == null) continue;
+                                ToolCallback callback = skillToolCallbackFactory.create(skill);
+                                if (toolName.equals(callback.getToolDefinition().name())) {
+                                        return callback;
+                                }
                         }
                 }
-                if (session.sessionSkillUuids() != null) {
-                        roots.addAll(session.sessionSkillUuids());
-                }
-
-                for (sh.vork.skill.Skill skill : expandRootSkillsWithEffectiveSubs(List.copyOf(roots))) {
-                        if (skill == null) continue;
-                        ToolCallback callback = skillToolCallbackFactory.create(skill);
-                        if (toolName.equals(callback.getToolDefinition().name())) {
-                                return callback;
-                        }
-                }
-
-                boolean inSkillFrame = session.skillStack() != null && !session.skillStack().isEmpty();
 
                 // Reflection tools are injected dynamically from effective binding assignments.
                 List<ResolvedReflectionBindings> effectiveReflectionBindings =
@@ -2109,6 +2208,18 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         }
 
         private String describeSkillParameter(sh.vork.skill.SkillParameter parameter) {
+                if (parameter != null && parameter.type() != null) {
+                        String t = parameter.type().trim().toLowerCase();
+                        boolean primitive = t.equals("string") || t.equals("text") || t.equals("int")
+                                || t.equals("double") || t.equals("boolean") || t.equals("date")
+                                || t.equals("timestamp") || t.equals("secret");
+                        if (!primitive) {
+                                String suffix = parameter.description() != null && !parameter.description().isBlank()
+                                        ? " " + parameter.description()
+                                        : "";
+                                return "Binding VID implementing contract '" + parameter.type() + "'." + suffix;
+                        }
+                }
                 if (parameter.description() != null && !parameter.description().isBlank()) {
                         return parameter.description();
                 }

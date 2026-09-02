@@ -1,5 +1,7 @@
 package sh.vork.github.contribution;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
@@ -101,7 +103,7 @@ public class ContributionLifecyclePromotionService {
             }
             String jsonPath = "agents/" + agent.groupId() + "/" + agent.artifactId() + "/" + agent.version() + "/agent.json";
 
-            if (agent.artifactStatus() == sh.vork.ai.agent.ArtifactStatus.SUBMITTED) {
+            if (agent.artifactStatus() == sh.vork.artifact.ArtifactStatus.SUBMITTED) {
                 if (isRejectedPr("agent", agent.uuid())) {
                     AgentTemplate rejected = new AgentTemplate(
                             agent.uuid(),
@@ -118,7 +120,7 @@ public class ContributionLifecyclePromotionService {
                             agent.groupId(),
                             agent.artifactId(),
                             agent.version(),
-                            sh.vork.ai.agent.ArtifactStatus.REJECTED);
+                            sh.vork.artifact.ArtifactStatus.REJECTED);
                     agentRepository.save(rejected);
                     agentsToRejected.incrementAndGet();
                     log.info("Agent marked REJECTED after PR closed without merge [id={}]", agent.uuid());
@@ -140,7 +142,7 @@ public class ContributionLifecyclePromotionService {
                             agent.groupId(),
                             agent.artifactId(),
                             agent.version(),
-                            sh.vork.ai.agent.ArtifactStatus.STAGED);
+                            sh.vork.artifact.ArtifactStatus.STAGED);
                     agentRepository.save(staged);
                     agentsToStaged.incrementAndGet();
                     log.debug("Step 1: agent promoted to STAGED [id={}]", agent.uuid());
@@ -148,7 +150,7 @@ public class ContributionLifecyclePromotionService {
                 return;
             }
 
-            if (agent.artifactStatus() == sh.vork.ai.agent.ArtifactStatus.STAGED
+            if (agent.artifactStatus() == sh.vork.artifact.ArtifactStatus.STAGED
                     && safePathExists(MAIN_BRANCH, jsonPath)) {
                 AgentTemplate published = new AgentTemplate(
                         agent.uuid(),
@@ -165,7 +167,7 @@ public class ContributionLifecyclePromotionService {
                         agent.groupId(),
                         agent.artifactId(),
                         agent.version(),
-                        sh.vork.ai.agent.ArtifactStatus.PUBLISHED);
+                        sh.vork.artifact.ArtifactStatus.PUBLISHED);
                 agentRepository.save(published);
                 agentsToPublished.incrementAndGet();
                 log.debug("Step 2: agent promoted to PUBLISHED [id={}]", agent.uuid());
@@ -178,7 +180,7 @@ public class ContributionLifecyclePromotionService {
             }
             String jsonPath = "jobs/" + job.groupId() + "/" + job.artifactId() + "/" + job.version() + "/job.json";
 
-            if (job.artifactStatus() == sh.vork.scheduling.domain.ArtifactStatus.SUBMITTED) {
+            if (job.artifactStatus() == sh.vork.artifact.ArtifactStatus.SUBMITTED) {
                 if (isRejectedPr("job", job.id())) {
                     ScheduledJob rejected = new ScheduledJob(
                             job.id(),
@@ -204,7 +206,7 @@ public class ContributionLifecyclePromotionService {
                             job.groupId(),
                             job.artifactId(),
                             job.version(),
-                            sh.vork.scheduling.domain.ArtifactStatus.REJECTED);
+                            sh.vork.artifact.ArtifactStatus.REJECTED);
                     jobRepository.save(rejected);
                     jobsToRejected.incrementAndGet();
                     log.info("Job marked REJECTED after PR closed without merge [id={}]", job.id());
@@ -235,7 +237,7 @@ public class ContributionLifecyclePromotionService {
                             job.groupId(),
                             job.artifactId(),
                             job.version(),
-                            sh.vork.scheduling.domain.ArtifactStatus.STAGED);
+                            sh.vork.artifact.ArtifactStatus.STAGED);
                     jobRepository.save(staged);
                     jobsToStaged.incrementAndGet();
                     log.debug("Step 3: job promoted to STAGED [id={}]", job.id());
@@ -243,7 +245,7 @@ public class ContributionLifecyclePromotionService {
                 return;
             }
 
-            if (job.artifactStatus() == sh.vork.scheduling.domain.ArtifactStatus.STAGED
+            if (job.artifactStatus() == sh.vork.artifact.ArtifactStatus.STAGED
                     && safePathExists(MAIN_BRANCH, jsonPath)) {
                 ScheduledJob published = new ScheduledJob(
                         job.id(),
@@ -269,7 +271,7 @@ public class ContributionLifecyclePromotionService {
                         job.groupId(),
                         job.artifactId(),
                         job.version(),
-                        sh.vork.scheduling.domain.ArtifactStatus.PUBLISHED);
+                        sh.vork.artifact.ArtifactStatus.PUBLISHED);
                 jobRepository.save(published);
                 jobsToPublished.incrementAndGet();
                 log.debug("Step 4: job promoted to PUBLISHED [id={}]", job.id());
@@ -282,7 +284,7 @@ public class ContributionLifecyclePromotionService {
             }
             String jsonPath = "surfaces/" + surface.groupId() + "/" + surface.artifactId() + "/" + surface.version() + "/surface.json";
 
-            if (surface.artifactStatus() == sh.vork.surface.ArtifactStatus.SUBMITTED) {
+            if (surface.artifactStatus() == sh.vork.artifact.ArtifactStatus.SUBMITTED) {
                 if (isRejectedPr("surface", surface.uuid())) {
                     Surface rejected = new Surface(
                             surface.uuid(),
@@ -301,7 +303,7 @@ public class ContributionLifecyclePromotionService {
                             surface.groupId(),
                             surface.artifactId(),
                             surface.version(),
-                            sh.vork.surface.ArtifactStatus.REJECTED,
+                            sh.vork.artifact.ArtifactStatus.REJECTED,
                             surface.createdAt(),
                             System.currentTimeMillis());
                     surfaceRepository.save(rejected);
@@ -327,7 +329,7 @@ public class ContributionLifecyclePromotionService {
                             surface.groupId(),
                             surface.artifactId(),
                             surface.version(),
-                            sh.vork.surface.ArtifactStatus.STAGED,
+                            sh.vork.artifact.ArtifactStatus.STAGED,
                             surface.createdAt(),
                             System.currentTimeMillis());
                     surfaceRepository.save(staged);
@@ -337,7 +339,7 @@ public class ContributionLifecyclePromotionService {
                 return;
             }
 
-            if (surface.artifactStatus() == sh.vork.surface.ArtifactStatus.STAGED
+            if (surface.artifactStatus() == sh.vork.artifact.ArtifactStatus.STAGED
                     && safePathExists(MAIN_BRANCH, jsonPath)) {
                 Surface published = new Surface(
                         surface.uuid(),
@@ -356,7 +358,7 @@ public class ContributionLifecyclePromotionService {
                         surface.groupId(),
                         surface.artifactId(),
                         surface.version(),
-                        sh.vork.surface.ArtifactStatus.PUBLISHED,
+                        sh.vork.artifact.ArtifactStatus.PUBLISHED,
                         surface.createdAt(),
                         System.currentTimeMillis());
                 surfaceRepository.save(published);
@@ -371,7 +373,7 @@ public class ContributionLifecyclePromotionService {
             }
             String jsonPath = "skills/" + group.groupId() + "/" + group.artifactId() + "/" + group.version() + "/skills.json";
 
-            if (group.artifactStatus() == sh.vork.skill.ArtifactStatus.SUBMITTED) {
+            if (group.artifactStatus() == sh.vork.artifact.ArtifactStatus.SUBMITTED) {
                 if (isRejectedPr("skill", group.uuid())) {
                     SkillGroup rejected = new SkillGroup(
                             group.uuid(),
@@ -382,7 +384,7 @@ public class ContributionLifecyclePromotionService {
                             group.groupId(),
                             group.artifactId(),
                             group.version(),
-                            sh.vork.skill.ArtifactStatus.REJECTED,
+                            sh.vork.artifact.ArtifactStatus.REJECTED,
                             group.createdAt(),
                             System.currentTimeMillis());
                     skillGroupRepository.save(rejected);
@@ -400,7 +402,7 @@ public class ContributionLifecyclePromotionService {
                             group.groupId(),
                             group.artifactId(),
                             group.version(),
-                            sh.vork.skill.ArtifactStatus.STAGED,
+                            sh.vork.artifact.ArtifactStatus.STAGED,
                             group.createdAt(),
                             System.currentTimeMillis());
                     skillGroupRepository.save(staged);
@@ -410,7 +412,7 @@ public class ContributionLifecyclePromotionService {
                 return;
             }
 
-            if (group.artifactStatus() == sh.vork.skill.ArtifactStatus.STAGED
+            if (group.artifactStatus() == sh.vork.artifact.ArtifactStatus.STAGED
                     && safePathExists(MAIN_BRANCH, jsonPath)) {
                 SkillGroup published = new SkillGroup(
                         group.uuid(),
@@ -421,7 +423,7 @@ public class ContributionLifecyclePromotionService {
                         group.groupId(),
                         group.artifactId(),
                         group.version(),
-                        sh.vork.skill.ArtifactStatus.PUBLISHED,
+                        sh.vork.artifact.ArtifactStatus.PUBLISHED,
                         group.createdAt(),
                         System.currentTimeMillis());
                 skillGroupRepository.save(published);
@@ -436,7 +438,7 @@ public class ContributionLifecyclePromotionService {
             }
             String jsonPath = "reflections/" + group.groupId() + "/" + group.artifactId() + "/" + group.version() + "/reflections.json";
 
-            if (group.artifactStatus() == sh.vork.reflection.ArtifactStatus.SUBMITTED) {
+            if (group.artifactStatus() == sh.vork.artifact.ArtifactStatus.SUBMITTED) {
                 if (isRejectedPr("reflection", group.uuid())) {
                     ReflectionGroup rejected = new ReflectionGroup(
                             group.uuid(),
@@ -453,7 +455,7 @@ public class ContributionLifecyclePromotionService {
                             group.groupId(),
                             group.artifactId(),
                             group.version(),
-                            sh.vork.reflection.ArtifactStatus.REJECTED,
+                            sh.vork.artifact.ArtifactStatus.REJECTED,
                             group.createdAt(),
                             System.currentTimeMillis());
                     reflectionGroupRepository.save(rejected);
@@ -477,7 +479,7 @@ public class ContributionLifecyclePromotionService {
                             group.groupId(),
                             group.artifactId(),
                             group.version(),
-                            sh.vork.reflection.ArtifactStatus.STAGED,
+                            sh.vork.artifact.ArtifactStatus.STAGED,
                             group.createdAt(),
                             System.currentTimeMillis());
                     reflectionGroupRepository.save(staged);
@@ -487,7 +489,7 @@ public class ContributionLifecyclePromotionService {
                 return;
             }
 
-            if (group.artifactStatus() == sh.vork.reflection.ArtifactStatus.STAGED
+            if (group.artifactStatus() == sh.vork.artifact.ArtifactStatus.STAGED
                     && safePathExists(MAIN_BRANCH, jsonPath)) {
                 ReflectionGroup published = new ReflectionGroup(
                         group.uuid(),
@@ -504,7 +506,7 @@ public class ContributionLifecyclePromotionService {
                         group.groupId(),
                         group.artifactId(),
                         group.version(),
-                        sh.vork.reflection.ArtifactStatus.PUBLISHED,
+                        sh.vork.artifact.ArtifactStatus.PUBLISHED,
                         group.createdAt(),
                         System.currentTimeMillis());
                 reflectionGroupRepository.save(published);
@@ -519,7 +521,7 @@ public class ContributionLifecyclePromotionService {
             }
             String jsonPath = "oauth-templates/" + template.clientName() + ".json";
 
-            if (template.artifactStatus() == sh.vork.oauth.ArtifactStatus.SUBMITTED) {
+            if (template.artifactStatus() == sh.vork.artifact.ArtifactStatus.SUBMITTED) {
                 if (isRejectedPr("oauth-template", template.uuid())) {
                     OAuthTemplateEntity rejected = new OAuthTemplateEntity(
                             template.uuid(),
@@ -530,7 +532,7 @@ public class ContributionLifecyclePromotionService {
                             template.tokenEndpoint(),
                             template.scopes(),
                             template.authorizationParameters(),
-                            sh.vork.oauth.ArtifactStatus.REJECTED,
+                            sh.vork.artifact.ArtifactStatus.REJECTED,
                             template.createdAt(),
                             System.currentTimeMillis());
                     oauthTemplateRepository.save(rejected);
@@ -548,7 +550,7 @@ public class ContributionLifecyclePromotionService {
                             template.tokenEndpoint(),
                             template.scopes(),
                             template.authorizationParameters(),
-                            sh.vork.oauth.ArtifactStatus.PUBLISHED,
+                            sh.vork.artifact.ArtifactStatus.PUBLISHED,
                             template.createdAt(),
                             System.currentTimeMillis());
                     oauthTemplateRepository.save(published);
@@ -566,7 +568,7 @@ public class ContributionLifecyclePromotionService {
                             template.tokenEndpoint(),
                             template.scopes(),
                             template.authorizationParameters(),
-                            sh.vork.oauth.ArtifactStatus.STAGED,
+                            sh.vork.artifact.ArtifactStatus.STAGED,
                             template.createdAt(),
                             System.currentTimeMillis());
                     oauthTemplateRepository.save(staged);
@@ -576,7 +578,7 @@ public class ContributionLifecyclePromotionService {
                 return;
             }
 
-            if (template.artifactStatus() == sh.vork.oauth.ArtifactStatus.STAGED
+            if (template.artifactStatus() == sh.vork.artifact.ArtifactStatus.STAGED
                     && safePathExists(MAIN_BRANCH, jsonPath)) {
                 OAuthTemplateEntity published = new OAuthTemplateEntity(
                         template.uuid(),
@@ -587,7 +589,7 @@ public class ContributionLifecyclePromotionService {
                         template.tokenEndpoint(),
                         template.scopes(),
                         template.authorizationParameters(),
-                        sh.vork.oauth.ArtifactStatus.PUBLISHED,
+                        sh.vork.artifact.ArtifactStatus.PUBLISHED,
                         template.createdAt(),
                         System.currentTimeMillis());
                 oauthTemplateRepository.save(published);

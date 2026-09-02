@@ -40,6 +40,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.security.AuthorizationRuleEngine;
 import sh.vork.ai.security.LoggedToolCallback;
+import sh.vork.ai.security.SecuredToolCallback;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
 import sh.vork.scheduling.service.SystemBackgroundAuthentication;
@@ -208,7 +209,7 @@ public class TelegramChatResumptionService {
             String token;
             try {
                 token = toolResponseDataForAction(normalizedAction, conversationFields,
-                        toolName, executionArgumentsJson);
+                        toolName, toolCallId, executionArgumentsJson);
             } catch (ToolSuspensionException ex) {
                 // Tool suspended again before producing a result
                 return saveAndRethrow(session, ex, toolCallId, argumentsJson);
@@ -289,7 +290,6 @@ public class TelegramChatResumptionService {
                     System.currentTimeMillis(), null, null, null, null));
 
             sessionRepo.save(withMessages(session, updated, AiSessionStatus.RUNNING));
-            authorizationRuleEngine.removeUseOnceRule("pending-id");
             chatService.maybeGenerateSessionName(sessionUuid);
 
             log.info("Telegram resumption completed [session={}, responseLength={}]",
@@ -409,7 +409,7 @@ public class TelegramChatResumptionService {
             String token;
             try {
                 token = toolResponseDataForAction(normalizedAction, conversationFields,
-                        toolName, executionArgumentsJson);
+                        toolName, toolCallId, executionArgumentsJson);
             } catch (ToolSuspensionException ex) {
                 saveAndRethrow(session, ex, toolCallId, argumentsJson);
                 throw ex; // unreachable, but satisfies compiler
@@ -486,7 +486,6 @@ public class TelegramChatResumptionService {
                                            String toolName, String toolCallId) {
         switch (action) {
             case "ONCE", "ALLOW_ONCE" -> {
-                authorizationRuleEngine.addUseOnceRule("pending-id");
                 authorizationRuleEngine.addUseOnceRule(toolCallId);
             }
             case "SESSION", "ALLOW_SESSION" -> authorizationRuleEngine.addTemporaryUserRule(username, toolName);
@@ -508,11 +507,11 @@ public class TelegramChatResumptionService {
     }
 
     private String toolResponseDataForAction(String action, Map<String, String> fields,
-                                              String toolName, String argumentsJson) {
+                                              String toolName, String toolCallId, String argumentsJson) {
         return switch (action) {
             case "ONCE", "ALLOW_ONCE", "SESSION", "ALLOW_SESSION", "ALWAYS", "ALLOW_ALWAYS",
                     "SAVE", "CONTINUE", "SUBMIT" -> {
-                String result = executeTool(toolName, argumentsJson);
+                String result = executeTool(toolName, toolCallId, argumentsJson);
                 try {
                     objectMapper.readValue(result, new TypeReference<Map<String, Object>>() {});
                     yield result;
@@ -527,10 +526,14 @@ public class TelegramChatResumptionService {
         };
     }
 
-    private String executeTool(String toolName, String argumentsJson) {
+    private String executeTool(String toolName, String toolCallId, String argumentsJson) {
         ToolCallback callback = toolCallbacksByName.get(toolName);
         if (callback == null) {
             throw new IllegalStateException("No tool callback for: " + toolName);
+        }
+        Object previousToolCallId = ToolExecutionContext.get(SecuredToolCallback.CURRENT_TOOL_CALL_ID_CONTEXT_KEY);
+        if (toolCallId != null && !toolCallId.isBlank()) {
+            ToolExecutionContext.put(SecuredToolCallback.CURRENT_TOOL_CALL_ID_CONTEXT_KEY, toolCallId);
         }
         try {
             return callback.call(argumentsJson);
@@ -540,6 +543,12 @@ public class TelegramChatResumptionService {
             suspension = consumePendingToolSuspension();
             if (suspension != null) throw suspension;
             throw ex;
+        } finally {
+            if (previousToolCallId == null) {
+                ToolExecutionContext.remove(SecuredToolCallback.CURRENT_TOOL_CALL_ID_CONTEXT_KEY);
+            } else {
+                ToolExecutionContext.put(SecuredToolCallback.CURRENT_TOOL_CALL_ID_CONTEXT_KEY, previousToolCallId);
+            }
         }
     }
 

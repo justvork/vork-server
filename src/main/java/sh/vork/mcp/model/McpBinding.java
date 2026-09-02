@@ -1,7 +1,7 @@
 package sh.vork.mcp.model;
 
 import sh.vork.orm.DatabaseEntity;
-import sh.vork.reflection.ArtifactStatus;
+import sh.vork.artifact.ArtifactStatus;
 
 /**
  * Binding configuration for one MCP server endpoint.

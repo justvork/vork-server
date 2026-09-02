@@ -1,5 +1,7 @@
 package sh.vork.ai.service;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -12,6 +14,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.AfterEach;
@@ -29,6 +32,13 @@ import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.memory.SessionEnvironmentService;
+import sh.vork.reflection.Reflection;
+import sh.vork.reflection.ReflectionAuthenticationMode;
+import sh.vork.reflection.ReflectionBinding;
+import sh.vork.reflection.ReflectionGroup;
+import sh.vork.reflection.ReflectionService;
+import sh.vork.reflection.ReflectionToolCallbackFactory;
+import sh.vork.reflection.ReflectionType;
 import sh.vork.security.UserService;
 import sh.vork.security.VorkUser;
 import sh.vork.skill.SkillFrame;
@@ -265,6 +275,199 @@ class AiOrchestrationServicePromptHydrationTest {
         assertTrue(names.contains("getTypeSchema"));
         assertTrue(names.contains("listEnumValues"));
         assertFalse(names.contains("compileJavaType"));
+    }
+
+        @Test
+        void resolveFilteredToolCallbacks_whenSkillFrameAndSessionBinding_injectsReflectionTools() throws Exception {
+        SessionEnvironmentService envService = mock(SessionEnvironmentService.class);
+
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<AiSession> sessionRepo = mock(DatabaseRepository.class);
+        AiSession session = new AiSession(
+            "session-skill-binding-1",
+            "GEMINI",
+            SessionOriginMode.WEB,
+            "tester",
+            "Skill Binding Session",
+            System.currentTimeMillis(),
+            0,
+            List.of(),
+            Map.of("SESSION_REFLECTION_BINDING_UUIDS", "binding-1"),
+            AiSessionStatus.RUNNING,
+            null,
+            null,
+            List.of(new SkillFrame(
+                "skill-tools-1",
+                "Skill Tools",
+                "Do email work",
+                List.of(),
+                List.of(),
+                Map.of(),
+                0)),
+            List.of(),
+            List.of());
+        when(sessionRepo.get("session-skill-binding-1")).thenReturn(session);
+
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<sh.vork.skill.Skill> skillRepo = mock(DatabaseRepository.class);
+        when(skillRepo.get("skill-tools-1")).thenReturn(null);
+
+        ReflectionService reflectionService = mock(ReflectionService.class);
+        ReflectionToolCallbackFactory reflectionToolCallbackFactory = mock(ReflectionToolCallbackFactory.class);
+
+        long now = System.currentTimeMillis();
+        ReflectionGroup group = new ReflectionGroup(
+            "group-1",
+            "email",
+            "Email",
+            "",
+            ReflectionType.REST,
+            "",
+            true,
+            List.of(),
+            List.of(),
+            ReflectionAuthenticationMode.NONE,
+            "",
+            List.of(),
+            "mail",
+            "email",
+            "SNAPSHOT",
+            sh.vork.artifact.ArtifactStatus.SNAPSHOT,
+            now,
+            now);
+        Reflection bindingAnchor = new Reflection(
+            "anchor-1",
+            "anchor",
+            "Anchor",
+            "",
+            "group-1",
+            List.of(),
+            "GET",
+            "",
+            Map.of(),
+            Map.of(),
+            "",
+            "application/json",
+            "application/json",
+            "",
+            1L,
+            now,
+            now);
+        Reflection reflection = new Reflection(
+            "reflection-1",
+            "readMessage",
+            "Read Message",
+            "",
+            "group-1",
+            List.of(),
+            "GET",
+            "",
+            Map.of(),
+            Map.of(),
+            "",
+            "application/json",
+            "application/json",
+            "",
+            1L,
+            now,
+            now);
+        ReflectionBinding binding = new ReflectionBinding(
+            "binding-1",
+            "anchor-1",
+            "gmail",
+            "",
+            Map.of(),
+            1L,
+            now,
+            now);
+
+        when(reflectionService.listReflections()).thenReturn(List.of(reflection));
+        when(reflectionService.listGroups()).thenReturn(List.of(group));
+        when(reflectionService.bindingsForGroup("group-1")).thenReturn(List.of(binding));
+        when(reflectionService.getBindingByUuid("binding-1")).thenReturn(binding);
+        when(reflectionService.getReflection("anchor-1")).thenReturn(bindingAnchor);
+        when(reflectionService.getReflection("reflection-1")).thenReturn(reflection);
+        when(reflectionService.getGroup("group-1")).thenReturn(group);
+
+        ToolCallback reflectionCallback = namedTool("mail.email.readMessage");
+        when(reflectionToolCallbackFactory.create(reflection, List.of(binding))).thenReturn(reflectionCallback);
+
+        @SuppressWarnings("unchecked")
+        AiOrchestrationService service = new AiOrchestrationService(
+            Map.of(AiProvider.GEMINI, mock(ChatClient.class)),
+            null,
+            envService,
+            sessionRepo,
+            mock(DatabaseRepository.class),
+            skillRepo,
+            Map.of(),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+        setPrivateField(service, "reflectionService", reflectionService);
+        setPrivateField(service, "reflectionToolCallbackFactory", reflectionToolCallbackFactory);
+
+        ToolExecutionContext.bindSessionUuid("session-skill-binding-1");
+
+        ToolCallback[] resolved = invokeResolveFilteredToolCallbacks(service);
+        List<String> names = java.util.Arrays.stream(resolved)
+            .map(cb -> cb.getToolDefinition().name())
+            .toList();
+
+        assertTrue(names.contains("mail.email.readMessage"));
+        }
+
+    @Test
+    void resolveVisibleToolNamesForSession_alwaysIncludesGlobalHiddenUtilityTools() {
+        SessionEnvironmentService envService = mock(SessionEnvironmentService.class);
+
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<AiSession> sessionRepo = mock(DatabaseRepository.class);
+        AiSession session = new AiSession(
+                "session-utils",
+                "GEMINI",
+                SessionOriginMode.WEB,
+                "tester",
+                "Utility Session",
+                System.currentTimeMillis(),
+                0,
+                List.of(),
+                Map.of(),
+                AiSessionStatus.RUNNING,
+                null,
+                null,
+                List.of(),
+                List.of(),
+                List.of());
+        when(sessionRepo.get("session-utils")).thenReturn(session);
+
+        @SuppressWarnings("unchecked")
+        AiOrchestrationService service = new AiOrchestrationService(
+                Map.of(AiProvider.GEMINI, mock(ChatClient.class)),
+                null,
+                envService,
+                sessionRepo,
+                mock(DatabaseRepository.class),
+                null,
+                Map.of(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null);
+
+        Set<String> visible = service.resolveVisibleToolNamesForSession("session-utils");
+
+        assertTrue(visible.contains("think"));
+        assertTrue(visible.contains("recordProgress"));
+        assertTrue(visible.contains("memory"));
+        assertTrue(visible.contains("getDateTime"));
     }
 
         @Test

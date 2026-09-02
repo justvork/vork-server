@@ -1,15 +1,19 @@
 package sh.vork.oauth;
 
+import sh.vork.artifact.ArtifactStatus;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * Shared OAuth provider template metadata.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public record OAuthTemplate(
-        UUID id,
+    String id,
         String name,
         String clientName,
         String description,
@@ -20,6 +24,12 @@ public record OAuthTemplate(
     ArtifactStatus artifactStatus
 ) {
     public OAuthTemplate {
+        if (id != null) {
+            id = id.trim();
+            if (id.isBlank()) {
+                id = null;
+            }
+        }
         if (clientName == null || clientName.isBlank()) {
             clientName = OAuthClientService.normalizeClientName(name);
         }

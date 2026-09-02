@@ -1,5 +1,7 @@
 package sh.vork.skill;
 
+import sh.vork.artifact.ArtifactStatus;
+
 import sh.vork.orm.DatabaseEntity;
 import sh.vork.typegen.ExportableType;
 

@@ -251,6 +251,7 @@ public class SlackSocketModeService {
             String userId      = (String) event.get("user");
             String text        = (String) event.getOrDefault("text", "");
             String eventTs     = (String) event.getOrDefault("ts", "");
+            String threadTs    = (String) event.getOrDefault("thread_ts", "");
 
             if (channelId == null || userId == null) return;
 
@@ -287,7 +288,7 @@ public class SlackSocketModeService {
             SlackMessageConsumer.IncomingSlackMessage msg =
                     new SlackMessageConsumer.IncomingSlackMessage(
                             configId, botToken, channelId, channelType,
-                            userId, text, eventTs, voiceFileUrl, voiceMimeType,
+                        userId, text, eventTs, threadTs, voiceFileUrl, voiceMimeType,
                             fileUrl, fileMimeType, fileName);
 
             log.debug("Dispatching Slack message [configId={}, channel={}, type={}, from={}]",
