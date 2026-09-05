@@ -39,7 +39,8 @@ class SessionFileControllerAuthorizationTest {
     void setUp() {
         sessionFileSystem = mock(SessionFileSystem.class);
         sessionRepo = mock(DatabaseRepository.class);
-        SessionFileController controller = new SessionFileController(sessionFileSystem, sessionRepo);
+        SessionFileAuthorizationService authz = new SessionFileAuthorizationService(sessionRepo);
+        SessionFileController controller = new SessionFileController(sessionFileSystem, authz);
         mvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 

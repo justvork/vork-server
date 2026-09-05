@@ -9,6 +9,7 @@ import java.util.List;
  * <p>Role values:
  * <ul>
  *   <li>{@code "USER"} — message sent by the human</li>
+ *   <li>{@code "EXTERNAL"} — message sourced from an external participant/channel</li>
  *   <li>{@code "ASSISTANT"} — text response from the model</li>
  *   <li>{@code "AWAITING_INPUT"} — model requested a tool call that
  *       needs human approval; {@link #toolCalls()} contains the pending call</li>
@@ -25,6 +26,8 @@ import java.util.List;
  * @param toolCalls   pending tool calls; non-null for {@code AWAITING_INPUT} messages
  * @param toolCallId  tool call ID being responded to; non-null for {@code TOOL} messages
  * @param toolName    name of the tool; non-null for {@code TOOL} messages
+ * @param externalSource optional external source/channel label (e.g. email, slack)
+ * @param externalParticipant optional external participant identity/display name
  */
 public record AiChatMessage(
         String              uuid,
@@ -34,12 +37,28 @@ public record AiChatMessage(
         List<AttachmentRef> attachments,
         List<ToolCallRef>   toolCalls,
         String              toolCallId,
-        String              toolName
+        String              toolName,
+        String              externalSource,
+        String              externalParticipant
 ) {
     /** Backward-compatible constructor for messages without tool-call fields. */
     public AiChatMessage(String uuid, String role, String content,
                          long timestamp, List<AttachmentRef> attachments) {
-        this(uuid, role, content, timestamp, attachments, null, null, null);
+        this(uuid, role, content, timestamp, attachments, null, null, null, null, null);
+    }
+
+    /** Backward-compatible constructor for messages with tool-call fields but no external metadata. */
+    public AiChatMessage(String uuid, String role, String content,
+                         long timestamp, List<AttachmentRef> attachments,
+                         List<ToolCallRef> toolCalls, String toolCallId, String toolName) {
+        this(uuid, role, content, timestamp, attachments, toolCalls, toolCallId, toolName, null, null);
+    }
+
+    /** Constructor for explicit external-message provenance metadata. */
+    public AiChatMessage(String uuid, String role, String content,
+                         long timestamp, List<AttachmentRef> attachments,
+                         String externalSource, String externalParticipant) {
+        this(uuid, role, content, timestamp, attachments, null, null, null, externalSource, externalParticipant);
     }
 
     /**

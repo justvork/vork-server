@@ -23,11 +23,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Flow;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.chat.model.ToolContext;
+import org.springframework.ai.tool.definition.DefaultToolDefinition;
+import org.springframework.ai.tool.definition.ToolDefinition;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mongodb.client.FindIterable;
@@ -501,6 +506,401 @@ class ReflectionServiceTest {
         assertTrue(!reflectionService.isReflectionAdvertisedToConsumers(group, "privateTool"));
         assertTrue(reflectionService.isReflectionAdvertisedToConsumers(group, "customNonContractTool"));
     }
+
+        @Test
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        void executeRestReflectionTransformationChainsSourceOutputIntoTargetTool() throws Exception {
+                ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                                "REST Group", "desc", "REST", "", List.of(), List.of()));
+                reflectionService.createBinding("alice", group.uuid(),
+                                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+                reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                                "sourceTool",
+                                "Source Tool",
+                                "desc",
+                                group.uuid(),
+                                List.of(),
+                                "GET",
+                                "https://example.com/source",
+                                Map.of(),
+                                Map.of(),
+                                "",
+                                "application/json",
+                                "application/json",
+                                ""));
+
+                AtomicReference<String> targetInput = new AtomicReference<>();
+                ToolCallback targetTool = new ToolCallback() {
+                        private final ToolDefinition definition = DefaultToolDefinition.builder()
+                                        .name("writeBase64File")
+                                        .description("Write base64 payload")
+                                        .inputSchema("{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"base64Content\":{\"type\":\"string\"}},\"required\":[\"path\",\"base64Content\"]}")
+                                        .build();
+
+                        @Override
+                        public ToolDefinition getToolDefinition() {
+                                return definition;
+                        }
+
+                        @Override
+                        public String call(String toolInput) {
+                                targetInput.set(toolInput);
+                                return "{\"status\":\"ok\",\"written\":true}";
+                        }
+
+                        @Override
+                        public String call(String toolInput, ToolContext toolContext) {
+                                return call(toolInput);
+                        }
+                };
+                reflectionService.setToolCallbacks(List.of(targetTool));
+
+                reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                                "transformWrite",
+                                "Transform Write",
+                                "desc",
+                                group.uuid(),
+                                List.of(),
+                                "GET",
+                                "https://example.com/ignored",
+                                Map.of(),
+                                Map.of(),
+                                "",
+                                "application/json",
+                                "application/json",
+                                "",
+                                true,
+                                "sourceTool",
+                                "writeBase64File",
+                                List.of(
+                                                new ReflectionTransformationMapping("path", "[output].data.path", ""),
+                                                new ReflectionTransformationMapping("base64Content", "[output].data.base64", ""))));
+
+                HttpResponse<String> response = mock(HttpResponse.class);
+                when(response.statusCode()).thenReturn(200);
+                when(response.body()).thenReturn("{\"data\":{\"path\":\"/tmp/a.bin\",\"base64\":\"QQ==\"}}");
+                when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (a, b) -> true));
+                when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn((HttpResponse) response);
+
+                String result = reflectionService.executeRestReflection("transformWrite", Map.of(), null, "alice");
+
+                assertTrue(result.contains("\"status\":\"ok\""));
+                assertNotNull(targetInput.get());
+                assertTrue(targetInput.get().contains("\"path\":\"/tmp/a.bin\""));
+                assertTrue(targetInput.get().contains("\"base64Content\":\"QQ==\""));
+        }
+
+        @Test
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        void executeRestReflectionTransformationChainsInputMappingIntoTargetTool() throws Exception {
+                ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                                "REST Group", "desc", "REST", "", List.of(), List.of()));
+                reflectionService.createBinding("alice", group.uuid(),
+                                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+                reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                                "sourceTool",
+                                "Source Tool",
+                                "desc",
+                                group.uuid(),
+                                List.of(),
+                                "GET",
+                                "https://example.com/source",
+                                Map.of(),
+                                Map.of(),
+                                "",
+                                "application/json",
+                                "application/json",
+                                ""));
+
+                AtomicReference<String> targetInput = new AtomicReference<>();
+                ToolCallback targetTool = new ToolCallback() {
+                        private final ToolDefinition definition = DefaultToolDefinition.builder()
+                                        .name("writeBase64File")
+                                        .description("Write base64 payload")
+                                        .inputSchema("{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"base64Content\":{\"type\":\"string\"}},\"required\":[\"path\",\"base64Content\"]}")
+                                        .build();
+
+                        @Override
+                        public ToolDefinition getToolDefinition() {
+                                return definition;
+                        }
+
+                        @Override
+                        public String call(String toolInput) {
+                                targetInput.set(toolInput);
+                                return "{\"status\":\"ok\",\"written\":true}";
+                        }
+
+                        @Override
+                        public String call(String toolInput, ToolContext toolContext) {
+                                return call(toolInput);
+                        }
+                };
+                reflectionService.setToolCallbacks(List.of(targetTool));
+
+                reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                                "transformWrite",
+                                "Transform Write",
+                                "desc",
+                                group.uuid(),
+                                List.of(new ReflectionInputParameter("path", "string", "Path", true)),
+                                "GET",
+                                "",
+                                Map.of(),
+                                Map.of(),
+                                "",
+                                "application/json",
+                                "application/json",
+                                "",
+                                true,
+                                "sourceTool",
+                                "writeBase64File",
+                                List.of(
+                                                new ReflectionTransformationMapping("path", "[input].path", ""),
+                                                new ReflectionTransformationMapping("base64Content", "[output].data.base64", ""))));
+
+                HttpResponse<String> response = mock(HttpResponse.class);
+                when(response.statusCode()).thenReturn(200);
+                when(response.body()).thenReturn("{\"data\":{\"base64\":\"QQ==\"}}");
+                when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (a, b) -> true));
+                when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn((HttpResponse) response);
+
+                String result = reflectionService.executeRestReflection(
+                                "transformWrite",
+                                Map.of("path", "/tmp/from-input.bin"),
+                                null,
+                                "alice");
+
+                assertTrue(result.contains("\"status\":\"ok\""));
+                assertNotNull(targetInput.get());
+                assertTrue(targetInput.get().contains("\"path\":\"/tmp/from-input.bin\""));
+                assertTrue(targetInput.get().contains("\"base64Content\":\"QQ==\""));
+        }
+
+        @Test
+        void createReflectionTransformationRejectsMissingRequiredTargetMapping() {
+                ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                                "REST Group", "desc", "REST", "", List.of(), List.of()));
+
+                reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                                "sourceTool",
+                                "Source Tool",
+                                "desc",
+                                group.uuid(),
+                                List.of(),
+                                "GET",
+                                "https://example.com/source",
+                                Map.of(),
+                                Map.of(),
+                                "",
+                                "application/json",
+                                "application/json",
+                                ""));
+
+                ToolCallback targetTool = new ToolCallback() {
+                        private final ToolDefinition definition = DefaultToolDefinition.builder()
+                                        .name("writeBase64File")
+                                        .description("Write base64 payload")
+                                        .inputSchema("{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"base64Content\":{\"type\":\"string\"}},\"required\":[\"path\",\"base64Content\"]}")
+                                        .build();
+
+                        @Override
+                        public ToolDefinition getToolDefinition() {
+                                return definition;
+                        }
+
+                        @Override
+                        public String call(String toolInput) {
+                                return "{\"status\":\"ok\"}";
+                        }
+
+                        @Override
+                        public String call(String toolInput, ToolContext toolContext) {
+                                return call(toolInput);
+                        }
+                };
+                reflectionService.setToolCallbacks(List.of(targetTool));
+
+                IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                                reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                                                "transformWrite",
+                                                "Transform Write",
+                                                "desc",
+                                                group.uuid(),
+                                                List.of(),
+                                                "GET",
+                                                "https://example.com/ignored",
+                                                Map.of(),
+                                                Map.of(),
+                                                "",
+                                                "application/json",
+                                                "application/json",
+                                                "",
+                                                true,
+                                                "sourceTool",
+                                                "writeBase64File",
+                                                List.of(new ReflectionTransformationMapping("path", "[output].data.path", "")))));
+
+                assertTrue(ex.getMessage().contains("Missing mapping for required target tool parameter"));
+        }
+
+        @Test
+        void executeRestReflectionTransformationReturnsErrorWhenSourceFails() {
+                ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                                "REST Group", "desc", "REST", "", List.of(), List.of()));
+                reflectionService.createBinding("alice", group.uuid(),
+                                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+                reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                                "sourceTool",
+                                "Source Tool",
+                                "desc",
+                                group.uuid(),
+                                List.of(new ReflectionInputParameter("city", "string", "City", true)),
+                                "GET",
+                                "https://example.com/source",
+                                Map.of(),
+                                Map.of(),
+                                "",
+                                "application/json",
+                                "application/json",
+                                ""));
+
+                ToolCallback targetTool = new ToolCallback() {
+                        private final ToolDefinition definition = DefaultToolDefinition.builder()
+                                        .name("writeBase64File")
+                                        .description("Write base64 payload")
+                                        .inputSchema("{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"base64Content\":{\"type\":\"string\"}},\"required\":[\"path\",\"base64Content\"]}")
+                                        .build();
+
+                        @Override
+                        public ToolDefinition getToolDefinition() {
+                                return definition;
+                        }
+
+                        @Override
+                        public String call(String toolInput) {
+                                return "{\"status\":\"ok\"}";
+                        }
+
+                        @Override
+                        public String call(String toolInput, ToolContext toolContext) {
+                                return call(toolInput);
+                        }
+                };
+                reflectionService.setToolCallbacks(List.of(targetTool));
+
+                reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                                "transformWrite",
+                                "Transform Write",
+                                "desc",
+                                group.uuid(),
+                                List.of(),
+                                "GET",
+                                "https://example.com/ignored",
+                                Map.of(),
+                                Map.of(),
+                                "",
+                                "application/json",
+                                "application/json",
+                                "",
+                                true,
+                                "sourceTool",
+                                "writeBase64File",
+                                List.of(
+                                                new ReflectionTransformationMapping("path", "[output].data.path", ""),
+                                                new ReflectionTransformationMapping("base64Content", "[output].data.base64", ""))));
+
+                String result = reflectionService.executeRestReflection("transformWrite", Map.of(), null, "alice");
+
+                assertTrue(result.contains("\"status\":\"error\""));
+                assertTrue(result.contains("Transformation source tool failed"));
+                assertTrue(result.contains("\"source\""));
+        }
+
+        @Test
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        void executeRestReflectionTransformationReturnsErrorWhenTargetFails() throws Exception {
+                ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                                "REST Group", "desc", "REST", "", List.of(), List.of()));
+                reflectionService.createBinding("alice", group.uuid(),
+                                new ReflectionService.ReflectionBindingRequest("default", "", Map.of(), Map.of()));
+
+                reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                                "sourceTool",
+                                "Source Tool",
+                                "desc",
+                                group.uuid(),
+                                List.of(),
+                                "GET",
+                                "https://example.com/source",
+                                Map.of(),
+                                Map.of(),
+                                "",
+                                "application/json",
+                                "application/json",
+                                ""));
+
+                ToolCallback targetTool = new ToolCallback() {
+                        private final ToolDefinition definition = DefaultToolDefinition.builder()
+                                        .name("writeBase64File")
+                                        .description("Write base64 payload")
+                                        .inputSchema("{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"base64Content\":{\"type\":\"string\"}},\"required\":[\"path\",\"base64Content\"]}")
+                                        .build();
+
+                        @Override
+                        public ToolDefinition getToolDefinition() {
+                                return definition;
+                        }
+
+                        @Override
+                        public String call(String toolInput) {
+                                return "{\"status\":\"error\",\"message\":\"target failed\"}";
+                        }
+
+                        @Override
+                        public String call(String toolInput, ToolContext toolContext) {
+                                return call(toolInput);
+                        }
+                };
+                reflectionService.setToolCallbacks(List.of(targetTool));
+
+                reflectionService.createReflection(new ReflectionService.ReflectionRequest(
+                                "transformWrite",
+                                "Transform Write",
+                                "desc",
+                                group.uuid(),
+                                List.of(),
+                                "GET",
+                                "https://example.com/ignored",
+                                Map.of(),
+                                Map.of(),
+                                "",
+                                "application/json",
+                                "application/json",
+                                "",
+                                true,
+                                "sourceTool",
+                                "writeBase64File",
+                                List.of(
+                                                new ReflectionTransformationMapping("path", "[output].data.path", ""),
+                                                new ReflectionTransformationMapping("base64Content", "[output].data.base64", ""))));
+
+                HttpResponse<String> response = mock(HttpResponse.class);
+                when(response.statusCode()).thenReturn(200);
+                when(response.body()).thenReturn("{\"data\":{\"path\":\"/tmp/a.bin\",\"base64\":\"QQ==\"}}");
+                when(response.headers()).thenReturn(HttpHeaders.of(Map.of(), (a, b) -> true));
+                when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn((HttpResponse) response);
+
+                String result = reflectionService.executeRestReflection("transformWrite", Map.of(), null, "alice");
+
+                assertTrue(result.contains("\"status\":\"error\""));
+                assertTrue(result.contains("Transformation target tool failed"));
+                assertTrue(result.contains("\"target\""));
+                assertTrue(result.contains("target failed"));
+        }
 
     @Test
     void executeRestReflectionReturnsMissingParametersWhenRequiredInputNotProvided() {

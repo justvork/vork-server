@@ -141,20 +141,30 @@
     function renderMessage(msg) {
         if (!ctx) return;
         const isUser    = msg.role === 'USER';
-        const textHtml  = isUser
+        const isExternal = msg.role === 'EXTERNAL';
+        const textHtml  = (isUser || isExternal)
             ? escapeHtml(msg.content || '').replace(/\n/g, '<br>')
             : (typeof marked !== 'undefined' ? marked.parse(msg.content || '') : escapeHtml(msg.content || ''));
-        const bubbleCls  = isUser ? 'user' : (msg.role === 'ERROR' ? 'error' : 'assistant');
-        const avatarCls  = isUser ? 'user' : 'assistant';
+        const bubbleCls  = isUser ? 'user' : (isExternal ? 'external' : (msg.role === 'ERROR' ? 'error' : 'assistant'));
+        const avatarCls  = isUser ? 'user' : (isExternal ? 'external' : 'assistant');
         const avatarIcon = isUser
             ? '<i class="fa-solid fa-user"></i>'
-            : '<i class="fa-solid fa-robot"></i>';
+            : (isExternal ? '<i class="fa-solid fa-envelope"></i>' : '<i class="fa-solid fa-robot"></i>');
         const attachHtml = renderAttachmentsHtml(msg.attachments);
+        const bodyHtml = isExternal
+            ? ('<div class="external-message-card">'
+                + '<div class="external-message-header">'
+                + '<div><span class="external-label">Source:</span> ' + escapeHtml(String(msg.externalSource || 'external')) + '</div>'
+                + '<div><span class="external-label">Participant:</span> ' + escapeHtml(String(msg.externalParticipant || 'unknown')) + '</div>'
+                + '</div>'
+                + '<div class="external-message-body">' + attachHtml + textHtml + '</div>'
+                + '</div>')
+            : (attachHtml + textHtml);
         const row = document.createElement('div');
         row.className = 'message-row' + (isUser ? ' user' : '');
         row.innerHTML =
             '<div class="avatar ' + avatarCls + '">' + avatarIcon + '</div>' +
-            '<div class="bubble ' + bubbleCls + '">' + attachHtml + textHtml + '</div>';
+            '<div class="bubble ' + bubbleCls + '">' + bodyHtml + '</div>';
         ctx.messagesArea.insertBefore(row, ctx.typingEl);
         scrollBottom();
     }

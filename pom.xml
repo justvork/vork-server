@@ -148,6 +148,13 @@
             <artifactId>jackson-databind</artifactId>
         </dependency>
 
+        <!-- Archive utilities (tar extraction) -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-compress</artifactId>
+            <version>1.27.1</version>
+        </dependency>
+
         <!-- Enables constructor-parameter name discovery for Jackson -->
         <dependency>
             <groupId>com.fasterxml.jackson.module</groupId>

@@ -23,10 +23,54 @@ public record Reflection(
         String requestContentType,
         String responseContentType,
         String outputSchema,
+        Boolean transformationEnabled,
+        String transformationSourceReflectionId,
+        String transformationTargetToolName,
+        List<ReflectionTransformationMapping> transformationMappings,
         long version,
         long createdAt,
         long updatedAt
 ) implements DatabaseEntity {
+
+    public Reflection(String uuid,
+                      String id,
+                      String name,
+                      String description,
+                      String groupUuid,
+                      List<ReflectionInputParameter> inputParameters,
+                      String method,
+                      String url,
+                      Map<String, String> headers,
+                      Map<String, String> queryParameters,
+                      String bodyTemplate,
+                      String requestContentType,
+                      String responseContentType,
+                      String outputSchema,
+                      long version,
+                      long createdAt,
+                      long updatedAt) {
+        this(uuid,
+                id,
+                name,
+                description,
+                groupUuid,
+                inputParameters,
+                method,
+                url,
+                headers,
+                queryParameters,
+                bodyTemplate,
+                requestContentType,
+                responseContentType,
+                outputSchema,
+                false,
+                "",
+                "",
+                List.of(),
+                version,
+                createdAt,
+                updatedAt);
+    }
 
     public Reflection {
         if (id == null) {
@@ -67,6 +111,18 @@ public record Reflection(
         }
         if (outputSchema == null) {
             outputSchema = "";
+        }
+        if (transformationEnabled == null) {
+            transformationEnabled = false;
+        }
+        if (transformationSourceReflectionId == null) {
+            transformationSourceReflectionId = "";
+        }
+        if (transformationTargetToolName == null) {
+            transformationTargetToolName = "";
+        }
+        if (transformationMappings == null) {
+            transformationMappings = List.of();
         }
         if (version < 1) {
             version = 1;

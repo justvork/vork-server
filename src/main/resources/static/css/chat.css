@@ -616,6 +616,41 @@ body.sidebar-collapsed .sidebar-tab-btn {
     padding-right: 2.35rem;
 }
 
+.bubble.external {
+    background: linear-gradient(180deg, rgba(13, 148, 136, 0.14), rgba(13, 148, 136, 0.05));
+    border: 1px solid rgba(20, 184, 166, 0.35);
+    border-bottom-left-radius: 0.3rem;
+    padding-right: 2.35rem;
+}
+
+.avatar.external {
+    background: linear-gradient(180deg, #0f766e, #0d9488);
+    color: #ecfeff;
+}
+
+.external-message-card {
+    display: block;
+}
+
+.external-message-header {
+    border-bottom: 1px dashed rgba(148, 163, 184, 0.45);
+    margin-bottom: 0.45rem;
+    padding-bottom: 0.35rem;
+    display: grid;
+    gap: 0.15rem;
+    font-size: 0.78rem;
+    color: #cdebe8;
+}
+
+.external-label {
+    color: #93c5fd;
+    font-weight: 600;
+}
+
+.external-message-body {
+    white-space: normal;
+}
+
 .bubble.error {
     background-color: rgba(255,107,107,0.12);
     color: var(--vork-danger);

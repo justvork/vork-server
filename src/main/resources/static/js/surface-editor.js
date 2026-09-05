@@ -711,15 +711,16 @@ async function persistCurrentFile(reason) {
     const nextText = getCurrentEditorText();
     saveInFlight = true;
     try {
-        const formData = new FormData();
-        formData.append('file', new Blob([nextText], { type: 'text/plain' }), fileNameFromPath(selectedPath));
-
-        const uploadUrl = '/api/session-files/upload?area=SESSION&sessionUuid=' + encodeURIComponent(sessionUuid)
+        const uploadUrl = '/api/session-files/upload-stream?area=SESSION&sessionUuid=' + encodeURIComponent(sessionUuid)
             + '&path=' + encodeURIComponent(selectedPath);
 
         const res = await fetch(uploadUrl, {
             method: 'POST',
-            body: formData
+            headers: {
+                'Content-Type': 'text/plain; charset=utf-8',
+                'X-File-Name': fileNameFromPath(selectedPath)
+            },
+            body: nextText
         });
 
         if (!res.ok) {

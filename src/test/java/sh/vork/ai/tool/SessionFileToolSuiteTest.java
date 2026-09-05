@@ -1,6 +1,9 @@
 package sh.vork.ai.tool;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -16,8 +19,12 @@ import sh.vork.ai.process.SessionPathResolver;
 import sh.vork.ai.function.CreateFolderRequest;
 import sh.vork.ai.function.CreatePdfRequest;
 import sh.vork.ai.function.DownloadFolderAsZipRequest;
+import sh.vork.ai.function.ExtractTarRequest;
+import sh.vork.ai.function.GetTextFileInfoRequest;
+import sh.vork.ai.function.ReadTextFileRangeRequest;
 import sh.vork.ai.function.ReadFileRequest;
 import sh.vork.ai.function.ResolveArchitectureRequest;
+import sh.vork.ai.function.SearchTextFileRequest;
 import sh.vork.ai.function.WriteBase64FileRequest;
 import sh.vork.ai.function.WriteFileRequest;
 import sh.vork.filesystem.FileArea;
@@ -31,6 +38,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Map;
 import java.util.List;
@@ -49,6 +57,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class SessionFileToolSuiteTest {
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @TempDir
     Path tempDir;
@@ -496,4 +506,457 @@ class SessionFileToolSuiteTest {
         }
         throw new AssertionError("Missing zip entry: " + expectedEntry);
     }
+
+    @Test
+    void extractTarWritesEntriesToDestination() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        byte[] tarBytes = createTar(Map.of(
+                "nested/a.log", "AAA",
+                "nested/b.log", "BBB"
+        ));
+        when(fs.read(eq(FileArea.SESSION), eq("session-abc"), eq("archives/logs.tar")))
+                .thenReturn(new ByteArrayInputStream(tarBytes));
+
+        when(fs.write(eq(FileArea.SESSION), eq("session-abc"), eq("out/nested/a.log"), any(InputStream.class), eq(3L)))
+                .thenReturn(new FileDescriptor(
+                        FileArea.SESSION,
+                        "session-abc",
+                        "out/nested/a.log",
+                        3,
+                        "/api/session-files/download?area=SESSION&sessionUuid=session-abc&path=out%2Fnested%2Fa.log"));
+        when(fs.write(eq(FileArea.SESSION), eq("session-abc"), eq("out/nested/b.log"), any(InputStream.class), eq(3L)))
+                .thenReturn(new FileDescriptor(
+                        FileArea.SESSION,
+                        "session-abc",
+                        "out/nested/b.log",
+                        3,
+                        "/api/session-files/download?area=SESSION&sessionUuid=session-abc&path=out%2Fnested%2Fb.log"));
+
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+                fs,
+                new InMemorySessionEnvironmentService(),
+                new SessionPathResolver(),
+                objectMapper);
+
+        String response = tool.extractTar(new ExtractTarRequest("archives/logs.tar", "out", "SESSION", true));
+
+        assertTrue(response.contains("\"status\":\"ok\""));
+        assertTrue(response.contains("\"filesExtracted\":2"));
+        verify(fs).write(eq(FileArea.SESSION), eq("session-abc"), eq("out/nested/a.log"), any(InputStream.class), eq(3L));
+        verify(fs).write(eq(FileArea.SESSION), eq("session-abc"), eq("out/nested/b.log"), any(InputStream.class), eq(3L));
+    }
+
+    @Test
+    void extractTarRejectsTraversalEntries() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        byte[] tarBytes = createTar(Map.of("../escape.txt", "bad"));
+        when(fs.read(eq(FileArea.SESSION), eq("session-abc"), eq("archives/bad.tar")))
+                .thenReturn(new ByteArrayInputStream(tarBytes));
+
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+                fs,
+                new InMemorySessionEnvironmentService(),
+                new SessionPathResolver(),
+                objectMapper);
+
+        String response = tool.extractTar(new ExtractTarRequest("archives/bad.tar", "out", "SESSION", false));
+
+        assertTrue(response.contains("\"status\":\"error\""));
+        assertTrue(response.contains("Invalid archive entry path"));
+        verify(fs, never()).write(eq(FileArea.SESSION), eq("session-abc"), any(), any(InputStream.class), anyLong());
+    }
+
+    private static byte[] createTar(Map<String, String> entries) throws Exception {
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
+             TarArchiveOutputStream tarOut = new TarArchiveOutputStream(baos, StandardCharsets.UTF_8.name())) {
+            tarOut.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
+            for (Map.Entry<String, String> entry : entries.entrySet()) {
+                String name = entry.getKey();
+                String content = entry.getValue();
+                TarArchiveEntry tarEntry = new TarArchiveEntry(name);
+                if (content == null) {
+                    tarOut.putArchiveEntry(tarEntry);
+                    tarOut.closeArchiveEntry();
+                    continue;
+                }
+                byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+                tarEntry.setSize(bytes.length);
+                tarOut.putArchiveEntry(tarEntry);
+                tarOut.write(bytes);
+                tarOut.closeArchiveEntry();
+            }
+            tarOut.finish();
+            return baos.toByteArray();
+        }
+    }
+
+        @Test
+        void getTextFileInfoReturnsSizeAndLineCount() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        String text = "alpha\nbeta\n";
+        when(fs.read(eq(FileArea.SESSION), eq("session-abc"), eq("logs/app.log")))
+            .thenReturn(new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)));
+
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+            fs,
+            new InMemorySessionEnvironmentService(),
+            new SessionPathResolver(),
+            objectMapper);
+
+        String response = tool.getTextFileInfo(new GetTextFileInfoRequest("logs/app.log", "SESSION"));
+        JsonNode root = objectMapper.readTree(response);
+
+        assertEquals("ok", root.get("status").asText());
+        assertEquals("logs/app.log", root.get("path").asText());
+        assertEquals(text.getBytes(StandardCharsets.UTF_8).length, root.get("sizeBytes").asLong());
+        assertEquals(2, root.get("lineCount").asLong());
+        assertEquals("UTF-8", root.get("encoding").asText());
+        }
+
+        @Test
+        void searchTextFileSupportsContainsExactAndRegex() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        String text = String.join("\n", List.of(
+            "INFO start",
+            "ERROR Disk full",
+            "warn lower",
+            "ID=42",
+            "ERROR Network"
+        ));
+
+        when(fs.read(eq(FileArea.SESSION), eq("session-abc"), eq("logs/app.log")))
+            .thenReturn(
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8))
+            );
+
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+            fs,
+            new InMemorySessionEnvironmentService(),
+            new SessionPathResolver(),
+            objectMapper);
+
+        JsonNode contains = objectMapper.readTree(tool.searchTextFile(new SearchTextFileRequest(
+            "logs/app.log", "error", "CONTAINS", false, 0, 0, 10, null, null, "SESSION")));
+        JsonNode exact = objectMapper.readTree(tool.searchTextFile(new SearchTextFileRequest(
+            "logs/app.log", "ERROR Disk full", "EXACT", true, 0, 0, 10, null, null, "SESSION")));
+        JsonNode regex = objectMapper.readTree(tool.searchTextFile(new SearchTextFileRequest(
+            "logs/app.log", "ID=\\d+", "REGEX", true, 0, 0, 10, null, null, "SESSION")));
+
+        assertEquals(2, contains.get("returnedMatches").asInt());
+        assertEquals(1, exact.get("returnedMatches").asInt());
+        assertEquals(1, regex.get("returnedMatches").asInt());
+        }
+
+        @Test
+        void searchTextFileHandlesCaseSensitivity() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        String text = "ERROR one\nerror two\n";
+        when(fs.read(eq(FileArea.SESSION), eq("session-abc"), eq("logs/app.log")))
+            .thenReturn(
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8))
+            );
+
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+            fs,
+            new InMemorySessionEnvironmentService(),
+            new SessionPathResolver(),
+            objectMapper);
+
+        JsonNode insensitive = objectMapper.readTree(tool.searchTextFile(new SearchTextFileRequest(
+            "logs/app.log", "error", "CONTAINS", false, 0, 0, 10, null, null, "SESSION")));
+        JsonNode sensitive = objectMapper.readTree(tool.searchTextFile(new SearchTextFileRequest(
+            "logs/app.log", "error", "CONTAINS", true, 0, 0, 10, null, null, "SESSION")));
+
+        assertEquals(2, insensitive.get("returnedMatches").asInt());
+        assertEquals(1, sensitive.get("returnedMatches").asInt());
+        }
+
+        @Test
+        void searchTextFileMergesOverlappingContextBlocks() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        String text = String.join("\n", List.of(
+            "l1",
+            "l2",
+            "ERROR a",
+            "l4",
+            "ERROR b",
+            "l6"
+        ));
+        when(fs.read(eq(FileArea.SESSION), eq("session-abc"), eq("logs/app.log")))
+            .thenReturn(
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8))
+            );
+
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+            fs,
+            new InMemorySessionEnvironmentService(),
+            new SessionPathResolver(),
+            objectMapper);
+
+        JsonNode root = objectMapper.readTree(tool.searchTextFile(new SearchTextFileRequest(
+            "logs/app.log", "ERROR", "CONTAINS", true, 1, 1, 10, null, null, "SESSION")));
+        JsonNode blocks = root.get("blocks");
+
+        assertEquals(1, blocks.size());
+        assertEquals(2, blocks.get(0).get("startLine").asLong());
+        assertEquals(6, blocks.get(0).get("endLine").asLong());
+        assertEquals(2, blocks.get(0).get("matchLines").size());
+        }
+
+        @Test
+        void searchTextFileHonoursMaxMatchesWithExplicitCappedSemantics() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        List<String> lines = new ArrayList<>();
+        for (int i = 1; i <= 5000; i++) {
+            lines.add("ERROR line " + i);
+        }
+        String text = String.join("\n", lines);
+        when(fs.read(eq(FileArea.SESSION), eq("session-abc"), eq("logs/huge.log")))
+            .thenReturn(
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8))
+            );
+
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+            fs,
+            new InMemorySessionEnvironmentService(),
+            new SessionPathResolver(),
+            objectMapper);
+
+        JsonNode root = objectMapper.readTree(tool.searchTextFile(new SearchTextFileRequest(
+            "logs/huge.log", "ERROR", "CONTAINS", true, 0, 0, 3, null, null, "SESSION")));
+
+        assertEquals(3, root.get("returnedMatches").asInt());
+        assertTrue(root.get("truncated").asBoolean());
+        assertTrue(root.get("moreMatchesPossible").asBoolean());
+        assertTrue(root.get("totalMatches").isNull());
+        }
+
+        @Test
+        void searchTextFileHonoursStartAndEndLineBounds() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        String text = String.join("\n", List.of(
+            "ERROR before",
+            "ok",
+            "ERROR in",
+            "ok",
+            "ERROR after"
+        ));
+        when(fs.read(eq(FileArea.SESSION), eq("session-abc"), eq("logs/app.log")))
+            .thenReturn(
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8))
+            );
+
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+            fs,
+            new InMemorySessionEnvironmentService(),
+            new SessionPathResolver(),
+            objectMapper);
+
+        JsonNode root = objectMapper.readTree(tool.searchTextFile(new SearchTextFileRequest(
+            "logs/app.log", "ERROR", "CONTAINS", true, 0, 0, 10, 2L, 4L, "SESSION")));
+
+        assertEquals(1, root.get("returnedMatches").asInt());
+        assertEquals(3, root.get("blocks").get(0).get("matchLines").get(0).asLong());
+        }
+
+        @Test
+        void searchTextFileReturnsValidationErrorForInvalidRegex() {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+            fs,
+            new InMemorySessionEnvironmentService(),
+            new SessionPathResolver(),
+            objectMapper);
+
+        String response = tool.searchTextFile(new SearchTextFileRequest(
+            "logs/app.log", "(", "REGEX", true, 0, 0, 10, null, null, "SESSION"));
+
+        assertTrue(response.contains("\"status\":\"error\""));
+        assertTrue(response.contains("Invalid regex"));
+        }
+
+        @Test
+        void searchTextFileHandlesEmptyFileAndNoMatches() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        when(fs.read(eq(FileArea.SESSION), eq("session-abc"), eq("logs/empty.log")))
+            .thenReturn(
+                new ByteArrayInputStream(new byte[0]),
+                new ByteArrayInputStream(new byte[0])
+            );
+
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+            fs,
+            new InMemorySessionEnvironmentService(),
+            new SessionPathResolver(),
+            objectMapper);
+
+        JsonNode root = objectMapper.readTree(tool.searchTextFile(new SearchTextFileRequest(
+            "logs/empty.log", "ERROR", "CONTAINS", true, 0, 0, 10, null, null, "SESSION")));
+
+        assertEquals(0, root.get("returnedMatches").asInt());
+        assertEquals(0, root.get("blocks").size());
+        assertEquals(0, root.get("totalMatches").asInt());
+        }
+
+        @Test
+        void searchTextFileHandlesNonEmptyFileWithNoMatches() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        String text = "INFO startup\nINFO healthy\n";
+        when(fs.read(eq(FileArea.SESSION), eq("session-abc"), eq("logs/app.log")))
+            .thenReturn(
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8))
+            );
+
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+            fs,
+            new InMemorySessionEnvironmentService(),
+            new SessionPathResolver(),
+            objectMapper);
+
+        JsonNode root = objectMapper.readTree(tool.searchTextFile(new SearchTextFileRequest(
+            "logs/app.log", "ERROR", "CONTAINS", true, 0, 0, 10, null, null, "SESSION")));
+
+        assertEquals(0, root.get("returnedMatches").asInt());
+        assertEquals(0, root.get("blocks").size());
+        assertEquals(0, root.get("totalMatches").asInt());
+        assertTrue(root.get("allMatchesScanned").asBoolean());
+        }
+
+        @Test
+        void searchTextFileFindsFirstAndLastLineMatches() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        String text = "ERROR first\nmid\nERROR last\n";
+        when(fs.read(eq(FileArea.SESSION), eq("session-abc"), eq("logs/edges.log")))
+            .thenReturn(
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8))
+            );
+
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+            fs,
+            new InMemorySessionEnvironmentService(),
+            new SessionPathResolver(),
+            objectMapper);
+
+        JsonNode root = objectMapper.readTree(tool.searchTextFile(new SearchTextFileRequest(
+            "logs/edges.log", "ERROR", "CONTAINS", true, 0, 0, 10, null, null, "SESSION")));
+
+        assertEquals(2, root.get("returnedMatches").asInt());
+        assertEquals(1, root.get("blocks").get(0).get("matchLines").get(0).asLong());
+        assertEquals(3, root.get("blocks").get(1).get("matchLines").get(0).asLong());
+        }
+
+        @Test
+        void searchTextFileReturnsErrorForInvalidPathTraversalAttempt() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        when(fs.read(eq(FileArea.SESSION), eq("session-abc"), eq("../secrets.log")))
+            .thenThrow(new IllegalArgumentException("Path traversal is not allowed"));
+
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+            fs,
+            new InMemorySessionEnvironmentService(),
+            new SessionPathResolver(),
+            objectMapper);
+
+        String response = tool.searchTextFile(new SearchTextFileRequest(
+            "../secrets.log", "ERROR", "CONTAINS", true, 0, 0, 10, null, null, "SESSION"));
+
+        assertTrue(response.contains("\"status\":\"error\""));
+        assertTrue(response.contains("Path traversal"));
+        }
+
+        @Test
+        void readTextFileRangeStreamsRequestedRegion() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        String text = String.join("\n", List.of("l1", "l2", "l3", "l4", "l5"));
+        when(fs.read(eq(FileArea.SESSION), eq("session-abc"), eq("logs/app.log")))
+            .thenReturn(new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)));
+
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+            fs,
+            new InMemorySessionEnvironmentService(),
+            new SessionPathResolver(),
+            objectMapper);
+
+        JsonNode root = objectMapper.readTree(tool.readTextFileRange(new ReadTextFileRangeRequest(
+            "logs/app.log", 2L, 4L, "SESSION")));
+
+        assertEquals("l2\nl3\nl4", root.get("text").asText());
+        assertEquals(3, root.get("linesRead").asInt());
+        }
+
+        @Test
+        void readTextFileRangeValidatesLineRange() {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+            fs,
+            new InMemorySessionEnvironmentService(),
+            new SessionPathResolver(),
+            objectMapper);
+
+        String response = tool.readTextFileRange(new ReadTextFileRangeRequest("logs/app.log", 20L, 10L, "SESSION"));
+        assertTrue(response.contains("\"status\":\"error\""));
+        assertTrue(response.contains("endLine must be >= startLine"));
+        }
+
+        @Test
+        void readTextFileRangeEnforcesLineLimit() {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+            fs,
+            new InMemorySessionEnvironmentService(),
+            new SessionPathResolver(),
+            objectMapper);
+
+        String response = tool.readTextFileRange(new ReadTextFileRangeRequest("logs/app.log", 1L, 3000L, "SESSION"));
+        assertTrue(response.contains("\"status\":\"error\""));
+        assertTrue(response.contains("exceeds limit"));
+        }
+
+        @Test
+        void readTextFileRangeEnforcesByteLimit() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        String giantLine = "x".repeat(400_000);
+        when(fs.read(eq(FileArea.SESSION), eq("session-abc"), eq("logs/big.log")))
+            .thenReturn(new ByteArrayInputStream((giantLine + "\n").getBytes(StandardCharsets.UTF_8)));
+
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+            fs,
+            new InMemorySessionEnvironmentService(),
+            new SessionPathResolver(),
+            objectMapper);
+
+        String response = tool.readTextFileRange(new ReadTextFileRangeRequest("logs/big.log", 1L, 1L, "SESSION"));
+        assertTrue(response.contains("\"status\":\"error\""));
+        assertTrue(response.contains("max response size"));
+        }
 }

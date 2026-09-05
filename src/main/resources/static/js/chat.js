@@ -477,32 +477,51 @@ function renderAttachmentsHtml(attachments) {
 
 function renderMessage(msg) {
     const isUser    = msg.role === 'USER';
+    const isExternal = msg.role === 'EXTERNAL';
     const isAssistant = msg.role === 'ASSISTANT';
-    const content   = isUser
+    const content   = isUser || isExternal
         ? (msg.content || '')
         : normalizeAssistantContent(msg.content);
-    const textHtml  = isUser
+    const textHtml  = isUser || isExternal
         ? escapeHtml(content).replace(/\n/g, '<br>')
         : marked.parse(content || '');
 
-    const bubbleCls  = isUser ? 'user' : (msg.role === 'ERROR' ? 'error' : 'assistant');
-    const avatarCls  = isUser ? 'user' : 'assistant';
+    const bubbleCls  = isUser
+        ? 'user'
+        : (isExternal ? 'external' : (msg.role === 'ERROR' ? 'error' : 'assistant'));
+    const avatarCls  = isUser ? 'user' : (isExternal ? 'external' : 'assistant');
     const avatarIcon = isUser
         ? '<i class="fa-solid fa-user"></i>'
-        : '<i class="fa-solid fa-robot"></i>';
+        : (isExternal ? '<i class="fa-solid fa-envelope"></i>' : '<i class="fa-solid fa-robot"></i>');
 
     const attachHtml = renderAttachmentsHtml(msg.attachments);
-    const copyButtonHtml = isAssistant
+    const copyButtonHtml = isAssistant || isExternal
         ? '<button class="bubble-copy-btn" type="button" aria-label="Copy assistant message" title="Copy message">'
             + '<i class="fa-regular fa-copy" aria-hidden="true"></i>'
           + '</button>'
         : '';
 
+    let bodyHtml;
+    if (isExternal) {
+        const source = (msg.externalSource || 'external').toString();
+        const participant = (msg.externalParticipant || 'unknown').toString();
+        bodyHtml =
+            '<div class="external-message-card">'
+            + '  <div class="external-message-header">'
+            + '    <div><span class="external-label">Source:</span> ' + escapeHtml(source) + '</div>'
+            + '    <div><span class="external-label">Participant:</span> ' + escapeHtml(participant) + '</div>'
+            + '  </div>'
+            + '  <div class="external-message-body">' + attachHtml + textHtml + '</div>'
+            + '</div>';
+    } else {
+        bodyHtml = '<div class="bubble-content">' + attachHtml + textHtml + '</div>';
+    }
+
     const row = document.createElement('div');
     row.className = 'message-row' + (isUser ? ' user' : '');
     row.innerHTML =
         '<div class="avatar ' + avatarCls + '">' + avatarIcon + '</div>' +
-        '<div class="bubble ' + bubbleCls + '">' + copyButtonHtml + '<div class="bubble-content">' + attachHtml + textHtml + '</div></div>';
+        '<div class="bubble ' + bubbleCls + '">' + copyButtonHtml + bodyHtml + '</div>';
 
     const copyBtn = row.querySelector('.bubble-copy-btn');
     if (copyBtn) {
@@ -2189,12 +2208,16 @@ function uploadFile(file) {
         return;
     }
 
-    const formData = new FormData();
-    formData.append('file', file);
-
-    const uploadUrl = '/api/session-files/upload?area=SESSION&sessionUuid=' + encodeURIComponent(sessionUuid)
+    const uploadUrl = '/api/session-files/upload-stream?area=SESSION&sessionUuid=' + encodeURIComponent(sessionUuid)
         + '&path=' + encodeURIComponent(file.name);
-    fetch(uploadUrl, { method: 'POST', body: formData })
+    fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': file.type || 'application/octet-stream',
+            'X-File-Name': file.name
+        },
+        body: file
+    })
         .then(function (resp) {
             if (!resp.ok) {
                 return resp.text().then(function (rawBody) {
@@ -2472,13 +2495,18 @@ async function loadSandboxDirectory(dir, container) {
 async function uploadSandboxFile(file) {
     if (!file || !sessionUuid) return;
     setSandboxStatus('Uploading ' + file.name + ' ...', false);
-    const formData = new FormData();
-    formData.append('file', file);
     const targetPath = resolveSandboxUploadPath(file.name);
-    const uploadUrl = '/api/session-files/upload?area=SESSION&sessionUuid=' + encodeURIComponent(sessionUuid)
+    const uploadUrl = '/api/session-files/upload-stream?area=SESSION&sessionUuid=' + encodeURIComponent(sessionUuid)
         + '&path=' + encodeURIComponent(targetPath);
 
-    const resp = await fetch(uploadUrl, { method: 'POST', body: formData });
+    const resp = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': file.type || 'application/octet-stream',
+            'X-File-Name': file.name
+        },
+        body: file
+    });
     if (!resp.ok) {
         let message = 'Upload failed';
         try {

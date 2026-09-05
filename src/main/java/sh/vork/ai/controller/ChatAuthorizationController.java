@@ -60,6 +60,7 @@ import sh.vork.ai.security.SecuredToolCallback;
 import sh.vork.ai.security.VisualizableTool;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
+import sh.vork.ai.service.ExternalMessageProvenance;
 import sh.vork.attention.AttentionSignalService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.scheduling.service.AiSchedulerService;
@@ -962,6 +963,7 @@ public class ChatAuthorizationController {
         for (AiChatMessage message : messages) {
             switch (message.role()) {
                 case "USER" -> history.add(new UserMessage(message.content() == null ? "" : message.content()));
+                case "EXTERNAL" -> history.add(new UserMessage(ExternalMessageProvenance.toWrappedEvidence(message)));
                 case "ASSISTANT" -> history.add(new AssistantMessage(message.content() == null ? "" : message.content()));
                 case "TOOL" -> appendToolReplay(history, message);
                 default -> {

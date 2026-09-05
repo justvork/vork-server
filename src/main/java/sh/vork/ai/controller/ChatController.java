@@ -38,6 +38,8 @@ import sh.vork.ai.terminal.TerminalStreamRouter;
 import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.binding.BindingCatalogService;
 import sh.vork.binding.BindingSummary;
+import sh.vork.channel.ChannelRef;
+import sh.vork.channel.ChannelService;
 import sh.vork.mcp.model.McpBindingStatus;
 import sh.vork.mcp.service.McpBindingService;
 import sh.vork.orm.DatabaseRepository;
@@ -63,6 +65,7 @@ import sh.vork.web.RequestOriginContext;
 public class ChatController {
 
     private static final Logger log = LoggerFactory.getLogger(ChatController.class);
+    private static final String INFORMATION_REQUEST_SOURCE = "Information Request";
 
     private final ChatService            chatService;
     private final SimpMessagingTemplate  messaging;
@@ -75,6 +78,9 @@ public class ChatController {
     private final BindingCatalogService bindingCatalogService;
     private final McpBindingService mcpBindingService;
     private final RequestInformationService requestInformationService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ChannelService channelService;
 
 
 
@@ -255,7 +261,18 @@ public class ChatController {
             }
 
             String username = (principal != null && principal.getName() != null) ? principal.getName() : session.username();
-            AiChatMessage response = chatService.sendMessageAsUser(username, sessionUuid, content, List.of(), null);
+                String participantChannel = session.environmentVariables() == null
+                    ? session.username()
+                    : session.environmentVariables().getOrDefault("REQUEST_CAMPAIGN_RECIPIENT_CHANNEL", session.username());
+                String participant = resolveDisplayParticipant(participantChannel);
+            AiChatMessage response = chatService.sendMessageAsExternal(
+                    username,
+                    sessionUuid,
+                    content,
+                    participant,
+                    INFORMATION_REQUEST_SOURCE,
+                    List.of(),
+                    null);
             if (response != null) {
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, response);
             }
@@ -784,6 +801,49 @@ public class ChatController {
         String routeMode = session.environmentVariables().get("REQUEST_CAMPAIGN_ROUTE_MODE");
         return campaignId != null && !campaignId.isBlank()
                 && routeMode != null && "CHILD_SESSION".equalsIgnoreCase(routeMode);
+    }
+
+    private String resolveDisplayParticipant(String channelLike) {
+        if (channelLike == null || channelLike.isBlank()) {
+            return "unknown";
+        }
+        String fallback = channelLike.trim();
+        if (channelService == null) {
+            return normalizeParticipantLabel(fallback, fallback);
+        }
+        try {
+            java.util.Optional<ChannelRef> refOptional = channelService.resolveByChannelName(fallback);
+            ChannelRef ref = refOptional == null ? null : refOptional.orElse(null);
+            if (ref != null && ref.displayName() != null && !ref.displayName().isBlank()) {
+                return normalizeParticipantLabel(ref.displayName().trim(), fallback);
+            }
+        } catch (Exception ex) {
+            log.debug("Failed resolving participant display [{}]: {}", fallback, ex.getMessage());
+        }
+        return normalizeParticipantLabel(fallback, fallback);
+    }
+
+    private static String normalizeParticipantLabel(String label, String fallbackChannel) {
+        if (label == null) {
+            return fallbackChannel == null ? "unknown" : fallbackChannel.trim();
+        }
+        String trimmed = label.trim();
+        int open = trimmed.lastIndexOf(" (");
+        int close = trimmed.endsWith(")") ? trimmed.length() - 1 : -1;
+        if (open > 0 && close > open + 2) {
+            String base = trimmed.substring(0, open).trim();
+            String bracket = trimmed.substring(open + 2, close).trim();
+            if (!base.isBlank() && !bracket.isBlank()) {
+                if (base.equalsIgnoreCase(bracket)) {
+                    return base;
+                }
+                if (fallbackChannel != null && !fallbackChannel.isBlank()
+                        && bracket.equalsIgnoreCase(fallbackChannel.trim())) {
+                    return base;
+                }
+            }
+        }
+        return trimmed;
     }
 
     // ── DTOs ──────────────────────────────────────────────────────────────────

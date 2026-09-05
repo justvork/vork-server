@@ -18,6 +18,9 @@ let modalGroupBindingSecrets = [];
 let modalBindingParameterValues = {};
 let modalBindingSecretValues = {};
 let modalSelectedBindingContractUuids = [];
+let transformationTargetTools = [];
+let modalTransformationMappings = [];
+let modalReflectionKind = 'tool';
 let oauthConnectDefaults = null;
 let githubConnection = null;
 let mongoWizardCollections = [];
@@ -73,7 +76,7 @@ function bindEvents() {
             }
             const action = target.getAttribute('data-action');
             const groupUuid = target.getAttribute('data-group-id');
-            if (action !== 'add-tool' && action !== 'add-reflection' && action !== 'add-mongo-tool' && action !== 'add-binding') {
+            if (action !== 'add-tool' && action !== 'add-transform' && action !== 'add-reflection' && action !== 'add-mongo-tool' && action !== 'add-binding') {
                 return;
             }
             event.preventDefault();
@@ -89,7 +92,12 @@ function bindEvents() {
                 return;
             }
             if (action === 'add-reflection') {
-                openCreateReflectionModal(groupUuid);
+                openCreateReflectionModal(groupUuid, 'tool');
+                return;
+            }
+
+            if (action === 'add-transform') {
+                openCreateReflectionModal(groupUuid, 'transform');
                 return;
             }
 
@@ -102,7 +110,7 @@ function bindEvents() {
                 openCreateRecordToolModal(groupUuid);
                 return;
             }
-            openCreateReflectionModal(groupUuid);
+            openCreateReflectionModal(groupUuid, 'tool');
         });
     }
 
@@ -131,6 +139,19 @@ function bindEvents() {
     document.getElementById('reflection-modal-save').addEventListener('click', saveReflection);
     document.getElementById('reflection-group').addEventListener('change', onReflectionGroupChanged);
     document.getElementById('reflection-id').addEventListener('input', onReflectionIdentityChanged);
+    document.getElementById('reflection-transformation-enabled').addEventListener('change', function () {
+        syncTransformationVisibility();
+    });
+    document.getElementById('reflection-transformation-source').addEventListener('change', function () {
+        renderTransformationMappings();
+    });
+    document.getElementById('reflection-transformation-target-tool').addEventListener('change', function () {
+        renderTransformationMappings();
+    });
+    document.getElementById('add-transformation-mapping-btn').addEventListener('click', function () {
+        modalTransformationMappings.push({ targetParameter: '', mappingType: 'OUTPUT', mappingValue: '' });
+        renderTransformationMappings();
+    });
 
     const mongoToolModalClose = document.getElementById('mongo-tool-modal-close');
     const mongoToolModalCancel = document.getElementById('mongo-tool-modal-cancel');
@@ -282,8 +303,26 @@ function bindEvents() {
 }
 
 async function loadAll() {
-    await Promise.all([loadGroups(), loadReflections(), loadOAuthTemplates(), loadBindingContracts()]);
+    await Promise.all([
+        loadGroups(),
+        loadReflections(),
+        loadOAuthTemplates(),
+        loadBindingContracts(),
+        loadTransformationTargetTools()
+    ]);
     renderGroups();
+}
+
+async function loadTransformationTargetTools() {
+    try {
+        const response = await fetch('/api/reflections/transformation-target-tools');
+        if (!response.ok) {
+            throw new Error('HTTP ' + response.status);
+        }
+        transformationTargetTools = await response.json();
+    } catch (_error) {
+        transformationTargetTools = [];
+    }
 }
 
 async function loadOAuthTemplates() {
@@ -417,6 +456,7 @@ function reflectionsForGroupUuid(groupUuid) {
 function renderReflectionPillsHtml(groupReflections, groupUuid) {
     const groupType = resolveGroupType(groupUuid);
     const isMongoGroup = groupType === 'MONGO';
+    const isRestGroup = groupType === 'REST';
 
     if (!groupReflections || groupReflections.length === 0) {
         if (isReadOnly) {
@@ -427,10 +467,16 @@ function renderReflectionPillsHtml(groupReflections, groupUuid) {
                 ? '<span class="text-xs text-zinc-500">Managed by Mongo wizard/custom Mongo tools.</span>'
                 : '<button class="rounded-full border border-dashed border-zinc-600 px-3 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" data-action="add-tool" data-group-id="' + escapeHtml(groupUuid) + '"><i class="fa-solid fa-plus mr-1"></i>Add tool</button>';
         }
-        return ''
+        const firstToolButton = ''
             + '<button class="rounded-full border border-dashed border-zinc-600 px-3 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" '
             + 'data-action="add-tool" data-group-id="' + escapeHtml(groupUuid) + '">'
             + '<i class="fa-solid fa-plus mr-1"></i>Add first tool</button>';
+        const firstTransformButton = isRestGroup
+            ? ' <button class="rounded-full border border-dashed border-cyan-500/40 px-3 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/10" '
+                + 'data-action="add-transform" data-group-id="' + escapeHtml(groupUuid) + '">'
+                + '<i class="fa-solid fa-shuffle mr-1"></i>Add transform</button>'
+            : '';
+        return firstToolButton + firstTransformButton;
     }
 
     const pills = groupReflections
@@ -456,11 +502,12 @@ function renderReflectionPillsHtml(groupReflections, groupUuid) {
 
     const addButton = isReadOnly
         ? ''
-        : (isMongoGroup
-            ? '<button class="mb-1 inline-flex items-center rounded-full border border-dashed border-zinc-600 px-2.5 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" data-action="add-tool" data-group-id="' + escapeHtml(groupUuid) + '" title="Add tool to group"><i class="fa-solid fa-plus mr-1"></i>Add tool</button>'
-            : '<button class="mb-1 inline-flex items-center rounded-full border border-dashed border-zinc-600 px-2.5 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" data-action="add-tool" data-group-id="' + escapeHtml(groupUuid) + '" title="Add tool to group"><i class="fa-solid fa-plus mr-1"></i>Add tool</button>');
+        : '<button class="mb-1 inline-flex items-center rounded-full border border-dashed border-zinc-600 px-2.5 py-1 text-xs text-zinc-300 transition-colors hover:border-[#fdaa02] hover:text-[#fdaa02]" data-action="add-tool" data-group-id="' + escapeHtml(groupUuid) + '" title="Add tool to group"><i class="fa-solid fa-plus mr-1"></i>Add tool</button>';
+    const addTransformButton = (isReadOnly || !isRestGroup)
+        ? ''
+        : '<button class="mb-1 ml-1 inline-flex items-center rounded-full border border-dashed border-cyan-500/40 px-2.5 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/10" data-action="add-transform" data-group-id="' + escapeHtml(groupUuid) + '" title="Add transform"><i class="fa-solid fa-shuffle mr-1"></i>Add transform</button>';
 
-    return pills + addButton;
+    return pills + addButton + addTransformButton;
 }
 
 function resolveGroupType(groupUuid) {
@@ -560,14 +607,20 @@ function bindDynamicTableEvents(root) {
                 openCreateRecordToolModal(groupUuid);
                 return;
             }
-            openCreateReflectionModal(groupUuid);
+            openCreateReflectionModal(groupUuid, 'tool');
+        });
+    });
+
+    root.querySelectorAll('button[data-action="add-transform"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            openCreateReflectionModal(button.getAttribute('data-group-id'), 'transform');
         });
     });
 
     // Legacy action names kept for compatibility with older rendered rows.
     root.querySelectorAll('button[data-action="add-reflection"]').forEach(function (button) {
         button.addEventListener('click', function () {
-            openCreateReflectionModal(button.getAttribute('data-group-id'));
+            openCreateReflectionModal(button.getAttribute('data-group-id'), 'tool');
         });
     });
     root.querySelectorAll('button[data-action="add-mongo-tool"]').forEach(function (button) {
@@ -2234,7 +2287,7 @@ async function deleteGroup(uuid) {
     }
 }
 
-function openCreateReflectionModal(defaultGroupUuid) {
+function openCreateReflectionModal(defaultGroupUuid, requestedKind) {
     if (!groups || groups.length === 0) {
         showAlert('Create a reflection group first.', 'warning');
         return;
@@ -2251,6 +2304,8 @@ function openCreateReflectionModal(defaultGroupUuid) {
         return;
     }
 
+    const kind = requestedKind === 'transform' ? 'transform' : 'tool';
+
     const supportedGroups = (groups || []).filter(function (entry) {
         const group = entry.group || entry;
         const type = String(group.type || 'REST').toUpperCase();
@@ -2261,7 +2316,9 @@ function openCreateReflectionModal(defaultGroupUuid) {
         return;
     }
 
-    document.getElementById('reflection-modal-title').textContent = 'New REST/OAuth Reflection';
+    document.getElementById('reflection-modal-title').textContent = kind === 'transform'
+        ? 'New Transform'
+        : 'New REST/OAuth Reflection';
     document.getElementById('reflection-uuid').value = '';
     document.getElementById('reflection-id').value = '';
     document.getElementById('reflection-name').value = '';
@@ -2272,26 +2329,36 @@ function openCreateReflectionModal(defaultGroupUuid) {
     document.getElementById('reflection-response-content-type').value = 'application/json';
     document.getElementById('reflection-output-schema').value = '';
     document.getElementById('reflection-body').value = '';
+    document.getElementById('reflection-transformation-enabled').checked = kind === 'transform';
+    document.getElementById('reflection-transformation-source').innerHTML = '';
+    document.getElementById('reflection-transformation-target-tool').innerHTML = '';
     activeContractTool = null;
     modalParameters = [];
     modalHeaders = [];
     modalQueryParameters = [];
+    modalTransformationMappings = [];
     populateGroupSelect(defaultGroupUuid || '');
     updateRequestTemplateVisibility();
     updateOutputSchemaVisibility();
-    setReflectionTab('request');
+    setReflectionModalKind(kind);
     renderKeyValueRows('headers-list', modalHeaders, 'header');
     renderKeyValueRows('query-params-list', modalQueryParameters, 'query');
+    populateTransformationTargetToolOptions('');
+    renderTransformationSourceOptions();
+    renderTransformationMappings();
+    syncTransformationVisibility();
 
     const selectedGroupUuid = document.getElementById('reflection-group').value;
-    const pendingContractTools = missingContractToolsForGroup(selectedGroupUuid);
-    const hasContracts = contractsForGroup(selectedGroupUuid).length > 0;
-    if (hasContracts && pendingContractTools.length === 0) {
-        showAlert('All contract tools for this group already exist. Contract-bound groups do not allow non-contract REST tools.', 'warning');
-        return;
-    }
-    if (pendingContractTools.length > 0) {
-        applyContractToolToModal(pendingContractTools[0], true);
+    if (kind === 'tool') {
+        const pendingContractTools = missingContractToolsForGroup(selectedGroupUuid);
+        const hasContracts = contractsForGroup(selectedGroupUuid).length > 0;
+        if (hasContracts && pendingContractTools.length === 0) {
+            showAlert('All contract tools for this group already exist. Contract-bound groups do not allow non-contract REST tools.', 'warning');
+            return;
+        }
+        if (pendingContractTools.length > 0) {
+            applyContractToolToModal(pendingContractTools[0], true);
+        }
     }
 
     renderParameters();
@@ -2316,8 +2383,11 @@ function openEditReflectionModal(uuid) {
         return;
     }
 
-    document.getElementById('reflection-modal-title').textContent = 'Edit REST/OAuth Reflection';
-    populateReflectionModalFromReflection(reflection, false);
+    const kind = reflection.transformationEnabled ? 'transform' : 'tool';
+    document.getElementById('reflection-modal-title').textContent = kind === 'transform'
+        ? 'Edit Transform'
+        : 'Edit REST/OAuth Reflection';
+    populateReflectionModalFromReflection(reflection, false, kind);
     showModal('reflection-modal');
 }
 
@@ -2338,12 +2408,16 @@ function openCopyReflectionModal(uuid) {
         return;
     }
 
-    document.getElementById('reflection-modal-title').textContent = 'Copy REST/OAuth Reflection';
-    populateReflectionModalFromReflection(reflection, true);
+    const kind = reflection.transformationEnabled ? 'transform' : 'tool';
+    document.getElementById('reflection-modal-title').textContent = kind === 'transform'
+        ? 'Copy Transform'
+        : 'Copy REST/OAuth Reflection';
+    populateReflectionModalFromReflection(reflection, true, kind);
     showModal('reflection-modal');
 }
 
-function populateReflectionModalFromReflection(reflection, asCopy) {
+function populateReflectionModalFromReflection(reflection, asCopy, forcedKind) {
+    const kind = forcedKind === 'transform' ? 'transform' : (reflection.transformationEnabled ? 'transform' : 'tool');
     document.getElementById('reflection-uuid').value = asCopy ? '' : (reflection.uuid || '');
     document.getElementById('reflection-id').value = asCopy ? '' : (reflection.id || '');
     document.getElementById('reflection-name').value = reflection.name || '';
@@ -2354,6 +2428,7 @@ function populateReflectionModalFromReflection(reflection, asCopy) {
     document.getElementById('reflection-response-content-type').value = reflection.responseContentType || 'application/json';
     document.getElementById('reflection-output-schema').value = reflection.outputSchema || '';
     document.getElementById('reflection-body').value = reflection.bodyTemplate || '';
+    document.getElementById('reflection-transformation-enabled').checked = !!reflection.transformationEnabled;
     modalHeaders = mapToKeyValueEntries(reflection.headers || {});
     modalQueryParameters = mapToKeyValueEntries(reflection.queryParameters || {});
     modalParameters = (reflection.inputParameters || []).map(function (parameter) {
@@ -2365,15 +2440,45 @@ function populateReflectionModalFromReflection(reflection, asCopy) {
             array: !!parameter.array
         };
     });
+    modalTransformationMappings = (reflection.transformationMappings || []).map(function (mapping) {
+        const sourcePath = mapping.sourcePath || '';
+        const constantValue = mapping.constantValue || '';
+        let mappingType = 'FIXED';
+        let mappingValue = constantValue;
+        if (sourcePath.startsWith('[input].') || sourcePath.startsWith('input.')) {
+            mappingType = 'INPUT';
+            mappingValue = sourcePath.startsWith('[input].')
+                ? sourcePath.substring('[input].'.length)
+                : sourcePath.substring('input.'.length);
+        } else if (sourcePath) {
+            mappingType = 'OUTPUT';
+            mappingValue = sourcePath;
+        }
+        return {
+            targetParameter: mapping.targetParameter || '',
+            mappingType: mappingType,
+            mappingValue: mappingValue || ''
+        };
+    });
     populateGroupSelect(reflection.groupUuid || '');
     updateRequestTemplateVisibility();
     updateOutputSchemaVisibility();
-    setReflectionTab('request');
+    setReflectionModalKind(kind);
     renderKeyValueRows('headers-list', modalHeaders, 'header');
     renderKeyValueRows('query-params-list', modalQueryParameters, 'query');
-    const contractTool = contractToolForReflection(reflection.groupUuid || '', reflection.id || '');
-    if (contractTool) {
-        applyContractToolToModal(contractTool, true);
+    populateTransformationTargetToolOptions(reflection.transformationTargetToolName || '');
+    renderTransformationSourceOptions(reflection.transformationSourceReflectionId || '');
+    renderTransformationMappings();
+    syncTransformationVisibility();
+    if (kind === 'tool') {
+        const contractTool = contractToolForReflection(reflection.groupUuid || '', reflection.id || '');
+        if (contractTool) {
+            applyContractToolToModal(contractTool, true);
+        } else {
+            activeContractTool = null;
+            renderParameters();
+            updateReflectionContractUiLock(false, null);
+        }
     } else {
         activeContractTool = null;
         renderParameters();
@@ -2397,7 +2502,11 @@ async function saveReflection() {
         outputSchema: document.getElementById('reflection-output-schema').value,
         headers: keyValueEntriesToMap(modalHeaders),
         queryParameters: keyValueEntriesToMap(modalQueryParameters),
-        bodyTemplate: document.getElementById('reflection-body').value
+        bodyTemplate: document.getElementById('reflection-body').value,
+        transformationEnabled: document.getElementById('reflection-transformation-enabled').checked,
+        transformationSourceReflectionId: document.getElementById('reflection-transformation-source').value,
+        transformationTargetToolName: document.getElementById('reflection-transformation-target-tool').value,
+        transformationMappings: sanitizeTransformationMappings(modalTransformationMappings)
     };
 
     const groupType = resolveGroupType(payload.groupUuid);
@@ -2407,7 +2516,7 @@ async function saveReflection() {
         return;
     }
 
-    if (groupType === 'REST' && !payload.url) {
+    if (groupType === 'REST' && !payload.transformationEnabled && !payload.url) {
         showReflectionModalAlert('URL is required for REST reflections.', 'warning');
         return;
     }
@@ -2420,6 +2529,27 @@ async function saveReflection() {
     if (!/^[A-Za-z0-9]+$/.test(payload.id)) {
         showReflectionModalAlert('ID must be alphanumeric.', 'warning');
         return;
+    }
+
+    if (payload.transformationEnabled) {
+        if (!payload.transformationSourceReflectionId) {
+            showReflectionModalAlert('Transformation source reflection is required.', 'warning');
+            return;
+        }
+        if (!payload.transformationTargetToolName) {
+            showReflectionModalAlert('Transformation target tool is required.', 'warning');
+            return;
+        }
+        if (!payload.transformationMappings || payload.transformationMappings.length === 0) {
+            showReflectionModalAlert('At least one transformation mapping is required.', 'warning');
+            return;
+        }
+        payload.url = payload.url || '';
+        payload.method = payload.method || 'GET';
+    } else {
+        payload.transformationSourceReflectionId = '';
+        payload.transformationTargetToolName = '';
+        payload.transformationMappings = [];
     }
 
     try {
@@ -2719,6 +2849,8 @@ function onReflectionGroupChanged() {
     const hasContracts = contractsForGroup(groupUuid).length > 0;
     activeContractTool = null;
     updateReflectionContractUiLock(false, hasContracts ? 'optional-extra-tool' : null);
+    renderTransformationSourceOptions();
+    renderTransformationMappings();
 }
 
 function onReflectionIdentityChanged() {
@@ -2732,6 +2864,298 @@ function onReflectionIdentityChanged() {
     const hasContracts = contractsForGroup(groupUuid).length > 0;
     activeContractTool = null;
     updateReflectionContractUiLock(false, hasContracts ? 'optional-extra-tool' : null);
+    renderTransformationSourceOptions();
+    renderTransformationMappings();
+}
+
+function syncTransformationVisibility() {
+    const enabled = document.getElementById('reflection-transformation-enabled')?.checked;
+    const config = document.getElementById('reflection-transformation-config');
+    if (!config) {
+        return;
+    }
+    config.classList.toggle('hidden', !enabled);
+}
+
+function populateTransformationTargetToolOptions(selectedName) {
+    const select = document.getElementById('reflection-transformation-target-tool');
+    if (!select) {
+        return;
+    }
+    select.innerHTML = '';
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = 'Select target tool';
+    select.appendChild(empty);
+
+    (transformationTargetTools || []).forEach(function (tool) {
+        const option = document.createElement('option');
+        option.value = tool.name || '';
+        option.textContent = tool.name || '';
+        if (selectedName && selectedName === option.value) {
+            option.selected = true;
+        }
+        select.appendChild(option);
+    });
+}
+
+function renderTransformationSourceOptions(selectedSourceId) {
+    const groupUuid = document.getElementById('reflection-group')?.value || '';
+    const currentId = document.getElementById('reflection-id')?.value || '';
+    const select = document.getElementById('reflection-transformation-source');
+    if (!select) {
+        return;
+    }
+    const preferred = selectedSourceId || select.value;
+    select.innerHTML = '';
+
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = 'Select source reflection tool';
+    select.appendChild(empty);
+
+    const candidates = reflectionsForGroupUuid(groupUuid)
+        .filter(function (reflection) {
+            if (!reflection || !reflection.id) {
+                return false;
+            }
+            if (currentId && String(reflection.id).toLowerCase() === String(currentId).toLowerCase()) {
+                return false;
+            }
+            return true;
+        })
+        .sort(function (a, b) {
+            return String(a.id || '').localeCompare(String(b.id || ''), undefined, { sensitivity: 'base' });
+        });
+
+    candidates.forEach(function (reflection) {
+        const option = document.createElement('option');
+        option.value = reflection.id || '';
+        option.textContent = (reflection.id || '') + (reflection.name ? (' - ' + reflection.name) : '');
+        if (preferred && preferred === option.value) {
+            option.selected = true;
+        }
+        select.appendChild(option);
+    });
+}
+
+function targetToolByName(toolName) {
+    if (!toolName) {
+        return null;
+    }
+    return (transformationTargetTools || []).find(function (tool) {
+        return String(tool.name || '').toLowerCase() === String(toolName).toLowerCase();
+    }) || null;
+}
+
+function renderTransformationMappings() {
+    const container = document.getElementById('reflection-transformation-mappings');
+    if (!container) {
+        return;
+    }
+    container.innerHTML = '';
+
+    if (!modalTransformationMappings || modalTransformationMappings.length === 0) {
+        container.innerHTML = '<p class="text-xs text-zinc-500">No mappings configured.</p>';
+        return;
+    }
+
+    const targetToolName = document.getElementById('reflection-transformation-target-tool')?.value || '';
+    const targetTool = targetToolByName(targetToolName);
+    const targetParams = targetTool && Array.isArray(targetTool.inputParameters)
+        ? targetTool.inputParameters
+        : [];
+
+    modalTransformationMappings.forEach(function (mapping, index) {
+        const mappingType = String(mapping.mappingType || 'OUTPUT').toUpperCase();
+        const row = document.createElement('div');
+        row.className = 'grid grid-cols-12 gap-2 mb-2';
+        row.innerHTML = ''
+            + '<select class="col-span-3 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 transformation-target" data-index="' + index + '"></select>'
+            + '<select class="col-span-2 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 transformation-type" data-index="' + index + '">'
+            + '  <option value="INPUT"' + (mappingType === 'INPUT' ? ' selected' : '') + '>Input</option>'
+            + '  <option value="OUTPUT"' + (mappingType === 'OUTPUT' ? ' selected' : '') + '>Output</option>'
+            + '  <option value="FIXED"' + (mappingType === 'FIXED' ? ' selected' : '') + '>Fixed</option>'
+            + '</select>'
+            + '<div class="col-span-6" id="transformation-value-cell-' + index + '"></div>'
+            + '<button type="button" class="col-span-1 rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transformation-remove" data-index="' + index + '" title="Remove"><i class="fa-solid fa-xmark"></i></button>';
+        container.appendChild(row);
+
+        const select = row.querySelector('.transformation-target');
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = 'target param';
+        select.appendChild(empty);
+        targetParams.forEach(function (paramName) {
+            const option = document.createElement('option');
+            option.value = paramName;
+            option.textContent = paramName;
+            if ((mapping.targetParameter || '') === paramName) {
+                option.selected = true;
+            }
+            select.appendChild(option);
+        });
+
+        renderTransformationValueControl(index);
+    });
+
+    container.querySelectorAll('.transformation-target').forEach(function (select) {
+        select.addEventListener('change', function () {
+            const index = Number(select.getAttribute('data-index'));
+            modalTransformationMappings[index].targetParameter = select.value;
+        });
+    });
+    container.querySelectorAll('.transformation-type').forEach(function (select) {
+        select.addEventListener('change', function () {
+            const index = Number(select.getAttribute('data-index'));
+            modalTransformationMappings[index].mappingType = select.value;
+            modalTransformationMappings[index].mappingValue = '';
+            renderTransformationValueControl(index);
+        });
+    });
+    container.querySelectorAll('.transformation-remove').forEach(function (button) {
+        button.addEventListener('click', function () {
+            const index = Number(button.getAttribute('data-index'));
+            modalTransformationMappings.splice(index, 1);
+            renderTransformationMappings();
+        });
+    });
+}
+
+function renderTransformationValueControl(index) {
+    const mapping = modalTransformationMappings[index];
+    const host = document.getElementById('transformation-value-cell-' + index);
+    if (!mapping || !host) {
+        return;
+    }
+
+    const type = String(mapping.mappingType || 'OUTPUT').toUpperCase();
+    if (type === 'INPUT') {
+        const inputParams = sanitizeParameters(modalParameters).map(function (parameter) {
+            return parameter.name;
+        }).filter(function (name) { return !!name; });
+
+        const select = document.createElement('select');
+        select.className = 'w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100';
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = inputParams.length === 0 ? 'No request inputs available' : 'Select input parameter';
+        select.appendChild(empty);
+        inputParams.forEach(function (name) {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            if ((mapping.mappingValue || '') === name) {
+                option.selected = true;
+            }
+            select.appendChild(option);
+        });
+        host.innerHTML = '';
+        host.appendChild(select);
+        select.addEventListener('change', function () {
+            modalTransformationMappings[index].mappingValue = select.value;
+        });
+        return;
+    }
+
+    if (type === 'OUTPUT') {
+        const sourceId = document.getElementById('reflection-transformation-source')?.value || '';
+        const outputPaths = sourceOutputPathsForReflection(sourceId);
+
+        const select = document.createElement('select');
+        select.className = 'w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100';
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = outputPaths.length === 0 ? 'No output fields available' : 'Select output path';
+        select.appendChild(empty);
+        outputPaths.forEach(function (path) {
+            const option = document.createElement('option');
+            option.value = path;
+            option.textContent = path;
+            if ((mapping.mappingValue || '') === path) {
+                option.selected = true;
+            }
+            select.appendChild(option);
+        });
+        host.innerHTML = '';
+        host.appendChild(select);
+        select.addEventListener('change', function () {
+            modalTransformationMappings[index].mappingValue = select.value;
+        });
+        return;
+    }
+
+    host.innerHTML = '';
+    const input = document.createElement('input');
+    input.className = 'w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100';
+    input.placeholder = 'Fixed value';
+    input.value = mapping.mappingValue || '';
+    host.appendChild(input);
+    input.addEventListener('input', function () {
+        modalTransformationMappings[index].mappingValue = input.value;
+    });
+}
+
+function sourceOutputPathsForReflection(sourceReflectionId) {
+    if (!sourceReflectionId) {
+        return [];
+    }
+    const groupUuid = document.getElementById('reflection-group')?.value || '';
+    const source = reflectionsForGroupUuid(groupUuid).find(function (reflection) {
+        return String(reflection.id || '').toLowerCase() === String(sourceReflectionId).toLowerCase();
+    });
+    if (!source || !source.outputSchema) {
+        return [];
+    }
+    try {
+        const schema = JSON.parse(source.outputSchema);
+        const paths = [];
+        collectJsonSchemaPaths(schema, '[output]', paths);
+        return paths;
+    } catch (_error) {
+        return [];
+    }
+}
+
+function collectJsonSchemaPaths(schemaNode, prefix, out) {
+    if (!schemaNode || typeof schemaNode !== 'object') {
+        return;
+    }
+    const properties = schemaNode.properties;
+    if (!properties || typeof properties !== 'object') {
+        return;
+    }
+    Object.keys(properties).forEach(function (key) {
+        const child = properties[key];
+        const childPath = prefix + '.' + key;
+        out.push(childPath);
+        collectJsonSchemaPaths(child, childPath, out);
+    });
+}
+
+function sanitizeTransformationMappings(mappings) {
+    return (mappings || [])
+        .map(function (mapping) {
+            const value = (mapping.mappingValue || '').trim();
+            const mappingType = String(mapping.mappingType || 'OUTPUT').toUpperCase();
+            let sourcePath = '';
+            let constantValue = '';
+            if (mappingType === 'INPUT') {
+                sourcePath = value ? ('[input].' + value) : '';
+            } else if (mappingType === 'OUTPUT') {
+                sourcePath = value;
+            } else {
+                constantValue = value;
+            }
+            return {
+                targetParameter: (mapping.targetParameter || '').trim(),
+                sourcePath: sourcePath,
+                constantValue: constantValue
+            };
+        })
+        .filter(function (mapping) {
+            return mapping.targetParameter && (mapping.sourcePath || mapping.constantValue);
+        });
 }
 
 function populateRecordGroupSelect(selectedUuid) {
@@ -3531,14 +3955,77 @@ function closeReflectionModal() {
     hideModal('reflection-modal');
 }
 
+function setReflectionModalKind(kind) {
+    modalReflectionKind = kind === 'transform' ? 'transform' : 'tool';
+    const isTransform = modalReflectionKind === 'transform';
+
+    const requestBtn = document.getElementById('reflection-tab-request');
+    const responseBtn = document.getElementById('reflection-tab-response');
+    const transformationBtn = document.getElementById('reflection-tab-transformation');
+    const saveBtn = document.getElementById('reflection-modal-save');
+
+    if (requestBtn) {
+        requestBtn.classList.remove('hidden');
+    }
+    if (responseBtn) {
+        responseBtn.classList.toggle('hidden', isTransform);
+    }
+    if (transformationBtn) {
+        transformationBtn.classList.toggle('hidden', !isTransform);
+    }
+
+    if (saveBtn) {
+        saveBtn.textContent = isTransform ? 'Save Transform' : 'Save Tool';
+    }
+
+    if (isTransform) {
+        const toggle = document.getElementById('reflection-transformation-enabled');
+        if (toggle) {
+            toggle.checked = true;
+            toggle.disabled = true;
+        }
+        syncRequestFieldsByModalKind();
+        syncTransformationVisibility();
+        setReflectionTab('request');
+    } else {
+        const toggle = document.getElementById('reflection-transformation-enabled');
+        if (toggle) {
+            toggle.checked = false;
+            toggle.disabled = true;
+        }
+        syncRequestFieldsByModalKind();
+        syncTransformationVisibility();
+        setReflectionTab('request');
+    }
+}
+
+function syncRequestFieldsByModalKind() {
+    const isTransform = modalReflectionKind === 'transform';
+    const sectionIds = [
+        'reflection-request-http-section',
+        'reflection-request-url-section',
+        'reflection-request-headers-section',
+        'reflection-request-query-section',
+        'request-template-section'
+    ];
+    sectionIds.forEach(function (id) {
+        const section = document.getElementById(id);
+        if (section) {
+            section.classList.toggle('hidden', isTransform);
+        }
+    });
+}
+
 function setReflectionTab(tab) {
     const requestBtn = document.getElementById('reflection-tab-request');
     const responseBtn = document.getElementById('reflection-tab-response');
+    const transformationBtn = document.getElementById('reflection-tab-transformation');
     const requestPanel = document.getElementById('reflection-tab-panel-request');
     const responsePanel = document.getElementById('reflection-tab-panel-response');
-    const active = tab === 'response' ? 'response' : 'request';
+    const transformationPanel = document.getElementById('reflection-tab-panel-transformation');
+    const active = tab === 'response' ? 'response' : (tab === 'transformation' ? 'transformation' : 'request');
 
-    if (!requestBtn || !responseBtn || !requestPanel || !responsePanel) {
+    if (!requestBtn || !responseBtn || !transformationBtn || !requestPanel || !responsePanel || !transformationPanel) {
         return;
     }
 
@@ -3554,13 +4041,24 @@ function setReflectionTab(tab) {
     if (active === 'request') {
         activate(requestBtn);
         deactivate(responseBtn);
+        deactivate(transformationBtn);
         requestPanel.classList.remove('hidden');
         responsePanel.classList.add('hidden');
-    } else {
+        transformationPanel.classList.add('hidden');
+    } else if (active === 'response') {
         activate(responseBtn);
         deactivate(requestBtn);
+        deactivate(transformationBtn);
         responsePanel.classList.remove('hidden');
         requestPanel.classList.add('hidden');
+        transformationPanel.classList.add('hidden');
+    } else {
+        activate(transformationBtn);
+        deactivate(requestBtn);
+        deactivate(responseBtn);
+        transformationPanel.classList.remove('hidden');
+        requestPanel.classList.add('hidden');
+        responsePanel.classList.add('hidden');
     }
 }
 

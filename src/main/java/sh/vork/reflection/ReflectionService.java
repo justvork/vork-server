@@ -29,6 +29,7 @@ import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -110,6 +111,8 @@ public class ReflectionService {
             "timestamp",
             "hidden");
     private static final long PENDING_OAUTH_BINDING_TTL_MS = 15 * 60 * 1000L;
+    private static final int MAX_TRANSFORMATION_DEPTH = 4;
+    private static final String TRANSFORMATION_DEPTH_CONTEXT_KEY = "__reflection_transformation_depth__";
     private static final boolean DEV_UNREDACTED_LOGS = resolveDevUnredactedLogsFlag();
 
     private final DatabaseRepository<Reflection> reflectionRepository;
@@ -130,6 +133,7 @@ public class ReflectionService {
     private DatabaseRepository<TypeRecordBindingScope> typeRecordBindingScopeRepository;
     private DatabaseRepository<TypeRecordVersionMetadata> typeRecordVersionMetadataRepository;
     private DatabaseRepository<JavaType> javaTypeRepository;
+    private List<ToolCallback> toolCallbacks = List.of();
 
     @Autowired
     public ReflectionService(RepositoryFactory factory,
@@ -178,6 +182,11 @@ public class ReflectionService {
     @Autowired(required = false)
     public void setJavaTypeRepository(DatabaseRepository<JavaType> javaTypeRepository) {
         this.javaTypeRepository = javaTypeRepository;
+    }
+
+    @Autowired(required = false)
+    public void setToolCallbacks(List<ToolCallback> toolCallbacks) {
+        this.toolCallbacks = toolCallbacks == null ? List.of() : List.copyOf(toolCallbacks);
     }
 
         ReflectionService(DatabaseRepository<Reflection> reflectionRepository,
@@ -263,6 +272,25 @@ public class ReflectionService {
                     .findFirst()
                     .orElse(null);
         }
+    }
+
+    public List<TransformationTargetToolDescriptor> listTransformationTargetTools() {
+        List<TransformationTargetToolDescriptor> out = new ArrayList<>();
+        for (ToolCallback callback : toolCallbacks) {
+            if (callback == null || callback.getToolDefinition() == null
+                    || callback.getToolDefinition().name() == null || callback.getToolDefinition().name().isBlank()) {
+                continue;
+            }
+            String toolName = callback.getToolDefinition().name();
+            String description = callback.getToolDefinition().description() == null
+                    ? ""
+                    : callback.getToolDefinition().description();
+            List<String> parameterNames = extractToolSchemaPropertyNames(callback);
+            List<String> required = extractToolSchemaRequiredFields(callback);
+            out.add(new TransformationTargetToolDescriptor(toolName, description, parameterNames, required));
+        }
+        out.sort(Comparator.comparing(TransformationTargetToolDescriptor::name, String.CASE_INSENSITIVE_ORDER));
+        return List.copyOf(out);
     }
 
     public ReflectionGroup createGroup(ReflectionGroupRequest request) {
@@ -1404,6 +1432,9 @@ public class ReflectionService {
 
         ReflectionGroup group = reflectionGroupRepository.get(reflection.groupUuid());
         ReflectionType type = group == null ? ReflectionType.REST : group.type();
+        if (Boolean.TRUE.equals(reflection.transformationEnabled())) {
+            return executeTransformationReflection(reflection, group, runtimeInputs, bindingName, username);
+        }
         if (type == ReflectionType.RECORD) {
             return executeRecordReflection(reflection, runtimeInputs, bindingName, username);
         }
@@ -1563,6 +1594,463 @@ public class ReflectionService {
         }
     }
 
+    private String executeTransformationReflection(Reflection reflection,
+                                                   ReflectionGroup group,
+                                                   Map<String, Object> runtimeInputs,
+                                                   String bindingName,
+                                                   String username) {
+        int depth = currentTransformationDepth();
+        if (depth >= MAX_TRANSFORMATION_DEPTH) {
+            return jsonError("Transformation depth limit exceeded.");
+        }
+
+        String sourceReflectionId = reflection.transformationSourceReflectionId() == null
+                ? ""
+                : reflection.transformationSourceReflectionId().trim();
+        String targetToolName = reflection.transformationTargetToolName() == null
+                ? ""
+                : reflection.transformationTargetToolName().trim();
+
+        Reflection source = resolveSourceReflection(group, sourceReflectionId);
+        if (source == null) {
+            return jsonError("Transformation source reflection not found in group: " + sourceReflectionId);
+        }
+
+        ToolCallback targetTool = resolveToolCallbackByName(targetToolName);
+        if (targetTool == null) {
+            return jsonError("Transformation target tool not found: " + targetToolName);
+        }
+
+        List<ReflectionTransformationMapping> mappings = normalizeTransformationMappings(reflection.transformationMappings());
+        if (mappings.isEmpty()) {
+            return jsonError("Transformation mappings are required.");
+        }
+
+        Map<String, Object> sourceInputs = runtimeInputs == null ? Map.of() : runtimeInputs;
+        Object previousDepth = ToolExecutionContext.get(TRANSFORMATION_DEPTH_CONTEXT_KEY);
+        ToolExecutionContext.put(TRANSFORMATION_DEPTH_CONTEXT_KEY, depth + 1);
+
+        try {
+            String sourceResultRaw = executeRestReflectionByUuid(source.uuid(), sourceInputs, bindingName, username);
+            Map<String, Object> sourceEnvelope = parseJsonObjectSafe(sourceResultRaw);
+            String sourceStatus = String.valueOf(sourceEnvelope.getOrDefault("status", "error"));
+            if (!"ok".equalsIgnoreCase(sourceStatus)) {
+                return buildTransformationError("Transformation source tool failed.", reflection.id(), sourceEnvelope, null);
+            }
+
+            Object outputPayload = parseOutputPayload(sourceEnvelope.get("body"));
+            Map<String, Object> targetArgs = buildTransformationTargetArgs(mappings, sourceInputs, sourceEnvelope, outputPayload);
+            String missingRequired = validateTargetRequiredArguments(targetTool, targetArgs);
+            if (missingRequired != null) {
+                return buildTransformationError(missingRequired, reflection.id(), sourceEnvelope, null);
+            }
+
+            String targetResultRaw = targetTool.call(objectMapper.writeValueAsString(targetArgs));
+            Map<String, Object> targetEnvelope = parseJsonObjectSafe(targetResultRaw);
+            String targetStatus = String.valueOf(targetEnvelope.getOrDefault("status", "ok"));
+            if (!"ok".equalsIgnoreCase(targetStatus)) {
+                return buildTransformationError("Transformation target tool failed.", reflection.id(), sourceEnvelope, targetEnvelope);
+            }
+            return targetResultRaw;
+        } catch (Exception ex) {
+            log.warn("Transformation execution failed [reflectionId={}]: {}", reflection.id(), ex.getMessage());
+            return jsonError("Transformation execution failed: " + ex.getMessage());
+        } finally {
+            if (previousDepth == null) {
+                ToolExecutionContext.remove(TRANSFORMATION_DEPTH_CONTEXT_KEY);
+            } else {
+                ToolExecutionContext.put(TRANSFORMATION_DEPTH_CONTEXT_KEY, previousDepth);
+            }
+        }
+    }
+
+    private int currentTransformationDepth() {
+        Object depth = ToolExecutionContext.get(TRANSFORMATION_DEPTH_CONTEXT_KEY);
+        if (depth instanceof Number number) {
+            return number.intValue();
+        }
+        if (depth instanceof String text) {
+            try {
+                return Integer.parseInt(text.trim());
+            } catch (NumberFormatException ignored) {
+                return 0;
+            }
+        }
+        return 0;
+    }
+
+    private Reflection resolveSourceReflection(ReflectionGroup group, String sourceReflectionId) {
+        if (sourceReflectionId == null || sourceReflectionId.isBlank()) {
+            return null;
+        }
+        if (group == null || group.uuid() == null || group.uuid().isBlank()) {
+            return null;
+        }
+        return reflectionsForGroup(group.uuid()).stream()
+                .filter(ref -> sourceReflectionId.equalsIgnoreCase(ref.id()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private ToolCallback resolveToolCallbackByName(String toolName) {
+        if (toolName == null || toolName.isBlank()) {
+            return null;
+        }
+        for (ToolCallback callback : toolCallbacks) {
+            if (callback == null || callback.getToolDefinition() == null || callback.getToolDefinition().name() == null) {
+                continue;
+            }
+            if (toolName.equalsIgnoreCase(callback.getToolDefinition().name())) {
+                return callback;
+            }
+        }
+        return null;
+    }
+
+    private Map<String, Object> parseJsonObjectSafe(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Map.of();
+        }
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> parsed = objectMapper.readValue(raw, Map.class);
+            return parsed == null ? Map.of() : parsed;
+        } catch (Exception ex) {
+            return Map.of("status", "error", "message", raw);
+        }
+    }
+
+    private Object parseOutputPayload(Object bodyValue) {
+        if (bodyValue == null) {
+            return null;
+        }
+        if (bodyValue instanceof Map<?, ?> || bodyValue instanceof List<?>) {
+            return bodyValue;
+        }
+        if (bodyValue instanceof String text) {
+            String trimmed = text.trim();
+            if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+                try {
+                    return objectMapper.readValue(trimmed, Object.class);
+                } catch (Exception ignored) {
+                    return text;
+                }
+            }
+            return text;
+        }
+        return bodyValue;
+    }
+
+    private Map<String, Object> buildTransformationTargetArgs(List<ReflectionTransformationMapping> mappings,
+                                                               Map<String, Object> sourceInputs,
+                                                               Map<String, Object> sourceEnvelope,
+                                                               Object outputPayload) {
+        Map<String, Object> args = new LinkedHashMap<>();
+        for (ReflectionTransformationMapping mapping : mappings) {
+            if (mapping == null || mapping.targetParameter() == null || mapping.targetParameter().isBlank()) {
+                continue;
+            }
+            Object value = resolveMappingValue(mapping, sourceInputs, sourceEnvelope, outputPayload);
+            if (value != null) {
+                args.put(mapping.targetParameter().trim(), value);
+            }
+        }
+        return args;
+    }
+
+    private Object resolveMappingValue(ReflectionTransformationMapping mapping,
+                                       Map<String, Object> sourceInputs,
+                                       Map<String, Object> sourceEnvelope,
+                                       Object outputPayload) {
+        String constantValue = mapping.constantValue() == null ? "" : mapping.constantValue().trim();
+        if (!constantValue.isBlank()) {
+            return parseConstantValue(constantValue);
+        }
+        String sourcePath = mapping.sourcePath() == null ? "" : mapping.sourcePath().trim();
+        if (sourcePath.isBlank()) {
+            return null;
+        }
+        if ("output".equalsIgnoreCase(sourcePath) || "[output]".equalsIgnoreCase(sourcePath)) {
+            return outputPayload;
+        }
+        if (sourcePath.startsWith("[output].")) {
+            return resolveDottedPath(outputPayload, sourcePath.substring("[output].".length()));
+        }
+        if (sourcePath.startsWith("output.")) {
+            return resolveDottedPath(outputPayload, sourcePath.substring("output.".length()));
+        }
+        if ("input".equalsIgnoreCase(sourcePath) || "[input]".equalsIgnoreCase(sourcePath)) {
+            return sourceInputs;
+        }
+        if (sourcePath.startsWith("[input].")) {
+            return resolveDottedPath(sourceInputs, sourcePath.substring("[input].".length()));
+        }
+        if (sourcePath.startsWith("input.")) {
+            return resolveDottedPath(sourceInputs, sourcePath.substring("input.".length()));
+        }
+        if (sourcePath.startsWith("source.")) {
+            return resolveDottedPath(sourceEnvelope, sourcePath.substring("source.".length()));
+        }
+        return resolveDottedPath(outputPayload, sourcePath);
+    }
+
+    private Object resolveDottedPath(Object root, String path) {
+        if (root == null || path == null || path.isBlank()) {
+            return root;
+        }
+        Object current = root;
+        String[] segments = path.split("\\.");
+        for (String rawSegment : segments) {
+            String segment = rawSegment == null ? "" : rawSegment.trim();
+            if (segment.isBlank()) {
+                return null;
+            }
+
+            int bracketStart = segment.indexOf('[');
+            String mapKey = bracketStart >= 0 ? segment.substring(0, bracketStart) : segment;
+            if (!mapKey.isBlank()) {
+                if (!(current instanceof Map<?, ?> map)) {
+                    return null;
+                }
+                current = map.get(mapKey);
+            }
+
+            while (bracketStart >= 0) {
+                int bracketEnd = segment.indexOf(']', bracketStart);
+                if (bracketEnd <= bracketStart + 1) {
+                    return null;
+                }
+                String indexToken = segment.substring(bracketStart + 1, bracketEnd).trim();
+                int index;
+                try {
+                    index = Integer.parseInt(indexToken);
+                } catch (NumberFormatException ex) {
+                    return null;
+                }
+                if (!(current instanceof List<?> list) || index < 0 || index >= list.size()) {
+                    return null;
+                }
+                current = list.get(index);
+                bracketStart = segment.indexOf('[', bracketEnd + 1);
+            }
+        }
+        return current;
+    }
+
+    private Object parseConstantValue(String rawValue) {
+        if (rawValue == null) {
+            return null;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(rawValue);
+            if (node == null || node instanceof NullNode) {
+                return null;
+            }
+            if (node.isTextual()) {
+                return node.asText();
+            }
+            if (node.isBoolean()) {
+                return node.booleanValue();
+            }
+            if (node.isIntegralNumber()) {
+                return node.longValue();
+            }
+            if (node.isFloatingPointNumber()) {
+                return node.doubleValue();
+            }
+            return objectMapper.convertValue(node, Object.class);
+        } catch (Exception ignored) {
+            return rawValue;
+        }
+    }
+
+    private String validateTargetRequiredArguments(ToolCallback targetTool, Map<String, Object> args) {
+        List<String> required = extractToolSchemaRequiredFields(targetTool);
+        if (required.isEmpty()) {
+            return null;
+        }
+        List<String> missing = new ArrayList<>();
+        for (String field : required) {
+            Object value = args.get(field);
+            if (value == null || (value instanceof String s && s.isBlank())) {
+                missing.add(field);
+            }
+        }
+        if (missing.isEmpty()) {
+            return null;
+        }
+        return "Transformation mapping is missing required target parameter(s): " + String.join(", ", missing);
+    }
+
+    private String buildTransformationError(String message,
+                                            String reflectionId,
+                                            Map<String, Object> sourceResult,
+                                            Map<String, Object> targetResult) {
+        try {
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("status", "error");
+            response.put("message", message);
+            response.put("reflectionId", reflectionId == null ? "" : reflectionId);
+            if (sourceResult != null) {
+                response.put("source", sourceResult);
+            }
+            if (targetResult != null) {
+                response.put("target", targetResult);
+            }
+            return objectMapper.writeValueAsString(response);
+        } catch (Exception ex) {
+            return jsonError(message);
+        }
+    }
+
+    private List<ReflectionTransformationMapping> normalizeTransformationMappings(List<ReflectionTransformationMapping> mappings) {
+        if (mappings == null || mappings.isEmpty()) {
+            return List.of();
+        }
+        List<ReflectionTransformationMapping> normalized = new ArrayList<>();
+        Set<String> targetNames = new LinkedHashSet<>();
+        for (ReflectionTransformationMapping mapping : mappings) {
+            if (mapping == null) {
+                continue;
+            }
+            String targetParameter = mapping.targetParameter() == null ? "" : mapping.targetParameter().trim();
+            String sourcePath = mapping.sourcePath() == null ? "" : mapping.sourcePath().trim();
+            String constantValue = mapping.constantValue() == null ? "" : mapping.constantValue().trim();
+            if (targetParameter.isBlank()) {
+                continue;
+            }
+            if (!targetNames.add(targetParameter.toLowerCase(Locale.ROOT))) {
+                throw new IllegalArgumentException("Duplicate transformation target parameter mapping: " + targetParameter);
+            }
+            if (sourcePath.isBlank() && constantValue.isBlank()) {
+                throw new IllegalArgumentException("Transformation mapping requires sourcePath or constantValue for target parameter: " + targetParameter);
+            }
+            if (!sourcePath.isBlank() && !constantValue.isBlank()) {
+                throw new IllegalArgumentException("Transformation mapping cannot define both sourcePath and constantValue for target parameter: " + targetParameter);
+            }
+            normalized.add(new ReflectionTransformationMapping(targetParameter, sourcePath, constantValue));
+        }
+        return List.copyOf(normalized);
+    }
+
+    private void validateTransformationConfig(String currentReflectionUuid,
+                                              ReflectionGroup group,
+                                              String reflectionId,
+                                              List<ReflectionInputParameter> inputParameters,
+                                              boolean transformationEnabled,
+                                              String sourceReflectionId,
+                                              String targetToolName,
+                                              List<ReflectionTransformationMapping> mappings) {
+        if (!transformationEnabled) {
+            return;
+        }
+        if (group == null || group.type() != ReflectionType.REST) {
+            throw new IllegalArgumentException("Transformations are only supported for REST reflections.");
+        }
+        if (sourceReflectionId == null || sourceReflectionId.isBlank()) {
+            throw new IllegalArgumentException("Transformation source reflection is required.");
+        }
+        if (targetToolName == null || targetToolName.isBlank()) {
+            throw new IllegalArgumentException("Transformation target tool is required.");
+        }
+        if (sourceReflectionId.equalsIgnoreCase(reflectionId)) {
+            throw new IllegalArgumentException("Transformation source reflection cannot reference itself.");
+        }
+        Reflection source = resolveSourceReflection(group, sourceReflectionId);
+        if (source == null) {
+            throw new IllegalArgumentException("Transformation source reflection must be in the same group.");
+        }
+        if (currentReflectionUuid != null && currentReflectionUuid.equals(source.uuid())) {
+            throw new IllegalArgumentException("Transformation source reflection cannot reference itself.");
+        }
+        ToolCallback target = resolveToolCallbackByName(targetToolName);
+        if (target == null) {
+            throw new IllegalArgumentException("Transformation target tool not found: " + targetToolName);
+        }
+        if (mappings == null || mappings.isEmpty()) {
+            throw new IllegalArgumentException("Transformation mappings are required.");
+        }
+
+        Set<String> knownParameters = new LinkedHashSet<>();
+        for (String name : extractToolSchemaPropertyNames(target)) {
+            knownParameters.add(name.toLowerCase(Locale.ROOT));
+        }
+        for (ReflectionTransformationMapping mapping : mappings) {
+            if (!knownParameters.isEmpty()
+                    && !knownParameters.contains(mapping.targetParameter().trim().toLowerCase(Locale.ROOT))) {
+                throw new IllegalArgumentException("Unknown target tool parameter for transformation mapping: " + mapping.targetParameter());
+            }
+            String sourcePath = mapping.sourcePath() == null ? "" : mapping.sourcePath().trim();
+            if (sourcePath.startsWith("[input].") || sourcePath.startsWith("input.")) {
+                String name = sourcePath.startsWith("[input].")
+                        ? sourcePath.substring("[input].".length())
+                        : sourcePath.substring("input.".length());
+                String normalized = name == null ? "" : name.trim();
+                boolean exists = inputParameters != null && inputParameters.stream()
+                        .anyMatch(parameter -> normalized.equalsIgnoreCase(parameter.name()));
+                if (!exists) {
+                    throw new IllegalArgumentException("Transformation input mapping references unknown input parameter: " + normalized);
+                }
+            }
+        }
+
+        List<String> required = extractToolSchemaRequiredFields(target);
+        for (String requiredParam : required) {
+            boolean present = mappings.stream().anyMatch(m -> requiredParam.equalsIgnoreCase(m.targetParameter()));
+            if (!present) {
+                throw new IllegalArgumentException("Missing mapping for required target tool parameter: " + requiredParam);
+            }
+        }
+    }
+
+    private List<String> extractToolSchemaPropertyNames(ToolCallback callback) {
+        if (callback == null || callback.getToolDefinition() == null) {
+            return List.of();
+        }
+        String schema = callback.getToolDefinition().inputSchema();
+        if (schema == null || schema.isBlank()) {
+            return List.of();
+        }
+        try {
+            JsonNode root = objectMapper.readTree(schema);
+            JsonNode properties = root.get("properties");
+            if (!(properties instanceof ObjectNode objectNode)) {
+                return List.of();
+            }
+            List<String> names = new ArrayList<>();
+            objectNode.fieldNames().forEachRemaining(names::add);
+            return List.copyOf(names);
+        } catch (Exception ex) {
+            return List.of();
+        }
+    }
+
+    private List<String> extractToolSchemaRequiredFields(ToolCallback callback) {
+        if (callback == null || callback.getToolDefinition() == null) {
+            return List.of();
+        }
+        String schema = callback.getToolDefinition().inputSchema();
+        if (schema == null || schema.isBlank()) {
+            return List.of();
+        }
+        try {
+            JsonNode root = objectMapper.readTree(schema);
+            JsonNode required = root.get("required");
+            if (!(required instanceof ArrayNode arrayNode)) {
+                return List.of();
+            }
+            List<String> names = new ArrayList<>();
+            arrayNode.forEach(node -> {
+                if (node != null && node.isTextual()) {
+                    names.add(node.asText());
+                }
+            });
+            return List.copyOf(names);
+        } catch (Exception ex) {
+            return List.of();
+        }
+    }
+
     private Reflection normalizeAndValidate(Reflection existing, ReflectionRequest request) {
         if (request == null) {
             throw new IllegalArgumentException("Reflection payload is required.");
@@ -1601,9 +2089,10 @@ public class ReflectionService {
             throw new IllegalArgumentException("Reserved record-tool metadata cannot be set manually.");
         }
 
-        String method = normalizeMethod(request.method());
+        boolean transformationEnabled = request.transformationEnabled() != null && request.transformationEnabled();
+        String method = normalizeMethod(request.method() == null || request.method().isBlank() ? "GET" : request.method());
         String url = request.url() == null ? "" : request.url().trim();
-        if (url.isBlank()) {
+        if (!transformationEnabled && url.isBlank()) {
             throw new IllegalArgumentException("URL is required.");
         }
 
@@ -1616,6 +2105,22 @@ public class ReflectionService {
         String requestContentType = normalizeRequestContentType(request.requestContentType());
         String responseContentType = normalizeResponseContentType(request.responseContentType());
         String outputSchema = normalizeOutputSchema(request.outputSchema(), responseContentType);
+
+        String transformationSourceReflectionId = request.transformationSourceReflectionId() == null
+            ? ""
+            : request.transformationSourceReflectionId().trim();
+        String transformationTargetToolName = request.transformationTargetToolName() == null
+            ? ""
+            : request.transformationTargetToolName().trim();
+        List<ReflectionTransformationMapping> transformationMappings = normalizeTransformationMappings(request.transformationMappings());
+        validateTransformationConfig(existing == null ? null : existing.uuid(),
+            group,
+            id,
+            parameters,
+            transformationEnabled,
+            transformationSourceReflectionId,
+            transformationTargetToolName,
+            transformationMappings);
 
         long now = System.currentTimeMillis();
 
@@ -1635,6 +2140,10 @@ public class ReflectionService {
                     requestContentType,
                     responseContentType,
                     outputSchema,
+                    transformationEnabled,
+                    transformationSourceReflectionId,
+                    transformationTargetToolName,
+                    transformationMappings,
                     1L,
                     now,
                     now);
@@ -1655,6 +2164,10 @@ public class ReflectionService {
                 requestContentType,
                 responseContentType,
                 outputSchema,
+                transformationEnabled,
+                transformationSourceReflectionId,
+                transformationTargetToolName,
+                transformationMappings,
                 existing.version() + 1,
                 existing.createdAt(),
                 now);
@@ -5788,8 +6301,51 @@ public class ReflectionService {
             String bodyTemplate,
             String requestContentType,
             String responseContentType,
-            String outputSchema
-    ) {}
+                String outputSchema,
+                Boolean transformationEnabled,
+                String transformationSourceReflectionId,
+                String transformationTargetToolName,
+                List<ReflectionTransformationMapping> transformationMappings
+            ) {
+            public ReflectionRequest(String id,
+                         String name,
+                         String description,
+                         String groupUuid,
+                         List<ReflectionInputParameter> inputParameters,
+                         String method,
+                         String url,
+                         Map<String, String> headers,
+                         Map<String, String> queryParameters,
+                         String bodyTemplate,
+                         String requestContentType,
+                         String responseContentType,
+                         String outputSchema) {
+                this(id,
+                    name,
+                    description,
+                    groupUuid,
+                    inputParameters,
+                    method,
+                    url,
+                    headers,
+                    queryParameters,
+                    bodyTemplate,
+                    requestContentType,
+                    responseContentType,
+                    outputSchema,
+                    false,
+                    "",
+                    "",
+                    List.of());
+            }
+            }
+
+            public record TransformationTargetToolDescriptor(
+                String name,
+                String description,
+                List<String> inputParameters,
+                List<String> requiredParameters
+            ) {}
 
             public record MongoToolRequest(
                 String id,

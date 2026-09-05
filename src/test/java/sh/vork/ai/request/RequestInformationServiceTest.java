@@ -123,6 +123,8 @@ class RequestInformationServiceTest {
         ChannelService channelService = mock(ChannelService.class);
         when(channelService.resolveByChannelName("lee"))
                 .thenReturn(Optional.of(new ChannelRef("lee", "Lee", "local")));
+        when(channelService.resolveByChannelName("admin"))
+                .thenReturn(Optional.of(new ChannelRef("admin", "Admin User", "local")));
 
         AttentionAlertService attentionAlertService = mock(AttentionAlertService.class);
         when(attentionAlertService.create(any())).thenAnswer(invocation -> {
@@ -228,6 +230,8 @@ class RequestInformationServiceTest {
         ChannelService channelService = mock(ChannelService.class);
         when(channelService.resolveByChannelName("lee"))
                 .thenReturn(Optional.of(new ChannelRef("lee", "Lee", "local")));
+        when(channelService.resolveByChannelName("admin"))
+                .thenReturn(Optional.of(new ChannelRef("admin", "Admin User", "local")));
 
         AttentionAlertService attentionAlertService = mock(AttentionAlertService.class);
         when(attentionAlertService.create(any())).thenAnswer(invocation -> {
@@ -333,6 +337,8 @@ class RequestInformationServiceTest {
         ChannelService channelService = mock(ChannelService.class);
         when(channelService.resolveByChannelName("lee"))
                 .thenReturn(Optional.of(new ChannelRef("lee", "Lee", "local")));
+        when(channelService.resolveByChannelName("admin"))
+                .thenReturn(Optional.of(new ChannelRef("admin", "Admin User", "local")));
 
         AttentionAlertService attentionAlertService = mock(AttentionAlertService.class);
         when(attentionAlertService.create(any())).thenAnswer(invocation -> {
@@ -418,9 +424,11 @@ class RequestInformationServiceTest {
         assertEquals(campaignUuid,
                 childSession.environmentVariables().get("REQUEST_CAMPAIGN_ID"));
         assertTrue(childSession.messages() != null && childSession.messages().size() >= 2);
-        assertEquals("ASSISTANT", childSession.messages().get(0).role());
+        assertEquals("EXTERNAL", childSession.messages().get(0).role());
         assertEquals("Requesting the sales meeting time for tomorrow from Lee.",
                 childSession.messages().get(0).content());
+        assertEquals("Information Request", childSession.messages().get(0).externalSource());
+        assertEquals("Admin User", childSession.messages().get(0).externalParticipant());
         assertEquals("PROMPT_REQUIRED", childSession.messages().get(1).role());
 
         UiEventFrame childPrompt = new ObjectMapper().readValue(childSession.messages().get(1).content(), UiEventFrame.class);

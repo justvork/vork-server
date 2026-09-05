@@ -84,11 +84,13 @@ import sh.vork.ai.function.ExportAllJavaTypeDataRequest;
 import sh.vork.ai.function.ExportJavaTypeRequest;
 import sh.vork.ai.function.ExportJavaTypeSourceRequest;
 import sh.vork.ai.function.ExtractZipRequest;
+import sh.vork.ai.function.ExtractTarRequest;
 import sh.vork.ai.function.FileExistsRequest;
 import sh.vork.ai.function.FolderExistsRequest;
 import sh.vork.ai.function.GeneratePrivateKeyRequest;
 import sh.vork.ai.function.GetDateTimeRequest;
 import sh.vork.ai.function.GetMongoDbCollectionSchemaRequest;
+import sh.vork.ai.function.GetTextFileInfoRequest;
 import sh.vork.ai.function.GetPublicKeyRequest;
 import sh.vork.ai.function.GetSurfaceReflectionContractsRequest;
 import sh.vork.ai.function.GetTypeSchemaRequest;
@@ -107,11 +109,13 @@ import sh.vork.ai.function.ListNotificationProvidersRequest;
 import sh.vork.ai.function.ListSshConnectionsRequest;
 import sh.vork.ai.function.LogInfoRequest;
 import sh.vork.ai.function.ReadFileRequest;
+import sh.vork.ai.function.ReadTextFileRangeRequest;
 import sh.vork.ai.function.ReadProcessRequest;
 import sh.vork.ai.function.RequestAuthorizationToolRequest;
 import sh.vork.ai.function.RequestInformationToolRequest;
 import sh.vork.ai.function.ResolveArchitectureRequest;
 import sh.vork.ai.function.SearchMongoDbDocumentsRequest;
+import sh.vork.ai.function.SearchTextFileRequest;
 import sh.vork.ai.function.SendNotificationRequest;
 import sh.vork.ai.function.SetSshAliasRequest;
 import sh.vork.ai.function.SignDataRequest;
@@ -574,10 +578,16 @@ the protocol and will break the system. Do not converse. Execute.
 
     @Bean
     @ToolCategory("Surface")
-    public ToolCallback getSurfaceReflectionContracts(SurfaceReflectionContractService contractService) {
+    public ToolCallback getSurfaceReflectionContracts(
+            ObjectProvider<SurfaceReflectionContractService> contractServiceProvider) {
         return FunctionToolCallback
                 .builder("getSurfaceReflectionContracts", (GetSurfaceReflectionContractsRequest req) -> {
                     try {
+                        SurfaceReflectionContractService contractService = contractServiceProvider.getIfAvailable();
+                        if (contractService == null) {
+                            return "{\"status\":\"error\",\"message\":\"Surface reflection contracts service is unavailable.\"}";
+                        }
+
                         String sessionUuid = resolveSessionUuid();
                         String requestedSurfaceUuid = req == null ? null : req.surfaceUuid();
                         String requestedBindingGroupToolId = req == null ? null : req.bindingGroupToolId();
@@ -2240,6 +2250,45 @@ the protocol and will break the system. Do not converse. Execute.
     }
 
     @Bean
+    @ToolCategory("Files")
+    public ToolCallback getTextFileInfo(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("getTextFileInfo", sessionFileToolSuite::getTextFileInfo)
+                .description("""
+                    Inspect a text/log file without returning its full content.
+                    Use this first for large files to get size and line count before searching.
+                    """.stripIndent())
+                .inputType(GetTextFileInfoRequest.class)
+                .build();
+    }
+
+    @Bean
+    @ToolCategory("Files")
+    public ToolCallback searchTextFile(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("searchTextFile", sessionFileToolSuite::searchTextFile)
+                .description("""
+                    Search very large text/log files line-by-line with bounded contextual windows around matches.
+                    Prefer this over full-file reads when looking for errors, IDs, protocol events, or timestamps.
+                    """.stripIndent())
+                .inputType(SearchTextFileRequest.class)
+                .build();
+    }
+
+    @Bean
+    @ToolCategory("Files")
+    public ToolCallback readTextFileRange(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("readTextFileRange", sessionFileToolSuite::readTextFileRange)
+                .description("""
+                    Read a precise inclusive line range from a text/log file.
+                    Use after searchTextFile identifies an interesting region; avoids loading the entire file.
+                    """.stripIndent())
+                .inputType(ReadTextFileRangeRequest.class)
+                .build();
+    }
+
+    @Bean
     @Hidden
     @ToolCategory("Files")
     public ToolCallback createFolder(SessionFileToolSuite sessionFileToolSuite) {
@@ -2327,6 +2376,16 @@ the protocol and will break the system. Do not converse. Execute.
                 .builder("extractZip", sessionFileToolSuite::extractZip)
                 .description("Extract a zip archive into the session/shared file area with safe path validation.")
                 .inputType(ExtractZipRequest.class)
+                .build();
+    }
+
+    @Bean
+    @ToolCategory("Files")
+    public ToolCallback extractTar(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("extractTar", sessionFileToolSuite::extractTar)
+                .description("Extract a tar archive into the session/shared file area with safe path validation.")
+                .inputType(ExtractTarRequest.class)
                 .build();
     }
 
@@ -3053,9 +3112,14 @@ the protocol and will break the system. Do not converse. Execute.
     @Bean
     @Restricted
     @ToolCategory("Schema & Types")
-    public ToolCallback compileJavaType(TypeGeneratorService typeGeneratorService) {
+    public ToolCallback compileJavaType(ObjectProvider<TypeGeneratorService> typeGeneratorServiceProvider) {
         ToolCallback delegate = FunctionToolCallback
                 .builder("compileJavaType", (CompileTypeRequest req) -> {
+                    TypeGeneratorService typeGeneratorService = typeGeneratorServiceProvider.getIfAvailable();
+                    if (typeGeneratorService == null) {
+                        return "{\"status\":\"error\",\"message\":\"Type generator service is unavailable.\"}";
+                    }
+
                     String group;
                     try {
                         group = normalizeCompileTypeGroup(req.group());

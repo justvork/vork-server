@@ -32,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -122,6 +123,67 @@ class ChatControllerAttachmentBroadcastTest {
         assertEquals(1, broadcast.attachments().size());
         assertEquals("bundle.zip", broadcast.attachments().get(0).name());
         assertEquals("application/zip", broadcast.attachments().get(0).mimeType());
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void submitChildCampaignResponse_routesThroughExternalRoleApi() {
+        ChatService chatService = mock(ChatService.class);
+        RequestInformationService requestInformationService = mock(RequestInformationService.class);
+        SimpMessagingTemplate messaging = mock(SimpMessagingTemplate.class);
+
+        String sessionUuid = "child-session-1";
+        String campaignUuid = "campaign-1";
+        Map<String, String> env = new java.util.LinkedHashMap<>(AiSession.defaultEnvironmentVariables());
+        env.put("REQUEST_CAMPAIGN_ID", campaignUuid);
+        env.put("REQUEST_CAMPAIGN_ROUTE_MODE", "CHILD_SESSION");
+        env.put("REQUEST_CAMPAIGN_RECIPIENT_CHANNEL", "accounts@example.com");
+
+        AiSession childSession = new AiSession(
+                sessionUuid,
+                AiProvider.GEMINI.name(),
+                sh.vork.ai.entity.SessionOriginMode.WEB,
+                "alice",
+                "Child",
+                System.currentTimeMillis(),
+                0,
+                List.of(),
+                env,
+                sh.vork.ai.entity.AiSessionStatus.RUNNING,
+                null,
+                null,
+                List.of(),
+                List.of(),
+                List.of());
+
+        when(chatService.getSessionForCurrentUser(sessionUuid)).thenReturn(childSession);
+        when(chatService.sendMessageAsExternal(eq("alice"), eq(sessionUuid), eq("Customer replied"),
+                eq("accounts@example.com"), eq("Information Request"), eq(List.of()), isNull()))
+                .thenReturn(new AiChatMessage("m1", "ASSISTANT", "ack", System.currentTimeMillis(), null));
+
+        ChatController controller = new ChatController(
+                chatService,
+                messaging,
+                mock(AiOrchestrationService.class),
+                mock(TerminalStreamRouter.class),
+                mock(ToolRegistry.class),
+                (DatabaseRepository<Skill>) mock(DatabaseRepository.class),
+                mock(SessionEnvironmentService.class),
+                mock(ReflectionService.class),
+                mock(BindingCatalogService.class),
+                mock(McpBindingService.class),
+                requestInformationService
+        );
+
+        ResponseEntity<?> response = controller.submitChildCampaignResponse(
+                sessionUuid,
+                campaignUuid,
+                new ChatController.CampaignResponseRequest("Customer replied"),
+                () -> "alice");
+
+        assertEquals(200, response.getStatusCode().value());
+        verify(chatService).sendMessageAsExternal(eq("alice"), eq(sessionUuid), eq("Customer replied"),
+                eq("accounts@example.com"), eq("Information Request"), eq(List.of()), isNull());
     }
 
         @SuppressWarnings("unchecked")

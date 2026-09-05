@@ -9,17 +9,21 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 import sh.vork.ai.function.ExtractZipRequest;
+import sh.vork.ai.function.ExtractTarRequest;
 import sh.vork.ai.function.FileExistsRequest;
 import sh.vork.ai.function.FolderExistsRequest;
 import sh.vork.ai.function.InstallCommandRequest;
 import sh.vork.ai.function.IsCommandInstalledRequest;
+import sh.vork.ai.function.GetTextFileInfoRequest;
 import sh.vork.ai.function.CreatePdfRequest;
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.function.CreateFolderRequest;
 import sh.vork.ai.function.DownloadFolderAsZipRequest;
 import sh.vork.ai.function.ListFilesRequest;
+import sh.vork.ai.function.ReadTextFileRangeRequest;
 import sh.vork.ai.function.ReadFileRequest;
 import sh.vork.ai.function.ResolveArchitectureRequest;
+import sh.vork.ai.function.SearchTextFileRequest;
 import sh.vork.ai.function.WriteBase64FileRequest;
 import sh.vork.ai.function.WriteFileRequest;
 import sh.vork.ai.memory.SessionEnvironmentService;
@@ -32,6 +36,10 @@ import sh.vork.filesystem.SessionFileSystem;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.FilterInputStream;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -45,7 +53,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -58,6 +70,11 @@ public class SessionFileToolSuite {
 
     private static final Logger log = LoggerFactory.getLogger(SessionFileToolSuite.class);
     private static final int DEFAULT_MAX_READ_BYTES = 200_000;
+    private static final int DEFAULT_MAX_TEXT_SEARCH_MATCHES = 20;
+    private static final int MAX_TEXT_SEARCH_MATCHES = 200;
+    private static final int MAX_CONTEXT_LINES = 200;
+    private static final int MAX_TEXT_RANGE_LINES = 2_000;
+    private static final int MAX_TEXT_RANGE_BYTES = 300_000;
     private static final String GENERATED_ATTACHMENTS_CONTEXT_KEY = "generated.session.attachments";
     private static final Pattern PATH_SPLIT_PATTERN = Pattern.compile(Pattern.quote(java.io.File.pathSeparator));
         private static final boolean WINDOWS = System.getProperty("os.name", "")
@@ -562,6 +579,326 @@ public class SessionFileToolSuite {
         }
     }
 
+    public String extractTar(ExtractTarRequest req) {
+        log.debug("ENTER extractTar: area={}, archivePath={}, destinationPath={}",
+                req == null ? null : req.area(),
+                req == null ? null : req.archivePath(),
+                req == null ? null : req.destinationPath());
+        if (req == null || req.archivePath() == null || req.archivePath().isBlank()) {
+            return error("archivePath is required");
+        }
+        if (req.destinationPath() == null || req.destinationPath().isBlank()) {
+            return error("destinationPath is required");
+        }
+
+        FileArea area = parseArea(req.area());
+        String sessionUuid = resolveSessionUuid();
+        ToolExecutionContext.bindSessionUuid(sessionUuid);
+        String owner = area == FileArea.SESSION ? sessionUuid : null;
+        String destinationRoot = normalizePath(req.destinationPath());
+
+        int fileCount = 0;
+        int dirCount = 0;
+        try (InputStream tarIn = sessionFileSystem.read(area, owner, req.archivePath());
+             TarArchiveInputStream tais = new TarArchiveInputStream(tarIn, StandardCharsets.UTF_8.name())) {
+
+            TarArchiveEntry entry;
+            while ((entry = tais.getNextEntry()) != null) {
+                String entryName = sanitizeArchiveEntry(entry.getName());
+                if (entryName.isBlank()) {
+                    continue;
+                }
+
+                String destinationPath = destinationRoot + "/" + entryName;
+                String normalizedDestination = normalizePath(destinationPath);
+                if (!normalizedDestination.startsWith(destinationRoot + "/")
+                        && !normalizedDestination.equals(destinationRoot)) {
+                    throw new IllegalArgumentException("Tar entry escapes destination root: " + entry.getName());
+                }
+
+                if (entry.isDirectory()) {
+                    sessionFileSystem.createDirectory(area, owner, normalizedDestination);
+                    dirCount++;
+                    continue;
+                }
+
+                String parent = parentPath(normalizedDestination);
+                if (parent != null && !parent.isBlank()) {
+                    sessionFileSystem.createDirectory(area, owner, parent);
+                }
+
+                ByteArrayOutputStream entryBytes = new ByteArrayOutputStream();
+                tais.transferTo(entryBytes);
+                byte[] bytes = entryBytes.toByteArray();
+                FileDescriptor descriptor = sessionFileSystem.write(
+                        area,
+                        owner,
+                        normalizedDestination,
+                        new ByteArrayInputStream(bytes),
+                        bytes.length);
+                fileCount++;
+
+                boolean attachToChat = req.attachToChat() != null && req.attachToChat();
+                if (attachToChat) {
+                    recordGeneratedAttachment(descriptor.path(), inferMimeType(descriptor.path()), descriptor.downloadUrl());
+                }
+            }
+
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("status", "ok");
+            payload.put("area", area.name());
+            payload.put("archivePath", req.archivePath());
+            payload.put("destinationPath", destinationRoot);
+            payload.put("filesExtracted", fileCount);
+            payload.put("directoriesCreated", dirCount);
+            log.debug("EXIT extractTar: area={}, archivePath={}, files={}, dirs={}",
+                    area, req.archivePath(), fileCount, dirCount);
+            return json(payload);
+        } catch (Exception ex) {
+            log.warn("extractTar failed [archivePath={}]: {}", req.archivePath(), ex.getMessage());
+            return error(ex.getMessage());
+        }
+    }
+
+    public String getTextFileInfo(GetTextFileInfoRequest req) {
+        log.debug("ENTER getTextFileInfo: area={}, path={}",
+                req == null ? null : req.area(),
+                req == null ? null : req.path());
+        if (req == null || req.path() == null || req.path().isBlank()) {
+            return error("path is required");
+        }
+
+        FileArea area = parseArea(req.area());
+        String sessionUuid = resolveSessionUuid();
+        ToolExecutionContext.bindSessionUuid(sessionUuid);
+        String owner = area == FileArea.SESSION ? sessionUuid : null;
+
+        try (CountingInputStream countingIn = new CountingInputStream(sessionFileSystem.read(area, owner, req.path()));
+             BufferedReader reader = new BufferedReader(new InputStreamReader(countingIn, StandardCharsets.UTF_8))) {
+
+            long lineCount = 0;
+            while (reader.readLine() != null) {
+                lineCount++;
+            }
+
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("status", "ok");
+            payload.put("area", area.name());
+            payload.put("path", req.path());
+            payload.put("sizeBytes", countingIn.count());
+            payload.put("lineCount", lineCount);
+            payload.put("encoding", "UTF-8");
+            log.debug("EXIT getTextFileInfo: area={}, path={}, sizeBytes={}, lineCount={}",
+                    area, req.path(), countingIn.count(), lineCount);
+            return json(payload);
+        } catch (Exception ex) {
+            log.warn("getTextFileInfo failed [path={}]: {}", req.path(), ex.getMessage());
+            return error(ex.getMessage());
+        }
+    }
+
+    public String searchTextFile(SearchTextFileRequest req) {
+        log.debug("ENTER searchTextFile: area={}, path={}, matchType={}",
+                req == null ? null : req.area(),
+                req == null ? null : req.path(),
+                req == null ? null : req.matchType());
+        if (req == null || req.path() == null || req.path().isBlank()) {
+            return error("path is required");
+        }
+        if (req.query() == null || req.query().isBlank()) {
+            return error("query is required");
+        }
+
+        FileArea area = parseArea(req.area());
+        String sessionUuid = resolveSessionUuid();
+        ToolExecutionContext.bindSessionUuid(sessionUuid);
+        String owner = area == FileArea.SESSION ? sessionUuid : null;
+
+        int beforeLines = req.beforeLines() == null ? 0 : req.beforeLines();
+        int afterLines = req.afterLines() == null ? 0 : req.afterLines();
+        int maxMatches = req.maxMatches() == null ? DEFAULT_MAX_TEXT_SEARCH_MATCHES : req.maxMatches();
+        if (beforeLines < 0 || afterLines < 0) {
+            return error("beforeLines and afterLines must be >= 0");
+        }
+        if (beforeLines > MAX_CONTEXT_LINES || afterLines > MAX_CONTEXT_LINES) {
+            return error("beforeLines and afterLines must be <= " + MAX_CONTEXT_LINES);
+        }
+        if (maxMatches < 1 || maxMatches > MAX_TEXT_SEARCH_MATCHES) {
+            return error("maxMatches must be between 1 and " + MAX_TEXT_SEARCH_MATCHES);
+        }
+
+        long startLine = req.startLine() == null ? 1L : req.startLine();
+        long endLine = req.endLine() == null ? Long.MAX_VALUE : req.endLine();
+        if (startLine < 1 || endLine < 1) {
+            return error("startLine and endLine must be >= 1");
+        }
+        if (endLine < startLine) {
+            return error("endLine must be >= startLine");
+        }
+
+        SearchMatchType matchType = parseSearchMatchType(req.matchType());
+        if (matchType == null) {
+            return error("matchType must be one of CONTAINS, EXACT, REGEX");
+        }
+        boolean caseSensitive = req.caseSensitive() != null && req.caseSensitive();
+
+        Pattern regexPattern = null;
+        if (matchType == SearchMatchType.REGEX) {
+            try {
+                int flags = caseSensitive ? 0 : Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
+                regexPattern = Pattern.compile(req.query(), flags);
+            } catch (PatternSyntaxException ex) {
+                return error("Invalid regex: " + ex.getMessage());
+            }
+        }
+
+        List<Long> returnedMatchLines = new ArrayList<>();
+        long observedMatches = 0;
+        boolean allMatchesScanned = true;
+
+        try (InputStream in = sessionFileSystem.read(area, owner, req.path());
+             BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+            String line;
+            long lineNumber = 0;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                if (lineNumber < startLine) {
+                    continue;
+                }
+                if (lineNumber > endLine) {
+                    break;
+                }
+
+                if (matchesLine(line, req.query(), matchType, caseSensitive, regexPattern)) {
+                    observedMatches++;
+                    if (returnedMatchLines.size() < maxMatches) {
+                        returnedMatchLines.add(lineNumber);
+                    } else {
+                        allMatchesScanned = false;
+                        break;
+                    }
+                }
+            }
+
+            List<SearchBlock> blocks = mergeSearchBlocks(returnedMatchLines, beforeLines, afterLines, startLine, endLine);
+            populateSearchBlocksText(readerFor(area, owner, req.path()), blocks);
+
+            List<Map<String, Object>> blockPayloads = new ArrayList<>();
+            for (SearchBlock block : blocks) {
+                Map<String, Object> b = new LinkedHashMap<>();
+                b.put("startLine", block.startLine());
+                b.put("endLine", block.endLine());
+                b.put("matchLines", block.matchLines());
+                b.put("text", block.text());
+                blockPayloads.add(b);
+            }
+
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("status", "ok");
+            payload.put("area", area.name());
+            payload.put("path", req.path());
+            payload.put("query", req.query());
+            payload.put("matchType", matchType.name());
+            payload.put("caseSensitive", caseSensitive);
+            payload.put("beforeLines", beforeLines);
+            payload.put("afterLines", afterLines);
+            payload.put("startLine", startLine);
+            payload.put("endLine", endLine == Long.MAX_VALUE ? null : endLine);
+            payload.put("maxMatches", maxMatches);
+            payload.put("returnedMatches", returnedMatchLines.size());
+            payload.put("totalMatches", allMatchesScanned ? observedMatches : null);
+            payload.put("allMatchesScanned", allMatchesScanned);
+            payload.put("moreMatchesPossible", !allMatchesScanned);
+            payload.put("truncated", !allMatchesScanned);
+            payload.put("blocks", blockPayloads);
+            log.debug("EXIT searchTextFile: area={}, path={}, returnedMatches={}, allMatchesScanned={}",
+                    area, req.path(), returnedMatchLines.size(), allMatchesScanned);
+            return json(payload);
+        } catch (Exception ex) {
+            log.warn("searchTextFile failed [path={}]: {}", req.path(), ex.getMessage());
+            return error(ex.getMessage());
+        }
+    }
+
+    public String readTextFileRange(ReadTextFileRangeRequest req) {
+        log.debug("ENTER readTextFileRange: area={}, path={}, startLine={}, endLine={}",
+                req == null ? null : req.area(),
+                req == null ? null : req.path(),
+                req == null ? null : req.startLine(),
+                req == null ? null : req.endLine());
+        if (req == null || req.path() == null || req.path().isBlank()) {
+            return error("path is required");
+        }
+        if (req.startLine() == null || req.endLine() == null) {
+            return error("startLine and endLine are required");
+        }
+
+        long startLine = req.startLine();
+        long endLine = req.endLine();
+        if (startLine < 1 || endLine < 1) {
+            return error("startLine and endLine must be >= 1");
+        }
+        if (endLine < startLine) {
+            return error("endLine must be >= startLine");
+        }
+
+        long requestedLines = endLine - startLine + 1;
+        if (requestedLines > MAX_TEXT_RANGE_LINES) {
+            return error("Requested line range exceeds limit of " + MAX_TEXT_RANGE_LINES + " lines");
+        }
+
+        FileArea area = parseArea(req.area());
+        String sessionUuid = resolveSessionUuid();
+        ToolExecutionContext.bindSessionUuid(sessionUuid);
+        String owner = area == FileArea.SESSION ? sessionUuid : null;
+
+        try (InputStream in = sessionFileSystem.read(area, owner, req.path());
+             BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+
+            StringBuilder text = new StringBuilder();
+            long lineNumber = 0;
+            long linesRead = 0;
+            long bytes = 0;
+            String line;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                if (lineNumber < startLine) {
+                    continue;
+                }
+                if (lineNumber > endLine) {
+                    break;
+                }
+
+                long delta = line.getBytes(StandardCharsets.UTF_8).length + (text.isEmpty() ? 0 : 1);
+                if (bytes + delta > MAX_TEXT_RANGE_BYTES) {
+                    return error("Requested range exceeds max response size of " + MAX_TEXT_RANGE_BYTES + " bytes");
+                }
+                if (!text.isEmpty()) {
+                    text.append('\n');
+                }
+                text.append(line);
+                bytes += delta;
+                linesRead++;
+            }
+
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("status", "ok");
+            payload.put("area", area.name());
+            payload.put("path", req.path());
+            payload.put("startLine", startLine);
+            payload.put("endLine", endLine);
+            payload.put("linesRead", linesRead);
+            payload.put("bytesRead", bytes);
+            payload.put("text", text.toString());
+            log.debug("EXIT readTextFileRange: area={}, path={}, linesRead={}, bytesRead={}",
+                    area, req.path(), linesRead, bytes);
+            return json(payload);
+        } catch (Exception ex) {
+            log.warn("readTextFileRange failed [path={}]: {}", req.path(), ex.getMessage());
+            return error(ex.getMessage());
+        }
+    }
+
     public String installCommand(InstallCommandRequest req) {
         log.debug("ENTER installCommand: area={}, binPath={}, command={}",
                 req == null ? null : req.area(),
@@ -806,6 +1143,22 @@ public class SessionFileToolSuite {
         return normalizePath(normalized);
     }
 
+    private static String sanitizeArchiveEntry(String entryName) {
+        if (entryName == null || entryName.isBlank()) {
+            return "";
+        }
+
+        String normalized = entryName.replace('\\', '/').trim();
+        while (normalized.startsWith("/")) {
+            normalized = normalized.substring(1);
+        }
+
+        if (normalized.contains("..") || normalized.contains(":") || normalized.startsWith("/")) {
+            throw new IllegalArgumentException("Invalid archive entry path: " + entryName);
+        }
+        return normalizePath(normalized);
+    }
+
     private static String parentPath(String path) {
         int idx = path.lastIndexOf('/');
         if (idx <= 0) {
@@ -955,6 +1308,177 @@ public class SessionFileToolSuite {
                 || lower.endsWith(".html")
                 || lower.endsWith(".css")
                 || lower.endsWith(".log");
+    }
+
+    private BufferedReader readerFor(FileArea area, String owner, String path) throws IOException {
+        InputStream in = sessionFileSystem.read(area, owner, path);
+        return new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
+    }
+
+    private static boolean matchesLine(String line,
+                                       String query,
+                                       SearchMatchType matchType,
+                                       boolean caseSensitive,
+                                       Pattern regexPattern) {
+        return switch (matchType) {
+            case CONTAINS -> {
+                if (caseSensitive) {
+                    yield line.contains(query);
+                }
+                yield line.toLowerCase(Locale.ROOT).contains(query.toLowerCase(Locale.ROOT));
+            }
+            case EXACT -> caseSensitive
+                    ? line.equals(query)
+                    : line.equalsIgnoreCase(query);
+            case REGEX -> {
+                Matcher matcher = regexPattern.matcher(line);
+                yield matcher.find();
+            }
+        };
+    }
+
+    private static SearchMatchType parseSearchMatchType(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return SearchMatchType.CONTAINS;
+        }
+        try {
+            return SearchMatchType.valueOf(raw.trim().toUpperCase(Locale.ROOT));
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private static List<SearchBlock> mergeSearchBlocks(List<Long> matchLines,
+                                                       int beforeLines,
+                                                       int afterLines,
+                                                       long startLine,
+                                                       long endLine) {
+        List<SearchBlock> blocks = new ArrayList<>();
+        SearchBlock current = null;
+        for (Long matchLine : matchLines) {
+            long blockStart = Math.max(startLine, matchLine - beforeLines);
+            long blockEnd = endLine == Long.MAX_VALUE
+                    ? matchLine + afterLines
+                    : Math.min(endLine, matchLine + afterLines);
+            if (current == null) {
+                current = new SearchBlock(blockStart, blockEnd);
+                current.matchLines().add(matchLine);
+                continue;
+            }
+            if (blockStart <= current.endLine() + 1) {
+                current.setEndLine(Math.max(current.endLine(), blockEnd));
+                current.matchLines().add(matchLine);
+                continue;
+            }
+            blocks.add(current);
+            current = new SearchBlock(blockStart, blockEnd);
+            current.matchLines().add(matchLine);
+        }
+        if (current != null) {
+            blocks.add(current);
+        }
+        return blocks;
+    }
+
+    private static void populateSearchBlocksText(BufferedReader reader, List<SearchBlock> blocks) throws IOException {
+        try (reader) {
+            if (blocks.isEmpty()) {
+                return;
+            }
+            int index = 0;
+            SearchBlock current = blocks.get(index);
+            long lineNumber = 0;
+            String line;
+            while ((line = reader.readLine()) != null && index < blocks.size()) {
+                lineNumber++;
+                while (current != null && lineNumber > current.endLine()) {
+                    index++;
+                    current = index < blocks.size() ? blocks.get(index) : null;
+                }
+                if (current == null) {
+                    break;
+                }
+                if (lineNumber < current.startLine()) {
+                    continue;
+                }
+                current.appendLine(line);
+            }
+        }
+    }
+
+    private enum SearchMatchType {
+        CONTAINS,
+        EXACT,
+        REGEX
+    }
+
+    private static final class SearchBlock {
+        private final long startLine;
+        private long endLine;
+        private final List<Long> matchLines = new ArrayList<>();
+        private final StringBuilder text = new StringBuilder();
+
+        private SearchBlock(long startLine, long endLine) {
+            this.startLine = startLine;
+            this.endLine = endLine;
+        }
+
+        private long startLine() {
+            return startLine;
+        }
+
+        private long endLine() {
+            return endLine;
+        }
+
+        private void setEndLine(long endLine) {
+            this.endLine = endLine;
+        }
+
+        private List<Long> matchLines() {
+            return matchLines;
+        }
+
+        private String text() {
+            return text.toString();
+        }
+
+        private void appendLine(String line) {
+            if (!text.isEmpty()) {
+                text.append('\n');
+            }
+            text.append(line);
+        }
+    }
+
+    private static final class CountingInputStream extends FilterInputStream {
+        private long count;
+
+        private CountingInputStream(InputStream in) {
+            super(in);
+        }
+
+        private long count() {
+            return count;
+        }
+
+        @Override
+        public int read() throws IOException {
+            int value = super.read();
+            if (value >= 0) {
+                count++;
+            }
+            return value;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            int read = super.read(b, off, len);
+            if (read > 0) {
+                count += read;
+            }
+            return read;
+        }
     }
 
     private static String inferMimeType(String path) {

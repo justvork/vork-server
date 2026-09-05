@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -46,6 +47,137 @@ import sh.vork.scheduling.service.SystemNotificationService;
 import sh.vork.setup.SystemSettingsService;
 
 class ChatServiceSuspensionPersistenceTest {
+
+    @Test
+    void sendMessageAsExternal_whenChildCampaignSession_mirrorsExternalMessageToParentSession() {
+    MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+    AiOrchestrationService aiService = mock(AiOrchestrationService.class);
+    SimpMessagingTemplate messaging = mock(SimpMessagingTemplate.class);
+    ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+    RequestInformationService requestInformationService = mock(RequestInformationService.class);
+
+    String parentSessionId = "parent-session-external";
+    String childSessionId = "child-session-external";
+    String campaignId = "campaign-external";
+    String eventId = "event-external";
+
+    sessionRepo.save(new AiSession(
+        parentSessionId,
+        AiProvider.GEMINI.name(),
+        SessionOriginMode.WEB,
+        "admin",
+        "Parent",
+        100L,
+        0,
+        List.of(),
+        AiSession.defaultEnvironmentVariables(),
+        AiSessionStatus.AWAITING_INPUT,
+        null,
+        null,
+        null,
+        null,
+        null));
+
+    java.util.Map<String, String> childEnv = new java.util.HashMap<>(AiSession.defaultEnvironmentVariables());
+    childEnv.put("REQUEST_CAMPAIGN_ID", campaignId);
+    childEnv.put("REQUEST_CAMPAIGN_PARENT_SESSION_UUID", parentSessionId);
+    childEnv.put("REQUEST_CAMPAIGN_RECIPIENT_CHANNEL", "alice");
+    childEnv.put("REQUEST_CAMPAIGN_ROUTE_MODE", "CHILD_SESSION");
+
+    sessionRepo.save(new AiSession(
+        childSessionId,
+        AiProvider.GEMINI.name(),
+        SessionOriginMode.WEB,
+        "alice",
+        "Child",
+        101L,
+        0,
+        List.of(),
+        childEnv,
+        AiSessionStatus.RUNNING,
+        null,
+        null,
+        null,
+        null,
+        null));
+
+    RequestInformationCampaign campaign = new RequestInformationCampaign(
+        campaignId,
+        parentSessionId,
+        eventId,
+        "admin",
+        "Need input",
+        List.of("alice"),
+        RequestResponsePolicy.FIRST,
+        1,
+        List.of(),
+        RequestCampaignStatus.OPEN,
+        false,
+        200L,
+        200L,
+        null,
+        parentSessionId,
+        java.util.Map.of("alice", childSessionId),
+        RequestResponseRouteMode.CHILD_SESSION,
+        true);
+
+    RequestInformationService.ResponseGateResult gate = new RequestInformationService.ResponseGateResult(
+        true,
+        false,
+        campaignId,
+        1,
+        1,
+        "Thanks. Response recorded.");
+
+    when(requestInformationService.getCampaign(campaignId)).thenReturn(campaign);
+    when(requestInformationService.recordResponseAndEvaluate(eq(campaignId), eq("alice"), eq("ONCE"), any()))
+        .thenReturn(gate);
+
+    ChatService chatService = new ChatService(
+        sessionRepo,
+        null,
+        aiService,
+        messaging,
+        objectMapper,
+        List.of(),
+        mock(SystemNotificationService.class),
+        Runnable::run,
+        mock(RelayEncryptionService.class),
+        mock(RelayHttpClient.class),
+        mock(SystemSettingsService.class),
+        null);
+
+    ReflectionTestUtils.setField(chatService, "requestInformationService", requestInformationService);
+
+    AiChatMessage out = chatService.sendMessageAsExternal(
+        "alice",
+        childSessionId,
+        "Customer response from child session",
+        "alice",
+        "external-channel",
+        List.of(),
+        AiProvider.GEMINI);
+
+    assertNotNull(out);
+    assertEquals("ASSISTANT", out.role());
+
+    AiSession savedChild = sessionRepo.get(childSessionId);
+    assertNotNull(savedChild);
+    assertEquals(1, savedChild.messages().size());
+    assertEquals("ASSISTANT", savedChild.messages().get(0).role());
+
+    AiSession savedParent = sessionRepo.get(parentSessionId);
+    assertNotNull(savedParent);
+    assertEquals(1, savedParent.messages().size());
+    assertEquals("EXTERNAL", savedParent.messages().get(0).role());
+    assertEquals("Customer response from child session", savedParent.messages().get(0).content());
+    assertEquals("external-channel", savedParent.messages().get(0).externalSource());
+    assertEquals("alice", savedParent.messages().get(0).externalParticipant());
+
+    ArgumentCaptor<AiChatMessage> externalCaptor = ArgumentCaptor.forClass(AiChatMessage.class);
+    verify(messaging).convertAndSend(eq("/topic/chat/" + parentSessionId), externalCaptor.capture());
+    assertEquals("EXTERNAL", externalCaptor.getValue().role());
+    }
 
     @Test
     void sendMessageAsUser_whenChildCampaignQuorumNotMet_recordsResponseWithoutParentResume() {

@@ -47,6 +47,7 @@ import java.util.regex.Pattern;
 public class RequestInformationService {
 
     private static final Logger log = LoggerFactory.getLogger(RequestInformationService.class);
+    private static final String INFORMATION_REQUEST_SOURCE = "Information Request";
 
     private static final Pattern AT_LEAST_PATTERN = Pattern.compile("\\bat\\s+least\\s+(\\d+)\\b", Pattern.CASE_INSENSITIVE);
     private static final String REQUEST_CAMPAIGN_RESPONSE_INTENT = "REQUEST_CAMPAIGN_RESPONSE";
@@ -562,6 +563,11 @@ public class RequestInformationService {
             }
             String normalized = ChannelService.normalize(channel);
             String childUsername = (normalized == null || normalized.isBlank()) ? channel.trim() : normalized;
+                String requesterParticipant = resolveDisplayNameOrFallback(
+                    campaign == null ? null : campaign.createdBy());
+                if (requesterParticipant == null || requesterParticipant.isBlank()) {
+                requesterParticipant = "requester";
+                }
 
             AiSession existingChild = findExistingChildSession(campaign.sessionUuid(), channel);
             if (existingChild != null) {
@@ -578,10 +584,12 @@ public class RequestInformationService {
                 : existingChild.messages());
             updatedMessages.add(new AiChatMessage(
                 UUID.randomUUID().toString(),
-                "ASSISTANT",
+                "EXTERNAL",
                 buildResponderIntroMessage(campaign, channel, responderIntroOverride),
                 now,
-                null));
+                null,
+                INFORMATION_REQUEST_SOURCE,
+                requesterParticipant));
             updatedMessages.add(new AiChatMessage(
                 UUID.randomUUID().toString(),
                 "PROMPT_REQUIRED",
@@ -622,10 +630,12 @@ public class RequestInformationService {
             List<AiChatMessage> childMessages = List.of(
                     new AiChatMessage(
                             UUID.randomUUID().toString(),
-                            "ASSISTANT",
+                            "EXTERNAL",
                         buildResponderIntroMessage(campaign, channel, responderIntroOverride),
                             now,
-                            null),
+                            null,
+                            INFORMATION_REQUEST_SOURCE,
+                            requesterParticipant),
                     new AiChatMessage(
                         UUID.randomUUID().toString(),
                         "PROMPT_REQUIRED",
@@ -738,15 +748,40 @@ public class RequestInformationService {
         if (channelLike == null || channelLike.isBlank()) {
             return "";
         }
+        String lookup = channelLike.trim();
         try {
-            ChannelRef resolved = channelService.resolveByChannelName(channelLike).orElse(null);
+            java.util.Optional<ChannelRef> resolvedOptional = channelService.resolveByChannelName(lookup);
+            ChannelRef resolved = resolvedOptional == null ? null : resolvedOptional.orElse(null);
             if (resolved != null && resolved.displayName() != null && !resolved.displayName().isBlank()) {
-                return resolved.displayName().trim();
+                return normalizeParticipantLabel(resolved.displayName().trim(), lookup);
             }
         } catch (Exception ex) {
-            log.debug("Failed to resolve display name for channel [{}]: {}", channelLike, ex.getMessage());
+            log.debug("Failed to resolve display name for channel [{}]: {}", lookup, ex.getMessage());
         }
-        return channelLike.trim();
+        return normalizeParticipantLabel(lookup, lookup);
+    }
+
+    private static String normalizeParticipantLabel(String label, String fallbackChannel) {
+        if (label == null) {
+            return fallbackChannel == null ? "" : fallbackChannel.trim();
+        }
+        String trimmed = label.trim();
+        int open = trimmed.lastIndexOf(" (");
+        int close = trimmed.endsWith(")") ? trimmed.length() - 1 : -1;
+        if (open > 0 && close > open + 2) {
+            String base = trimmed.substring(0, open).trim();
+            String bracket = trimmed.substring(open + 2, close).trim();
+            if (!base.isBlank() && !bracket.isBlank()) {
+                if (base.equalsIgnoreCase(bracket)) {
+                    return base;
+                }
+                if (fallbackChannel != null && !fallbackChannel.isBlank()
+                        && bracket.equalsIgnoreCase(fallbackChannel.trim())) {
+                    return base;
+                }
+            }
+        }
+        return trimmed;
     }
 
     private String buildChildSessionName(RequestInformationCampaign campaign) {

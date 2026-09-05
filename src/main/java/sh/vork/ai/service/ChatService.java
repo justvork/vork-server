@@ -777,10 +777,60 @@ public class ChatService {
     }
 
     /**
+     * Persists an incoming external participant message and continues normal chat flow.
+     * The persisted role remains EXTERNAL; model adapters wrap provenance for history replay.
+     */
+    public AiChatMessage sendMessageAsExternal(String username,
+                                               String sessionUuid,
+                                               String content,
+                                               String externalParticipant,
+                                               String externalSource,
+                                               List<String> attachmentUuids,
+                                               AiProvider provider) {
+        AiSession session = sessionRepo.get(sessionUuid);
+        if (session == null) {
+            throw new IllegalStateException("AI session not found: " + sessionUuid);
+        }
+        if (!username.equals(session.username())) {
+            throw new IllegalStateException("Access denied for session: " + sessionUuid);
+        }
+        session = ensureActiveAgentAccessForSession(session, username);
+
+        SecurityContext prevCtx = SecurityContextHolder.getContext();
+        boolean needsCtx = prevCtx.getAuthentication() == null
+                || prevCtx.getAuthentication().getName() == null
+                || prevCtx.getAuthentication().getName().isBlank();
+        if (needsCtx) {
+            SecurityContext ctx = SecurityContextHolder.createEmptyContext();
+            ctx.setAuthentication(new SystemBackgroundAuthentication(username));
+            SecurityContextHolder.setContext(ctx);
+        }
+        try {
+            return sendMessageWithSession(session, content, attachmentUuids, provider,
+                    "EXTERNAL", externalParticipant, externalSource);
+        } finally {
+            if (needsCtx) {
+                SecurityContextHolder.setContext(prevCtx);
+            }
+        }
+    }
+
+    /**
      * Internal helper that performs the send operation with an already-verified session.
      */
     private AiChatMessage sendMessageWithSession(AiSession session, String content,
                                                   List<String> attachmentUuids, AiProvider provider) {
+        return sendMessageWithSession(session, content, attachmentUuids, provider,
+            "USER", null, null);
+        }
+
+        private AiChatMessage sendMessageWithSession(AiSession session,
+                             String content,
+                             List<String> attachmentUuids,
+                             AiProvider provider,
+                             String inboundRole,
+                             String externalParticipant,
+                             String externalSource) {
         String sessionUuid = session.uuid();
         // Fall back to the provider stored in the session when none is supplied by the caller
         AiProvider effectiveProvider = provider;
@@ -817,16 +867,34 @@ public class ChatService {
 
             long now = System.currentTimeMillis();
             List<AttachmentRef> userRefs = refs.isEmpty() ? null : Collections.unmodifiableList(refs);
-            AiChatMessage userMsg = new AiChatMessage(UUID.randomUUID().toString(), "USER",
-                    content == null ? "" : content, now, userRefs);
+                boolean externalInbound = "EXTERNAL".equalsIgnoreCase(inboundRole);
+                AiChatMessage userMsg = externalInbound
+                    ? new AiChatMessage(
+                        UUID.randomUUID().toString(),
+                        "EXTERNAL",
+                        content == null ? "" : content,
+                        now,
+                        userRefs,
+                        externalSource,
+                        externalParticipant)
+                    : new AiChatMessage(UUID.randomUUID().toString(), "USER",
+                        content == null ? "" : content, now, userRefs);
 
-            AiChatMessage childCampaignResponse = handleChildSessionCampaignResponse(session, userMsg, true);
+                String modelInputContent = effectiveContent;
+                if (externalInbound) {
+                modelInputContent = ExternalMessageProvenance.toWrappedEvidence(
+                    effectiveContent,
+                    externalSource,
+                    externalParticipant);
+                }
+
+                AiChatMessage childCampaignResponse = handleChildSessionCampaignResponse(session, userMsg, !externalInbound);
             if (childCampaignResponse != null) {
                 return childCampaignResponse;
             }
 
             try {
-                return executeAgentLoop(session, history, effectiveContent, media, resolvedProvider, userMsg, refs,
+                return executeAgentLoop(session, history, modelInputContent, media, resolvedProvider, userMsg, refs,
                     true);
             } catch (ToolSuspensionException ex) {
                 String simulatedToolCallId = "pending-" + UUID.randomUUID();
@@ -996,6 +1064,10 @@ public class ChatService {
                 campaign.uuid(), latest.uuid(), responderChannel,
                 gate.accepted(), gate.shouldResume(), gate.responseCount(), gate.requiredResponses());
 
+        if ("EXTERNAL".equalsIgnoreCase(userMsg.role())) {
+            persistExternalChildResponseToParentSession(campaign, latest, userMsg, responderChannel);
+        }
+
         if (gate.shouldResume()) {
             boolean shouldResumeNow = requestInformationService.markResumeStarted(campaign.uuid());
             if (shouldResumeNow) {
@@ -1008,11 +1080,54 @@ public class ChatService {
         return childAck;
     }
 
-    private void resumeParentSessionFromChildCampaign(RequestInformationCampaign campaign, AiSession childSession) {
-        if (campaign == null || telegramChatResumptionService == null || requestInformationService == null) {
+    private void persistExternalChildResponseToParentSession(RequestInformationCampaign campaign,
+                                                             AiSession childSession,
+                                                             AiChatMessage externalMessage,
+                                                             String responderChannel) {
+        if (campaign == null || externalMessage == null) {
             return;
         }
 
+        String parentSessionUuid = resolveParentSessionUuid(campaign, childSession);
+        if (parentSessionUuid == null || parentSessionUuid.isBlank()) {
+            log.warn("Cannot mirror child external response: parent session UUID unresolved [campaign={}]", campaign.uuid());
+            return;
+        }
+        if (childSession != null && parentSessionUuid.equals(childSession.uuid())) {
+            return;
+        }
+
+        AiSession parentSession = sessionRepo.get(parentSessionUuid);
+        if (parentSession == null) {
+            log.warn("Cannot mirror child external response: parent session not found [campaign={}, parentSession={}]",
+                    campaign.uuid(), parentSessionUuid);
+            return;
+        }
+
+        List<AiChatMessage> parentMessages = new ArrayList<>(
+                parentSession.messages() == null ? List.of() : parentSession.messages());
+        AiChatMessage mirrored = new AiChatMessage(
+                UUID.randomUUID().toString(),
+                "EXTERNAL",
+                externalMessage.content() == null ? "" : externalMessage.content(),
+                System.currentTimeMillis(),
+                externalMessage.attachments(),
+                externalMessage.externalSource() == null ? "external-channel" : externalMessage.externalSource(),
+                externalMessage.externalParticipant() == null ? responderChannel : externalMessage.externalParticipant());
+        parentMessages.add(mirrored);
+
+        sessionRepo.save(new AiSession(
+                parentSession.uuid(), parentSession.provider(), parentSession.originMode(), parentSession.username(),
+                parentSession.name(), parentSession.createdAt(), parentSession.currentRoundCount(), List.copyOf(parentMessages),
+                parentSession.environmentVariables(), parentSession.status(), parentSession.activeAgentTemplateId(),
+                parentSession.modelId(), parentSession.skillStack(), parentSession.sessionSkillUuids(), parentSession.sessionToolIds()));
+
+        messaging.convertAndSend("/topic/chat/" + parentSessionUuid, mirrored);
+        log.info("Mirrored child external response to parent session [campaign={}, childSession={}, parentSession={}]",
+                campaign.uuid(), childSession == null ? "unknown" : childSession.uuid(), parentSessionUuid);
+    }
+
+    private static String resolveParentSessionUuid(RequestInformationCampaign campaign, AiSession childSession) {
         String parentSessionUuid = null;
         if (childSession != null && childSession.environmentVariables() != null) {
             parentSessionUuid = childSession.environmentVariables().get(REQUEST_CAMPAIGN_PARENT_SESSION_UUID_ENV);
@@ -1023,6 +1138,15 @@ public class ChatService {
         if (parentSessionUuid == null || parentSessionUuid.isBlank()) {
             parentSessionUuid = campaign.sessionUuid();
         }
+        return parentSessionUuid;
+    }
+
+    private void resumeParentSessionFromChildCampaign(RequestInformationCampaign campaign, AiSession childSession) {
+        if (campaign == null || telegramChatResumptionService == null || requestInformationService == null) {
+            return;
+        }
+
+        String parentSessionUuid = resolveParentSessionUuid(campaign, childSession);
         if (parentSessionUuid == null || parentSessionUuid.isBlank()) {
             log.warn("Cannot resume parent session: campaign has no parent/session UUID [campaign={}]", campaign.uuid());
             return;
@@ -3241,6 +3365,7 @@ public class ChatService {
         for (AiChatMessage message : messages) {
             switch (message.role()) {
                 case "USER" -> history.add(new UserMessage(message.content() == null ? "" : message.content()));
+                case "EXTERNAL" -> history.add(new UserMessage(ExternalMessageProvenance.toWrappedEvidence(message)));
                 case "ASSISTANT" -> history.add(new AssistantMessage(message.content() == null ? "" : message.content()));
                 case "TOOL" -> {
                     String toolName = message.toolName();

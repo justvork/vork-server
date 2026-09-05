@@ -283,6 +283,12 @@ public class ReflectionController {
         return ResponseEntity.ok(reflectionService.listReflections());
     }
 
+    @GetMapping("/reflections/transformation-target-tools")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> listTransformationTargetTools() {
+        return ResponseEntity.ok(reflectionService.listTransformationTargetTools());
+    }
+
     @GetMapping("/reflections/{uuid}")
     public ResponseEntity<?> getReflection(@PathVariable String uuid) {
         Reflection reflection = reflectionService.getReflection(uuid);

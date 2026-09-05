@@ -347,11 +347,14 @@
                     <button id="reflection-tab-response" type="button" data-tab="response" class="reflection-tab-btn inline-flex items-center rounded-t-md border border-zinc-700 border-b-transparent bg-zinc-950 px-3 py-1.5 text-sm font-medium text-zinc-400 hover:text-zinc-200">
                         Response
                     </button>
+                    <button id="reflection-tab-transformation" type="button" data-tab="transformation" class="reflection-tab-btn inline-flex items-center rounded-t-md border border-zinc-700 border-b-transparent bg-zinc-950 px-3 py-1.5 text-sm font-medium text-zinc-400 hover:text-zinc-200">
+                        Transformation
+                    </button>
                 </nav>
             </div>
 
             <div id="reflection-tab-panel-request" class="space-y-3">
-                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div id="reflection-request-http-section" class="grid grid-cols-1 gap-3 md:grid-cols-2">
                     <div>
                         <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-method">HTTP Method</label>
                         <select id="reflection-method" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
@@ -372,12 +375,12 @@
                     </div>
                 </div>
 
-                <div>
+                <div id="reflection-request-url-section">
                     <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-url">URL <span class="text-rose-400">*</span></label>
                     <input id="reflection-url" type="url" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="https://api.example.com/weather/{{city}}">
                 </div>
 
-                <div>
+                <div id="reflection-request-headers-section">
                     <div>
                         <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-headers">Headers</label>
                         <div id="headers-list" class="space-y-2"></div>
@@ -388,7 +391,7 @@
                     </div>
                 </div>
 
-                <div>
+                <div id="reflection-request-query-section">
                     <div>
                         <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-query">Additional Parameters</label>
                         <div id="query-params-list" class="space-y-2"></div>
@@ -438,6 +441,37 @@
                     <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-output-schema">Output Schema (JSON Schema)</label>
                     <textarea id="reflection-output-schema" class="min-h-28 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-100" placeholder='{"type":"object","required":["id"],"properties":{"id":{"type":"string"}}}'></textarea>
                     <div class="mt-1 text-xs text-zinc-500">Applied when Response Content Type is application/json. Validation mismatches are logged as warnings only.</div>
+                </div>
+            </div>
+
+            <div id="reflection-tab-panel-transformation" class="hidden space-y-3">
+                <label class="inline-flex items-center gap-2 text-sm font-medium text-zinc-300" for="reflection-transformation-enabled">
+                    <input id="reflection-transformation-enabled" type="checkbox" class="h-4 w-4 rounded border-zinc-700 bg-zinc-950 text-[#fdaa02]">
+                    Enable transformation execution
+                </label>
+
+                <div id="reflection-transformation-config" class="hidden space-y-3 rounded-lg border border-zinc-800 bg-zinc-950/50 p-3">
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-transformation-source">Source Reflection Tool <span class="text-rose-400">*</span></label>
+                        <select id="reflection-transformation-source" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"></select>
+                        <div class="mt-1 text-xs text-zinc-500">Must be in the same reflection group.</div>
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-zinc-300" for="reflection-transformation-target-tool">Target Tool <span class="text-rose-400">*</span></label>
+                        <select id="reflection-transformation-target-tool" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"></select>
+                    </div>
+
+                    <div>
+                        <div class="mb-1 flex items-center justify-between">
+                            <label class="block text-sm font-medium text-zinc-300">Mappings</label>
+                            <button id="add-transformation-mapping-btn" type="button" class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200">
+                                <i class="fa-solid fa-plus mr-1"></i>Add Mapping
+                            </button>
+                        </div>
+                        <div id="reflection-transformation-mappings"></div>
+                        <div class="mt-1 text-xs text-zinc-500">Choose mapping type: Input (from this transform tool input), Output (from source tool schema), or Fixed (manual value).</div>
+                    </div>
                 </div>
             </div>
         </div>

@@ -14,8 +14,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.multipart.MultipartFile;
-import sh.vork.ai.entity.AiSession;
-import sh.vork.orm.DatabaseRepository;
 import sh.vork.storage.AiMimeTypeSupport;
 
 import java.io.IOException;
@@ -38,12 +36,12 @@ public class SessionFileController {
     private static final Logger log = LoggerFactory.getLogger(SessionFileController.class);
 
     private final SessionFileSystem sessionFileSystem;
-    private final DatabaseRepository<AiSession> aiSessionRepository;
+    private final SessionFileAuthorizationService authorizationService;
 
     public SessionFileController(SessionFileSystem sessionFileSystem,
-                                 DatabaseRepository<AiSession> aiSessionRepository) {
+                                 SessionFileAuthorizationService authorizationService) {
         this.sessionFileSystem = sessionFileSystem;
-        this.aiSessionRepository = aiSessionRepository;
+        this.authorizationService = authorizationService;
     }
 
     @GetMapping("/list")
@@ -53,7 +51,7 @@ public class SessionFileController {
                                   Principal principal) {
         log.debug("ENTER list: area={}, sessionUuid={}, dir={}, user={}",
             area, sessionUuid, dir, principal == null ? null : principal.getName());
-        if (!isAuthorized(area, sessionUuid, principal)) {
+        if (!authorizationService.isAuthorized(area, sessionUuid, principal)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("status", "error", "message", "Access denied"));
         }
@@ -83,7 +81,7 @@ public class SessionFileController {
                          HttpServletResponse response) throws IOException {
         log.debug("ENTER download: area={}, sessionUuid={}, path={}, user={}",
                 area, sessionUuid, path, principal == null ? null : principal.getName());
-        if (!isAuthorized(area, sessionUuid, principal)) {
+        if (!authorizationService.isAuthorized(area, sessionUuid, principal)) {
             response.sendError(HttpServletResponse.SC_FORBIDDEN, "Access denied");
             return;
         }
@@ -114,7 +112,7 @@ public class SessionFileController {
                                           Principal principal) {
         log.debug("ENTER createFolder: area={}, sessionUuid={}, dir={}, user={}",
                 area, sessionUuid, dir, principal == null ? null : principal.getName());
-        if (!isAuthorized(area, sessionUuid, principal)) {
+        if (!authorizationService.isAuthorized(area, sessionUuid, principal)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("status", "error", "message", "Access denied"));
         }
@@ -143,7 +141,7 @@ public class SessionFileController {
                                     Principal principal) {
         log.debug("ENTER upload: area={}, sessionUuid={}, path={}, user={}",
             area, sessionUuid, path, principal == null ? null : principal.getName());
-        if (!isAuthorized(area, sessionUuid, principal)) {
+        if (!authorizationService.isAuthorized(area, sessionUuid, principal)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("status", "error", "message", "Access denied"));
         }
@@ -180,21 +178,6 @@ public class SessionFileController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(Map.of("status", "error", "message", message));
         }
-    }
-
-    private boolean isAuthorized(FileArea area, String sessionUuid, Principal principal) {
-        if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
-            return false;
-        }
-        if (area == FileArea.SHARED) {
-            return true;
-        }
-        if (sessionUuid == null || sessionUuid.isBlank()) {
-            return false;
-        }
-
-        AiSession session = aiSessionRepository.get(sessionUuid);
-        return session != null && principal.getName().equals(session.username());
     }
 
     private static String fileName(String relativePath) {
