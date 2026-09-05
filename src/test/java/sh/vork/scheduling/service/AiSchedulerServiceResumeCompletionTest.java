@@ -11,6 +11,7 @@ import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
+import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.orm.mock.MapDatabaseRepository;
 import sh.vork.scheduling.domain.InvocationType;
 import sh.vork.scheduling.domain.ScheduledJob;
@@ -56,7 +57,7 @@ class AiSchedulerServiceResumeCompletionTest {
                 AiSessionStatus.RUNNING, null, null, null, null, null));
 
         CompletingEngine engine = new CompletingEngine(sessionRepo);
-        AiSchedulerService service = new AiSchedulerService(null, jobRepo, engine, sessionRepo);
+    AiSchedulerService service = new AiSchedulerService(null, jobRepo, engine, sessionRepo, org.mockito.Mockito.mock(SessionFileSystem.class));
 
         service.resumeBackgroundSession(trackingSessionUuid);
 

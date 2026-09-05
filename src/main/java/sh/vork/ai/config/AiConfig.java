@@ -125,6 +125,7 @@ import sh.vork.ai.function.UploadFileRequest;
 import sh.vork.ai.function.UploadTextFileRequest;
 import sh.vork.ai.function.VerifyDataByRefRequest;
 import sh.vork.ai.function.VerifyDataRequest;
+import sh.vork.ai.function.WriteBase64FileRequest;
 import sh.vork.ai.function.WriteFileRequest;
 import sh.vork.ai.function.WriteProcessRequest;
 import sh.vork.ai.memory.SessionEnvironmentService;
@@ -144,6 +145,7 @@ import sh.vork.ai.security.ApprovalPolicyRuntimeResolver;
 import sh.vork.ai.security.ApprovalPolicy;
 import sh.vork.ai.security.ApprovalPolicyService;
 import sh.vork.ai.security.LoggedToolCallback;
+import sh.vork.ai.security.InToolAuthorizationService;
 import sh.vork.ai.security.PreAuthorizationTokenService;
 import sh.vork.ai.security.Restricted;
 import sh.vork.ai.security.SecuredToolCallback;
@@ -695,6 +697,8 @@ the protocol and will break the system. Do not converse. Execute.
                                 "skillUuid", created.uuid(),
                                 "name", created.name(),
                                 "groupUuid", created.groupUuid()));
+                    } catch (ToolSuspensionException ex) {
+                        throw ex;
                     } catch (Exception e) {
                         return "{\"status\":\"error\",\"message\":\""
                                 + e.getMessage().replace("\"", "'") + "\"}";
@@ -716,7 +720,8 @@ the protocol and will break the system. Do not converse. Execute.
                                      DatabaseRepository<AgentTemplate> agentTemplateRepository,
                                      DatabaseRepository<ScheduledJob> jobRepository,
                                      DatabaseRepository<AiSession> aiSessionRepository,
-                                     AgentAssignmentService agentAssignmentService) {
+                                     AgentAssignmentService agentAssignmentService,
+                                     InToolAuthorizationService inToolAuthorizationService) {
         return FunctionToolCallback
                 .builder("delegateTask", (DelegateTaskRequest req) -> {
                     try {
@@ -726,11 +731,14 @@ the protocol and will break the system. Do not converse. Execute.
                         if (req.prompt() == null || req.prompt().isBlank()) {
                             return "{\"status\":\"error\",\"message\":\"prompt is required\"}";
                         }
-                        if (req.jobUuid() == null || req.jobUuid().isBlank()) {
-                            return "{\"status\":\"error\",\"message\":\"jobUuid is required\"}";
-                        }
 
                         String sessionUuid = resolveSessionUuid();
+                        List<String> requestedSessionFiles = normalizeSessionFiles(req.sessionFiles());
+                        if (!requestedSessionFiles.isEmpty()
+                                && (sessionUuid == null || sessionUuid.isBlank() || "system".equals(sessionUuid))) {
+                            return "{\"status\":\"error\",\"message\":\"sessionFiles require a non-system session context\"}";
+                        }
+
                         String username = resolveUsername();
                         AiSession activeSession = null;
                         if ((username == null || username.isBlank())
@@ -776,11 +784,37 @@ the protocol and will break the system. Do not converse. Execute.
                         }
 
                         AgentTemplate target = matches.get(0);
-                        if (!agentAssignmentService.isAssignedToUser(target, username)) {
-                            return objectMapper.writeValueAsString(Map.of(
-                                    "status", "error",
-                                    "message", "Agent is not assigned to the current user.",
-                                    "agentName", req.agentName()));
+                        boolean assignedToUser = username != null
+                            && !username.isBlank()
+                            && !"system".equalsIgnoreCase(username)
+                            && agentAssignmentService.isAssignedToUser(target, username);
+                        if (!assignedToUser) {
+                            String sourceAgentId = activeSession == null ? null : activeSession.activeAgentTemplateId();
+                            String sourceAgentName = null;
+                            if (sourceAgentId != null && !sourceAgentId.isBlank()) {
+                            AgentTemplate sourceAgent = agentTemplateRepository.get(sourceAgentId);
+                            sourceAgentName = sourceAgent == null ? null : sourceAgent.name();
+                            }
+                            String authorizationPayload = objectMapper.writeValueAsString(Map.of(
+                                "tool", "delegateTask",
+                                "targetAgentName", target.name(),
+                                "targetAgentUuid", target.uuid(),
+                                "sourceAgentUuid", sourceAgentId == null ? "" : sourceAgentId,
+                                "sourceAgentName", sourceAgentName == null ? "" : sourceAgentName,
+                                "sourceSessionUuid", sessionUuid == null ? "" : sessionUuid,
+                                "requestedBy", username == null ? "" : username));
+                            String markdownDetails = "## Delegation Request\n"
+                                + "- Source Agent: " + (sourceAgentName == null ? "(unknown)" : sourceAgentName) + "\n"
+                                + "- Source Session: " + (sessionUuid == null ? "(none)" : sessionUuid) + "\n"
+                                + "- Target Agent: " + target.name() + "\n"
+                                + "- Requested By: " + (username == null || username.isBlank() ? "system" : username) + "\n\n"
+                                + "Approve this delegation to allow one execution of delegateTask.";
+                            inToolAuthorizationService.requireAdminApproval(
+                                "delegateTask",
+                                authorizationPayload,
+                                "Delegation Authorization Required",
+                                "Administrator approval is required before this agent delegation can continue.",
+                                markdownDetails);
                         }
                         if (target.agentType() != sh.vork.ai.agent.AgentType.BACKGROUND) {
                             return objectMapper.writeValueAsString(Map.of(
@@ -790,73 +824,88 @@ the protocol and will break the system. Do not converse. Execute.
                                     "agentType", target.agentType().name()));
                         }
 
-                        ScheduledJob assignedJob = jobRepository.get(req.jobUuid().trim());
-                        if (assignedJob == null) {
+                        ScheduledJob assignedJob = null;
+                        if (req.jobUuid() != null && !req.jobUuid().isBlank()) {
+                            assignedJob = jobRepository.get(req.jobUuid().trim());
+                            if (assignedJob == null) {
                             return objectMapper.writeValueAsString(Map.of(
-                                    "status", "error",
-                                    "message", "Assigned job not found.",
-                                    "jobUuid", req.jobUuid().trim()));
-                        }
+                                "status", "error",
+                                "message", "Assigned job not found.",
+                                "jobUuid", req.jobUuid().trim()));
+                            }
 
-                        if (target.jobUuids() == null || !target.jobUuids().contains(assignedJob.id())) {
+                            if (target.jobUuids() == null || !target.jobUuids().contains(assignedJob.id())) {
                             return objectMapper.writeValueAsString(Map.of(
-                                    "status", "error",
-                                    "message", "Selected job is not assigned to target agent.",
-                                    "agentName", target.name(),
-                                    "jobUuid", assignedJob.id()));
-                        }
+                                "status", "error",
+                                "message", "Selected job is not assigned to target agent.",
+                                "agentName", target.name(),
+                                "jobUuid", assignedJob.id()));
+                            }
 
-                        if (assignedJob.userId() != null
+                            if (assignedJob.userId() != null
                                 && !assignedJob.userId().isBlank()
                                 && !assignedJob.userId().equals(username)) {
                             return objectMapper.writeValueAsString(Map.of(
-                                    "status", "error",
-                                    "message", "Selected job belongs to a different user.",
-                                    "jobUuid", assignedJob.id()));
-                        }
+                                "status", "error",
+                                "message", "Selected job belongs to a different user.",
+                                "jobUuid", assignedJob.id()));
+                            }
 
-                        if (activeSession != null
+                            if (activeSession != null
                                 && activeSession.activeAgentTemplateId() != null
                                 && !activeSession.activeAgentTemplateId().isBlank()) {
                             AgentTemplate activeAgent = agentTemplateRepository.get(activeSession.activeAgentTemplateId());
                             if (activeAgent != null && activeAgent.jobUuids() != null
-                                    && !activeAgent.jobUuids().isEmpty()
-                                    && !activeAgent.jobUuids().contains(assignedJob.id())) {
+                                && !activeAgent.jobUuids().isEmpty()
+                                && !activeAgent.jobUuids().contains(assignedJob.id())) {
                                 return objectMapper.writeValueAsString(Map.of(
-                                        "status", "error",
-                                        "message", "Current active agent is not permitted to delegate this job.",
-                                        "jobUuid", assignedJob.id(),
-                                        "activeAgentUuid", activeAgent.uuid()));
+                                    "status", "error",
+                                    "message", "Current active agent is not permitted to delegate this job.",
+                                    "jobUuid", assignedJob.id(),
+                                    "activeAgentUuid", activeAgent.uuid()));
+                            }
                             }
                         }
 
+                        RecommendedModelSelection recommendedModel = parseRecommendedModel(target.recommendedModel());
+
                         String jobName = "Dynamic: " + target.name();
                         String dynamicArtifactId = "delegated" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-                        String dynamicJobId = "system-" + dynamicArtifactId + "-SNAPSHOT";
+                        String dynamicJobId = "dynamic-" + dynamicArtifactId;
                         ScheduledJob dynamicJob = new ScheduledJob(
                             dynamicJobId,
                                 jobName,
                                 req.prompt().trim(),
-                                assignedJob.sessionUuid(),
+                            null,
                                 username,
-                                InvocationType.ONE_TIME,
+                            InvocationType.DYNAMIC,
                                 java.time.Instant.now(),
                                 0L,
-                                assignedJob.durationType() != null ? assignedJob.durationType() : DurationType.MINUTES,
+                            assignedJob != null && assignedJob.durationType() != null
+                                ? assignedJob.durationType()
+                                : DurationType.MINUTES,
                                 0L,
                                 0L,
                                 target.uuid(),
-                                assignedJob.provider(),
-                                assignedJob.modelId(),
-                                assignedJob.oobTimeoutMinutes() > 0 ? assignedJob.oobTimeoutMinutes() : 240,
-                                assignedJob.expectedOutput(),
+                            assignedJob != null
+                                ? assignedJob.provider()
+                                : recommendedModel.provider(),
+                            assignedJob != null
+                                ? assignedJob.modelId()
+                                : recommendedModel.modelId(),
+                            assignedJob != null && assignedJob.oobTimeoutMinutes() > 0 ? assignedJob.oobTimeoutMinutes() : 240,
+                            assignedJob != null ? assignedJob.expectedOutput() : null,
                                 ScheduledJobStatus.WAITING,
-                                assignedJob.skillUuids(),
-                                assignedJob.toolIds(),
+                            assignedJob != null
+                                ? assignedJob.skillUuids()
+                                : target.skillUuids(),
+                            assignedJob != null
+                                ? assignedJob.toolIds()
+                                : target.allowedTools(),
                                 List.of(username),
-                                "system",
+                            "dynamic",
                                 dynamicArtifactId,
-                                "SNAPSHOT",
+                            "DYNAMIC",
                                 ArtifactStatus.SNAPSHOT);
 
                             AiSchedulerService aiSchedulerService = aiSchedulerServiceProvider.getIfAvailable();
@@ -864,23 +913,77 @@ the protocol and will break the system. Do not converse. Execute.
                                 return "{\"status\":\"error\",\"message\":\"Scheduler service is unavailable\"}";
                             }
 
-                        ScheduledJob saved = aiSchedulerService.scheduleJob(dynamicJob);
-                        return objectMapper.writeValueAsString(Map.of(
-                                "status", "scheduled",
-                                "jobId", saved.id(),
-                                "jobName", saved.name(),
-                                "agentName", target.name(),
-                                "agentUuid", target.uuid(),
-                            "sourceJobUuid", assignedJob.id(),
-                                "invocationType", saved.invocationType().name()));
+                        ScheduledJob saved = aiSchedulerService.scheduleDelegatedDynamicJob(
+                            dynamicJob,
+                            (sessionUuid == null || sessionUuid.isBlank() || "system".equals(sessionUuid))
+                                ? null
+                                : sessionUuid,
+                            requestedSessionFiles);
+                        Map<String, Object> response = new LinkedHashMap<>();
+                        response.put("status", "scheduled");
+                        response.put("jobId", saved.id());
+                        response.put("jobName", saved.name());
+                        response.put("agentName", target.name());
+                        response.put("agentUuid", target.uuid());
+                        response.put("invocationType", saved.invocationType().name());
+                        if (!requestedSessionFiles.isEmpty()) {
+                            response.put("copiedSessionFileCount", requestedSessionFiles.size());
+                        }
+                        if (assignedJob != null) {
+                            response.put("sourceJobUuid", assignedJob.id());
+                        }
+                        return objectMapper.writeValueAsString(response);
+                    } catch (ToolSuspensionException ex) {
+                        throw ex;
                     } catch (Exception e) {
                         return "{\"status\":\"error\",\"message\":\""
                                 + e.getMessage().replace("\"", "'") + "\"}";
                     }
                 })
-                .description("Delegate work to another agent by selecting an assigned job template (jobUuid) and overriding prompt for a one-time background run. Only jobs assigned to the selected agent are allowed.")
+                .description("Delegate work to another agent using a dynamic one-off background run. If jobUuid is provided, its policy/tooling settings are inherited and validated against the selected agent; if omitted, the run is created directly from the target background agent plus the provided prompt.")
                 .inputType(DelegateTaskRequest.class)
                 .build();
+    }
+
+    private static RecommendedModelSelection parseRecommendedModel(String recommendedModel) {
+        if (recommendedModel == null || recommendedModel.isBlank()) {
+            return new RecommendedModelSelection(AiProvider.BACKGROUND_SCHEDULER.name(), null);
+        }
+        String normalized = recommendedModel.trim();
+        int idx = normalized.indexOf(':');
+        if (idx < 0) {
+            try {
+                return new RecommendedModelSelection(AiProvider.valueOf(normalized.toUpperCase(Locale.ROOT)).name(), null);
+            } catch (IllegalArgumentException ignored) {
+                return new RecommendedModelSelection(AiProvider.BACKGROUND_SCHEDULER.name(), normalized);
+            }
+        }
+
+        String providerRaw = normalized.substring(0, idx).trim().toUpperCase(Locale.ROOT);
+        String modelId = normalized.substring(idx + 1).trim();
+        String providerName;
+        try {
+            providerName = AiProvider.valueOf(providerRaw).name();
+        } catch (IllegalArgumentException ignored) {
+            providerName = AiProvider.BACKGROUND_SCHEDULER.name();
+        }
+        return new RecommendedModelSelection(providerName, modelId.isBlank() ? null : modelId);
+    }
+
+    private record RecommendedModelSelection(String provider, String modelId) {}
+
+    private static List<String> normalizeSessionFiles(List<String> sessionFiles) {
+        if (sessionFiles == null || sessionFiles.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (String value : sessionFiles) {
+            if (value == null || value.isBlank()) {
+                continue;
+            }
+            normalized.add(value.trim());
+        }
+        return List.copyOf(normalized);
     }
 
     @Bean
@@ -2102,6 +2205,23 @@ the protocol and will break the system. Do not converse. Execute.
                     Response guidance: do not paste raw download URLs in assistant text; generated files are auto-attached to the chat message.
                     """.stripIndent())
                 .inputType(WriteFileRequest.class)
+                .build();
+    }
+
+    @Bean
+    @Hidden
+    @ToolCategory("Files")
+    public ToolCallback writeBase64File(SessionFileToolSuite sessionFileToolSuite) {
+        return FunctionToolCallback
+                .builder("writeBase64File", sessionFileToolSuite::writeBase64File)
+                .description("""
+                    Write a binary file into the current session sandbox (default) or shared area from Base64 content.
+                    The incoming base64Content is decoded to raw bytes before writing to disk.
+                    Both standard Base64 and URL-safe Base64 are accepted automatically (no mode switch required).
+                    Set attachToChat=false for intermediate files that should not appear in the assistant attachment list.
+                    Response guidance: do not paste raw download URLs in assistant text; generated files are auto-attached to the chat message.
+                    """.stripIndent())
+                .inputType(WriteBase64FileRequest.class)
                 .build();
     }
 

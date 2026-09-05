@@ -742,6 +742,21 @@ public class ReflectionService {
                 .orElse(null);
     }
 
+    public boolean isReflectionAdvertisedToConsumers(ReflectionGroup group, String reflectionId) {
+        if (group == null || group.type() != ReflectionType.REST) {
+            return true;
+        }
+        Map<String, BindingContractToolDefinition> contractTools = resolveContractToolsForGroup(group);
+        if (contractTools.isEmpty()) {
+            return true;
+        }
+        BindingContractToolDefinition contractTool = resolveContractToolForReflectionId(contractTools, reflectionId);
+        if (contractTool == null) {
+            return true;
+        }
+        return contractTool.publiclyVisible() == null || contractTool.publiclyVisible();
+    }
+
     public Reflection createReflection(ReflectionRequest request) {
         log.debug("ENTER createReflection: [id={}]", request == null ? "null" : request.id());
         Reflection normalized = normalizeAndValidate(null, request);
@@ -1867,7 +1882,8 @@ public class ReflectionService {
                     tools.put(key, new BindingContractToolDefinition(
                             name,
                             tool.description() == null ? "" : tool.description(),
-                            normalizeInputParameters(tool.inputParameters())));
+                            normalizeInputParameters(tool.inputParameters()),
+                            tool.publiclyVisible() == null || tool.publiclyVisible()));
                     continue;
                 }
                 if (!parametersMatchContract(existing.inputParameters(), normalizeInputParameters(tool.inputParameters()))) {

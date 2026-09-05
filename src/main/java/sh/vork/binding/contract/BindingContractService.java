@@ -57,7 +57,7 @@ public class BindingContractService {
 
     public BindingContract createContract(BindingContract request) {
         log.debug("ENTER createContract: name={}", request == null ? null : request.name());
-        BindingContract normalized = normalizeAndValidate(request);
+        BindingContract normalized = normalizeAndValidate(request, false);
         String vid = toVid(normalized.groupId(), normalized.artifactId(), normalized.version());
         if (repository.get(vid) != null) {
             throw new IllegalArgumentException("Binding contract already exists for deterministic VID: " + vid);
@@ -95,7 +95,7 @@ public class BindingContractService {
             throw new IllegalArgumentException("Only SNAPSHOT or REJECTED binding contracts can be edited.");
         }
 
-        BindingContract normalized = normalizeAndValidate(request);
+        BindingContract normalized = normalizeAndValidate(request, false);
         String expectedId = toVid(normalized.groupId(), normalized.artifactId(), normalized.version());
         if (!expectedId.equals(normalizedId)) {
             throw new IllegalArgumentException("Binding contract identity is immutable and must remain: " + expectedId);
@@ -178,7 +178,7 @@ public class BindingContractService {
 
         BindingContract normalized;
         try {
-            normalized = normalizeAndValidate(pkg.contract());
+            normalized = normalizeAndValidate(pkg.contract(), true);
         } catch (IllegalArgumentException ex) {
             return new BindingContractImportResult("error", ex.getMessage(), null);
         }
@@ -211,6 +211,68 @@ public class BindingContractService {
         log.info("Binding contract import complete [id={}, status={}]", vid, status);
         log.debug("EXIT importContract: status={}, id={}", status, vid);
         return new BindingContractImportResult(status, null, vid);
+    }
+
+    public List<BindingContractToolDefinition> listTools(String id) {
+        BindingContract contract = getRequiredContract(id);
+        return contract.tools();
+    }
+
+    public BindingContract addTool(String id, BindingContractToolDefinition tool) {
+        BindingContract contract = getRequiredEditableContract(id);
+        BindingContractToolDefinition normalizedTool = normalizeRequiredTool(tool);
+        ensureToolNameNotPresent(contract.tools(), normalizedTool.name(), null);
+
+        List<BindingContractToolDefinition> nextTools = new ArrayList<>(contract.tools());
+        nextTools.add(normalizedTool);
+        BindingContract updated = withTools(contract, List.copyOf(nextTools));
+        repository.save(updated);
+        log.info("Binding contract tool added [id={}, tool={}]", updated.uuid(), normalizedTool.name());
+        return updated;
+    }
+
+    public BindingContract updateTool(String id,
+                                      String existingToolName,
+                                      BindingContractToolDefinition tool) {
+        BindingContract contract = getRequiredEditableContract(id);
+        if (existingToolName == null || existingToolName.isBlank()) {
+            throw new IllegalArgumentException("existingToolName is required.");
+        }
+
+        int index = findToolIndex(contract.tools(), existingToolName.trim());
+        if (index < 0) {
+            throw new IllegalArgumentException("Tool not found: " + existingToolName.trim());
+        }
+
+        BindingContractToolDefinition normalizedTool = normalizeRequiredTool(tool);
+        ensureToolNameNotPresent(contract.tools(), normalizedTool.name(), index);
+
+        List<BindingContractToolDefinition> nextTools = new ArrayList<>(contract.tools());
+        nextTools.set(index, normalizedTool);
+        BindingContract updated = withTools(contract, List.copyOf(nextTools));
+        repository.save(updated);
+        log.info("Binding contract tool updated [id={}, oldTool={}, newTool={}]",
+                updated.uuid(), existingToolName.trim(), normalizedTool.name());
+        return updated;
+    }
+
+    public BindingContract deleteTool(String id, String toolName) {
+        BindingContract contract = getRequiredEditableContract(id);
+        if (toolName == null || toolName.isBlank()) {
+            throw new IllegalArgumentException("toolName is required.");
+        }
+
+        int index = findToolIndex(contract.tools(), toolName.trim());
+        if (index < 0) {
+            throw new IllegalArgumentException("Tool not found: " + toolName.trim());
+        }
+
+        List<BindingContractToolDefinition> nextTools = new ArrayList<>(contract.tools());
+        BindingContractToolDefinition removed = nextTools.remove(index);
+        BindingContract updated = withTools(contract, List.copyOf(nextTools));
+        repository.save(updated);
+        log.info("Binding contract tool deleted [id={}, tool={}]", updated.uuid(), removed.name());
+        return updated;
     }
 
     private BindingContract transitionStatus(String id,
@@ -249,7 +311,7 @@ public class BindingContractService {
         return updated;
     }
 
-    private BindingContract normalizeAndValidate(BindingContract request) {
+    private BindingContract normalizeAndValidate(BindingContract request, boolean requireAtLeastOneTool) {
         if (request == null) {
             throw new IllegalArgumentException("Binding contract payload is required.");
         }
@@ -268,7 +330,7 @@ public class BindingContractService {
         }
 
         List<BindingContractToolDefinition> tools = normalizeTools(request.tools());
-        if (tools.isEmpty()) {
+        if (requireAtLeastOneTool && tools.isEmpty()) {
             throw new IllegalArgumentException("At least one tool definition is required.");
         }
 
@@ -287,6 +349,73 @@ public class BindingContractService {
                 artifactStatus,
                 request.createdAt(),
                 request.updatedAt());
+    }
+
+    private BindingContract getRequiredContract(String id) {
+        if (id == null || id.isBlank()) {
+            throw new IllegalArgumentException("id is required.");
+        }
+        BindingContract contract = repository.get(id.trim());
+        if (contract == null) {
+            throw new IllegalArgumentException("Binding contract not found: " + id.trim());
+        }
+        return contract;
+    }
+
+    private BindingContract getRequiredEditableContract(String id) {
+        BindingContract contract = getRequiredContract(id);
+        if (!contract.isSnapshotMutable()) {
+            throw new IllegalArgumentException("Only SNAPSHOT or REJECTED binding contracts can be edited.");
+        }
+        return contract;
+    }
+
+    private static BindingContractToolDefinition normalizeRequiredTool(BindingContractToolDefinition tool) {
+        if (tool == null || tool.name() == null || tool.name().isBlank()) {
+            throw new IllegalArgumentException("Tool name is required.");
+        }
+        List<BindingContractToolDefinition> normalized = normalizeTools(List.of(tool));
+        if (normalized.isEmpty()) {
+            throw new IllegalArgumentException("Tool name is required.");
+        }
+        return normalized.getFirst();
+    }
+
+    private static int findToolIndex(List<BindingContractToolDefinition> tools, String toolName) {
+        for (int i = 0; i < tools.size(); i++) {
+            BindingContractToolDefinition tool = tools.get(i);
+            if (tool.name().equalsIgnoreCase(toolName)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static void ensureToolNameNotPresent(List<BindingContractToolDefinition> tools,
+                                                 String candidateName,
+                                                 Integer exceptIndex) {
+        for (int i = 0; i < tools.size(); i++) {
+            if (exceptIndex != null && i == exceptIndex) {
+                continue;
+            }
+            if (tools.get(i).name().equalsIgnoreCase(candidateName)) {
+                throw new IllegalArgumentException("Tool names must be unique. Duplicate: " + candidateName);
+            }
+        }
+    }
+
+    private static BindingContract withTools(BindingContract source, List<BindingContractToolDefinition> tools) {
+        return new BindingContract(
+                source.uuid(),
+                source.name(),
+                source.description(),
+                tools,
+                source.groupId(),
+                source.artifactId(),
+                source.version(),
+                source.artifactStatus(),
+                source.createdAt(),
+                System.currentTimeMillis());
     }
 
     private static List<BindingContractToolDefinition> normalizeTools(List<BindingContractToolDefinition> tools) {
@@ -310,7 +439,8 @@ public class BindingContractService {
             normalized.add(new BindingContractToolDefinition(
                     name,
                     tool.description() == null ? "" : tool.description().trim(),
-                    params));
+                    params,
+                    tool.publiclyVisible() == null || tool.publiclyVisible()));
         }
         return List.copyOf(normalized);
     }

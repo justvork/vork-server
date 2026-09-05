@@ -1,4 +1,4 @@
-/* settings-binding-contracts.js - Binding Contract management */
+/* settings-binding-contracts.js - Binding Contract group + tool management */
 /* jshint esversion: 6 */
 
 const csrfToken = document.querySelector('meta[name="_csrf"]')?.getAttribute('content') || '';
@@ -19,17 +19,31 @@ const contractArtifactId = document.getElementById('contract-artifact-id');
 const contractVersion = document.getElementById('contract-version');
 const contractName = document.getElementById('contract-name');
 const contractDescription = document.getElementById('contract-description');
-const toolsContainer = document.getElementById('tools-container');
+
+const toolModal = document.getElementById('toolModal');
+const toolModalTitle = document.getElementById('tool-modal-title');
+const toolModalAlert = document.getElementById('tool-modal-alert');
+const toolContractId = document.getElementById('tool-contract-id');
+const toolOriginalName = document.getElementById('tool-original-name');
+const toolName = document.getElementById('tool-name');
+const toolDescription = document.getElementById('tool-description');
+const toolPubliclyVisible = document.getElementById('tool-publicly-visible');
+const toolParamsList = document.getElementById('tool-params-list');
 
 let allContracts = [];
-let draftTools = [];
+let toolDraftParams = [];
 
 function init() {
     document.getElementById('new-contract-btn').addEventListener('click', openCreateContractModal);
     document.getElementById('close-contract-modal').addEventListener('click', closeContractModal);
     document.getElementById('cancel-contract-btn').addEventListener('click', closeContractModal);
     document.getElementById('save-contract-btn').addEventListener('click', saveContract);
-    document.getElementById('add-tool-btn').addEventListener('click', addToolDraft);
+
+    document.getElementById('close-tool-modal').addEventListener('click', closeToolModal);
+    document.getElementById('cancel-tool-modal').addEventListener('click', closeToolModal);
+    document.getElementById('save-tool-btn').addEventListener('click', saveTool);
+    document.getElementById('add-tool-param-btn').addEventListener('click', addToolParameterDraft);
+
     document.getElementById('import-contract-btn').addEventListener('click', function () {
         document.getElementById('import-contract-input').click();
     });
@@ -38,7 +52,14 @@ function init() {
     });
 
     document.addEventListener('keydown', function (event) {
-        if (event.key === 'Escape' && !contractModal.classList.contains('hidden')) {
+        if (event.key !== 'Escape') {
+            return;
+        }
+        if (!toolModal.classList.contains('hidden')) {
+            closeToolModal();
+            return;
+        }
+        if (!contractModal.classList.contains('hidden')) {
             closeContractModal();
         }
     });
@@ -83,24 +104,62 @@ function renderContracts() {
         row.innerHTML = ''
             + '<td class="px-3 py-2 align-top font-semibold text-zinc-100">' + escapeHtml(contract.name || '') + '</td>'
             + '<td class="px-3 py-2 align-top text-xs font-mono text-zinc-300">' + escapeHtml(contract.uuid || '') + '</td>'
-            + '<td class="px-3 py-2 align-top text-zinc-300">' + String((contract.tools || []).length) + '</td>'
+            + '<td class="px-3 py-2 align-top">' + buildToolsCell(contract, isEditable) + '</td>'
             + '<td class="px-3 py-2 align-top"><span class="inline-flex rounded-md border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-xs text-zinc-300">' + escapeHtml(artifactStatus) + '</span></td>'
             + '<td class="px-3 py-2 align-top text-right">'
             + '  <div class="inline-flex gap-1 justify-end">'
             + '    <button class="rounded-md border border-cyan-500/40 px-2 py-1 text-xs text-cyan-300 transition-colors hover:bg-cyan-500/15" data-action="export" data-id="' + escapeHtml(contract.uuid) + '" title="Export contract"><i class="fa-solid fa-file-export"></i></button>'
             + (isEditable
-                ? '    <button class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800" data-action="edit" data-id="' + escapeHtml(contract.uuid) + '" title="Edit contract"><i class="fa-solid fa-pen"></i></button>'
+                ? '    <button class="rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800" data-action="edit" data-id="' + escapeHtml(contract.uuid) + '" title="Edit group"><i class="fa-solid fa-pen"></i></button>'
                 : '')
             + buildLifecycleButtons(contract)
             + (isEditable
-                ? '    <button class="rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15" data-action="delete" data-id="' + escapeHtml(contract.uuid) + '" title="Delete contract"><i class="fa-solid fa-trash"></i></button>'
-                : '    <button type="button" class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-500 cursor-not-allowed" title="Only SNAPSHOT or REJECTED contracts can be deleted" disabled><i class="fa-solid fa-trash"></i></button>')
+                ? '    <button class="rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15" data-action="delete" data-id="' + escapeHtml(contract.uuid) + '" title="Delete group"><i class="fa-solid fa-trash"></i></button>'
+                : '    <button type="button" class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-500 cursor-not-allowed" title="Only SNAPSHOT or REJECTED groups can be deleted" disabled><i class="fa-solid fa-trash"></i></button>')
             + '  </div>'
             + '</td>';
 
         contractsBody.appendChild(row);
     });
 
+    wireRowActions();
+}
+
+function buildToolsCell(contract, editable) {
+    const tools = contract.tools || [];
+    const pills = tools.map(function (tool, index) {
+        const name = tool && tool.name ? tool.name : 'Unnamed';
+        const publiclyVisible = !tool || tool.publiclyVisible === undefined || tool.publiclyVisible === null
+            ? true
+            : !!tool.publiclyVisible;
+        return ''
+            + '<span class="extra-pill tool-pill contract-tool-pill">'
+            + '  <button type="button" class="contract-pill-edit" data-action="edit-tool" data-id="' + escapeHtml(contract.uuid) + '" data-tool-index="' + index + '" ' + (editable ? '' : 'disabled') + ' title="' + (editable ? 'Edit tool' : 'This contract is immutable') + '">'
+            + escapeHtml(name)
+            + (publiclyVisible ? '' : ' <i class="fa-solid fa-lock text-zinc-400" title="Private tool (not advertised)"></i>')
+            + '  </button>'
+            + (editable
+                ? '  <button type="button" class="pill-remove" data-action="remove-tool" data-id="' + escapeHtml(contract.uuid) + '" data-tool-index="' + index + '" title="Remove tool"><i class="fa-solid fa-xmark"></i></button>'
+                : '')
+            + '</span>';
+    }).join('');
+
+    const emptyText = tools.length === 0
+        ? '<span class="text-xs text-zinc-500">No tools</span>'
+        : pills;
+
+    const addButton = editable
+        ? '<button type="button" class="contract-inline-add-btn" data-action="add-tool" data-id="' + escapeHtml(contract.uuid) + '"><i class="fa-solid fa-plus mr-1"></i>Add</button>'
+        : '';
+
+    return ''
+        + '<div class="contract-tools-wrap">'
+        + '  <div class="contract-tools-pills">' + emptyText + '</div>'
+        + (addButton ? '  <div class="contract-tools-add">' + addButton + '</div>' : '')
+        + '</div>';
+}
+
+function wireRowActions() {
     contractsBody.querySelectorAll('button[data-action="edit"]').forEach(function (button) {
         button.addEventListener('click', function () {
             openEditContractModal(button.getAttribute('data-id'));
@@ -136,6 +195,24 @@ function renderContracts() {
             transitionContract(button.getAttribute('data-id'), 'publish');
         });
     });
+
+    contractsBody.querySelectorAll('button[data-action="add-tool"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            openAddToolModal(button.getAttribute('data-id'));
+        });
+    });
+
+    contractsBody.querySelectorAll('button[data-action="edit-tool"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            openEditToolModal(button.getAttribute('data-id'), Number(button.getAttribute('data-tool-index')));
+        });
+    });
+
+    contractsBody.querySelectorAll('button[data-action="remove-tool"]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            deleteTool(button.getAttribute('data-id'), Number(button.getAttribute('data-tool-index')));
+        });
+    });
 }
 
 function buildLifecycleButtons(contract) {
@@ -154,15 +231,16 @@ function buildLifecycleButtons(contract) {
 }
 
 function openCreateContractModal() {
-    contractModalTitle.textContent = 'New Binding Contract';
+    contractModalTitle.textContent = 'New Binding Contract Group';
     contractId.value = '';
     contractGroupId.value = 'binding';
     contractArtifactId.value = '';
     contractVersion.value = 'SNAPSHOT';
     contractName.value = '';
     contractDescription.value = '';
-    draftTools = [];
-    addToolDraft();
+    contractGroupId.disabled = false;
+    contractArtifactId.disabled = false;
+    contractVersion.disabled = false;
     clearContractModalAlert();
     openContractModal();
 }
@@ -170,19 +248,17 @@ function openCreateContractModal() {
 function openEditContractModal(id) {
     const contract = allContracts.find(function (entry) { return entry.uuid === id; });
     if (!contract) {
-        showAlert('Contract not found. Reload and try again.', 'warning');
+        showAlert('Group not found. Reload and try again.', 'warning');
         return;
     }
 
-    contractModalTitle.textContent = 'Edit Binding Contract';
+    contractModalTitle.textContent = 'Edit Binding Contract Group';
     contractId.value = contract.uuid || '';
     contractGroupId.value = contract.groupId || '';
     contractArtifactId.value = contract.artifactId || '';
     contractVersion.value = contract.version || 'SNAPSHOT';
     contractName.value = contract.name || '';
     contractDescription.value = contract.description || '';
-    draftTools = cloneTools(contract.tools || []);
-    renderTools();
 
     const isEditable = (contract.artifactStatus || 'SNAPSHOT') === 'SNAPSHOT'
         || (contract.artifactStatus || 'SNAPSHOT') === 'REJECTED';
@@ -194,228 +270,16 @@ function openEditContractModal(id) {
     openContractModal();
 }
 
-function cloneTools(tools) {
-    return (tools || []).map(function (tool) {
-        return {
-            name: tool.name || '',
-            description: tool.description || '',
-            inputParameters: (tool.inputParameters || []).map(function (parameter) {
-                return {
-                    name: parameter.name || '',
-                    type: parameter.type || 'string',
-                    description: parameter.description || '',
-                    required: !!parameter.required,
-                    array: !!parameter.array
-                };
-            })
-        };
-    });
-}
-
-function addToolDraft() {
-    draftTools.push({
-        name: '',
-        description: '',
-        inputParameters: []
-    });
-    renderTools();
-}
-
-function removeToolDraft(toolIndex) {
-    draftTools.splice(toolIndex, 1);
-    renderTools();
-}
-
-function addParameterDraft(toolIndex) {
-    draftTools[toolIndex].inputParameters.push({
-        name: '',
-        type: 'string',
-        description: '',
-        required: false,
-        array: false
-    });
-    renderTools();
-}
-
-function removeParameterDraft(toolIndex, parameterIndex) {
-    draftTools[toolIndex].inputParameters.splice(parameterIndex, 1);
-    renderTools();
-}
-
-function renderTools() {
-    toolsContainer.innerHTML = '';
-
-    if (draftTools.length === 0) {
-        const message = document.createElement('div');
-        message.className = 'rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-400';
-        message.textContent = 'No tools defined yet. Add at least one tool.';
-        toolsContainer.appendChild(message);
-        return;
-    }
-
-    draftTools.forEach(function (tool, toolIndex) {
-        const card = document.createElement('div');
-        card.className = 'contract-tool-card';
-        card.innerHTML = ''
-            + '<div class="mb-2 flex items-center justify-between">'
-            + '  <h5 class="text-sm font-semibold text-zinc-200">Tool ' + (toolIndex + 1) + '</h5>'
-            + '  <button type="button" class="rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15" data-remove-tool="' + toolIndex + '"><i class="fa-solid fa-trash"></i></button>'
-            + '</div>'
-            + '<div class="grid grid-cols-1 gap-2 md:grid-cols-2">'
-            + '  <div>'
-            + '    <label class="mb-1 block text-xs font-medium text-zinc-300">Name <span class="text-rose-400">*</span></label>'
-            + '    <input data-tool-name="' + toolIndex + '" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" value="' + escapeHtmlAttribute(tool.name) + '">'
-            + '  </div>'
-            + '  <div>'
-            + '    <label class="mb-1 block text-xs font-medium text-zinc-300">Description</label>'
-            + '    <input data-tool-description="' + toolIndex + '" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" value="' + escapeHtmlAttribute(tool.description) + '">'
-            + '  </div>'
-            + '</div>'
-            + '<div class="mt-3">'
-            + '  <div class="mb-2 flex items-center justify-between">'
-            + '    <h6 class="text-xs font-semibold uppercase tracking-wide text-zinc-400">Input Parameters</h6>'
-            + '    <button type="button" class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800" data-add-param="' + toolIndex + '"><i class="fa-solid fa-plus mr-1"></i>Add Parameter</button>'
-            + '  </div>'
-            + renderParameterRows(tool, toolIndex)
-            + '</div>';
-        toolsContainer.appendChild(card);
-    });
-
-    wireToolEditorEvents();
-}
-
-function renderParameterRows(tool, toolIndex) {
-    const params = tool.inputParameters || [];
-    if (params.length === 0) {
-        return '<div class="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-400">No parameters defined.</div>';
-    }
-
-    return params.map(function (param, paramIndex) {
-        return ''
-            + '<div class="contract-param-grid mb-2 rounded-md border border-zinc-800 bg-zinc-900 p-2">'
-            + '  <input data-param-name="' + toolIndex + ':' + paramIndex + '" type="text" class="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100" placeholder="name" value="' + escapeHtmlAttribute(param.name || '') + '">'
-            + '  <select data-param-type="' + toolIndex + ':' + paramIndex + '" class="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100">'
-            + typeOptions(param.type)
-            + '  </select>'
-            + '  <input data-param-description="' + toolIndex + ':' + paramIndex + '" type="text" class="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100" placeholder="description" value="' + escapeHtmlAttribute(param.description || '') + '">'
-            + '  <label class="inline-flex items-center gap-1 text-xs text-zinc-300"><input data-param-required="' + toolIndex + ':' + paramIndex + '" type="checkbox" ' + (param.required ? 'checked' : '') + '>required</label>'
-            + '  <label class="inline-flex items-center gap-1 text-xs text-zinc-300"><input data-param-array="' + toolIndex + ':' + paramIndex + '" type="checkbox" ' + (param.array ? 'checked' : '') + '>array</label>'
-            + '  <button type="button" class="rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15" data-remove-param="' + toolIndex + ':' + paramIndex + '"><i class="fa-solid fa-trash"></i></button>'
-            + '</div>';
-    }).join('');
-}
-
-function typeOptions(selectedType) {
-    const types = ['string', 'int', 'double', 'boolean', 'date', 'timestamp'];
-    return types.map(function (type) {
-        const selected = (selectedType || 'string') === type ? ' selected' : '';
-        return '<option value="' + type + '"' + selected + '>' + type + '</option>';
-    }).join('');
-}
-
-function wireToolEditorEvents() {
-    toolsContainer.querySelectorAll('button[data-remove-tool]').forEach(function (button) {
-        button.addEventListener('click', function () {
-            removeToolDraft(Number(button.getAttribute('data-remove-tool')));
-        });
-    });
-
-    toolsContainer.querySelectorAll('button[data-add-param]').forEach(function (button) {
-        button.addEventListener('click', function () {
-            addParameterDraft(Number(button.getAttribute('data-add-param')));
-        });
-    });
-
-    toolsContainer.querySelectorAll('button[data-remove-param]').forEach(function (button) {
-        button.addEventListener('click', function () {
-            const parts = (button.getAttribute('data-remove-param') || '').split(':');
-            removeParameterDraft(Number(parts[0]), Number(parts[1]));
-        });
-    });
-
-    toolsContainer.querySelectorAll('input[data-tool-name]').forEach(function (input) {
-        input.addEventListener('input', function () {
-            const index = Number(input.getAttribute('data-tool-name'));
-            draftTools[index].name = input.value;
-        });
-    });
-
-    toolsContainer.querySelectorAll('input[data-tool-description]').forEach(function (input) {
-        input.addEventListener('input', function () {
-            const index = Number(input.getAttribute('data-tool-description'));
-            draftTools[index].description = input.value;
-        });
-    });
-
-    toolsContainer.querySelectorAll('input[data-param-name]').forEach(function (input) {
-        input.addEventListener('input', function () {
-            const parts = (input.getAttribute('data-param-name') || '').split(':');
-            draftTools[Number(parts[0])].inputParameters[Number(parts[1])].name = input.value;
-        });
-    });
-
-    toolsContainer.querySelectorAll('select[data-param-type]').forEach(function (select) {
-        select.addEventListener('change', function () {
-            const parts = (select.getAttribute('data-param-type') || '').split(':');
-            draftTools[Number(parts[0])].inputParameters[Number(parts[1])].type = select.value;
-        });
-    });
-
-    toolsContainer.querySelectorAll('input[data-param-description]').forEach(function (input) {
-        input.addEventListener('input', function () {
-            const parts = (input.getAttribute('data-param-description') || '').split(':');
-            draftTools[Number(parts[0])].inputParameters[Number(parts[1])].description = input.value;
-        });
-    });
-
-    toolsContainer.querySelectorAll('input[data-param-required]').forEach(function (input) {
-        input.addEventListener('change', function () {
-            const parts = (input.getAttribute('data-param-required') || '').split(':');
-            draftTools[Number(parts[0])].inputParameters[Number(parts[1])].required = input.checked;
-        });
-    });
-
-    toolsContainer.querySelectorAll('input[data-param-array]').forEach(function (input) {
-        input.addEventListener('change', function () {
-            const parts = (input.getAttribute('data-param-array') || '').split(':');
-            draftTools[Number(parts[0])].inputParameters[Number(parts[1])].array = input.checked;
-        });
-    });
-}
-
-function sanitizeTools(tools) {
-    return (tools || [])
-        .filter(function (tool) {
-            return tool && tool.name && tool.name.trim();
-        })
-        .map(function (tool) {
-            return {
-                name: tool.name.trim(),
-                description: (tool.description || '').trim(),
-                inputParameters: (tool.inputParameters || [])
-                    .filter(function (parameter) {
-                        return parameter && parameter.name && parameter.name.trim();
-                    })
-                    .map(function (parameter) {
-                        return {
-                            name: parameter.name.trim(),
-                            type: (parameter.type || 'string').trim().toLowerCase(),
-                            description: (parameter.description || '').trim(),
-                            required: !!parameter.required,
-                            array: !!parameter.array
-                        };
-                    })
-            };
-        });
-}
-
 async function saveContract() {
     const id = contractId.value.trim();
+    const existing = id
+        ? allContracts.find(function (entry) { return entry.uuid === id; })
+        : null;
     const payload = {
         uuid: id || null,
         name: contractName.value.trim(),
         description: contractDescription.value.trim(),
-        tools: sanitizeTools(draftTools),
+        tools: existing ? (existing.tools || []) : [],
         groupId: contractGroupId.value.trim(),
         artifactId: contractArtifactId.value.trim(),
         version: contractVersion.value.trim()
@@ -423,10 +287,6 @@ async function saveContract() {
 
     if (!payload.name || !payload.groupId || !payload.artifactId || !payload.version) {
         showContractModalAlert('Name, groupId, artifactId, and version are required.', 'warning');
-        return;
-    }
-    if (!payload.tools || payload.tools.length === 0) {
-        showContractModalAlert('At least one tool definition is required.', 'warning');
         return;
     }
 
@@ -441,16 +301,279 @@ async function saveContract() {
         });
         const result = await parseJson(response);
         if (!response.ok) {
-            showContractModalAlert(result.error || result.message || 'Failed to save contract.', 'danger');
+            showContractModalAlert(result.error || result.message || 'Failed to save group.', 'danger');
             return;
         }
 
         closeContractModal();
-        showAlert(id ? 'Binding contract updated.' : 'Binding contract created.', 'success');
+        showAlert(id ? 'Binding contract group updated.' : 'Binding contract group created.', 'success');
         await loadContracts();
     } catch (error) {
-        showContractModalAlert('Network error while saving contract.', 'danger');
+        showContractModalAlert('Network error while saving group.', 'danger');
     }
+}
+
+function openAddToolModal(contractUuid) {
+    const contract = allContracts.find(function (entry) { return entry.uuid === contractUuid; });
+    if (!contract) {
+        showAlert('Group not found. Reload and try again.', 'warning');
+        return;
+    }
+    if (!isContractEditable(contract)) {
+        showAlert('Only SNAPSHOT or REJECTED groups can be modified.', 'warning');
+        return;
+    }
+
+    toolModalTitle.textContent = 'Add Tool';
+    toolContractId.value = contract.uuid;
+    toolOriginalName.value = '';
+    toolName.value = '';
+    toolDescription.value = '';
+    toolPubliclyVisible.checked = true;
+    toolDraftParams = [];
+    clearToolModalAlert();
+    renderToolParameterRows();
+    openToolModal();
+}
+
+function openEditToolModal(contractUuid, toolIndex) {
+    const contract = allContracts.find(function (entry) { return entry.uuid === contractUuid; });
+    if (!contract) {
+        showAlert('Group not found. Reload and try again.', 'warning');
+        return;
+    }
+    if (!isContractEditable(contract)) {
+        showAlert('Only SNAPSHOT or REJECTED groups can be modified.', 'warning');
+        return;
+    }
+
+    const tool = (contract.tools || [])[toolIndex];
+    if (!tool) {
+        showAlert('Tool not found. Reload and try again.', 'warning');
+        return;
+    }
+
+    toolModalTitle.textContent = 'Edit Tool: ' + (tool.name || 'Tool');
+    toolContractId.value = contract.uuid;
+    toolOriginalName.value = tool.name || '';
+    toolName.value = tool.name || '';
+    toolDescription.value = tool.description || '';
+    toolPubliclyVisible.checked = tool.publiclyVisible === undefined || tool.publiclyVisible === null
+        ? true
+        : !!tool.publiclyVisible;
+    toolDraftParams = (tool.inputParameters || []).map(function (parameter) {
+        return {
+            name: parameter.name || '',
+            type: parameter.type || 'string',
+            description: parameter.description || '',
+            required: !!parameter.required,
+            array: !!parameter.array
+        };
+    });
+
+    clearToolModalAlert();
+    renderToolParameterRows();
+    openToolModal();
+}
+
+function addToolParameterDraft() {
+    toolDraftParams.push({
+        name: '',
+        type: 'string',
+        description: '',
+        required: false,
+        array: false
+    });
+    renderToolParameterRows();
+}
+
+function removeToolParameterDraft(paramIndex) {
+    toolDraftParams.splice(paramIndex, 1);
+    renderToolParameterRows();
+}
+
+function renderToolParameterRows() {
+    toolParamsList.innerHTML = '';
+
+    if (!toolDraftParams.length) {
+        const message = document.createElement('div');
+        message.className = 'rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-400';
+        message.textContent = 'No parameters defined.';
+        toolParamsList.appendChild(message);
+        return;
+    }
+
+    toolDraftParams.forEach(function (parameter, paramIndex) {
+        const row = document.createElement('div');
+        row.className = 'contract-param-grid rounded-md border border-zinc-800 bg-zinc-900 p-2';
+        row.innerHTML = ''
+            + '<input data-param-name="' + paramIndex + '" type="text" class="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100" placeholder="name" value="' + escapeHtmlAttribute(parameter.name || '') + '">'
+            + '<select data-param-type="' + paramIndex + '" class="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100">'
+            + typeOptions(parameter.type)
+            + '</select>'
+            + '<input data-param-description="' + paramIndex + '" type="text" class="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100" placeholder="description" value="' + escapeHtmlAttribute(parameter.description || '') + '">'
+            + '<label class="inline-flex items-center gap-1 text-xs text-zinc-300"><input data-param-required="' + paramIndex + '" type="checkbox" ' + (parameter.required ? 'checked' : '') + '>required</label>'
+            + '<label class="inline-flex items-center gap-1 text-xs text-zinc-300"><input data-param-array="' + paramIndex + '" type="checkbox" ' + (parameter.array ? 'checked' : '') + '>array</label>'
+            + '<button type="button" class="rounded-md border border-rose-500/40 px-2 py-1 text-xs text-rose-300 transition-colors hover:bg-rose-500/15" data-remove-param="' + paramIndex + '"><i class="fa-solid fa-trash"></i></button>';
+        toolParamsList.appendChild(row);
+    });
+
+    toolParamsList.querySelectorAll('button[data-remove-param]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            removeToolParameterDraft(Number(button.getAttribute('data-remove-param')));
+        });
+    });
+
+    toolParamsList.querySelectorAll('input[data-param-name]').forEach(function (input) {
+        input.addEventListener('input', function () {
+            const index = Number(input.getAttribute('data-param-name'));
+            toolDraftParams[index].name = input.value;
+        });
+    });
+
+    toolParamsList.querySelectorAll('select[data-param-type]').forEach(function (select) {
+        select.addEventListener('change', function () {
+            const index = Number(select.getAttribute('data-param-type'));
+            toolDraftParams[index].type = select.value;
+        });
+    });
+
+    toolParamsList.querySelectorAll('input[data-param-description]').forEach(function (input) {
+        input.addEventListener('input', function () {
+            const index = Number(input.getAttribute('data-param-description'));
+            toolDraftParams[index].description = input.value;
+        });
+    });
+
+    toolParamsList.querySelectorAll('input[data-param-required]').forEach(function (input) {
+        input.addEventListener('change', function () {
+            const index = Number(input.getAttribute('data-param-required'));
+            toolDraftParams[index].required = input.checked;
+        });
+    });
+
+    toolParamsList.querySelectorAll('input[data-param-array]').forEach(function (input) {
+        input.addEventListener('change', function () {
+            const index = Number(input.getAttribute('data-param-array'));
+            toolDraftParams[index].array = input.checked;
+        });
+    });
+}
+
+function typeOptions(selectedType) {
+    const types = ['string', 'int', 'double', 'boolean', 'date', 'timestamp'];
+    return types.map(function (type) {
+        const selected = (selectedType || 'string') === type ? ' selected' : '';
+        return '<option value="' + type + '"' + selected + '>' + type + '</option>';
+    }).join('');
+}
+
+function sanitizeSingleTool() {
+    const cleanedName = (toolName.value || '').trim();
+    if (!cleanedName) {
+        return null;
+    }
+    return {
+        name: cleanedName,
+        description: (toolDescription.value || '').trim(),
+        publiclyVisible: !!toolPubliclyVisible.checked,
+        inputParameters: (toolDraftParams || [])
+            .filter(function (parameter) {
+                return parameter && parameter.name && parameter.name.trim();
+            })
+            .map(function (parameter) {
+                return {
+                    name: parameter.name.trim(),
+                    type: (parameter.type || 'string').trim().toLowerCase(),
+                    description: (parameter.description || '').trim(),
+                    required: !!parameter.required,
+                    array: !!parameter.array
+                };
+            })
+    };
+}
+
+async function saveTool() {
+    const groupId = toolContractId.value.trim();
+    const originalName = toolOriginalName.value.trim();
+    const payload = sanitizeSingleTool();
+
+    if (!groupId) {
+        showToolModalAlert('No contract group selected.', 'warning');
+        return;
+    }
+    if (!payload || !payload.name) {
+        showToolModalAlert('Tool name is required.', 'warning');
+        return;
+    }
+
+    const creating = !originalName;
+    const url = creating
+        ? '/api/binding-contracts/' + encodeURIComponent(groupId) + '/tools'
+        : '/api/binding-contracts/' + encodeURIComponent(groupId) + '/tools/' + encodeURIComponent(originalName);
+    const method = creating ? 'POST' : 'PUT';
+
+    try {
+        const response = await fetch(url, {
+            method: method,
+            headers: buildJsonHeaders(),
+            body: JSON.stringify(payload)
+        });
+        const result = await parseJson(response);
+        if (!response.ok) {
+            showToolModalAlert(result.error || result.message || 'Failed to save tool.', 'danger');
+            return;
+        }
+
+        closeToolModal();
+        showAlert(creating ? 'Tool added.' : 'Tool updated.', 'success');
+        await loadContracts();
+    } catch (error) {
+        showToolModalAlert('Network error while saving tool.', 'danger');
+    }
+}
+
+async function deleteTool(contractUuid, toolIndex) {
+    const contract = allContracts.find(function (entry) { return entry.uuid === contractUuid; });
+    if (!contract) {
+        showAlert('Group not found. Reload and try again.', 'warning');
+        return;
+    }
+    if (!isContractEditable(contract)) {
+        showAlert('Only SNAPSHOT or REJECTED groups can be modified.', 'warning');
+        return;
+    }
+
+    const tool = (contract.tools || [])[toolIndex];
+    if (!tool || !tool.name) {
+        showAlert('Tool not found. Reload and try again.', 'warning');
+        return;
+    }
+    if (!confirm('Delete tool "' + tool.name + '" from this contract group?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/binding-contracts/' + encodeURIComponent(contract.uuid) + '/tools/' + encodeURIComponent(tool.name), {
+            method: 'DELETE',
+            headers: buildJsonHeaders()
+        });
+        const result = await parseJson(response);
+        if (!response.ok) {
+            showAlert(result.error || result.message || 'Failed to delete tool.', 'danger');
+            return;
+        }
+
+        showAlert('Tool deleted.', 'success');
+        await loadContracts();
+    } catch (error) {
+        showAlert('Network error while deleting tool.', 'danger');
+    }
+}
+
+function isContractEditable(contract) {
+    const status = contract && contract.artifactStatus ? contract.artifactStatus : 'SNAPSHOT';
+    return status === 'SNAPSHOT' || status === 'REJECTED';
 }
 
 async function transitionContract(id, action) {
@@ -478,7 +601,7 @@ async function deleteContract(id) {
     if (!id) {
         return;
     }
-    if (!confirm('Delete this binding contract?')) {
+    if (!confirm('Delete this binding contract group?')) {
         return;
     }
 
@@ -489,13 +612,13 @@ async function deleteContract(id) {
         });
         const result = await parseJson(response);
         if (!response.ok) {
-            showAlert(result.error || result.message || 'Failed to delete contract.', 'danger');
+            showAlert(result.error || result.message || 'Failed to delete group.', 'danger');
             return;
         }
-        showAlert('Binding contract deleted.', 'success');
+        showAlert('Binding contract group deleted.', 'success');
         await loadContracts();
     } catch (error) {
-        showAlert('Network error while deleting contract.', 'danger');
+        showAlert('Network error while deleting group.', 'danger');
     }
 }
 
@@ -553,6 +676,21 @@ function closeContractModal() {
     clearContractModalAlert();
 }
 
+function openToolModal() {
+    toolModal.classList.remove('hidden');
+}
+
+function closeToolModal() {
+    toolModal.classList.add('hidden');
+    toolContractId.value = '';
+    toolOriginalName.value = '';
+    toolName.value = '';
+    toolDescription.value = '';
+    toolPubliclyVisible.checked = true;
+    toolDraftParams = [];
+    clearToolModalAlert();
+}
+
 function showAlert(message, type) {
     if (!alertArea) {
         return;
@@ -566,6 +704,14 @@ function showContractModalAlert(message, type) {
 
 function clearContractModalAlert() {
     contractModalAlert.innerHTML = '';
+}
+
+function showToolModalAlert(message, type) {
+    toolModalAlert.innerHTML = '<div class="rounded-lg border px-3 py-2 text-sm ' + alertClass(type) + '">' + escapeHtml(message) + '</div>';
+}
+
+function clearToolModalAlert() {
+    toolModalAlert.innerHTML = '';
 }
 
 function alertClass(type) {

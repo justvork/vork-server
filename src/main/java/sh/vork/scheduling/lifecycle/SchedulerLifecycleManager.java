@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 
 import sh.vork.orm.DatabaseRepository;
+import sh.vork.scheduling.domain.InvocationType;
 import sh.vork.scheduling.domain.ScheduledJob;
 import sh.vork.scheduling.domain.ScheduledJobStatus;
 import sh.vork.scheduling.service.AiSchedulerService;
@@ -36,6 +37,9 @@ public class SchedulerLifecycleManager {
         int reset = 0;
         try (var stream = jobRepository.list(0, Integer.MAX_VALUE)) {
             for (ScheduledJob job : stream.toList()) {
+                if (job.invocationType() == InvocationType.DYNAMIC) {
+                    continue;
+                }
                 if (job.status() == ScheduledJobStatus.ACTIVE) {
                     // Job was in-flight when the app stopped — reset to WAITING so it
                     // can be re-scheduled safely without skipping.

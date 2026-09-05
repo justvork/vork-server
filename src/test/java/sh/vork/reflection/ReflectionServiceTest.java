@@ -1,7 +1,5 @@
 package sh.vork.reflection;
 
-import sh.vork.artifact.ArtifactStatus;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -458,6 +456,50 @@ class ReflectionServiceTest {
                         "")));
 
         assertTrue(ex.getMessage().contains("must exactly match"));
+    }
+
+    @Test
+    void isReflectionAdvertisedToConsumersHidesPrivateContractToolIds() {
+        BindingContract contract = new BindingContract(
+                "binding-visibility-SNAPSHOT",
+                "Visibility Contract",
+                "desc",
+                List.of(
+                        new BindingContractToolDefinition(
+                                "publicTool",
+                                "Public",
+                                List.of(new ReflectionInputParameter("city", "string", "City", true)),
+                                true),
+                        new BindingContractToolDefinition(
+                                "privateTool",
+                                "Private",
+                                List.of(new ReflectionInputParameter("city", "string", "City", true)),
+                                false)),
+                "binding",
+                "visibility",
+                "SNAPSHOT",
+                sh.vork.artifact.ArtifactStatus.SNAPSHOT,
+                0L,
+                0L);
+        when(bindingContractService.getContract(contract.uuid())).thenReturn(contract);
+
+        ReflectionGroup group = reflectionService.createGroup(new ReflectionService.ReflectionGroupRequest(
+                "REST Group",
+                "desc",
+                "REST",
+                "",
+                true,
+                List.of(),
+                List.of(),
+                "NONE",
+                "",
+                List.of(contract.uuid()),
+                "restgroup",
+                "visibilityapi"));
+
+        assertTrue(reflectionService.isReflectionAdvertisedToConsumers(group, "publicTool"));
+        assertTrue(!reflectionService.isReflectionAdvertisedToConsumers(group, "privateTool"));
+        assertTrue(reflectionService.isReflectionAdvertisedToConsumers(group, "customNonContractTool"));
     }
 
     @Test

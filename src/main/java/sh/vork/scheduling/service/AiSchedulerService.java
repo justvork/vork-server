@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
+import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.scheduling.domain.DurationType;
 import sh.vork.scheduling.domain.InvocationType;
@@ -25,7 +26,7 @@ import sh.vork.scheduling.domain.ScheduledJobStatus;
 /**
  * Core programmatic scheduler for persistent AI jobs.
  *
- * <p>Supports MANUAL, ONE_TIME, and REPEAT invocation types.  REPEAT jobs
+ * <p>Supports MANUAL, DYNAMIC, ONE_TIME, and REPEAT invocation types.  REPEAT jobs
  * calculate their effective start time on startup from {@code lastExecutionTime}
  * so missed intervals are skipped and the next interval fires correctly.
  */
@@ -38,17 +39,76 @@ public class AiSchedulerService {
     private final DatabaseRepository<ScheduledJob> jobRepository;
     private final BackgroundOrchestrationEngine backgroundOrchestrationEngine;
     private final DatabaseRepository<AiSession> sessionRepository;
+    private final SessionFileSystem sessionFileSystem;
 
     private final Map<String, ScheduledFuture<?>> activeFutures = new ConcurrentHashMap<>();
+    private final Map<String, DynamicSeedFiles> pendingDynamicSeedFiles = new ConcurrentHashMap<>();
 
     public AiSchedulerService(@Qualifier("aiTaskScheduler") ThreadPoolTaskScheduler taskScheduler,
                               DatabaseRepository<ScheduledJob> jobRepository,
                               BackgroundOrchestrationEngine backgroundOrchestrationEngine,
-                              DatabaseRepository<AiSession> sessionRepository) {
+                              DatabaseRepository<AiSession> sessionRepository,
+                              SessionFileSystem sessionFileSystem) {
         this.taskScheduler = taskScheduler;
         this.jobRepository = jobRepository;
         this.backgroundOrchestrationEngine = backgroundOrchestrationEngine;
         this.sessionRepository = sessionRepository;
+        this.sessionFileSystem = sessionFileSystem;
+    }
+
+    /**
+     * Schedules an internal delegated dynamic run and optionally seeds files
+     * from the source session into the delegated tracking session.
+     */
+    public ScheduledJob scheduleDelegatedDynamicJob(ScheduledJob job,
+                                                     String sourceSessionUuid,
+                                                     List<String> sessionFiles) {
+        if (job == null) {
+            throw new IllegalArgumentException("job is required");
+        }
+        if (job.invocationType() != InvocationType.DYNAMIC) {
+            return scheduleJob(job);
+        }
+
+        String effectiveId = ensureId(job.id());
+        ScheduledJob effectiveJob = job;
+        if (!effectiveId.equals(job.id())) {
+            effectiveJob = new ScheduledJob(
+                    effectiveId,
+                    job.name(),
+                    job.aiPrompt(),
+                    job.sessionUuid(),
+                    job.userId(),
+                    job.invocationType(),
+                    job.startTime(),
+                    job.repeatDuration(),
+                    job.durationType(),
+                    job.lastExecutionTime(),
+                    job.nextExecutionTime(),
+                    job.agentTemplateId(),
+                    job.provider(),
+                    job.modelId(),
+                    job.oobTimeoutMinutes(),
+                    job.expectedOutput(),
+                    job.status(),
+                    job.skillUuids(),
+                    job.toolIds(),
+                    job.notificationUserIds(),
+                    job.groupId(),
+                    job.artifactId(),
+                    job.version(),
+                    job.artifactStatus());
+        }
+
+        List<String> files = sessionFiles == null ? List.of() : sessionFiles.stream()
+                .filter(v -> v != null && !v.isBlank())
+                .map(String::trim)
+                .distinct()
+                .collect(Collectors.toList());
+        if (!files.isEmpty() && sourceSessionUuid != null && !sourceSessionUuid.isBlank()) {
+            pendingDynamicSeedFiles.put(effectiveId, new DynamicSeedFiles(sourceSessionUuid, List.copyOf(files)));
+        }
+        return scheduleJob(effectiveJob);
     }
 
     // ── Schedule / reschedule ─────────────────────────────────────────────────
@@ -97,6 +157,24 @@ public class AiSchedulerService {
             return base;
         }
 
+        if (type == InvocationType.DYNAMIC) {
+            DynamicSeedFiles seedFiles = pendingDynamicSeedFiles.remove(id);
+            ScheduledJob normalized = new ScheduledJob(
+                id, base.name(), base.aiPrompt(), base.sessionUuid(),
+                base.userId(), type, Instant.now(), 0L,
+                base.durationType(), base.lastExecutionTime(), 0L,
+                base.agentTemplateId(), base.provider(), base.modelId(),
+                base.oobTimeoutMinutes(), base.expectedOutput(), base.status(),
+                base.skillUuids(), base.toolIds(), base.notificationUserIds(),
+                base.groupId(), base.artifactId(), base.version(), base.artifactStatus());
+            jobRepository.save(normalized);
+            AiJobRunner runner = new AiJobRunner(normalized, backgroundOrchestrationEngine,
+                jobRepository, sessionRepository, sessionFileSystem, seedFiles);
+            taskScheduler.execute(runner);
+            log.info("DYNAMIC job launched immediately [id={}]", id);
+            return normalized;
+        }
+
         Instant effectiveStart = computeEffectiveStart(base);
         long nextExec = effectiveStart.toEpochMilli();
         ScheduledJob normalized = new ScheduledJob(
@@ -110,7 +188,7 @@ public class AiSchedulerService {
         jobRepository.save(normalized);
 
         AiJobRunner runner = new AiJobRunner(normalized, backgroundOrchestrationEngine,
-                jobRepository, sessionRepository);
+            jobRepository, sessionRepository, sessionFileSystem, null);
 
         ScheduledFuture<?> future;
         if (type == InvocationType.ONE_TIME) {
@@ -197,7 +275,7 @@ public class AiSchedulerService {
                 job.status(), job.skillUuids(), job.toolIds(), job.notificationUserIds(),
                 job.groupId(), job.artifactId(), job.version(), job.artifactStatus()));
         AiJobRunner runner = new AiJobRunner(job, backgroundOrchestrationEngine,
-            jobRepository, sessionRepository, trackingUuid);
+            jobRepository, sessionRepository, sessionFileSystem, null, trackingUuid);
         taskScheduler.execute(runner);
         log.info("Job triggered via Run Now [id={}, type={}, tracking={}]", jobId, job.invocationType(), trackingUuid);
         return trackingUuid;
@@ -216,7 +294,10 @@ public class AiSchedulerService {
     /** Returns all jobs belonging to the given user. */
     public List<ScheduledJob> listJobsForUser(String userId) {
         try (var stream = jobRepository.list(0, Integer.MAX_VALUE)) {
-            return stream.filter(j -> userId.equals(j.userId())).collect(Collectors.toList());
+            return stream
+                    .filter(j -> userId.equals(j.userId()))
+                    .filter(j -> j.invocationType() != InvocationType.DYNAMIC)
+                    .collect(Collectors.toList());
         }
     }
 
@@ -291,4 +372,6 @@ public class AiSchedulerService {
     private static String ensureId(String id) {
         return (id == null || id.isBlank()) ? java.util.UUID.randomUUID().toString() : id;
     }
+
+    public record DynamicSeedFiles(String sourceSessionUuid, List<String> sessionFiles) {}
 }

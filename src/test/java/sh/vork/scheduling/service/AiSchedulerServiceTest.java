@@ -19,6 +19,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 import sh.vork.ai.entity.AiSession;
+import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.scheduling.domain.DurationType;
 import sh.vork.scheduling.domain.InvocationType;
@@ -41,11 +42,12 @@ class AiSchedulerServiceTest {
         BackgroundOrchestrationEngine orchestrationEngine = mock(BackgroundOrchestrationEngine.class);
         @SuppressWarnings("unchecked")
         DatabaseRepository<AiSession> sessionRepo = mock(DatabaseRepository.class);
+        SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
         @SuppressWarnings("rawtypes")
         ScheduledFuture future = mock(ScheduledFuture.class);
         doReturn(future).when(scheduler).schedule(any(Runnable.class), any(Instant.class));
 
-        AiSchedulerService service = new AiSchedulerService(scheduler, repo, orchestrationEngine, sessionRepo);
+        AiSchedulerService service = new AiSchedulerService(scheduler, repo, orchestrationEngine, sessionRepo, sessionFileSystem);
 
         Instant start = Instant.parse("2099-05-17T10:15:30Z"); // future so effectiveStart == start
         ScheduledJob jobIn = job("job-1", InvocationType.ONE_TIME, 0, DurationType.MINUTES, start,
@@ -70,12 +72,13 @@ class AiSchedulerServiceTest {
         BackgroundOrchestrationEngine orchestrationEngine = mock(BackgroundOrchestrationEngine.class);
         @SuppressWarnings("unchecked")
         DatabaseRepository<AiSession> sessionRepo = mock(DatabaseRepository.class);
+        SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
         @SuppressWarnings("rawtypes")
         ScheduledFuture future = mock(ScheduledFuture.class);
         doReturn(future).when(scheduler)
                 .scheduleAtFixedRate(any(Runnable.class), any(Instant.class), any(Duration.class));
 
-        AiSchedulerService service = new AiSchedulerService(scheduler, repo, orchestrationEngine, sessionRepo);
+        AiSchedulerService service = new AiSchedulerService(scheduler, repo, orchestrationEngine, sessionRepo, sessionFileSystem);
 
         Instant start = Instant.parse("2099-05-17T10:15:30Z");
         ScheduledJob jobIn = job("job-2", InvocationType.REPEAT, 2, DurationType.HOURS, start,
@@ -94,11 +97,12 @@ class AiSchedulerServiceTest {
         BackgroundOrchestrationEngine orchestrationEngine = mock(BackgroundOrchestrationEngine.class);
         @SuppressWarnings("unchecked")
         DatabaseRepository<AiSession> sessionRepo = mock(DatabaseRepository.class);
+        SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
         @SuppressWarnings("rawtypes")
         ScheduledFuture future = mock(ScheduledFuture.class);
         doReturn(future).when(scheduler).schedule(any(Runnable.class), any(Instant.class));
 
-        AiSchedulerService service = new AiSchedulerService(scheduler, repo, orchestrationEngine, sessionRepo);
+        AiSchedulerService service = new AiSchedulerService(scheduler, repo, orchestrationEngine, sessionRepo, sessionFileSystem);
 
         // Null durationType and status — service should default them
         ScheduledJob jobIn = new ScheduledJob(" ", "Generated Job", "One shot", "sid-3", "charlie",
@@ -123,11 +127,12 @@ class AiSchedulerServiceTest {
         BackgroundOrchestrationEngine orchestrationEngine = mock(BackgroundOrchestrationEngine.class);
         @SuppressWarnings("unchecked")
         DatabaseRepository<AiSession> sessionRepo = mock(DatabaseRepository.class);
+        SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
         @SuppressWarnings("rawtypes")
         ScheduledFuture future = mock(ScheduledFuture.class);
         doReturn(future).when(scheduler).schedule(any(Runnable.class), any(Instant.class));
 
-        AiSchedulerService service = new AiSchedulerService(scheduler, repo, orchestrationEngine, sessionRepo);
+        AiSchedulerService service = new AiSchedulerService(scheduler, repo, orchestrationEngine, sessionRepo, sessionFileSystem);
 
         Instant start = Instant.parse("2099-05-17T10:15:30Z");
         ScheduledJob existing = job("job-3", InvocationType.ONE_TIME, 0, DurationType.MINUTES, start,

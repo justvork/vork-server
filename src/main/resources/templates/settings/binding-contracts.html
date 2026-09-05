@@ -19,11 +19,11 @@
     <div class="vork-page-header">
         <div>
             <h2 class="flex items-center gap-2 text-2xl font-bold text-zinc-100"><i class="fa-solid fa-file-contract text-[#fdaa02]"></i>Binding Contracts</h2>
-            <p class="vork-page-subtitle">Define reusable tool contracts with stable VID identity and lifecycle status.</p>
+            <p class="vork-page-subtitle">Create contract groups first, then manage contract tools individually.</p>
         </div>
         <div class="vork-page-header-actions">
             <button id="new-contract-btn" class="rounded-lg bg-[#fdaa02] px-3 py-2 text-sm font-semibold text-black transition-colors hover:bg-[#e89a02]">
-                <i class="fa-solid fa-plus mr-2"></i>New Contract
+                <i class="fa-solid fa-plus mr-2"></i>New Group
             </button>
             <button id="import-contract-btn" class="rounded-lg border border-emerald-500/40 px-3 py-2 text-sm font-medium text-emerald-300 transition-colors hover:bg-emerald-500/15">
                 <i class="fa-solid fa-file-import mr-2"></i>Import
@@ -92,26 +92,62 @@
                 <label class="mb-1 block text-sm font-medium text-zinc-300" for="contract-description">Description</label>
                 <textarea id="contract-description" class="min-h-20 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="Describe what this contract standardizes."></textarea>
             </div>
-
-            <div class="rounded-lg border border-zinc-800 bg-zinc-950/50 p-3">
-                <div class="mb-3 flex items-center justify-between">
-                    <h4 class="text-sm font-semibold text-zinc-200">Tool Definitions</h4>
-                    <button id="add-tool-btn" class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800" type="button">
-                        <i class="fa-solid fa-plus mr-1"></i>Add Tool
-                    </button>
-                </div>
-                <div id="tools-container" class="space-y-3"></div>
-            </div>
         </div>
         <div class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">
             <button id="cancel-contract-btn" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800">Cancel</button>
             <button id="save-contract-btn" class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-sm font-semibold text-black transition-colors hover:bg-[#e89a02]">
-                <i class="fa-solid fa-save mr-1"></i>Save Contract
+                <i class="fa-solid fa-save mr-1"></i>Save Group
             </button>
         </div>
     </div>
 </div>
 
-<script src="/js/settings-binding-contracts.js?v=20260829.1" th:src="@{/js/settings-binding-contracts.js(v='20260829.1')}"></script>
+<div id="toolModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div class="w-full max-w-4xl rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
+            <h3 id="tool-modal-title" class="text-lg font-semibold text-zinc-100">Edit Tool</h3>
+            <button id="close-tool-modal" class="rounded-md border border-zinc-700 px-2 py-1 text-zinc-300 transition-colors hover:bg-zinc-800" aria-label="Close">×</button>
+        </div>
+        <div class="space-y-4 px-5 py-4 contract-modal-body">
+            <div id="tool-modal-alert"></div>
+            <input id="tool-contract-id" type="hidden">
+            <input id="tool-original-name" type="hidden">
+
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="tool-name">Tool Name <span class="text-rose-400">*</span></label>
+                    <input id="tool-name" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="classifyEmail">
+                </div>
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-zinc-300" for="tool-description">Description</label>
+                    <input id="tool-description" type="text" class="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100" placeholder="Describe the tool purpose.">
+                </div>
+            </div>
+
+            <label class="inline-flex items-center gap-2 text-sm text-zinc-300" for="tool-publicly-visible">
+                <input id="tool-publicly-visible" type="checkbox" class="h-4 w-4 rounded border-zinc-700 bg-zinc-950" checked>
+                Public (advertise to reflection consumers)
+            </label>
+
+            <div class="rounded-lg border border-zinc-800 bg-zinc-950/50 p-3">
+                <div class="mb-3 flex items-center justify-between">
+                    <h4 class="text-sm font-semibold text-zinc-200">Input Parameters</h4>
+                    <button id="add-tool-param-btn" class="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-200 transition-colors hover:bg-zinc-800" type="button">
+                        <i class="fa-solid fa-plus mr-1"></i>Add Parameter
+                    </button>
+                </div>
+                <div id="tool-params-list" class="space-y-2"></div>
+            </div>
+        </div>
+        <div class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">
+            <button id="cancel-tool-modal" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800">Cancel</button>
+            <button id="save-tool-btn" class="rounded-lg bg-[#fdaa02] px-3 py-1.5 text-sm font-semibold text-black transition-colors hover:bg-[#e89a02]">
+                <i class="fa-solid fa-save mr-1"></i>Save Tool
+            </button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/settings-binding-contracts.js?v=20260905.1" th:src="@{/js/settings-binding-contracts.js(v='20260905.1')}"></script>
 </body>
 </html>

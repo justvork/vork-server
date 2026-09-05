@@ -1,6 +1,7 @@
 package sh.vork.scheduling.controller;
 
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -88,7 +89,9 @@ public class JobsController {
     public String jobsPage(Model model, @AuthenticationPrincipal UserDetails user) {
         log.debug("ENTER jobsPage: [user={}]", user.getUsername());
         model.addAttribute("jobs", schedulerService.listJobsForUser(user.getUsername()));
-        model.addAttribute("invocationTypes", InvocationType.values());
+        model.addAttribute("invocationTypes", Arrays.stream(InvocationType.values())
+            .filter(type -> type != InvocationType.DYNAMIC)
+            .toList());
         model.addAttribute("durationTypes", DurationType.values());
         return "jobs";
     }
@@ -411,6 +414,10 @@ public class JobsController {
         if (incoming.invocationType() == null) {
             return ResponseEntity.badRequest().body(new JobImportResult("error", null, "Invocation type is required."));
         }
+        if (incoming.invocationType() == InvocationType.DYNAMIC) {
+            return ResponseEntity.badRequest().body(new JobImportResult("error", null,
+                    "DYNAMIC invocation type is internal and cannot be imported via Jobs API."));
+        }
         if (incoming.invocationType() == InvocationType.REPEAT && incoming.repeatDuration() <= 0) {
             return ResponseEntity.badRequest().body(new JobImportResult("error", null, "Repeat duration must be greater than zero."));
         }
@@ -504,6 +511,8 @@ public class JobsController {
         if (req.name() == null || req.name().isBlank()) return "Name is required.";
         if (req.aiPrompt() == null || req.aiPrompt().isBlank()) return "AI prompt is required.";
         if (req.invocationType() == null) return "Invocation type is required.";
+        if (req.invocationType() == InvocationType.DYNAMIC)
+            return "DYNAMIC invocation type is internal and cannot be created from the Jobs API.";
         if (req.invocationType() == InvocationType.REPEAT && req.repeatDuration() <= 0)
             return "Repeat duration must be greater than zero.";
         return null;

@@ -103,6 +103,9 @@ public class SurfaceReflectionContractService {
 
             List<ReflectionContract> reflectionContracts = new ArrayList<>();
             for (Reflection reflection : reflectionService.reflectionsForGroup(group.uuid())) {
+                if (!reflectionService.isReflectionAdvertisedToConsumers(group, reflection.id())) {
+                    continue;
+                }
                 reflectionContracts.add(toReflectionContract(reflection, group, binding));
             }
 

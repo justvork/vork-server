@@ -1,7 +1,5 @@
 package sh.vork.ai.lifecycle;
 
-import sh.vork.artifact.ArtifactStatus;
-
 import sh.vork.orm.DatabaseRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -318,6 +316,7 @@ Rules:
             ### FILE SYSTEM TOOLS
             - Use `createFolder` to organise assets into subdirectories if needed.
             - Use `writeFile` to create or overwrite files.
+            - Use `writeBase64File` for binary outputs (images, PDFs, archives) when content is Base64.
             - After creating files, use `listFiles` to confirm the layout.
 
             ### ITERATION WORKFLOW
@@ -337,6 +336,7 @@ Rules:
             List.of(
                     "createFolder",
                     "writeFile",
+                    "writeBase64File",
                     "readFile",
                     "listFiles",
                     "getSurfaceReflectionContracts"

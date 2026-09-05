@@ -899,7 +899,7 @@ class ChatAuthorizationControllerIsolationTest {
         private String lastResumedSessionUuid;
 
         private RecordingSchedulerService() {
-            super(null, null, null, null);
+                        super(null, null, null, null, null);
         }
 
         @Override

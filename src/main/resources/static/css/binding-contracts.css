@@ -3,11 +3,55 @@
     overflow-y: auto;
 }
 
-.contract-tool-card {
-    border: 1px solid rgb(63 63 70);
-    border-radius: 0.75rem;
-    padding: 0.75rem;
-    background: rgb(9 9 11);
+.contract-tools-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.contract-tools-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.contract-tool-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.contract-pill-edit {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font-size: 0.75rem;
+    line-height: 1;
+}
+
+.contract-pill-edit:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.contract-tools-add {
+    display: flex;
+    align-items: center;
+}
+
+.contract-inline-add-btn {
+    border: 1px dashed rgb(113 113 122);
+    border-radius: 0.5rem;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.75rem;
+    color: rgb(212 212 216);
+    background: rgb(24 24 27);
+    transition: background-color 0.2s ease;
+}
+
+.contract-inline-add-btn:hover {
+    background: rgb(39 39 42);
 }
 
 .contract-param-grid {
@@ -20,5 +64,14 @@
 @media (max-width: 900px) {
     .contract-param-grid {
         grid-template-columns: 1fr;
+    }
+
+    .contract-tools-add {
+        width: 100%;
+    }
+
+    .contract-inline-add-btn {
+        width: 100%;
+        text-align: center;
     }
 }

@@ -18,6 +18,7 @@ import sh.vork.ai.function.CreatePdfRequest;
 import sh.vork.ai.function.DownloadFolderAsZipRequest;
 import sh.vork.ai.function.ReadFileRequest;
 import sh.vork.ai.function.ResolveArchitectureRequest;
+import sh.vork.ai.function.WriteBase64FileRequest;
 import sh.vork.ai.function.WriteFileRequest;
 import sh.vork.filesystem.FileArea;
 import sh.vork.filesystem.FileDescriptor;
@@ -30,6 +31,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.Map;
 import java.util.List;
 import java.util.zip.ZipEntry;
@@ -42,6 +44,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -80,6 +83,83 @@ class SessionFileToolSuiteTest {
         assertTrue(response.contains("\"status\":\"ok\""));
         assertTrue(response.contains("\"name\":\"todo.md\""));
         assertTrue(response.contains("\"downloadUrl\":\"/api/session-files/download"));
+    }
+
+    @Test
+    void writeBase64FileDecodesAndWritesBinaryBytes() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        byte[] expected = "PNG".getBytes(StandardCharsets.UTF_8);
+        String base64 = Base64.getEncoder().encodeToString(expected);
+        when(fs.write(eq(FileArea.SESSION), eq("session-abc"), eq("attachments/img.bin"), any(InputStream.class), eq((long) expected.length)))
+                .thenReturn(new FileDescriptor(
+                        FileArea.SESSION,
+                        "session-abc",
+                        "attachments/img.bin",
+                        expected.length,
+                        "/api/session-files/download?area=SESSION&sessionUuid=session-abc&path=attachments%2Fimg.bin"));
+
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+                fs,
+                new InMemorySessionEnvironmentService(),
+                new SessionPathResolver(),
+                new ObjectMapper());
+
+        String response = tool.writeBase64File(new WriteBase64FileRequest("attachments/img.bin", base64, "SESSION", null));
+
+        assertTrue(response.contains("\"status\":\"ok\""));
+        assertTrue(response.contains("\"name\":\"img.bin\""));
+
+        ArgumentCaptor<InputStream> contentCaptor = ArgumentCaptor.forClass(InputStream.class);
+        verify(fs).write(eq(FileArea.SESSION), eq("session-abc"), eq("attachments/img.bin"), contentCaptor.capture(), eq((long) expected.length));
+        byte[] actual = contentCaptor.getValue().readAllBytes();
+        assertEquals("PNG", new String(actual, StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void writeBase64FileDecodesUrlSafeBase64WithoutModeSwitch() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        byte[] expected = new byte[] {(byte) 0xfb, (byte) 0xef, (byte) 0xff};
+        String base64Url = Base64.getUrlEncoder().withoutPadding().encodeToString(expected);
+        when(fs.write(eq(FileArea.SESSION), eq("session-abc"), eq("attachments/data.bin"), any(InputStream.class), eq((long) expected.length)))
+                .thenReturn(new FileDescriptor(
+                        FileArea.SESSION,
+                        "session-abc",
+                        "attachments/data.bin",
+                        expected.length,
+                        "/api/session-files/download?area=SESSION&sessionUuid=session-abc&path=attachments%2Fdata.bin"));
+
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+                fs,
+                new InMemorySessionEnvironmentService(),
+                new SessionPathResolver(),
+                new ObjectMapper());
+
+        String response = tool.writeBase64File(new WriteBase64FileRequest("attachments/data.bin", base64Url, "SESSION", null));
+
+        assertTrue(response.contains("\"status\":\"ok\""));
+        ArgumentCaptor<InputStream> contentCaptor = ArgumentCaptor.forClass(InputStream.class);
+        verify(fs).write(eq(FileArea.SESSION), eq("session-abc"), eq("attachments/data.bin"), contentCaptor.capture(), eq((long) expected.length));
+        byte[] actual = contentCaptor.getValue().readAllBytes();
+        assertEquals(Base64.getEncoder().encodeToString(expected), Base64.getEncoder().encodeToString(actual));
+    }
+
+    @Test
+    void writeBase64FileRejectsInvalidBase64Payload() throws Exception {
+        SessionFileSystem fs = mock(SessionFileSystem.class);
+        ToolExecutionContext.bindSessionUuid("session-abc");
+        SessionFileToolSuite tool = new SessionFileToolSuite(
+                fs,
+                new InMemorySessionEnvironmentService(),
+                new SessionPathResolver(),
+                new ObjectMapper());
+
+        String response = tool.writeBase64File(new WriteBase64FileRequest("attachments/img.bin", "%%%", "SESSION", null));
+
+        assertTrue(response.contains("\"status\":\"error\""));
+        assertTrue(response.contains("base64Content is not valid Base64"));
+        verify(fs, never()).write(eq(FileArea.SESSION), eq("session-abc"), eq("attachments/img.bin"), any(InputStream.class), anyLong());
     }
 
     @Test

@@ -2,6 +2,8 @@ package sh.vork.scheduling.service;
 
 import java.util.List;
 import java.util.UUID;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,6 +14,8 @@ import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
+import sh.vork.filesystem.FileArea;
+import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.scheduling.domain.InvocationType;
 import sh.vork.scheduling.domain.ScheduledJob;
@@ -34,24 +38,40 @@ public class AiJobRunner implements Runnable {
     private final BackgroundOrchestrationEngine backgroundOrchestrationEngine;
     private final DatabaseRepository<ScheduledJob> jobRepository;
     private final DatabaseRepository<AiSession> sessionRepository;
+    private final SessionFileSystem sessionFileSystem;
+    private final AiSchedulerService.DynamicSeedFiles dynamicSeedFiles;
     private final String preGeneratedTrackingUuid;
 
     public AiJobRunner(ScheduledJob job,
                        BackgroundOrchestrationEngine backgroundOrchestrationEngine,
                        DatabaseRepository<ScheduledJob> jobRepository,
                        DatabaseRepository<AiSession> sessionRepository) {
-        this(job, backgroundOrchestrationEngine, jobRepository, sessionRepository, null);
+        this(job, backgroundOrchestrationEngine, jobRepository, sessionRepository, null, null, null);
     }
 
     public AiJobRunner(ScheduledJob job,
                        BackgroundOrchestrationEngine backgroundOrchestrationEngine,
                        DatabaseRepository<ScheduledJob> jobRepository,
                        DatabaseRepository<AiSession> sessionRepository,
+                       SessionFileSystem sessionFileSystem,
+                       AiSchedulerService.DynamicSeedFiles dynamicSeedFiles) {
+        this(job, backgroundOrchestrationEngine, jobRepository, sessionRepository,
+                sessionFileSystem, dynamicSeedFiles, null);
+    }
+
+    public AiJobRunner(ScheduledJob job,
+                       BackgroundOrchestrationEngine backgroundOrchestrationEngine,
+                       DatabaseRepository<ScheduledJob> jobRepository,
+                       DatabaseRepository<AiSession> sessionRepository,
+                       SessionFileSystem sessionFileSystem,
+                       AiSchedulerService.DynamicSeedFiles dynamicSeedFiles,
                        String preGeneratedTrackingUuid) {
         this.job = job;
         this.backgroundOrchestrationEngine = backgroundOrchestrationEngine;
         this.jobRepository = jobRepository;
         this.sessionRepository = sessionRepository;
+        this.sessionFileSystem = sessionFileSystem;
+        this.dynamicSeedFiles = dynamicSeedFiles;
         this.preGeneratedTrackingUuid = preGeneratedTrackingUuid;
     }
 
@@ -110,6 +130,7 @@ public class AiJobRunner implements Runnable {
                     job.skillUuids(),
                     job.toolIds());
             sessionRepository.save(trackingSession);
+                    copySeedFilesIfRequested(trackingSessionUuid);
 
             SecurityContextHolder.getContext()
                     .setAuthentication(new SystemBackgroundAuthentication(job.userId()));
@@ -151,6 +172,16 @@ public class AiJobRunner implements Runnable {
                 && finalSession.status() == AiSessionStatus.AWAITING_INPUT;
 
         switch (type) {
+            case DYNAMIC -> {
+                if (awaitingInput) {
+                    save(ScheduledJobStatus.AWAITING_INPUT, executionTime, 0L);
+                    log.info("DYNAMIC job awaiting authorization [id={}, tracking={}]",
+                            job.id(), trackingSessionUuid);
+                } else {
+                    save(ScheduledJobStatus.WAITING, executionTime, 0L);
+                    log.info("DYNAMIC job finished [id={}]", job.id());
+                }
+            }
             case ONE_TIME -> {
                 if (awaitingInput) {
                     save(ScheduledJobStatus.AWAITING_INPUT, executionTime, 0L);
@@ -227,4 +258,75 @@ public class AiJobRunner implements Runnable {
         }
         return env;
     }
+
+    private void copySeedFilesIfRequested(String trackingSessionUuid) {
+        if (dynamicSeedFiles == null || sessionFileSystem == null
+                || dynamicSeedFiles.sessionFiles() == null || dynamicSeedFiles.sessionFiles().isEmpty()) {
+            return;
+        }
+
+        String defaultSourceSession = dynamicSeedFiles.sourceSessionUuid();
+        for (String rawRef : dynamicSeedFiles.sessionFiles()) {
+            SessionSeedRef source = parseSessionSeedRef(rawRef, defaultSourceSession);
+            if (source == null || source.path() == null || source.path().isBlank()) {
+                continue;
+            }
+            try (java.io.InputStream in = sessionFileSystem.read(source.area(), source.sessionUuid(), source.path())) {
+                byte[] bytes = in.readAllBytes();
+                sessionFileSystem.write(FileArea.SESSION, trackingSessionUuid, source.path(),
+                        new java.io.ByteArrayInputStream(bytes), bytes.length);
+            } catch (Exception e) {
+                throw new IllegalStateException("Failed to seed delegated session file: " + source.path(), e);
+            }
+        }
+    }
+
+    private static SessionSeedRef parseSessionSeedRef(String value, String defaultSessionUuid) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String raw = value.trim();
+        if (raw.startsWith("session-url:")) {
+            raw = raw.substring("session-url:".length());
+        }
+        if (raw.startsWith("/api/session-files/download?")) {
+            String path = queryParam(raw, "path");
+            FileArea area = parseArea(queryParam(raw, "area"));
+            String sessionUuid = queryParam(raw, "sessionUuid");
+            if ((sessionUuid == null || sessionUuid.isBlank()) && area == FileArea.SESSION) {
+                sessionUuid = defaultSessionUuid;
+            }
+            return new SessionSeedRef(area, area == FileArea.SESSION ? sessionUuid : null, path);
+        }
+
+        return new SessionSeedRef(FileArea.SESSION, defaultSessionUuid, raw);
+    }
+
+    private static String queryParam(String url, String key) {
+        int q = url.indexOf('?');
+        if (q < 0 || q == url.length() - 1) {
+            return "";
+        }
+        String query = url.substring(q + 1);
+        for (String token : query.split("&")) {
+            String[] pair = token.split("=", 2);
+            if (pair.length == 2 && key.equals(pair[0])) {
+                return URLDecoder.decode(pair[1], StandardCharsets.UTF_8);
+            }
+        }
+        return "";
+    }
+
+    private static FileArea parseArea(String areaRaw) {
+        if (areaRaw == null || areaRaw.isBlank()) {
+            return FileArea.SESSION;
+        }
+        try {
+            return FileArea.valueOf(areaRaw.trim().toUpperCase());
+        } catch (Exception ignored) {
+            return FileArea.SESSION;
+        }
+    }
+
+    private record SessionSeedRef(FileArea area, String sessionUuid, String path) {}
 }

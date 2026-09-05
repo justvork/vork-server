@@ -20,6 +20,7 @@ import sh.vork.ai.function.DownloadFolderAsZipRequest;
 import sh.vork.ai.function.ListFilesRequest;
 import sh.vork.ai.function.ReadFileRequest;
 import sh.vork.ai.function.ResolveArchitectureRequest;
+import sh.vork.ai.function.WriteBase64FileRequest;
 import sh.vork.ai.function.WriteFileRequest;
 import sh.vork.ai.memory.SessionEnvironmentService;
 import sh.vork.ai.process.ProcessExecutionConfigResolver;
@@ -114,6 +115,91 @@ public class SessionFileToolSuite {
             log.warn("writeFile failed [path={}]: {}", req.path(), ex.getMessage());
             return error(ex.getMessage());
         }
+    }
+
+    public String writeBase64File(WriteBase64FileRequest req) {
+        log.debug("ENTER writeBase64File: area={}, path={}", req == null ? null : req.area(), req == null ? null : req.path());
+        if (req == null || req.path() == null || req.path().isBlank()) {
+            return error("path is required");
+        }
+        if (req.base64Content() == null || req.base64Content().isBlank()) {
+            return error("base64Content is required");
+        }
+
+        FileArea area = parseArea(req.area());
+        String sessionUuid = resolveSessionUuid();
+        ToolExecutionContext.bindSessionUuid(sessionUuid);
+        String owner = area == FileArea.SESSION ? sessionUuid : null;
+
+        byte[] bytes = decodeBase64Auto(req.base64Content());
+        if (bytes == null) {
+            return error("base64Content is not valid Base64");
+        }
+
+        try (ByteArrayInputStream in = new ByteArrayInputStream(bytes)) {
+            FileDescriptor descriptor = sessionFileSystem.write(area, owner, req.path(), in, bytes.length);
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("status", "ok");
+            payload.put("area", descriptor.area().name());
+            payload.put("path", descriptor.path());
+            payload.put("name", extractFileName(descriptor.path()));
+            payload.put("sizeBytes", descriptor.sizeBytes());
+            payload.put("downloadUrl", descriptor.downloadUrl());
+            boolean attachToChat = req.attachToChat() == null || req.attachToChat();
+            if (attachToChat) {
+                recordGeneratedAttachment(descriptor.path(), inferMimeType(descriptor.path()), descriptor.downloadUrl());
+            }
+            log.debug("EXIT writeBase64File: area={}, session={}, path={}, size={}",
+                    descriptor.area(), descriptor.sessionUuid(), descriptor.path(), descriptor.sizeBytes());
+            return json(payload);
+        } catch (Exception ex) {
+            log.warn("writeBase64File failed [path={}]: {}", req.path(), ex.getMessage());
+            return error(ex.getMessage());
+        }
+    }
+
+    private static byte[] decodeBase64Auto(String rawInput) {
+        if (rawInput == null) {
+            return null;
+        }
+        String input = rawInput.trim().replaceAll("\\s+", "");
+        if (input.isEmpty()) {
+            return null;
+        }
+
+        boolean looksUrlSafe = input.indexOf('-') >= 0 || input.indexOf('_') >= 0;
+        byte[] decoded = looksUrlSafe
+                ? decodeWithPadding(input, true)
+                : decodeWithPadding(input, false);
+        if (decoded != null) {
+            return decoded;
+        }
+        return looksUrlSafe
+                ? decodeWithPadding(input, false)
+                : decodeWithPadding(input, true);
+    }
+
+    private static byte[] decodeWithPadding(String input, boolean urlSafe) {
+        String padded = padBase64(input);
+        try {
+            return urlSafe
+                    ? Base64.getUrlDecoder().decode(padded)
+                    : Base64.getDecoder().decode(padded);
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    private static String padBase64(String input) {
+        int remainder = input.length() % 4;
+        if (remainder == 0) {
+            return input;
+        }
+        if (remainder == 1) {
+            // Impossible Base64 length after trimming/whitespace removal.
+            return input;
+        }
+        return input + "=".repeat(4 - remainder);
     }
 
     public String readFile(ReadFileRequest req) {

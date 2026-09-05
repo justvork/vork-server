@@ -49,6 +49,68 @@ public class BindingContractController {
         return ResponseEntity.ok(contract);
     }
 
+    @GetMapping("/{id}/tools")
+    public ResponseEntity<?> listTools(@PathVariable String id) {
+        log.debug("ENTER listTools: id={}", id);
+        try {
+            return ResponseEntity.ok(service.listTools(id));
+        } catch (IllegalArgumentException ex) {
+            if (ex.getMessage() != null && ex.getMessage().startsWith("Binding contract not found:")) {
+                return ResponseEntity.notFound().build();
+            }
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
+    }
+
+    @PostMapping("/{id}/tools")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> addTool(@PathVariable String id,
+                                     @RequestBody BindingContractToolDefinition tool) {
+        log.debug("ENTER addTool: id={}, tool={}", id, tool == null ? null : tool.name());
+        try {
+            BindingContract updated = service.addTool(id, tool);
+            return ResponseEntity.ok(updated);
+        } catch (IllegalArgumentException ex) {
+            if (ex.getMessage() != null && ex.getMessage().startsWith("Binding contract not found:")) {
+                return ResponseEntity.notFound().build();
+            }
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
+    }
+
+    @PutMapping("/{id}/tools/{toolName}")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> updateTool(@PathVariable String id,
+                                        @PathVariable String toolName,
+                                        @RequestBody BindingContractToolDefinition tool) {
+        log.debug("ENTER updateTool: id={}, toolName={}", id, toolName);
+        try {
+            BindingContract updated = service.updateTool(id, toolName, tool);
+            return ResponseEntity.ok(updated);
+        } catch (IllegalArgumentException ex) {
+            if (ex.getMessage() != null && ex.getMessage().startsWith("Binding contract not found:")) {
+                return ResponseEntity.notFound().build();
+            }
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/{id}/tools/{toolName}")
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> deleteTool(@PathVariable String id,
+                                        @PathVariable String toolName) {
+        log.debug("ENTER deleteTool: id={}, toolName={}", id, toolName);
+        try {
+            BindingContract updated = service.deleteTool(id, toolName);
+            return ResponseEntity.ok(updated);
+        } catch (IllegalArgumentException ex) {
+            if (ex.getMessage() != null && ex.getMessage().startsWith("Binding contract not found:")) {
+                return ResponseEntity.notFound().build();
+            }
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        }
+    }
+
     @PostMapping
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
     public ResponseEntity<?> createContract(@RequestBody BindingContract request) {

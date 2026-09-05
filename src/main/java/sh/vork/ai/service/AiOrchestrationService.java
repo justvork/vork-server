@@ -81,6 +81,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         private static final List<String> ALWAYS_ON_HIDDEN_FILE_TOOL_BEAN_NAMES = List.of(
                 "createSessionTextFile",
                 "writeFile",
+                "writeBase64File",
                 "readFile",
                 "createFolder",
                 "listFiles",

@@ -146,6 +146,121 @@ class BindingContractServiceTest {
         assertEquals("timestamp", created.tools().getFirst().inputParameters().get(1).type());
     }
 
+    @Test
+    void createContractAllowsEmptyToolsForGroupFirstFlow() {
+        BindingContract request = new BindingContract(
+                null,
+                "Empty Group",
+                "desc",
+                List.of(),
+                "binding",
+                "emptygroup",
+                "SNAPSHOT",
+                ArtifactStatus.SNAPSHOT,
+                0L,
+                0L);
+
+        BindingContract created = service.createContract(request);
+        assertNotNull(created);
+        assertEquals("binding-emptygroup-SNAPSHOT", created.uuid());
+        assertEquals(0, created.tools().size());
+    }
+
+    @Test
+    void addUpdateDeleteToolPersistsImmediately() {
+        BindingContract created = service.createContract(new BindingContract(
+                null,
+                "Empty Group",
+                "desc",
+                List.of(),
+                "binding",
+                "toolflow",
+                "SNAPSHOT",
+                ArtifactStatus.SNAPSHOT,
+                0L,
+                0L));
+
+        BindingContractToolDefinition first = new BindingContractToolDefinition(
+                "classifyEmail",
+                "Classify sender",
+                List.of(new ReflectionInputParameter("sender", "string", "sender", true, false)));
+        BindingContract afterAdd = service.addTool(created.uuid(), first);
+        assertEquals(1, afterAdd.tools().size());
+        assertEquals("classifyEmail", afterAdd.tools().getFirst().name());
+
+        BindingContractToolDefinition renamed = new BindingContractToolDefinition(
+                "classifyInbox",
+                "Classify inbox",
+                List.of(new ReflectionInputParameter("subject", "string", "subject", true, false)));
+        BindingContract afterUpdate = service.updateTool(created.uuid(), "classifyEmail", renamed);
+        assertEquals(1, afterUpdate.tools().size());
+        assertEquals("classifyInbox", afterUpdate.tools().getFirst().name());
+        assertEquals("subject", afterUpdate.tools().getFirst().inputParameters().getFirst().name());
+
+        BindingContract afterDelete = service.deleteTool(created.uuid(), "classifyInbox");
+        assertEquals(0, afterDelete.tools().size());
+    }
+
+    @Test
+    void addToolRejectedWhenContractNotMutable() {
+        BindingContract created = service.createContract(sampleContract(null));
+        service.markSubmitted(created.uuid());
+
+        BindingContractToolDefinition tool = new BindingContractToolDefinition(
+                "newTool",
+                "desc",
+                List.of());
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.addTool(created.uuid(), tool));
+        assertTrue(ex.getMessage().contains("Only SNAPSHOT or REJECTED"));
+    }
+
+    @Test
+    void updateToolRejectsDuplicateName() {
+        BindingContract created = service.createContract(new BindingContract(
+                null,
+                "Tool Group",
+                "desc",
+                List.of(),
+                "binding",
+                "duplicatecheck",
+                "SNAPSHOT",
+                ArtifactStatus.SNAPSHOT,
+                0L,
+                0L));
+
+        service.addTool(created.uuid(), new BindingContractToolDefinition("a", "", List.of()));
+        service.addTool(created.uuid(), new BindingContractToolDefinition("b", "", List.of()));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.updateTool(created.uuid(), "a", new BindingContractToolDefinition("b", "", List.of())));
+        assertTrue(ex.getMessage().contains("Tool names must be unique"));
+    }
+
+    @Test
+    void createContractPreservesPrivateToolVisibilityFlag() {
+        BindingContract request = new BindingContract(
+                null,
+                "Visibility Contract",
+                "desc",
+                List.of(new BindingContractToolDefinition(
+                        "internalRoute",
+                        "Internal only",
+                        List.of(new ReflectionInputParameter("id", "string", "identifier", true, false)),
+                        false)),
+                "binding",
+                "visibility",
+                "SNAPSHOT",
+                ArtifactStatus.SNAPSHOT,
+                0L,
+                0L);
+
+        BindingContract created = service.createContract(request);
+        assertEquals(1, created.tools().size());
+        assertEquals(Boolean.FALSE, created.tools().getFirst().publiclyVisible());
+    }
+
     private static BindingContract sampleContract(String uuid) {
         BindingContractToolDefinition tool = new BindingContractToolDefinition(
                 "classifyEmail",

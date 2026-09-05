@@ -14,6 +14,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
+import java.io.ByteArrayInputStream;
 import java.util.List;
 
 import org.junit.jupiter.api.AfterEach;
@@ -24,6 +25,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
+import sh.vork.filesystem.FileArea;
+import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.scheduling.domain.DurationType;
 import sh.vork.scheduling.domain.InvocationType;
@@ -158,5 +161,34 @@ class AiJobRunnerTest {
         assertEquals(ScheduledJobStatus.ACTIVE, saved.getAllValues().get(0).status());
         assertEquals(ScheduledJobStatus.WAITING, saved.getAllValues().get(1).status());
         assertNull(SecurityContextHolder.getContext().getAuthentication());
+    }
+
+    @Test
+    void run_dynamicWithSeedFiles_copiesFilesIntoTrackingSession() throws Exception {
+        BackgroundOrchestrationEngine engine = mock(BackgroundOrchestrationEngine.class);
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<ScheduledJob> repo = mock(DatabaseRepository.class);
+        @SuppressWarnings("unchecked")
+        DatabaseRepository<AiSession> sessionRepo = mock(DatabaseRepository.class);
+        SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+
+        ScheduledJob job = makeJob("job-6", InvocationType.DYNAMIC, 0, DurationType.MINUTES,
+                ScheduledJobStatus.WAITING);
+        when(repo.get("job-6")).thenReturn(job);
+        when(sessionRepo.get(anyString())).thenReturn(new AiSession(
+                "sid", "BACKGROUND_SCHEDULER", SessionOriginMode.BACKGROUND, "alice", "Untitled",
+                System.currentTimeMillis(), 0, List.of(), AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.COMPLETED, null, null, null, null, null));
+        when(sessionFileSystem.read(FileArea.SESSION, "session-parent", "inbox/mail-1.txt"))
+                .thenReturn(new ByteArrayInputStream("hello".getBytes()));
+
+        AiSchedulerService.DynamicSeedFiles seedFiles = new AiSchedulerService.DynamicSeedFiles(
+                "session-parent", List.of("inbox/mail-1.txt"));
+
+        new AiJobRunner(job, engine, repo, sessionRepo, sessionFileSystem, seedFiles).run();
+
+        verify(sessionFileSystem).read(FileArea.SESSION, "session-parent", "inbox/mail-1.txt");
+        verify(sessionFileSystem).write(eq(FileArea.SESSION), anyString(), eq("inbox/mail-1.txt"), any(), eq(5L));
+        verify(engine).executeBackgroundTurn(anyString(), eq("prompt-job-6"));
     }
 }
