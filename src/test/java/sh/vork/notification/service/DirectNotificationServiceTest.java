@@ -17,8 +17,12 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.context.ApplicationContext;
 
+import sh.vork.ai.entity.AiSession;
+import sh.vork.ai.entity.AiSessionStatus;
+import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.orm.mock.MapDatabaseRepository;
 
 import sh.vork.notification.Notification;
@@ -28,6 +32,7 @@ import sh.vork.notification.NotificationException;
 import sh.vork.notification.NotificationMediaType;
 import sh.vork.notification.NotificationProvider;
 import sh.vork.notification.NotificationProviderConfig;
+import sh.vork.notification.NotificationRecipientType;
 import sh.vork.notification.service.DirectNotificationService.ProviderSummary;
 
 class DirectNotificationServiceTest {
@@ -83,7 +88,7 @@ class DirectNotificationServiceTest {
             when(ctx.getBeansOfType(NotificationProvider.class))
                     .thenReturn(Map.of("sendgrid", sendgrid, "twilio-sms", twilio));
 
-            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, new MapDatabaseRepository<>(AiSession.class), ctx);
             List<ProviderSummary> result = service.listAvailable();
 
             assertEquals(2, result.size());
@@ -105,7 +110,7 @@ class DirectNotificationServiceTest {
             when(ctx.getBeansOfType(NotificationProvider.class))
                     .thenReturn(Map.of("telegram", telegram));
 
-            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, new MapDatabaseRepository<>(AiSession.class), ctx);
             List<ProviderSummary> result = service.listAvailable();
 
             assertTrue(result.isEmpty(), "Telegram should be excluded from direct-address list");
@@ -123,7 +128,7 @@ class DirectNotificationServiceTest {
             when(ctx.getBeansOfType(NotificationProvider.class))
                     .thenReturn(Map.of("sendgrid", sendgrid));
 
-                var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+                var service = new DirectNotificationService(repo, ledgerRepo, new MapDatabaseRepository<>(AiSession.class), ctx);
             assertTrue(service.listAvailable().isEmpty(),
                     "Provider without saved config should not appear in list");
         }
@@ -135,7 +140,7 @@ class DirectNotificationServiceTest {
             ApplicationContext ctx = mock(ApplicationContext.class);
             when(ctx.getBeansOfType(NotificationProvider.class)).thenReturn(Map.of());
 
-            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, new MapDatabaseRepository<>(AiSession.class), ctx);
             assertTrue(service.listAvailable().isEmpty());
         }
     }
@@ -169,7 +174,7 @@ class DirectNotificationServiceTest {
 
         @Test
         void sendsViaCorrectProvider() throws Exception {
-            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, new MapDatabaseRepository<>(AiSession.class), ctx);
             var result = service.send(sgConfigId, "Hello", "World", "user@example.com");
 
             assertEquals("ok", result.status());
@@ -179,7 +184,7 @@ class DirectNotificationServiceTest {
 
         @Test
         void passesCorrectRecipientAndContent() throws Exception {
-            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, new MapDatabaseRepository<>(AiSession.class), ctx);
             service.send(sgConfigId, "My Title", "My Body", "target@test.com");
 
             var captor = org.mockito.ArgumentCaptor.forClass(Notification.class);
@@ -193,7 +198,7 @@ class DirectNotificationServiceTest {
 
         @Test
         void passesRequestedHtmlBodyContentType() throws Exception {
-            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, new MapDatabaseRepository<>(AiSession.class), ctx);
             service.send(sgConfigId, "My Title", "<h1>My Body</h1>", Notification.CONTENT_TYPE_HTML, "target@test.com");
 
             var captor = org.mockito.ArgumentCaptor.forClass(Notification.class);
@@ -205,7 +210,7 @@ class DirectNotificationServiceTest {
 
         @Test
         void returnsErrorForUnknownConfigId() throws Exception {
-            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, new MapDatabaseRepository<>(AiSession.class), ctx);
             var result = service.send("non-existent-uuid", "Hi", "Body", "x@y.com");
 
             assertEquals("error", result.status());
@@ -216,7 +221,7 @@ class DirectNotificationServiceTest {
         void returnsErrorWhenProviderThrows() throws Exception {
             org.mockito.Mockito.doThrow(new NotificationException("API down")).when(sendgrid).send(any(), any());
 
-            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, new MapDatabaseRepository<>(AiSession.class), ctx);
             var result = service.send(sgConfigId, "Hi", "Body", "x@y.com");
 
             assertEquals("error", result.status());
@@ -228,7 +233,7 @@ class DirectNotificationServiceTest {
             String orphanId = UUID.randomUUID().toString();
             repo.save(config(orphanId, "unknown-provider", "Ghost"));
 
-            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, new MapDatabaseRepository<>(AiSession.class), ctx);
             var result = service.send(orphanId, "Hi", "Body", "x@y.com");
 
             assertEquals("error", result.status(), "Expected error for missing provider bean");
@@ -243,7 +248,7 @@ class DirectNotificationServiceTest {
             when(ctx.getBeansOfType(NotificationProvider.class))
                     .thenReturn(Map.of("sendgrid", sendgrid, "telegram", telegram));
 
-            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, new MapDatabaseRepository<>(AiSession.class), ctx);
             var result = service.send(tgId, "Hi", "Body", "@someuser");
 
             assertEquals("error", result.status(), "Expected error for non-direct provider");
@@ -251,7 +256,7 @@ class DirectNotificationServiceTest {
 
         @Test
         void suppressesDuplicateSuccessfulSendWhenIdempotencyGroupProvided() throws Exception {
-            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, new MapDatabaseRepository<>(AiSession.class), ctx);
 
             var first = service.send(
                     sgConfigId,
@@ -261,6 +266,8 @@ class DirectNotificationServiceTest {
                     "sales-campaign-28-08-2026",
                     "Concierge",
                     "marketing-skill",
+                    NotificationRecipientType.INTERNAL,
+                    null,
                     "user@example.com");
 
             var second = service.send(
@@ -271,6 +278,8 @@ class DirectNotificationServiceTest {
                     "sales-campaign-28-08-2026",
                     "Concierge",
                     "marketing-skill",
+                    NotificationRecipientType.INTERNAL,
+                    null,
                     "user@example.com");
 
             assertEquals("ok", first.status());
@@ -292,7 +301,7 @@ class DirectNotificationServiceTest {
                     .when(sendgrid)
                     .send(any(), any());
 
-            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, new MapDatabaseRepository<>(AiSession.class), ctx);
 
             var first = service.send(
                     sgConfigId,
@@ -302,6 +311,8 @@ class DirectNotificationServiceTest {
                     "sales-campaign-28-08-2026",
                     "Concierge",
                     "marketing-skill",
+                    NotificationRecipientType.INTERNAL,
+                    null,
                     "user@example.com");
 
             var second = service.send(
@@ -312,6 +323,8 @@ class DirectNotificationServiceTest {
                     "sales-campaign-28-08-2026",
                     "Concierge",
                     "marketing-skill",
+                    NotificationRecipientType.INTERNAL,
+                    null,
                     "user@example.com");
 
             assertEquals("error", first.status());
@@ -329,7 +342,7 @@ class DirectNotificationServiceTest {
 
         @Test
         void writesIdempotencyKeyToLedgerWhenGroupProvided() {
-            var service = new DirectNotificationService(repo, ledgerRepo, ctx);
+            var service = new DirectNotificationService(repo, ledgerRepo, new MapDatabaseRepository<>(AiSession.class), ctx);
 
             service.send(
                     sgConfigId,
@@ -339,12 +352,161 @@ class DirectNotificationServiceTest {
                     "sales-campaign-28-08-2026",
                     "Concierge",
                     "marketing-skill",
+                    NotificationRecipientType.INTERNAL,
+                    null,
                     "USER@Example.com");
 
             try (var stream = ledgerRepo.list(0, 10)) {
                 NotificationLedgerEntry entry = stream.findFirst().orElseThrow();
                 assertEquals("sales-campaign-28-08-2026:email_address:user@example.com", entry.idempotencyKey());
             }
+        }
+
+        @Test
+        void externalRecipientSuccessfulSend_persistsOutgoingChatMessageWithMetadata() throws Exception {
+            MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+            String sessionUuid = "session-outgoing-success";
+            sessionRepo.save(new AiSession(
+                    sessionUuid,
+                    "GEMINI",
+                    SessionOriginMode.WEB,
+                    "admin",
+                    "Session",
+                    System.currentTimeMillis(),
+                    0,
+                    List.of(),
+                    AiSession.defaultEnvironmentVariables(),
+                    AiSessionStatus.RUNNING,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null));
+
+            var service = new DirectNotificationService(repo, ledgerRepo, sessionRepo, ctx);
+
+            MDC.put("sessionUuid", sessionUuid);
+            try {
+                var result = service.send(
+                        sgConfigId,
+                        "Invoice Confirmation",
+                        "Thanks Jane. I have received the invoice.",
+                        Notification.CONTENT_TYPE_TEXT,
+                        "campaign-01",
+                        "Concierge",
+                        "sales-skill",
+                        NotificationRecipientType.EXTERNAL,
+                        "Jane Swift",
+                        "jane@example.com");
+
+                assertEquals("ok", result.status());
+            } finally {
+                MDC.remove("sessionUuid");
+            }
+
+            AiSession saved = sessionRepo.get(sessionUuid);
+            assertEquals(1, saved.messages().size());
+            var message = saved.messages().getFirst();
+            assertEquals("OUTGOING", message.role());
+            assertEquals("Thanks Jane. I have received the invoice.", message.content());
+            assertEquals("Email", message.externalSource());
+            assertEquals("Jane Swift", message.externalParticipant());
+            assertEquals("Invoice Confirmation", message.messageMetadata().get("title"));
+            assertEquals("jane@example.com", message.messageMetadata().get("destination"));
+            assertEquals("EMAIL_ADDRESS", message.messageMetadata().get("mediaType"));
+            assertEquals("SENT", message.messageMetadata().get("deliveryState"));
+        }
+
+        @Test
+        void internalRecipientSuccessfulSend_doesNotPersistOutgoingChatMessage() {
+            MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+            String sessionUuid = "session-outgoing-internal";
+            sessionRepo.save(new AiSession(
+                    sessionUuid,
+                    "GEMINI",
+                    SessionOriginMode.WEB,
+                    "admin",
+                    "Session",
+                    System.currentTimeMillis(),
+                    0,
+                    List.of(),
+                    AiSession.defaultEnvironmentVariables(),
+                    AiSessionStatus.RUNNING,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null));
+
+            var service = new DirectNotificationService(repo, ledgerRepo, sessionRepo, ctx);
+
+            MDC.put("sessionUuid", sessionUuid);
+            try {
+                var result = service.send(
+                        sgConfigId,
+                        "Internal Reminder",
+                        "Reminder for internal workflow.",
+                        Notification.CONTENT_TYPE_TEXT,
+                        null,
+                        null,
+                        null,
+                        NotificationRecipientType.INTERNAL,
+                        null,
+                        "admin@example.com");
+                assertEquals("ok", result.status());
+            } finally {
+                MDC.remove("sessionUuid");
+            }
+
+            AiSession saved = sessionRepo.get(sessionUuid);
+            assertEquals(0, saved.messages().size());
+        }
+
+        @Test
+        void externalRecipientFailedSend_doesNotPersistOutgoingChatMessage() throws Exception {
+            org.mockito.Mockito.doThrow(new NotificationException("provider unavailable")).when(sendgrid).send(any(), any());
+
+            MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+            String sessionUuid = "session-outgoing-failed";
+            sessionRepo.save(new AiSession(
+                    sessionUuid,
+                    "GEMINI",
+                    SessionOriginMode.WEB,
+                    "admin",
+                    "Session",
+                    System.currentTimeMillis(),
+                    0,
+                    List.of(),
+                    AiSession.defaultEnvironmentVariables(),
+                    AiSessionStatus.RUNNING,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null));
+
+            var service = new DirectNotificationService(repo, ledgerRepo, sessionRepo, ctx);
+
+            MDC.put("sessionUuid", sessionUuid);
+            try {
+                var result = service.send(
+                        sgConfigId,
+                        "Invoice Confirmation",
+                        "Thanks Jane. I have received the invoice.",
+                        Notification.CONTENT_TYPE_TEXT,
+                        null,
+                        null,
+                        null,
+                        NotificationRecipientType.EXTERNAL,
+                        "Jane Swift",
+                        "jane@example.com");
+                assertEquals("error", result.status());
+            } finally {
+                MDC.remove("sessionUuid");
+            }
+
+            AiSession saved = sessionRepo.get(sessionUuid);
+            assertEquals(0, saved.messages().size());
         }
     }
 }

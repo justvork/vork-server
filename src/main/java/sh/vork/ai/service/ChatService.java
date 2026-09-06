@@ -3366,6 +3366,7 @@ public class ChatService {
             switch (message.role()) {
                 case "USER" -> history.add(new UserMessage(message.content() == null ? "" : message.content()));
                 case "EXTERNAL" -> history.add(new UserMessage(ExternalMessageProvenance.toWrappedEvidence(message)));
+                case "OUTGOING" -> history.add(new UserMessage(OutgoingMessageProvenance.toWrappedEvidence(message)));
                 case "ASSISTANT" -> history.add(new AssistantMessage(message.content() == null ? "" : message.content()));
                 case "TOOL" -> {
                     String toolName = message.toolName();

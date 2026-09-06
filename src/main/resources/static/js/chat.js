@@ -478,30 +478,38 @@ function renderAttachmentsHtml(attachments) {
 function renderMessage(msg) {
     const isUser    = msg.role === 'USER';
     const isExternal = msg.role === 'EXTERNAL';
+    const isOutgoing = msg.role === 'OUTGOING';
     const isAssistant = msg.role === 'ASSISTANT';
-    const content   = isUser || isExternal
+    const content   = isUser || isExternal || isOutgoing
         ? (msg.content || '')
         : normalizeAssistantContent(msg.content);
-    const textHtml  = isUser || isExternal
+    const textHtml  = isUser || isExternal || isOutgoing
         ? escapeHtml(content).replace(/\n/g, '<br>')
         : marked.parse(content || '');
 
     const bubbleCls  = isUser
         ? 'user'
-        : (isExternal ? 'external' : (msg.role === 'ERROR' ? 'error' : 'assistant'));
-    const avatarCls  = isUser ? 'user' : (isExternal ? 'external' : 'assistant');
+        : (isExternal ? 'external' : (isOutgoing ? 'outgoing' : (msg.role === 'ERROR' ? 'error' : 'assistant')));
+    const avatarCls  = isUser ? 'user' : (isExternal ? 'external' : (isOutgoing ? 'outgoing' : 'assistant'));
     const avatarIcon = isUser
         ? '<i class="fa-solid fa-user"></i>'
-        : (isExternal ? '<i class="fa-solid fa-envelope"></i>' : '<i class="fa-solid fa-robot"></i>');
+        : (isExternal
+            ? '<i class="fa-solid fa-envelope"></i>'
+            : (isOutgoing ? '<i class="fa-solid fa-paper-plane"></i>' : '<i class="fa-solid fa-robot"></i>'));
 
     const attachHtml = renderAttachmentsHtml(msg.attachments);
-    const copyButtonHtml = isAssistant || isExternal
+    const copyButtonHtml = isAssistant || isExternal || isOutgoing
         ? '<button class="bubble-copy-btn" type="button" aria-label="Copy assistant message" title="Copy message">'
             + '<i class="fa-regular fa-copy" aria-hidden="true"></i>'
           + '</button>'
         : '';
 
     let bodyHtml;
+    const metadata = (msg && msg.messageMetadata && typeof msg.messageMetadata === 'object') ? msg.messageMetadata : {};
+    const timestamp = Number.isFinite(msg.timestamp) ? msg.timestamp : null;
+    const timeText = timestamp == null
+        ? ''
+        : new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     if (isExternal) {
         const source = (msg.externalSource || 'external').toString();
         const participant = (msg.externalParticipant || 'unknown').toString();
@@ -513,12 +521,31 @@ function renderMessage(msg) {
             + '  </div>'
             + '  <div class="external-message-body">' + attachHtml + textHtml + '</div>'
             + '</div>';
+    } else if (isOutgoing) {
+        const destination = (metadata.destination || '').toString().trim();
+        const participant = ((msg.externalParticipant || metadata.externalParticipant || destination || 'external recipient') + '').trim();
+        const mediaType = (metadata.mediaType || msg.externalSource || 'External').toString().replace(/_/g, ' ');
+        const state = (metadata.deliveryState || 'SENT').toString();
+        const reference = (metadata.providerMessageReferenceId || '').toString().trim();
+        const title = (metadata.title || '').toString().trim();
+        const destinationInfo = destination ? ' (' + escapeHtml(destination) + ')' : '';
+        const statusInfo = reference ? (escapeHtml(state) + ' · Ref ' + escapeHtml(reference)) : escapeHtml(state);
+        const footer = timeText ? (escapeHtml(timeText) + ' · ' + statusInfo) : statusInfo;
+        bodyHtml =
+            '<div class="outgoing-message-card">'
+            + '  <div class="outgoing-message-header">'
+            + '    <div><span class="outgoing-label">Sent to:</span> ' + escapeHtml(participant) + destinationInfo + ' · ' + escapeHtml(mediaType) + '</div>'
+            + (title ? ('<div><span class="outgoing-label">Title:</span> ' + escapeHtml(title) + '</div>') : '')
+            + '  </div>'
+            + '  <div class="outgoing-message-body">' + attachHtml + textHtml + '</div>'
+            + '  <div class="outgoing-message-footer">' + footer + '</div>'
+            + '</div>';
     } else {
         bodyHtml = '<div class="bubble-content">' + attachHtml + textHtml + '</div>';
     }
 
     const row = document.createElement('div');
-    row.className = 'message-row' + (isUser ? ' user' : '');
+    row.className = 'message-row' + (isUser || isOutgoing ? ' user' : '');
     row.innerHTML =
         '<div class="avatar ' + avatarCls + '">' + avatarIcon + '</div>' +
         '<div class="bubble ' + bubbleCls + '">' + copyButtonHtml + bodyHtml + '</div>';
@@ -526,7 +553,9 @@ function renderMessage(msg) {
     const copyBtn = row.querySelector('.bubble-copy-btn');
     if (copyBtn) {
         copyBtn.addEventListener('click', async function () {
-            const copyTarget = row.querySelector('.bubble-content');
+            const copyTarget = row.querySelector('.bubble-content')
+                || row.querySelector('.external-message-body')
+                || row.querySelector('.outgoing-message-body');
             const text = copyTarget ? (copyTarget.innerText || '').trim() : '';
             if (!text) return;
             const copied = await copyTextToClipboard(text);

@@ -586,6 +586,10 @@ body.sidebar-collapsed .sidebar-tab-btn {
 
 .bubble.assistant:hover .bubble-copy-btn,
 .bubble.assistant:focus-within .bubble-copy-btn,
+.bubble.external:hover .bubble-copy-btn,
+.bubble.external:focus-within .bubble-copy-btn,
+.bubble.outgoing:hover .bubble-copy-btn,
+.bubble.outgoing:focus-within .bubble-copy-btn,
 .bubble-copy-btn.copied {
     opacity: 1;
 }
@@ -623,9 +627,22 @@ body.sidebar-collapsed .sidebar-tab-btn {
     padding-right: 2.35rem;
 }
 
+.bubble.outgoing {
+    background: linear-gradient(180deg, rgba(56, 189, 248, 0.16), rgba(14, 116, 144, 0.06));
+    border: 1px solid rgba(56, 189, 248, 0.36);
+    border-bottom-right-radius: 0.3rem;
+    padding-right: 2.35rem;
+    color: #e0f2fe;
+}
+
 .avatar.external {
     background: linear-gradient(180deg, #0f766e, #0d9488);
     color: #ecfeff;
+}
+
+.avatar.outgoing {
+    background: linear-gradient(180deg, #0e7490, #0284c7);
+    color: #eff6ff;
 }
 
 .external-message-card {
@@ -649,6 +666,36 @@ body.sidebar-collapsed .sidebar-tab-btn {
 
 .external-message-body {
     white-space: normal;
+}
+
+.outgoing-message-card {
+    display: block;
+}
+
+.outgoing-message-header {
+    border-bottom: 1px dashed rgba(125, 211, 252, 0.55);
+    margin-bottom: 0.45rem;
+    padding-bottom: 0.35rem;
+    display: grid;
+    gap: 0.15rem;
+    font-size: 0.78rem;
+    color: #dbeafe;
+}
+
+.outgoing-label {
+    color: #bfdbfe;
+    font-weight: 600;
+}
+
+.outgoing-message-body {
+    white-space: normal;
+}
+
+.outgoing-message-footer {
+    margin-top: 0.5rem;
+    font-size: 0.74rem;
+    color: #bfdbfe;
+    opacity: 0.92;
 }
 
 .bubble.error {

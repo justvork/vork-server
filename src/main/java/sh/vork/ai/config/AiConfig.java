@@ -4005,6 +4005,12 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
         ToolCallback delegate = FunctionToolCallback
                 .builder("sendNotification",
                         (SendNotificationRequest req) -> {
+                            if (req == null) {
+                                return "{\"status\":\"error\",\"message\":\"request payload is required\"}";
+                            }
+                            if (req.recipientType() == null) {
+                                return "{\"status\":\"error\",\"message\":\"recipientType is required (INTERNAL or EXTERNAL)\"}";
+                            }
                             log.debug("Tool sendNotification invoked: providerConfigId={}, address={}",
                                     req.providerConfigId(), req.address());
                             DirectNotificationService.SendResult result = directNotificationService.send(
@@ -4015,10 +4021,13 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
                                     req.idempotencyGroup(),
                                     req.originatingAgent(),
                                     req.originatingSkill(),
+                                    req.recipientType(),
+                                    req.externalParticipant(),
                                     req.address());
                             try {
                                 java.util.Map<String, Object> payload = new java.util.LinkedHashMap<>();
                                 payload.put("status", result.status());
+                                payload.put("recipientType", req.recipientType().name());
                                 if (result.message() != null && !result.message().isBlank()) {
                                     payload.put("message", result.message());
                                 }
@@ -4027,6 +4036,24 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
                                 }
                                 if (result.idempotencyKey() != null && !result.idempotencyKey().isBlank()) {
                                     payload.put("idempotencyKey", result.idempotencyKey());
+                                }
+                                if (result.mediaType() != null && !result.mediaType().isBlank()) {
+                                    payload.put("mediaType", result.mediaType());
+                                }
+                                if (result.destination() != null && !result.destination().isBlank()) {
+                                    payload.put("destination", result.destination());
+                                }
+                                if (result.providerConfigId() != null && !result.providerConfigId().isBlank()) {
+                                    payload.put("providerConfigId", result.providerConfigId());
+                                }
+                                if (result.providerKey() != null && !result.providerKey().isBlank()) {
+                                    payload.put("providerKey", result.providerKey());
+                                }
+                                if (result.providerMessageReferenceId() != null && !result.providerMessageReferenceId().isBlank()) {
+                                    payload.put("providerMessageReferenceId", result.providerMessageReferenceId());
+                                }
+                                if (result.finalState() != null && !result.finalState().isBlank()) {
+                                    payload.put("finalState", result.finalState());
                                 }
                                 return objectMapper.writeValueAsString(payload);
                             } catch (Exception e) {
@@ -4040,6 +4067,8 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
                         + "Call listNotificationProviders first to get a valid providerConfigId "
                         + "and confirm the address type is supported. "
                     + "For email providers, set bodyContentType=text/html to send HTML email. "
+                        + "recipientType is required: INTERNAL for Vork-internal delivery; "
+                        + "EXTERNAL for communication to an external participant. "
                         + "Optional idempotencyGroup suppresses duplicate successful sends to the same "
                         + "mediaType+address and returns status=already sent when deduplicated. "
                         + "address must match the provider type: email address for email providers, "

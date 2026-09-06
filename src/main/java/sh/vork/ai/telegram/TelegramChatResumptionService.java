@@ -44,6 +44,7 @@ import sh.vork.ai.security.SecuredToolCallback;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
 import sh.vork.ai.service.ExternalMessageProvenance;
+import sh.vork.ai.service.OutgoingMessageProvenance;
 import sh.vork.scheduling.service.SystemBackgroundAuthentication;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.security.SecureCredentialStore;
@@ -583,6 +584,7 @@ public class TelegramChatResumptionService {
             switch (m.role()) {
                 case "USER"      -> history.add(new UserMessage(m.content() == null ? "" : m.content()));
                 case "EXTERNAL"  -> history.add(new UserMessage(ExternalMessageProvenance.toWrappedEvidence(m)));
+                case "OUTGOING"  -> history.add(new UserMessage(OutgoingMessageProvenance.toWrappedEvidence(m)));
                 case "ASSISTANT" -> history.add(new AssistantMessage(m.content() == null ? "" : m.content()));
                 case "TOOL"      -> history.add(toToolResponseMessage(m));
                 default          -> { /* skip control frames */ }

@@ -2,6 +2,7 @@ package sh.vork.ai.function;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
+import sh.vork.notification.NotificationRecipientType;
 
 /**
  * Input schema for the {@code sendNotification} tool.
@@ -42,6 +43,14 @@ public record SendNotificationRequest(
         @JsonProperty(value = "originatingSkill")
         @JsonPropertyDescription("Optional originating skill identifier for ledger traceability.")
         String originatingSkill,
+
+        @JsonProperty(required = true, value = "recipientType")
+        @JsonPropertyDescription("Required recipient intent. Use INTERNAL for Vork-internal user delivery, EXTERNAL for external participant communication.")
+        NotificationRecipientType recipientType,
+
+        @JsonProperty(value = "externalParticipant")
+        @JsonPropertyDescription("Optional external participant display name or identity when recipientType=EXTERNAL (for example 'Jane Swift').")
+        String externalParticipant,
 
         @JsonProperty(required = true, value = "address")
         @JsonPropertyDescription(

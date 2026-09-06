@@ -142,15 +142,19 @@
         if (!ctx) return;
         const isUser    = msg.role === 'USER';
         const isExternal = msg.role === 'EXTERNAL';
-        const textHtml  = (isUser || isExternal)
+        const isOutgoing = msg.role === 'OUTGOING';
+        const textHtml  = (isUser || isExternal || isOutgoing)
             ? escapeHtml(msg.content || '').replace(/\n/g, '<br>')
             : (typeof marked !== 'undefined' ? marked.parse(msg.content || '') : escapeHtml(msg.content || ''));
-        const bubbleCls  = isUser ? 'user' : (isExternal ? 'external' : (msg.role === 'ERROR' ? 'error' : 'assistant'));
-        const avatarCls  = isUser ? 'user' : (isExternal ? 'external' : 'assistant');
+        const bubbleCls  = isUser ? 'user' : (isExternal ? 'external' : (isOutgoing ? 'outgoing' : (msg.role === 'ERROR' ? 'error' : 'assistant')));
+        const avatarCls  = isUser ? 'user' : (isExternal ? 'external' : (isOutgoing ? 'outgoing' : 'assistant'));
         const avatarIcon = isUser
             ? '<i class="fa-solid fa-user"></i>'
-            : (isExternal ? '<i class="fa-solid fa-envelope"></i>' : '<i class="fa-solid fa-robot"></i>');
+            : (isExternal
+                ? '<i class="fa-solid fa-envelope"></i>'
+                : (isOutgoing ? '<i class="fa-solid fa-paper-plane"></i>' : '<i class="fa-solid fa-robot"></i>'));
         const attachHtml = renderAttachmentsHtml(msg.attachments);
+        const metadata = (msg && msg.messageMetadata && typeof msg.messageMetadata === 'object') ? msg.messageMetadata : {};
         const bodyHtml = isExternal
             ? ('<div class="external-message-card">'
                 + '<div class="external-message-header">'
@@ -159,9 +163,19 @@
                 + '</div>'
                 + '<div class="external-message-body">' + attachHtml + textHtml + '</div>'
                 + '</div>')
-            : (attachHtml + textHtml);
+            : (isOutgoing
+                ? ('<div class="outgoing-message-card">'
+                    + '<div class="outgoing-message-header">'
+                    + '<div><span class="outgoing-label">Sent to:</span> '
+                    + escapeHtml(String(msg.externalParticipant || metadata.destination || 'external recipient'))
+                    + ' · ' + escapeHtml(String(metadata.mediaType || msg.externalSource || 'External').replace(/_/g, ' '))
+                    + '</div>'
+                    + '</div>'
+                    + '<div class="outgoing-message-body">' + attachHtml + textHtml + '</div>'
+                    + '</div>')
+                : (attachHtml + textHtml));
         const row = document.createElement('div');
-        row.className = 'message-row' + (isUser ? ' user' : '');
+        row.className = 'message-row' + (isUser || isOutgoing ? ' user' : '');
         row.innerHTML =
             '<div class="avatar ' + avatarCls + '">' + avatarIcon + '</div>' +
             '<div class="bubble ' + bubbleCls + '">' + bodyHtml + '</div>';

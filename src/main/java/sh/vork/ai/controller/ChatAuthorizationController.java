@@ -61,6 +61,7 @@ import sh.vork.ai.security.VisualizableTool;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
 import sh.vork.ai.service.ExternalMessageProvenance;
+import sh.vork.ai.service.OutgoingMessageProvenance;
 import sh.vork.attention.AttentionSignalService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.scheduling.service.AiSchedulerService;
@@ -263,7 +264,12 @@ public class ChatAuthorizationController {
                 toolCallId,
                 toolName);
 
-            List<AiChatMessage> updated = new ArrayList<>(session.messages());
+            AiSession latestAfterToolExecution = sessionRepo.get(sessionUuid);
+            List<AiChatMessage> baseMessages = (latestAfterToolExecution != null && latestAfterToolExecution.messages() != null)
+                    ? latestAfterToolExecution.messages()
+                    : session.messages();
+
+            List<AiChatMessage> updated = new ArrayList<>(baseMessages == null ? List.of() : baseMessages);
             updated.add(toolMessage);
 
             log.info("Tool response persisted [tool={}, toolCallId={}, payloadSize={}]",
@@ -964,6 +970,7 @@ public class ChatAuthorizationController {
             switch (message.role()) {
                 case "USER" -> history.add(new UserMessage(message.content() == null ? "" : message.content()));
                 case "EXTERNAL" -> history.add(new UserMessage(ExternalMessageProvenance.toWrappedEvidence(message)));
+                case "OUTGOING" -> history.add(new UserMessage(OutgoingMessageProvenance.toWrappedEvidence(message)));
                 case "ASSISTANT" -> history.add(new AssistantMessage(message.content() == null ? "" : message.content()));
                 case "TOOL" -> appendToolReplay(history, message);
                 default -> {

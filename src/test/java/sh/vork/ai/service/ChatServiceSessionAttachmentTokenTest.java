@@ -22,6 +22,7 @@ import sh.vork.setup.SystemSettingsService;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -182,5 +183,91 @@ class ChatServiceSessionAttachmentTokenTest {
         assertTrue(wrapped.contains("source=\"email\""));
         assertTrue(wrapped.contains("participant=\"accounts@example.com\""));
         assertTrue(wrapped.contains("Please process invoice 42."));
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    @Test
+    void sendMessageAsUser_preservesHistoryOrderingAroundOutgoingAndExternalTurns() throws Exception {
+        MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+        AiOrchestrationService aiService = mock(AiOrchestrationService.class);
+        SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+
+        String sessionUuid = "session-history-order";
+        AiChatMessage user = new AiChatMessage("u1", "USER", "Draft a response", System.currentTimeMillis(), null);
+        AiChatMessage assistant = new AiChatMessage("a1", "ASSISTANT", "Draft created.", System.currentTimeMillis(), null);
+        AiChatMessage outgoing = new AiChatMessage(
+                "o1",
+                "OUTGOING",
+                "We can confirm completion on Tuesday.",
+                System.currentTimeMillis(),
+                null,
+                null,
+                null,
+                null,
+                "Email",
+                "Jane Swift",
+                Map.of(
+                        "mediaType", "EMAIL_ADDRESS",
+                        "destination", "jane@example.com",
+                        "deliveryState", "SENT",
+                        "title", "Project Confirmation",
+                        "bodyContentType", "text/plain"
+                ));
+        AiChatMessage external = new AiChatMessage(
+                "e1",
+                "EXTERNAL",
+                "Perfect, thanks.",
+                System.currentTimeMillis(),
+                null,
+                "Email",
+                "Jane Swift");
+
+        sessionRepo.save(new AiSession(
+                sessionUuid,
+                AiProvider.GEMINI.name(),
+                SessionOriginMode.WEB,
+                "alice",
+                "Untitled",
+                System.currentTimeMillis(),
+                0,
+                List.of(user, assistant, outgoing, external),
+                AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.RUNNING,
+                null,
+                null,
+                List.of(),
+                List.of(),
+                List.of()));
+
+        when(aiService.generateWithHistoryStrict(anyList(), any(String.class), eq(AiProvider.GEMINI), nullable(String.class)))
+                .thenReturn("{\"status\":\"FINISHED_TURN\",\"textResponse\":\"ok\"}");
+
+        ChatService chatService = new ChatService(
+                sessionRepo,
+                null,
+                aiService,
+                sessionFileSystem,
+                mock(SimpMessagingTemplate.class),
+                new ObjectMapper().findAndRegisterModules(),
+                List.of(),
+                mock(SystemNotificationService.class),
+                Runnable::run,
+                mock(RelayEncryptionService.class),
+                mock(RelayHttpClient.class),
+                mock(SystemSettingsService.class),
+                null);
+
+        chatService.sendMessageAsUser("alice", sessionUuid, "Continue", List.of(), AiProvider.GEMINI);
+
+        ArgumentCaptor<List<Message>> historyCaptor = ArgumentCaptor.forClass((Class) List.class);
+        verify(aiService).generateWithHistoryStrict(historyCaptor.capture(), any(String.class), eq(AiProvider.GEMINI), nullable(String.class));
+        List<Message> history = historyCaptor.getValue();
+
+        assertEquals(4, history.size());
+        assertEquals("Draft a response", history.get(0).getText());
+        assertEquals("Draft created.", history.get(1).getText());
+        assertTrue(history.get(2).getText().contains("<outgoing-message"));
+        assertTrue(history.get(2).getText().contains("destination=\"jane@example.com\""));
+        assertTrue(history.get(3).getText().contains("<external-message"));
     }
 }

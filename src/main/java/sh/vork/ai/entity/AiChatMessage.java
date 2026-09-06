@@ -1,6 +1,7 @@
 package sh.vork.ai.entity;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * A single turn in an AI chat session.
@@ -28,6 +29,7 @@ import java.util.List;
  * @param toolName    name of the tool; non-null for {@code TOOL} messages
  * @param externalSource optional external source/channel label (e.g. email, slack)
  * @param externalParticipant optional external participant identity/display name
+ * @param messageMetadata optional structured metadata for specialized roles (for example OUTGOING delivery metadata)
  */
 public record AiChatMessage(
         String              uuid,
@@ -39,26 +41,33 @@ public record AiChatMessage(
         String              toolCallId,
         String              toolName,
         String              externalSource,
-        String              externalParticipant
+        String              externalParticipant,
+        Map<String, String> messageMetadata
 ) {
+    public AiChatMessage {
+        if (messageMetadata != null) {
+            messageMetadata = Map.copyOf(messageMetadata);
+        }
+    }
+
     /** Backward-compatible constructor for messages without tool-call fields. */
     public AiChatMessage(String uuid, String role, String content,
                          long timestamp, List<AttachmentRef> attachments) {
-        this(uuid, role, content, timestamp, attachments, null, null, null, null, null);
+        this(uuid, role, content, timestamp, attachments, null, null, null, null, null, null);
     }
 
     /** Backward-compatible constructor for messages with tool-call fields but no external metadata. */
     public AiChatMessage(String uuid, String role, String content,
                          long timestamp, List<AttachmentRef> attachments,
                          List<ToolCallRef> toolCalls, String toolCallId, String toolName) {
-        this(uuid, role, content, timestamp, attachments, toolCalls, toolCallId, toolName, null, null);
+        this(uuid, role, content, timestamp, attachments, toolCalls, toolCallId, toolName, null, null, null);
     }
 
     /** Constructor for explicit external-message provenance metadata. */
     public AiChatMessage(String uuid, String role, String content,
                          long timestamp, List<AttachmentRef> attachments,
                          String externalSource, String externalParticipant) {
-        this(uuid, role, content, timestamp, attachments, null, null, null, externalSource, externalParticipant);
+        this(uuid, role, content, timestamp, attachments, null, null, null, externalSource, externalParticipant, null);
     }
 
     /**

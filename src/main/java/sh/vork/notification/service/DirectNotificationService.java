@@ -15,10 +15,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.context.ApplicationContext;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
+import sh.vork.ai.entity.AiChatMessage;
+import sh.vork.ai.entity.AiSession;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.orm.SearchQuery;
 import sh.vork.orm.SortOrder;
@@ -30,6 +34,7 @@ import sh.vork.notification.NotificationMediaType;
 import sh.vork.notification.NotificationProvider;
 import sh.vork.notification.NotificationProviderAttempt;
 import sh.vork.notification.NotificationProviderConfig;
+import sh.vork.notification.NotificationRecipientType;
 
 /**
  * Provides direct (unregistered-address) notification delivery for the AI tool layer.
@@ -48,7 +53,13 @@ public class DirectNotificationService {
             String status,
             String message,
             String ledgerEntryId,
-            String idempotencyKey
+            String idempotencyKey,
+            String mediaType,
+            String destination,
+            String providerConfigId,
+            String providerKey,
+            String providerMessageReferenceId,
+            String finalState
         ) {}
 
     /** Inner record returned by {@link #listAvailable()} — safe to serialise to JSON. */
@@ -60,15 +71,20 @@ public class DirectNotificationService {
     ) {}
 
     private final DatabaseRepository<NotificationProviderConfig> providerConfigRepo;
-        private final DatabaseRepository<NotificationLedgerEntry> notificationLedgerRepo;
+    private final DatabaseRepository<NotificationLedgerEntry> notificationLedgerRepo;
+    private final DatabaseRepository<AiSession> sessionRepo;
     private final ApplicationContext applicationContext;
+    @Autowired(required = false)
+    private SimpMessagingTemplate messagingTemplate;
 
     public DirectNotificationService(
             DatabaseRepository<NotificationProviderConfig> providerConfigRepo,
             DatabaseRepository<NotificationLedgerEntry> notificationLedgerRepo,
+            DatabaseRepository<AiSession> sessionRepo,
             ApplicationContext applicationContext) {
         this.providerConfigRepo = providerConfigRepo;
         this.notificationLedgerRepo = notificationLedgerRepo;
+        this.sessionRepo = sessionRepo;
         this.applicationContext = applicationContext;
     }
 
@@ -132,7 +148,8 @@ public class DirectNotificationService {
      * @return {@code "ok"} on success, or a human-readable error string on failure
      */
     public SendResult send(String providerConfigId, String title, String body, String address) {
-        return send(providerConfigId, title, body, Notification.CONTENT_TYPE_TEXT, null, null, null, address);
+        return send(providerConfigId, title, body, Notification.CONTENT_TYPE_TEXT,
+                null, null, null, NotificationRecipientType.INTERNAL, null, address);
     }
 
     /**
@@ -144,7 +161,8 @@ public class DirectNotificationService {
                            String body,
                            String bodyContentType,
                            String address) {
-        return send(providerConfigId, title, body, bodyContentType, null, null, null, address);
+        return send(providerConfigId, title, body, bodyContentType,
+            null, null, null, NotificationRecipientType.INTERNAL, null, address);
     }
 
     public SendResult send(String providerConfigId,
@@ -154,6 +172,8 @@ public class DirectNotificationService {
                            String idempotencyGroup,
                            String originatingAgent,
                            String originatingSkill,
+                   NotificationRecipientType recipientType,
+                   String externalParticipant,
                            String address) {
         log.debug("ENTER send: providerConfigId={}, address={}", providerConfigId, address);
 
@@ -181,7 +201,7 @@ public class DirectNotificationService {
                     null,
                     NotificationDeliveryState.FAILED,
                     "provider config '" + providerConfigId + "' not found");
-            return new SendResult("error", entry.errorMessage(), entry.uuid(), entry.idempotencyKey());
+            return toSendResult("error", entry.errorMessage(), entry);
         }
 
         Map<String, NotificationProvider> providerBeans =
@@ -209,7 +229,7 @@ public class DirectNotificationService {
                     cfg.displayName(),
                     NotificationDeliveryState.FAILED,
                     "no provider registered for key '" + cfg.providerKey() + "'");
-            return new SendResult("error", entry.errorMessage(), entry.uuid(), entry.idempotencyKey());
+            return toSendResult("error", entry.errorMessage(), entry);
         }
 
         NotificationMediaType mediaType = firstMediaType(provider, cfg);
@@ -237,7 +257,7 @@ public class DirectNotificationService {
                     null);
             log.info("Direct notification skipped as already sent [idempotencyKey={}, address={}]",
                     idempotencyKey, normalizedAddress);
-            return new SendResult("already sent", "already sent", alreadySentEntry.uuid(), idempotencyKey);
+            return toSendResult("already sent", "already sent", alreadySentEntry);
         }
 
         if (!provider.supportsDirectAddress()) {
@@ -259,7 +279,7 @@ public class DirectNotificationService {
                     cfg.displayName(),
                     NotificationDeliveryState.FAILED,
                     "provider '" + cfg.displayName() + "' requires prior opt-in and cannot send to unregistered addresses");
-            return new SendResult("error", entry.errorMessage(), entry.uuid(), entry.idempotencyKey());
+            return toSendResult("error", entry.errorMessage(), entry);
         }
 
         try {
@@ -282,9 +302,12 @@ public class DirectNotificationService {
                     cfg.displayName(),
                     NotificationDeliveryState.SENT,
                     null);
+                    if (NotificationRecipientType.EXTERNAL.equals(recipientType)) {
+                    persistOutgoingMessage(entry, notification, cfg, externalParticipant);
+                    }
             log.info("Direct notification sent via '{}' to '{}' [configId={}]",
                     cfg.providerKey(), address, providerConfigId);
-            return new SendResult("ok", "ok", entry.uuid(), entry.idempotencyKey());
+                    return toSendResult("ok", "ok", entry);
         } catch (Exception e) {
             log.warn("Direct notification delivery failed via '{}' [address={}, error={}]",
                     cfg.providerKey(), address, e.getMessage());
@@ -305,8 +328,130 @@ public class DirectNotificationService {
                     cfg.displayName(),
                     NotificationDeliveryState.FAILED,
                     "delivery failed — " + e.getMessage());
-            return new SendResult("error", entry.errorMessage(), entry.uuid(), entry.idempotencyKey());
+            return toSendResult("error", entry.errorMessage(), entry);
         }
+    }
+
+    private SendResult toSendResult(String status, String message, NotificationLedgerEntry entry) {
+        return new SendResult(
+                status,
+                message,
+                entry == null ? null : entry.uuid(),
+                entry == null ? null : entry.idempotencyKey(),
+                entry == null ? null : entry.mediaType(),
+                entry == null ? null : entry.destination(),
+                entry == null ? null : entry.providerConfigId(),
+                entry == null ? null : entry.providerKey(),
+                entry == null ? null : entry.providerMessageReferenceId(),
+                entry == null || entry.finalState() == null ? null : entry.finalState().name());
+    }
+
+    private void persistOutgoingMessage(NotificationLedgerEntry entry,
+                                        Notification notification,
+                                        NotificationProviderConfig cfg,
+                                        String externalParticipant) {
+        if (entry == null || notification == null) {
+            return;
+        }
+        String sessionUuid = entry.originatingSessionUuid();
+        if (sessionUuid == null || sessionUuid.isBlank()) {
+            return;
+        }
+        AiSession session = sessionRepo.get(sessionUuid);
+        if (session == null) {
+            log.warn("Cannot persist OUTGOING message: session not found [sessionUuid={}, ledgerEntryId={}]",
+                    sessionUuid, entry.uuid());
+            return;
+        }
+
+        String mediaType = normalizeOptional(entry.mediaType());
+        String destination = normalizeOptional(entry.destination());
+        String participant = normalizeOptional(externalParticipant);
+        if (participant == null) {
+            participant = destination == null ? "external recipient" : destination;
+        }
+
+        Map<String, String> metadata = new java.util.LinkedHashMap<>();
+        metadata.put("mediaType", mediaType == null ? "unknown" : mediaType);
+        metadata.put("destination", destination == null ? "" : destination);
+        metadata.put("providerConfigId", normalizeOptional(entry.providerConfigId()) == null ? "" : entry.providerConfigId().trim());
+        metadata.put("providerKey", normalizeOptional(entry.providerKey()) == null ? "" : entry.providerKey().trim());
+        metadata.put("providerDisplayName", cfg == null || cfg.displayName() == null ? "" : cfg.displayName().trim());
+        metadata.put("providerMessageReferenceId", normalizeOptional(entry.providerMessageReferenceId()) == null ? "" : entry.providerMessageReferenceId().trim());
+        metadata.put("title", notification.title() == null ? "" : notification.title());
+        metadata.put("bodyContentType", notification.bodyContentType() == null ? Notification.CONTENT_TYPE_TEXT : notification.bodyContentType());
+        metadata.put("deliveryState", entry.finalState() == null ? "SENT" : entry.finalState().name());
+        metadata.put("ledgerEntryId", entry.uuid() == null ? "" : entry.uuid());
+        metadata.put("idempotencyGroup", entry.idempotencyGroup() == null ? "" : entry.idempotencyGroup());
+        metadata.put("idempotencyKey", entry.idempotencyKey() == null ? "" : entry.idempotencyKey());
+
+        AiChatMessage outgoing = new AiChatMessage(
+                UUID.randomUUID().toString(),
+                "OUTGOING",
+                notification.body() == null ? "" : notification.body(),
+                System.currentTimeMillis(),
+                null,
+            null,
+            null,
+            null,
+                toDisplayMediaLabel(mediaType),
+                participant,
+                metadata);
+
+        List<AiChatMessage> updatedMessages = new ArrayList<>(
+                session.messages() == null ? List.of() : session.messages());
+        updatedMessages.add(outgoing);
+        sessionRepo.save(new AiSession(
+                session.uuid(),
+                session.provider(),
+                session.originMode(),
+                session.username(),
+                session.name(),
+                session.createdAt(),
+                session.currentRoundCount(),
+                List.copyOf(updatedMessages),
+                session.environmentVariables(),
+                session.status(),
+                session.activeAgentTemplateId(),
+                session.modelId(),
+                session.skillStack(),
+                session.sessionSkillUuids(),
+                session.sessionToolIds()));
+        log.info("Persisted OUTGOING message from notification dispatch [sessionUuid={}, ledgerEntryId={}, destination={}]",
+                sessionUuid, entry.uuid(), destination);
+        publishOutgoingMessage(sessionUuid, outgoing);
+    }
+
+    private void publishOutgoingMessage(String sessionUuid, AiChatMessage outgoing) {
+        if (sessionUuid == null || sessionUuid.isBlank() || outgoing == null) {
+            return;
+        }
+        if (messagingTemplate == null) {
+            log.debug("Skipping OUTGOING websocket publish: messaging template unavailable [sessionUuid={}]", sessionUuid);
+            return;
+        }
+        try {
+            messagingTemplate.convertAndSend("/topic/chat/" + sessionUuid, outgoing);
+            log.debug("Published OUTGOING websocket message [sessionUuid={}, messageUuid={}]", sessionUuid, outgoing.uuid());
+        } catch (Exception ex) {
+            log.warn("Failed to publish OUTGOING websocket message [sessionUuid={}, messageUuid={}, error={}]",
+                    sessionUuid, outgoing.uuid(), ex.getMessage());
+        }
+    }
+
+    private static String toDisplayMediaLabel(String mediaType) {
+        if (mediaType == null || mediaType.isBlank()) {
+            return "External";
+        }
+        String normalized = mediaType.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "EMAIL_ADDRESS" -> "Email";
+            case "PHONE_NUMBER" -> "SMS";
+            case "SLACK" -> "Slack";
+            case "TELEGRAM" -> "Telegram";
+            case "WHATSAPP" -> "WhatsApp";
+            default -> normalized.replace('_', ' ');
+        };
     }
 
     private NotificationLedgerEntry createLedgerEntry(long createdAt,
