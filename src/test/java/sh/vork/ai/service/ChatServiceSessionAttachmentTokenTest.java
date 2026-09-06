@@ -11,6 +11,7 @@ import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
+import sh.vork.ai.protocol.RetainedContext;
 import sh.vork.filesystem.FileArea;
 import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.orm.mock.MapDatabaseRepository;
@@ -68,7 +69,7 @@ class ChatServiceSessionAttachmentTokenTest {
         when(sessionFileSystem.read(eq(FileArea.SESSION), eq(sessionUuid), eq("docs/note.txt")))
                 .thenReturn(new ByteArrayInputStream(attachedText.getBytes(StandardCharsets.UTF_8)));
         when(aiService.generateWithHistoryStrict(anyList(), any(String.class), eq(AiProvider.GEMINI), nullable(String.class)))
-                .thenReturn("{\"status\":\"FINISHED_TURN\",\"textResponse\":\"ok\"}");
+                .thenReturn("{\"status\":\"FINISHED_TURN\",\"textResponse\":\"ok\",\"retainedContext\":{\"facts\":[\"Resolved attachment note.txt and summarized user request\"],\"decisions\":[],\"unresolved\":[]}}");
 
         ChatService chatService = new ChatService(
                 sessionRepo,
@@ -115,6 +116,7 @@ class ChatServiceSessionAttachmentTokenTest {
                 AiChatMessage assistant = saved.messages().get(1);
                 assertEquals("ASSISTANT", assistant.role());
                 assertEquals(null, assistant.attachments());
+                assertEquals(new RetainedContext(List.of("Resolved attachment note.txt and summarized user request"), List.of(), List.of()), assistant.retainedContext());
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -171,6 +173,14 @@ class ChatServiceSessionAttachmentTokenTest {
 
         chatService.sendMessageAsUser("alice", sessionUuid, "summarize", List.of(), AiProvider.GEMINI);
 
+        AiSession saved = sessionRepo.get(sessionUuid);
+        assertNotNull(saved);
+        assertEquals(3, saved.messages().size());
+        AiChatMessage assistant = saved.messages().get(2);
+        assertEquals("ASSISTANT", assistant.role());
+        assertEquals("ok", assistant.content());
+        assertEquals(RetainedContext.empty(), assistant.retainedContext());
+
         ArgumentCaptor<List<Message>> historyCaptor = ArgumentCaptor.forClass((Class) List.class);
         verify(aiService).generateWithHistoryStrict(historyCaptor.capture(), any(String.class), eq(AiProvider.GEMINI), nullable(String.class));
 
@@ -212,7 +222,8 @@ class ChatServiceSessionAttachmentTokenTest {
                         "deliveryState", "SENT",
                         "title", "Project Confirmation",
                         "bodyContentType", "text/plain"
-                ));
+                ),
+                null);
         AiChatMessage external = new AiChatMessage(
                 "e1",
                 "EXTERNAL",
@@ -270,4 +281,60 @@ class ChatServiceSessionAttachmentTokenTest {
         assertTrue(history.get(2).getText().contains("destination=\"jane@example.com\""));
         assertTrue(history.get(3).getText().contains("<external-message"));
     }
+
+        @Test
+        void sendMessageAsUser_recoversAlternateResponseFieldAndPersistsRetainedContext() throws Exception {
+                MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+                AiOrchestrationService aiService = mock(AiOrchestrationService.class);
+                SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+
+                String sessionUuid = "session-retained-context-alt-field";
+                sessionRepo.save(new AiSession(
+                                sessionUuid,
+                                AiProvider.GEMINI.name(),
+                                SessionOriginMode.WEB,
+                                "alice",
+                                "Untitled",
+                                System.currentTimeMillis(),
+                                0,
+                                List.of(),
+                                AiSession.defaultEnvironmentVariables(),
+                                AiSessionStatus.RUNNING,
+                                null,
+                                null,
+                                List.of(),
+                                List.of(),
+                                List.of()));
+
+                when(aiService.generateWithHistoryStrict(anyList(), any(String.class), eq(AiProvider.GEMINI), nullable(String.class)))
+                                .thenReturn("{\"status\":\"FINISHED_TURN\",\"response\":\"ok-from-alt\",\"retainedContext\":{\"facts\":[\"Looked up alternate response field and completed turn\"],\"decisions\":[],\"unresolved\":[]}}");
+
+                ChatService chatService = new ChatService(
+                                sessionRepo,
+                                null,
+                                aiService,
+                                sessionFileSystem,
+                                mock(SimpMessagingTemplate.class),
+                                new ObjectMapper().findAndRegisterModules(),
+                                List.of(),
+                                mock(SystemNotificationService.class),
+                                Runnable::run,
+                                mock(RelayEncryptionService.class),
+                                mock(RelayHttpClient.class),
+                                mock(SystemSettingsService.class),
+                                null);
+
+                AiChatMessage response = chatService.sendMessageAsUser("alice", sessionUuid, "status?", List.of(), AiProvider.GEMINI);
+                assertNotNull(response);
+                assertEquals("ok-from-alt", response.content());
+                assertEquals(new RetainedContext(List.of("Looked up alternate response field and completed turn"), List.of(), List.of()), response.retainedContext());
+
+                AiSession saved = sessionRepo.get(sessionUuid);
+                assertNotNull(saved);
+                assertEquals(2, saved.messages().size());
+                AiChatMessage assistant = saved.messages().get(1);
+                assertEquals("ASSISTANT", assistant.role());
+                assertEquals("ok-from-alt", assistant.content());
+                assertEquals(new RetainedContext(List.of("Looked up alternate response field and completed turn"), List.of(), List.of()), assistant.retainedContext());
+        }
 }

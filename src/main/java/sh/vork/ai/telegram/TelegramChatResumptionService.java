@@ -641,7 +641,7 @@ public class TelegramChatResumptionService {
     }
 
     private StructuredAgentResponse extractStructured(String raw) {
-        if (raw == null || raw.isBlank()) return new StructuredAgentResponse("FINISHED_TURN", "", null, null);
+        if (raw == null || raw.isBlank()) return new StructuredAgentResponse("FINISHED_TURN", "", null, null, null);
         try {
             String json = raw.strip();
             if (json.startsWith("```")) {
@@ -649,7 +649,7 @@ public class TelegramChatResumptionService {
             }
             return objectMapper.readValue(json, StructuredAgentResponse.class);
         } catch (Exception ignored) {
-            return new StructuredAgentResponse("FINISHED_TURN", raw, null, null);
+            return new StructuredAgentResponse("FINISHED_TURN", raw, null, null, null);
         }
     }
 

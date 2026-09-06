@@ -24,8 +24,14 @@ import java.security.KeyPairGenerator;
 import java.io.ByteArrayInputStream;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 
 import sh.vork.ai.context.ToolExecutionContext;
+import sh.vork.ai.AiProvider;
+import sh.vork.ai.entity.AiChatMessage;
+import sh.vork.ai.entity.AiSession;
+import sh.vork.ai.entity.AiSessionStatus;
+import sh.vork.ai.entity.SessionOriginMode;
 import sh.vork.ai.function.CreateSkillRequest;
 import sh.vork.ai.memory.InMemorySessionEnvironmentService;
 import sh.vork.ai.security.VisualizableTool;
@@ -33,6 +39,7 @@ import sh.vork.ai.security.encrypt.EncryptionService;
 import sh.vork.filesystem.FileArea;
 import sh.vork.filesystem.SessionFileSystem;
 import sh.vork.orm.DatabaseEntity;
+import sh.vork.orm.mock.MapDatabaseRepository;
 import sh.vork.security.SecureCredentialStore;
 import sh.vork.skill.Skill;
 import sh.vork.skill.SkillService;
@@ -48,6 +55,101 @@ class AiConfigRecordToolsTest {
     void clearExecutionContext() {
         ToolExecutionContext.clear();
         SecurityContextHolder.clearContext();
+        org.slf4j.MDC.remove("sessionUuid");
+    }
+
+    @Test
+    void readChatHistory_readsCurrentSessionMessageByReference() throws Exception {
+        JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
+        TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
+        AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
+
+        MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+        String sessionUuid = "session-read-history";
+        AiChatMessage user = new AiChatMessage("m1", "USER", "hello", System.currentTimeMillis(), null);
+        AiChatMessage assistant = new AiChatMessage("m2", "ASSISTANT", "full response body", System.currentTimeMillis(), null);
+        sessionRepo.save(new AiSession(
+                sessionUuid,
+                AiProvider.GEMINI.name(),
+                SessionOriginMode.WEB,
+                "alice",
+                "Test",
+                System.currentTimeMillis(),
+                0,
+                List.of(user, assistant),
+                AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.RUNNING,
+                null,
+                null,
+                List.of(),
+                List.of(),
+                List.of()));
+
+        org.slf4j.MDC.put("sessionUuid", sessionUuid);
+        ToolCallback tool = config.readChatHistory(sessionRepo);
+
+        String output = tool.call("{\"reference\":\"last-assistant\"}");
+        Map<String, Object> map = objectMapper.readValue(output, new TypeReference<Map<String, Object>>() {});
+
+        assertEquals("ok", map.get("status"));
+        assertEquals(sessionUuid, map.get("sessionUuid"));
+        assertEquals("m2", map.get("messageUuid"));
+        assertEquals("ASSISTANT", map.get("role"));
+        assertEquals("full response body", map.get("textResponse"));
+    }
+
+    @Test
+    void readChatHistory_cannotAccessOtherSessionHistory() throws Exception {
+        JavaTypeClassLoader classLoader = mock(JavaTypeClassLoader.class);
+        TypeDatabaseService typeDatabaseService = mock(TypeDatabaseService.class);
+        AiConfig config = new AiConfig(classLoader, typeDatabaseService, objectMapper);
+
+        MapDatabaseRepository<AiSession> sessionRepo = new MapDatabaseRepository<>(AiSession.class);
+        String sessionA = "session-a";
+        String sessionB = "session-b";
+
+        sessionRepo.save(new AiSession(
+                sessionA,
+                AiProvider.GEMINI.name(),
+                SessionOriginMode.WEB,
+                "alice",
+                "Session A",
+                System.currentTimeMillis(),
+                0,
+                List.of(new AiChatMessage("a-1", "ASSISTANT", "a-content", System.currentTimeMillis(), null)),
+                AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.RUNNING,
+                null,
+                null,
+                List.of(),
+                List.of(),
+                List.of()));
+
+        sessionRepo.save(new AiSession(
+                sessionB,
+                AiProvider.GEMINI.name(),
+                SessionOriginMode.WEB,
+                "bob",
+                "Session B",
+                System.currentTimeMillis(),
+                0,
+                List.of(new AiChatMessage("b-1", "ASSISTANT", "b-content", System.currentTimeMillis(), null)),
+                AiSession.defaultEnvironmentVariables(),
+                AiSessionStatus.RUNNING,
+                null,
+                null,
+                List.of(),
+                List.of(),
+                List.of()));
+
+        org.slf4j.MDC.put("sessionUuid", sessionA);
+        ToolCallback tool = config.readChatHistory(sessionRepo);
+
+        String output = tool.call("{\"reference\":\"b-1\"}");
+        Map<String, Object> map = objectMapper.readValue(output, new TypeReference<Map<String, Object>>() {});
+
+        assertEquals("error", map.get("status"));
+        assertTrue(String.valueOf(map.get("message")).contains("not found"));
     }
 
     @Test

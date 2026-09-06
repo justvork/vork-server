@@ -41,6 +41,7 @@ import org.springframework.util.MimeType;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import sh.vork.ai.AiProvider;
@@ -59,6 +60,7 @@ import sh.vork.ai.function.RequestInformationToolRequest;
 import sh.vork.ai.lifecycle.AgentTemplateSeeder;
 import sh.vork.ai.provider.AiModelService;
 import sh.vork.ai.protocol.StructuredAgentResponse;
+import sh.vork.ai.protocol.RetainedContext;
 import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.ai.protocol.interaction.FieldSource;
 import sh.vork.ai.protocol.interaction.FormAction;
@@ -1310,7 +1312,15 @@ public class ChatService {
                         "TEXT_RESPONSE", "CHAT_OUTPUT", progressText, null);
                 messaging.convertAndSend("/topic/chat/" + sessionUuid, progressEvent);
                 transitionMsgs.add(new AiChatMessage(UUID.randomUUID().toString(), "ASSISTANT",
-                        progressText, System.currentTimeMillis(), null));
+                    progressText, System.currentTimeMillis(), null,
+                    null, null, null, null, null, null,
+                    null));
+                RetainedContext progressRetainedContext = normalizeRetainedContext(structured.retainedContext());
+                if (progressRetainedContext.hasContent()) {
+                    log.debug("Assistant retainedContext captured [session={}, iteration={}, status=CONTINUE_TURN, retainedContext={}]",
+                        sessionUuid, i, progressRetainedContext);
+                    broadcastRetainedContextEvent(sessionUuid, progressRetainedContext);
+                }
                 history.add(new AssistantMessage(progressText));
                 currentPrompt = "Continue executing the task. Use available tools as needed.";
                 log.debug("CONTINUE_TURN progress broadcast [session={}, iteration={}]", sessionUuid, i);
@@ -1394,7 +1404,14 @@ public class ChatService {
                 AiChatMessage aiMsg = new AiChatMessage(
                     UUID.randomUUID().toString(), "ASSISTANT",
                     finalText, System.currentTimeMillis(),
-                    assistantAttachments == null ? null : Collections.unmodifiableList(assistantAttachments));
+                    assistantAttachments == null ? null : Collections.unmodifiableList(assistantAttachments),
+                    null, null, null, null, null, null,
+                    normalizeRetainedContext(structured.retainedContext()));
+                if (aiMsg.retainedContext() != null && aiMsg.retainedContext().hasContent()) {
+                    log.debug("Assistant retainedContext captured [session={}, iteration={}, status={}, retainedContext={}]",
+                            sessionUuid, i, structured.status(), aiMsg.retainedContext());
+                    broadcastRetainedContextEvent(sessionUuid, aiMsg.retainedContext());
+                }
 
             List<AiChatMessage> updated = new ArrayList<>(latest.messages());
             if (persistUserMessage) {
@@ -1431,7 +1448,9 @@ public class ChatService {
         String timeoutMsg = "Processing required too many steps and was interrupted. Please try again.";
         AiChatMessage aiMsg = new AiChatMessage(
                 UUID.randomUUID().toString(), "ASSISTANT",
-                timeoutMsg, System.currentTimeMillis(), null);
+            timeoutMsg, System.currentTimeMillis(), null,
+            null, null, null, null, null, null,
+            null);
         AiSession latest = sessionRepo.get(sessionUuid);
         if (latest == null) {
             latest = initialSession;
@@ -2236,6 +2255,18 @@ public class ChatService {
         log.debug("Skill transition [session={}, text={}]", sessionUuid, text);
     }
 
+    private void broadcastRetainedContextEvent(String sessionUuid, RetainedContext retainedContext) {
+        RetainedContext normalized = normalizeRetainedContext(retainedContext);
+        if (!normalized.hasContent()) {
+            return;
+        }
+        String payload = serializeRetainedContextForUi(normalized);
+        UiEventFrame event = new UiEventFrame(
+                UUID.randomUUID().toString(), "AI_RETAINED_CONTEXT", "AI_RETAINED_CONTEXT", payload, null);
+        messaging.convertAndSend("/topic/chat/" + sessionUuid, event);
+        log.debug("AI retained context event broadcast [session={}, retainedContext={}]", sessionUuid, normalized);
+    }
+
     /**
      * Resolves the display name of an {@link AgentTemplate} by UUID.
      * Falls back to a generic label when the template cannot be found.
@@ -2286,7 +2317,7 @@ public class ChatService {
 
     private StructuredAgentResponse parseStructuredResponse(String rawResponse) {
         if (rawResponse == null || rawResponse.isBlank()) {
-            return new StructuredAgentResponse("FINISHED_TURN", "", null, null);
+            return new StructuredAgentResponse("FINISHED_TURN", "", null, null, null);
         }
         String candidate = rawResponse.strip();
         if (candidate.startsWith("```")) {
@@ -2304,21 +2335,41 @@ public class ChatService {
 
         for (String json : attempts) {
             try {
-                StructuredAgentResponse parsed = objectMapper.readValue(json, StructuredAgentResponse.class);
+                JsonNode node = objectMapper.readTree(json);
+                if (node == null || !node.isObject()) {
+                    continue;
+                }
 
-                // If textResponse is missing, try common alternate field names the model might use
-                // (e.g. "result", "response", "message"). This avoids leaking raw JSON to the UI.
-                if (parsed.textResponse() == null || parsed.textResponse().isBlank()) {
-                    com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(json);
+                String status = textField(node, "status");
+                if (status == null || status.isBlank()) {
+                    status = "FINISHED_TURN";
+                }
+
+                String textResponse = textField(node, "textResponse");
+                if (textResponse == null || textResponse.isBlank()) {
                     String alt = extractAlternateTextField(node);
                     if (alt != null && !alt.isBlank()) {
                         log.debug("parseStructuredResponse: textResponse absent, recovered from alternate field [status={}]",
-                                parsed.status());
-                        parsed = new StructuredAgentResponse(
-                                parsed.status(), alt, parsed.targetAgent(), parsed.delegationInstructions());
+                                status);
+                        textResponse = alt;
                     }
                 }
-                return parsed;
+
+                RetainedContext retainedContext = parseRetainedContext(node.get("retainedContext"));
+                if (retainedContext == null || !retainedContext.hasContent()) {
+                    retainedContext = parseLegacyRetainedContext(node.get("contextLog"));
+                }
+                if (retainedContext != null && retainedContext.hasContent()) {
+                    log.debug("parseStructuredResponse: retainedContext present [status={}, retainedContext={}]",
+                            status, retainedContext);
+                }
+
+                return new StructuredAgentResponse(
+                        status,
+                        textResponse == null ? "" : textResponse,
+                        textField(node, "targetAgent"),
+                        textField(node, "delegationInstructions"),
+                        retainedContext);
             } catch (Exception ignored) {
                 // Try next candidate.
             }
@@ -2329,18 +2380,100 @@ public class ChatService {
             String recoveredText = extractMalformedTextResponse(rawAttempt);
             if (recoveredText != null && !recoveredText.isBlank()) {
                 log.warn("Recovered textResponse from malformed StructuredAgentResponse envelope");
-                return new StructuredAgentResponse("FINISHED_TURN", recoveredText, null, null);
+                return new StructuredAgentResponse("FINISHED_TURN", recoveredText, null, null, null);
             }
         }
         String recoveredFromOriginal = extractMalformedTextResponse(rawResponse);
         if (recoveredFromOriginal != null && !recoveredFromOriginal.isBlank()) {
             log.warn("Recovered textResponse from malformed StructuredAgentResponse envelope");
-            return new StructuredAgentResponse("FINISHED_TURN", recoveredFromOriginal, null, null);
+            return new StructuredAgentResponse("FINISHED_TURN", recoveredFromOriginal, null, null, null);
         }
 
         log.warn("Failed to parse StructuredAgentResponse, treating as FINISHED_TURN [rawResponse={}]",
                 rawResponse);
-        return new StructuredAgentResponse("FINISHED_TURN", rawResponse, null, null);
+        return new StructuredAgentResponse("FINISHED_TURN", rawResponse, null, null, null);
+    }
+
+    private static String textField(JsonNode node, String field) {
+        if (node == null || field == null || field.isBlank()) {
+            return null;
+        }
+        JsonNode value = node.get(field);
+        if (value == null || value.isNull()) {
+            return null;
+        }
+        if (value.isTextual()) {
+            String text = value.asText();
+            return text == null || text.isBlank() ? null : text;
+        }
+        if (value.isNumber() || value.isBoolean()) {
+            return value.asText();
+        }
+        return null;
+    }
+
+    private RetainedContext parseRetainedContext(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        if (!node.isObject()) {
+            return null;
+        }
+        List<String> facts = toStringList(node.get("facts"));
+        List<String> decisions = toStringList(node.get("decisions"));
+        List<String> unresolved = toStringList(node.get("unresolved"));
+        return normalizeRetainedContext(new RetainedContext(facts, decisions, unresolved));
+    }
+
+    private static RetainedContext parseLegacyRetainedContext(JsonNode legacyNode) {
+        if (legacyNode == null || legacyNode.isNull() || !legacyNode.isTextual()) {
+            return null;
+        }
+        String value = legacyNode.asText();
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return new RetainedContext(List.of(value.trim()), List.of(), List.of());
+    }
+
+    private static List<String> toStringList(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return List.of();
+        }
+        if (node.isTextual()) {
+            String value = node.asText();
+            return value == null || value.isBlank() ? List.of() : List.of(value.trim());
+        }
+        if (!node.isArray()) {
+            return List.of();
+        }
+        List<String> values = new ArrayList<>();
+        for (JsonNode item : node) {
+            if (item == null || item.isNull()) {
+                continue;
+            }
+            String value = item.asText(null);
+            if (value != null && !value.isBlank()) {
+                values.add(value.trim());
+            }
+        }
+        return values;
+    }
+
+    private static RetainedContext normalizeRetainedContext(RetainedContext retainedContext) {
+        if (retainedContext == null) {
+            return RetainedContext.empty();
+        }
+        return new RetainedContext(retainedContext.facts(), retainedContext.decisions(), retainedContext.unresolved());
+    }
+
+    private String serializeRetainedContextForUi(RetainedContext retainedContext) {
+        try {
+            return objectMapper.writeValueAsString(retainedContext);
+        } catch (Exception ex) {
+            log.warn("Failed to serialize retainedContext for UI event: {}", ex.getMessage());
+            return "";
+        }
     }
 
     private static String extractLikelyJsonObject(String text) {
@@ -2387,9 +2520,9 @@ public class ChatService {
      * names that models occasionally use instead of {@code textResponse}.
      * Returns {@code null} when none match.
      */
-    private static String extractAlternateTextField(com.fasterxml.jackson.databind.JsonNode node) {
+    private static String extractAlternateTextField(JsonNode node) {
         for (String field : List.of("result", "response", "message", "content", "output", "text", "reply")) {
-            com.fasterxml.jackson.databind.JsonNode n = node.get(field);
+            JsonNode n = node.get(field);
             if (n != null && n.isTextual() && !n.asText().isBlank()) {
                 return n.asText();
             }

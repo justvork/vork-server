@@ -6,7 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -16,6 +18,7 @@ import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -25,12 +28,14 @@ import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
+import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.orm.DatabaseRepository;
 
 class ReflectionToolCallbackFactoryTest {
 
     private ReflectionService reflectionService;
     private DatabaseRepository<AiSession> aiSessionRepository;
+    private SimpMessagingTemplate messagingTemplate;
     private ReflectionToolCallbackFactory factory;
 
     @BeforeEach
@@ -38,10 +43,12 @@ class ReflectionToolCallbackFactoryTest {
     void setUp() {
         reflectionService = mock(ReflectionService.class);
         aiSessionRepository = (DatabaseRepository<AiSession>) mock(DatabaseRepository.class);
+        messagingTemplate = mock(SimpMessagingTemplate.class);
 
         factory = new ReflectionToolCallbackFactory(new ObjectMapper());
         ReflectionTestUtils.setField(factory, "reflectionService", reflectionService);
         ReflectionTestUtils.setField(factory, "aiSessionRepository", aiSessionRepository);
+        ReflectionTestUtils.setField(factory, "messagingTemplate", messagingTemplate);
     }
 
     @AfterEach
@@ -93,22 +100,7 @@ class ReflectionToolCallbackFactoryTest {
         ToolCallback callback = factory.create(reflection, List.of(binding));
 
         ToolExecutionContext.bindSessionUuid("session-1");
-        when(aiSessionRepository.get("session-1")).thenReturn(new AiSession(
-                "session-1",
-                "GEMINI",
-                SessionOriginMode.WEB,
-                "alice",
-                "Session",
-                System.currentTimeMillis(),
-                0,
-                List.of(),
-                Map.of(),
-                AiSessionStatus.RUNNING,
-                null,
-                null,
-                List.of(),
-                List.of(),
-                List.of()));
+        when(aiSessionRepository.get("session-1")).thenReturn(sampleSession("session-1", "alice"));
         when(reflectionService.executeRestReflectionByUuid(eq("uuid-1"), any(), eq("default"), eq("alice")))
                 .thenReturn("{\"status\":\"ok\"}");
 
@@ -116,6 +108,8 @@ class ReflectionToolCallbackFactoryTest {
 
         assertEquals("{\"status\":\"ok\"}", result);
         verify(reflectionService).executeRestReflectionByUuid(eq("uuid-1"), any(), eq("default"), eq("alice"));
+        verify(messagingTemplate, times(2)).convertAndSend(eq("/topic/chat/session-1"), any(UiEventFrame.class));
+        verify(aiSessionRepository, atLeastOnce()).save(any(AiSession.class));
     }
 
         @Test
@@ -239,5 +233,24 @@ class ReflectionToolCallbackFactoryTest {
                 1L,
                 System.currentTimeMillis(),
                 System.currentTimeMillis());
+    }
+
+    private static AiSession sampleSession(String sessionUuid, String username) {
+        return new AiSession(
+                sessionUuid,
+                "GEMINI",
+                SessionOriginMode.WEB,
+                username,
+                "Session",
+                System.currentTimeMillis(),
+                0,
+                List.of(),
+                Map.of(),
+                AiSessionStatus.RUNNING,
+                null,
+                null,
+                List.of(),
+                List.of(),
+                List.of());
     }
 }

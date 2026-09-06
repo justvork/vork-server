@@ -396,7 +396,8 @@ public class DirectNotificationService {
             null,
                 toDisplayMediaLabel(mediaType),
                 participant,
-                metadata);
+                metadata,
+                null);
 
         List<AiChatMessage> updatedMessages = new ArrayList<>(
                 session.messages() == null ? List.of() : session.messages());

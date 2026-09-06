@@ -54,6 +54,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import sh.vork.ai.AiProvider;
 import sh.vork.ai.agent.AgentTemplate;
 import sh.vork.ai.context.ToolExecutionContext;
+import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.entity.AiSessionStatus;
 import sh.vork.ai.entity.SessionOriginMode;
@@ -108,6 +109,7 @@ import sh.vork.ai.function.ListNotificationLedgerEntriesRequest;
 import sh.vork.ai.function.ListNotificationProvidersRequest;
 import sh.vork.ai.function.ListSshConnectionsRequest;
 import sh.vork.ai.function.LogInfoRequest;
+import sh.vork.ai.function.ReadChatHistoryRequest;
 import sh.vork.ai.function.ReadFileRequest;
 import sh.vork.ai.function.ReadTextFileRangeRequest;
 import sh.vork.ai.function.ReadProcessRequest;
@@ -2250,6 +2252,65 @@ the protocol and will break the system. Do not converse. Execute.
     }
 
     @Bean
+    @Hidden
+    @ToolCategory("Agent Orchestration")
+    public ToolCallback readChatHistory(DatabaseRepository<AiSession> aiSessionRepository) {
+        return FunctionToolCallback
+                .builder("readChatHistory", (ReadChatHistoryRequest req) -> {
+                    if (req == null || req.reference() == null || req.reference().isBlank()) {
+                        return "{\"status\":\"error\",\"message\":\"reference is required\"}";
+                    }
+
+                    String sessionUuid = resolveSessionUuid();
+                    // This tool is intentionally scoped to the current execution context only.
+                    if (sessionUuid == null || sessionUuid.isBlank() || "system".equals(sessionUuid)) {
+                        return "{\"status\":\"error\",\"message\":\"readChatHistory requires an active chat session context\"}";
+                    }
+
+                    AiSession session = aiSessionRepository.get(sessionUuid);
+                    if (session == null) {
+                        return "{\"status\":\"error\",\"message\":\"active session not found\"}";
+                    }
+
+                    List<AiChatMessage> messages = session.messages() == null ? List.of() : session.messages();
+                    if (messages.isEmpty()) {
+                        return "{\"status\":\"error\",\"message\":\"session has no chat history\"}";
+                    }
+
+                    String reference = req.reference().trim();
+                    int index = resolveHistoryIndex(messages, reference);
+                    if (index < 0 || index >= messages.size()) {
+                        return "{\"status\":\"error\",\"message\":\"chat history item not found for reference: "
+                                + reference.replace("\"", "'") + "\"}";
+                    }
+
+                    AiChatMessage message = messages.get(index);
+                    String content = message.content() == null ? "" : message.content();
+
+                    Map<String, Object> response = new LinkedHashMap<>();
+                    response.put("status", "ok");
+                    response.put("sessionUuid", sessionUuid);
+                    response.put("reference", reference);
+                    response.put("index", index);
+                    response.put("messageUuid", message.uuid());
+                    response.put("role", message.role());
+                    response.put("timestamp", message.timestamp());
+                    response.put("textResponse", content);
+
+                    try {
+                        return objectMapper.writeValueAsString(response);
+                    } catch (Exception e) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + e.getMessage().replace("\"", "'") + "\"}";
+                    }
+                })
+                .description("Read one chat-history item's full content from the current session only. "
+                        + "Supports references: message UUID, 'uuid:<uuid>', numeric index, 'index:<n>', '-1' for last item, 'last', and 'last-assistant'.")
+                .inputType(ReadChatHistoryRequest.class)
+                .build();
+    }
+
+    @Bean
     @ToolCategory("Files")
     public ToolCallback getTextFileInfo(SessionFileToolSuite sessionFileToolSuite) {
         return FunctionToolCallback
@@ -4115,6 +4176,74 @@ REASONING_HINT: Authorization is required to compile {{type_name}} record/enum s
             return FileArea.valueOf(rawArea.trim().toUpperCase(Locale.ROOT));
         } catch (Exception ignored) {
             return FileArea.SESSION;
+        }
+    }
+
+    private static int resolveHistoryIndex(List<AiChatMessage> messages, String reference) {
+        if (messages == null || messages.isEmpty() || reference == null || reference.isBlank()) {
+            return -1;
+        }
+
+        String ref = reference.trim();
+        String normalized = ref.toLowerCase(Locale.ROOT);
+
+        if ("last".equals(normalized) || "latest".equals(normalized)) {
+            return messages.size() - 1;
+        }
+        if ("last-assistant".equals(normalized) || "assistant:last".equals(normalized)) {
+            for (int i = messages.size() - 1; i >= 0; i--) {
+                AiChatMessage candidate = messages.get(i);
+                if (candidate != null && "ASSISTANT".equals(candidate.role())) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        if (normalized.startsWith("uuid:")) {
+            String uuidRef = ref.substring(5).trim();
+            return findMessageIndexByUuid(messages, uuidRef);
+        }
+
+        if (normalized.startsWith("index:")) {
+            Integer parsed = parseIndexRef(ref.substring(6).trim(), messages.size());
+            return parsed == null ? -1 : parsed;
+        }
+
+        Integer parsedDirect = parseIndexRef(ref, messages.size());
+        if (parsedDirect != null) {
+            return parsedDirect;
+        }
+
+        return findMessageIndexByUuid(messages, ref);
+    }
+
+    private static int findMessageIndexByUuid(List<AiChatMessage> messages, String uuidRef) {
+        if (uuidRef == null || uuidRef.isBlank()) {
+            return -1;
+        }
+        for (int i = 0; i < messages.size(); i++) {
+            AiChatMessage msg = messages.get(i);
+            if (msg != null && uuidRef.equals(msg.uuid())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static Integer parseIndexRef(String ref, int size) {
+        if (ref == null || ref.isBlank()) {
+            return null;
+        }
+        try {
+            int n = Integer.parseInt(ref);
+            if (n >= 0) {
+                return n;
+            }
+            int fromEnd = size + n;
+            return fromEnd >= 0 ? fromEnd : null;
+        } catch (NumberFormatException ignored) {
+            return null;
         }
     }
 

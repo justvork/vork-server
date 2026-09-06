@@ -83,6 +83,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 "writeFile",
                 "writeBase64File",
                 "readFile",
+                "readChatHistory",
                 "createFolder",
                 "listFiles",
                 "downloadFolderAsZip",
@@ -109,11 +110,26 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 + "Return a single valid JSON object. No markdown fences, no explanation outside the JSON:\n"
                                 + "{\n"
                                 + "  \"status\": \"FINISHED_TURN\",\n"
-                                + "  \"textResponse\": \"<the complete skill output>\"\n"
+                                + "  \"textResponse\": \"<the complete skill output>\",\n"
+                                + "  \"retainedContext\": {\n"
+                                + "    \"facts\": [\"<substantive facts established this turn>\"],\n"
+                                + "    \"decisions\": [\"<material decisions established this turn>\"],\n"
+                                + "    \"unresolved\": [\"<outstanding questions/blockers/missing information>\"]\n"
+                                + "  }\n"
                                 + "}\n"
                                 + "FINISHED_TURN exits the skill. textResponse IS the skill output — "
                                 + "format it exactly as SKILL DIRECTIVES specify. "
-                                + "Do NOT call any tool to signal completion; returning FINISHED_TURN with your result IS the exit signal.";
+                                + "Do NOT call any tool to signal completion; returning FINISHED_TURN with your result IS the exit signal. "
+                                + "retainedContext represents retained knowledge/state, not an activity log. "
+                                + "Populate facts with concrete information learned or established this turn. "
+                                + "Populate decisions with materially relevant decisions that may affect future behaviour. "
+                                + "Populate unresolved with open questions, blockers, or missing information. "
+                                + "Use empty arrays when a category has nothing worth retaining. "
+                                + "Preserve concrete values, dates, amounts, identifiers, versions, and names where they may matter later. "
+                                + "Retain conclusions derived from tool output only when those conclusions themselves may matter later. "
+                                + "Do not record tool usage or process narration such as searched/retrieved/read/analyzed/processed/summarized/responded. "
+                                + "Avoid duplicating essentially identical information across arrays. "
+                                + "Be concise, but preserve enough factual detail for a future AI to continue without repeating the work.";
                 }
 
                 StringBuilder sb = new StringBuilder("\n\n### TURN OUTPUT REQUIREMENT\n");
@@ -122,7 +138,12 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 if (canDelegate) sb.append(" | DELEGATE_TURN");
                 if (canSwitchAgent) sb.append(" | SWITCH_AGENT");
                 sb.append("\",\n");
-                sb.append("  \"textResponse\": \"<your complete response>\"");
+                sb.append("  \"textResponse\": \"<your complete response>\",");
+                sb.append("\n  \"retainedContext\": {\n");
+                sb.append("    \"facts\": [\"<substantive facts established this turn>\"],\n");
+                sb.append("    \"decisions\": [\"<material decisions established this turn>\"],\n");
+                sb.append("    \"unresolved\": [\"<outstanding questions/blockers/missing information>\"]\n");
+                sb.append("  }");
                 if (canDelegate || canSwitchAgent) {
                         sb.append(",\n  \"targetAgent\": \"<exact agent display name, or null>\"");
                         sb.append(",\n  \"delegationInstructions\": \"<full self-contained task for sub-agent, or null>\"");
@@ -130,7 +151,27 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 sb.append("\n}\n");
 
                 sb.append("FINISHED_TURN: Task complete — textResponse MUST be a complete, substantive result or summary. ");
-                sb.append("Do NOT set FINISHED_TURN with an empty or status-only message — use the think tool for mid-turn updates.\n");
+                sb.append("Do NOT set FINISHED_TURN with an empty or status-only message — use the think tool for mid-turn updates.\n"
+                                + "For retainedContext: derive retained state from the substantive information established during the turn, including information returned by tools and information supplied by USER or EXTERNAL messages. "
+                                + "Do not describe the assistant's activity, workflow, tool usage, retrieval, analysis, processing or response generation. "
+                                + "Treat those actions as irrelevant unless their outcome itself changes the state of the task. "
+                                + "Ask: 'What concrete information from this turn would a future AI need to know if the full turn and all tool outputs disappeared?' "
+                                + "Retain that information directly. "
+                                + "If tools returned records, messages, files, search results or other data, retain the material information contained in them, not that they were retrieved, read, processed or summarized. "
+                                + "If analysis established a conclusion, retain the conclusion itself, not that analysis was performed. "
+                                + "If a USER or EXTERNAL participant supplied important information, retain the information itself, not that a message was received. "
+                                + "Use the smallest set of precise facts, decisions and unresolved matters needed to preserve continuity. "
+                                + "For retainedContext.facts, each array element must represent one independent fact or one tightly related set of facts about the same subject. "
+                                + "Do not use a single fact as a summary of multiple unrelated subjects, records, messages, events or results. "
+                                + "When a turn establishes material information about multiple independent subjects, create a separate fact for each subject. "
+                                + "Keep related details together when they describe the same subject, but split details when they could matter independently in a future turn. "
+                                + "Each retained fact should be useful and understandable on its own without requiring the neighbouring facts for context. "
+                                + "For retainedContext.decisions: retain decisions made or determinations reached during the turn that affect how information, work or future processing should be treated. "
+                                + "This includes operational decisions produced by analysis or tools, such as classifications, priorities, actionable status, routing, escalation or selected handling, as well as explicit user or business decisions. "
+                                + "Preserve identifiers needed to associate each decision with its subject. "
+                                + "Do not retain collection-level descriptions such as counts or lists of topics when the substantive information within that collection is what may matter later. "
+                                + "Do not retain information merely because it appeared during the turn; retain it only when losing it could cause future reasoning to repeat work, misunderstand the current state, or miss relevant information. "
+                                + "If nothing substantive needs to survive, return empty arrays.");
                 if (canDelegate) {
                         sb.append("DELEGATE_TURN: Assign work to a specialist agent — set targetAgent to their exact display name "
                                 + "and provide comprehensive instructions in delegationInstructions.\n");

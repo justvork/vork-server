@@ -1,9 +1,11 @@
 package sh.vork.reflection;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -14,12 +16,15 @@ import org.springframework.ai.tool.definition.DefaultToolDefinition;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import sh.vork.ai.context.ToolExecutionContext;
+import sh.vork.ai.entity.AiChatMessage;
 import sh.vork.ai.entity.AiSession;
+import sh.vork.ai.protocol.UiEventFrame;
 import sh.vork.orm.DatabaseRepository;
 
 /**
@@ -37,6 +42,9 @@ public class ReflectionToolCallbackFactory {
     @Lazy
     @Autowired
     private DatabaseRepository<AiSession> aiSessionRepository;
+
+    @Autowired(required = false)
+    private SimpMessagingTemplate messagingTemplate;
 
     private final ObjectMapper objectMapper;
 
@@ -111,6 +119,10 @@ public class ReflectionToolCallbackFactory {
                 String username = resolveUsername();
                 log.debug("ENTER reflectionToolCall [toolName={}, reflectionId={}, reflectionUuid={}, username={}, bindingName={}, params={}]",
                         aiToolName, reflection.id(), reflection.uuid(), username, resolvedBindingName, sanitizeForLogs(params));
+                String reflectionLabel = reflection.name() == null || reflection.name().isBlank()
+                        ? reflection.id()
+                        : reflection.name();
+                publishReflectionTransitionEvent("Running reflection: " + reflectionLabel);
                 String result = reflectionService.executeRestReflectionByUuid(reflection.uuid(), params, resolvedBindingName, username);
                 String status = extractStatus(result);
                 log.debug("EXIT reflectionToolCall [toolName={}, reflectionId={}, reflectionUuid={}, username={}, bindingName={}, status={}]",
@@ -118,10 +130,61 @@ public class ReflectionToolCallbackFactory {
                 if ("error".equalsIgnoreCase(status)) {
                     log.warn("Reflection tool failed [toolName={}, reflectionId={}, bindingName={}]. AI should report the error and stop without retrying alternative profiles.",
                             aiToolName, reflection.id(), resolvedBindingName);
+                    publishReflectionTransitionEvent("Reflection failed: " + reflectionLabel);
+                } else {
+                    publishReflectionTransitionEvent("Reflection completed: " + reflectionLabel);
                 }
                 return result;
             }
         };
+    }
+
+    private void publishReflectionTransitionEvent(String text) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        String sessionUuid = ToolExecutionContext.getSessionUuid();
+        if (sessionUuid == null || sessionUuid.isBlank()) {
+            return;
+        }
+
+        if (messagingTemplate != null) {
+            UiEventFrame event = new UiEventFrame(
+                    UUID.randomUUID().toString(),
+                    "REFLECTION_TRANSITION",
+                    "REFLECTION_TRANSITION",
+                    text,
+                    null);
+            messagingTemplate.convertAndSend("/topic/chat/" + sessionUuid, event);
+        }
+
+        AiSession session = aiSessionRepository.get(sessionUuid);
+        if (session == null) {
+            return;
+        }
+        List<AiChatMessage> updated = new ArrayList<>(session.messages() == null ? List.of() : session.messages());
+        updated.add(new AiChatMessage(
+                UUID.randomUUID().toString(),
+                "REFLECTION_TRANSITION",
+                text,
+                System.currentTimeMillis(),
+                null));
+        aiSessionRepository.save(new AiSession(
+                session.uuid(),
+                session.provider(),
+                session.originMode(),
+                session.username(),
+                session.name(),
+                session.createdAt(),
+                session.currentRoundCount(),
+                List.copyOf(updated),
+                session.environmentVariables(),
+                session.status(),
+                session.activeAgentTemplateId(),
+                session.modelId(),
+                session.skillStack(),
+                session.sessionSkillUuids(),
+                session.sessionToolIds()));
     }
 
     private String buildAiToolName(Reflection reflection) {

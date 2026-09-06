@@ -38,11 +38,14 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  *                               {@code null} when {@code FINISHED_TURN} or {@code CONTINUE_TURN}
  * @param delegationInstructions self-contained task parameters for the target agent;
  *                               {@code null} when {@code FINISHED_TURN} or {@code CONTINUE_TURN}
+ * @param retainedContext        optional structured retained turn state for future context compaction workflows;
+ *                               persisted with assistant turns when present
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record StructuredAgentResponse(
         String status,
         String textResponse,
         String targetAgent,
-        String delegationInstructions
+        String delegationInstructions,
+        RetainedContext retainedContext
 ) {}

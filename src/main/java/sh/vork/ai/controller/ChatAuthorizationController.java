@@ -358,8 +358,9 @@ public class ChatAuthorizationController {
                             ? "The tool call was denied by the user. Do not call tools again for this request."
                                 + " Explain to the user why you cannot proceed and suggest alternatives if any."
                             : "The approved tool result is already available in the conversation history."
-                                + " If the latest tool response is plain text intended for end users, return it verbatim"
-                                + " and do not add commentary, wrappers, or next-step suggestions."
+                                + " If the latest tool response is plain text intended for end users, place that text verbatim in textResponse"
+                                + " while still returning the required structured JSON envelope."
+                                + " Do not add commentary, wrappers, or next-step suggestions inside textResponse."
                                 + " If the tool response is structured data, provide a concise, accurate summary.";
                     final int MAX_RESUME_ITERATIONS = 10;
                     for (int resumeIter = 0; resumeIter < MAX_RESUME_ITERATIONS; resumeIter++) {
@@ -762,7 +763,7 @@ public class ChatAuthorizationController {
      */
     private StructuredAgentResponse extractStructured(String raw) {
         if (raw == null || raw.isBlank()) {
-            return new StructuredAgentResponse("FINISHED_TURN", "", null, null);
+            return new StructuredAgentResponse("FINISHED_TURN", "", null, null, null);
         }
         String candidate = raw.strip();
         if (candidate.startsWith("```")) {
@@ -786,7 +787,7 @@ public class ChatAuthorizationController {
                     String alt = extractAlternateTextField(node);
                     if (alt != null && !alt.isBlank()) {
                         parsed = new StructuredAgentResponse(
-                                parsed.status(), alt, parsed.targetAgent(), parsed.delegationInstructions());
+                                parsed.status(), alt, parsed.targetAgent(), parsed.delegationInstructions(), parsed.retainedContext());
                     }
                 }
                 return parsed;
@@ -794,7 +795,7 @@ public class ChatAuthorizationController {
                 // Try next candidate.
             }
         }
-        return new StructuredAgentResponse("FINISHED_TURN", raw, null, null);
+        return new StructuredAgentResponse("FINISHED_TURN", raw, null, null, null);
     }
 
     /**

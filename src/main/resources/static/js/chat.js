@@ -641,6 +641,14 @@ function renderSkillEvent(text) {
     scrollBottom();
 }
 
+function renderReflectionEvent(text) {
+    const row = document.createElement('div');
+    row.className = 'agent-transition-row';
+    row.innerHTML = '<i class="fa-solid fa-diagram-project" aria-hidden="true"></i><span>' + escapeHtml(text) + '</span>';
+    messagesArea.insertBefore(row, typingEl);
+    scrollBottom();
+}
+
 function renderThinkingEvent(text) {
     if (!thinkingEnabled) return;
     const row = document.createElement('div');
@@ -659,6 +667,91 @@ function renderThinkingEvent(text) {
 
     messagesArea.insertBefore(row, typingEl);
     scrollBottom();
+}
+
+function renderRetainedContextEvent(text) {
+    if (!thinkingEnabled) return;
+    const retained = normalizeRetainedContext(text);
+    if (!retained) return;
+    const contentHtml = buildRetainedContextHtml(retained);
+    if (!contentHtml) return;
+
+    const row = document.createElement('div');
+    row.className = 'thinking-row';
+
+    const icon = document.createElement('i');
+    icon.className = 'fa-solid fa-bookmark';
+    icon.setAttribute('aria-hidden', 'true');
+
+    const content = document.createElement('div');
+    content.className = 'thinking-text';
+    content.innerHTML = contentHtml;
+
+    row.appendChild(icon);
+    row.appendChild(content);
+
+    messagesArea.insertBefore(row, typingEl);
+    scrollBottom();
+}
+
+function normalizeRetainedContext(value) {
+    if (value == null) return null;
+
+    let candidate = value;
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) return null;
+        try {
+            candidate = JSON.parse(trimmed);
+        } catch (err) {
+            // Legacy fallback: treat plain string as a fact.
+            candidate = { facts: [trimmed], decisions: [], unresolved: [] };
+        }
+    }
+
+    if (!candidate || typeof candidate !== 'object') return null;
+
+    const facts = normalizeRetainedArray(candidate.facts);
+    const decisions = normalizeRetainedArray(candidate.decisions);
+    const unresolved = normalizeRetainedArray(candidate.unresolved);
+    return { facts: facts, decisions: decisions, unresolved: unresolved };
+}
+
+function normalizeRetainedArray(value) {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map(function (item) {
+            if (item == null) return '';
+            return String(item).trim();
+        })
+        .filter(function (item) {
+            return item.length > 0;
+        });
+}
+
+function buildRetainedContextHtml(retained) {
+    const sections = [
+        { title: 'Facts', values: retained.facts },
+        { title: 'Decisions', values: retained.decisions },
+        { title: 'Unresolved', values: retained.unresolved }
+    ];
+
+    const nonEmptySections = sections.filter(function (section) {
+        return Array.isArray(section.values) && section.values.length > 0;
+    });
+    if (!nonEmptySections.length) {
+        return '';
+    }
+
+    const html = [];
+    html.push('<div><strong>Retained Context</strong></div>');
+    nonEmptySections.forEach(function (section) {
+        html.push('<div><strong>' + section.title + ':</strong></div>');
+        section.values.forEach(function (value) {
+            html.push('<div>- ' + escapeHtml(value) + '</div>');
+        });
+    });
+    return html.join('');
 }
 
 function getSchemaFieldValue(schema, fieldName) {
@@ -1880,6 +1973,10 @@ function handleIncomingUiFrame(frame) {
             showTyping(true);
             return;
 
+        case 'AI_RETAINED_CONTEXT':
+            renderRetainedContextEvent(frame.textResponse || '');
+            return;
+
         case 'PROMPT_REQUIRED':
             setAwaitingPostTerminalResponse(false);
             renderPromptRequiredFrame(frame);
@@ -1913,6 +2010,10 @@ function handleIncomingUiFrame(frame) {
 
         case 'SKILL_TRANSITION':
             renderSkillEvent(frame.textResponse || '');
+            return;
+
+        case 'REFLECTION_TRANSITION':
+            renderReflectionEvent(frame.textResponse || '');
             return;
 
         case 'AGENT_SWITCH':
@@ -1995,6 +2096,15 @@ async function renderSessionRecord(msg, index, messages, lastPromptIndex) {
     if (msg.role === 'SKILL_TRANSITION') {
         renderSkillEvent(msg.content || '');
         return;
+    }
+
+    if (msg.role === 'REFLECTION_TRANSITION') {
+        renderReflectionEvent(msg.content || '');
+        return;
+    }
+
+    if (thinkingEnabled && msg.role === 'ASSISTANT' && msg.retainedContext) {
+        renderRetainedContextEvent(msg.retainedContext);
     }
 
     if (externalCampaignLock && externalCampaignLock.active && msg.role === 'ASSISTANT') {
