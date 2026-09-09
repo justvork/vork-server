@@ -1,7 +1,6 @@
 package sh.vork.ai.telegram;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -16,7 +15,6 @@ import org.slf4j.MDC;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Service;
 
@@ -43,8 +41,7 @@ import sh.vork.ai.security.LoggedToolCallback;
 import sh.vork.ai.security.SecuredToolCallback;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
-import sh.vork.ai.service.ExternalMessageProvenance;
-import sh.vork.ai.service.OutgoingMessageProvenance;
+import sh.vork.ai.service.HistoryContextBuilderService;
 import sh.vork.scheduling.service.SystemBackgroundAuthentication;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.security.SecureCredentialStore;
@@ -77,6 +74,20 @@ public class TelegramChatResumptionService {
     private final ObjectMapper                    objectMapper;
     private final Map<String, ToolCallback>       toolCallbacksByName;
     private final UserService                     userService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private HistoryContextBuilderService historyContextBuilderService;
+
+    private HistoryContextBuilderService contextBuilder() {
+        if (historyContextBuilderService != null) {
+            return historyContextBuilderService;
+        }
+        historyContextBuilderService = new HistoryContextBuilderService(
+                objectMapper,
+                HistoryContextBuilderService.DEFAULT_MAX_FULL_HISTORY_ITEMS,
+                HistoryContextBuilderService.DEFAULT_MAX_FULL_HISTORY_TOKENS);
+        return historyContextBuilderService;
+    }
 
     public TelegramChatResumptionService(DatabaseRepository<AiSession> sessionRepo,
                                           SessionEnvironmentService sessionEnvironmentService,
@@ -226,6 +237,7 @@ public class TelegramChatResumptionService {
                     "responses", List.of(Map.of("id", toolResponse.id(),
                             "name", toolResponse.name(),
                             "responseData", toolResponse.responseData())),
+                    "arguments", executionArgumentsJson,
                     "fields",    conversationFields));
 
             AiChatMessage toolMessage = new AiChatMessage(
@@ -246,7 +258,8 @@ public class TelegramChatResumptionService {
             try {
                 String continuationPrompt = "DENIED".equals(normalizedAction)
                         ? "The tool call was denied. Explain to the user why you cannot proceed."
-                        : "The tool result is in the conversation history. Summarize it for the user.";
+                    : "A tool metadata record is in conversation history. "
+                    + "If you need full tool output, call readChatHistory using that metadata messageUuid, then summarize for the user.";
 
                 for (int iter = 0; iter < MAX_RESUME_ITERATIONS; iter++) {
                     String rawResponse = safeGenerateWithHistory(
@@ -424,6 +437,7 @@ public class TelegramChatResumptionService {
                     "responses", List.of(Map.of("id", toolResponse.id(),
                             "name", toolResponse.name(),
                             "responseData", toolResponse.responseData())),
+                    "arguments", executionArgumentsJson,
                     "fields",    conversationFields));
 
             AiChatMessage toolMessage = new AiChatMessage(
@@ -538,6 +552,7 @@ public class TelegramChatResumptionService {
             ToolExecutionContext.put(SecuredToolCallback.CURRENT_TOOL_CALL_ID_CONTEXT_KEY, toolCallId);
         }
         try {
+            ToolExecutionContext.put(LoggedToolCallback.SUPPRESS_AUTO_TOOL_PERSIST_CONTEXT_KEY, Boolean.TRUE);
             return callback.call(argumentsJson);
         } catch (RuntimeException ex) {
             ToolSuspensionException suspension = findCause(ex, ToolSuspensionException.class);
@@ -546,6 +561,7 @@ public class TelegramChatResumptionService {
             if (suspension != null) throw suspension;
             throw ex;
         } finally {
+            ToolExecutionContext.remove(LoggedToolCallback.SUPPRESS_AUTO_TOOL_PERSIST_CONTEXT_KEY);
             if (previousToolCallId == null) {
                 ToolExecutionContext.remove(SecuredToolCallback.CURRENT_TOOL_CALL_ID_CONTEXT_KEY);
             } else {
@@ -579,65 +595,7 @@ public class TelegramChatResumptionService {
     }
 
     private List<Message> hydrateHistory(List<AiChatMessage> messages) {
-        List<Message> history = new ArrayList<>();
-        for (AiChatMessage m : messages) {
-            switch (m.role()) {
-                case "USER"      -> history.add(new UserMessage(m.content() == null ? "" : m.content()));
-                case "EXTERNAL"  -> history.add(new UserMessage(ExternalMessageProvenance.toWrappedEvidence(m)));
-                case "OUTGOING"  -> history.add(new UserMessage(OutgoingMessageProvenance.toWrappedEvidence(m)));
-                case "ASSISTANT" -> history.add(new AssistantMessage(m.content() == null ? "" : m.content()));
-                case "TOOL"      -> history.add(toToolResponseMessage(m));
-                default          -> { /* skip control frames */ }
-            }
-        }
-        return history;
-    }
-
-    private Message toToolResponseMessage(AiChatMessage m) {
-        String responseData = m.content();
-        try {
-            Map<String, Object> payload = objectMapper.readValue(m.content(),
-                    new TypeReference<Map<String, Object>>() {});
-            Object responsesRaw = payload.get("responses");
-            if (responsesRaw instanceof List<?> responses && !responses.isEmpty()
-                    && responses.get(0) instanceof Map<?, ?> first) {
-                Object v = first.get("responseData");
-                if (v != null) {
-                    if (v instanceof String s) {
-                        responseData = s;
-                    } else {
-                        responseData = toJson(v);
-                    }
-                }
-            }
-        } catch (Exception ignored) { }
-
-        responseData = normalizeToolResponseData(responseData);
-
-        return ToolResponseMessage.builder()
-                .responses(List.of(new ToolResponseMessage.ToolResponse(
-                        m.toolCallId() == null ? "pending-unknown" : m.toolCallId(),
-                        m.toolName()   == null ? "unknown-tool"   : m.toolName(),
-                        responseData)))
-                .metadata(Collections.emptyMap())
-                .build();
-    }
-
-    private String normalizeToolResponseData(String responseData) {
-        if (responseData == null || responseData.isBlank()) {
-            return toJson(Map.of("status", "EMPTY", "message", "No response data"));
-        }
-
-        String trimmed = responseData.trim();
-        try {
-            var node = objectMapper.readTree(trimmed);
-            if (node != null && node.isObject()) {
-                return trimmed;
-            }
-            return toJson(Map.of("status", "NON_OBJECT_JSON", "value", trimmed));
-        } catch (Exception ignored) {
-            return toJson(Map.of("status", "TEXT", "message", trimmed));
-        }
+        return contextBuilder().buildHistory(messages, HistoryContextBuilderService.BuildOptions.includeAllTools());
     }
 
     private StructuredAgentResponse extractStructured(String raw) {

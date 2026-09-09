@@ -8,9 +8,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import sh.vork.ai.security.LoggedToolCallback;
+import sh.vork.ai.service.ToolInvocationPersistenceService;
 
 /**
  * In-memory store of session-scoped {@link ToolCallback} instances.
@@ -40,6 +42,12 @@ public class SessionToolStore {
     private static final Logger log = LoggerFactory.getLogger(SessionToolStore.class);
 
     private final ConcurrentHashMap<String, List<ToolCallback>> store = new ConcurrentHashMap<>();
+    private final ToolInvocationPersistenceService toolInvocationPersistenceService;
+
+    @Autowired
+    public SessionToolStore(ToolInvocationPersistenceService toolInvocationPersistenceService) {
+        this.toolInvocationPersistenceService = toolInvocationPersistenceService;
+    }
 
     /**
      * Registers a tool callback for the given session.  The same callback can be
@@ -52,7 +60,7 @@ public class SessionToolStore {
     public void addTool(String sessionUuid, ToolCallback callback) {
         ToolCallback effective = callback instanceof LoggedToolCallback
                 ? callback
-                : new LoggedToolCallback(callback);
+                : new LoggedToolCallback(callback, toolInvocationPersistenceService);
         String toolName = effective.getToolDefinition().name();
         store.compute(sessionUuid, (k, existing) -> {
             List<ToolCallback> list = (existing != null) ? existing : new ArrayList<>();

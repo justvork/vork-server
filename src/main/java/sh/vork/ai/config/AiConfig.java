@@ -157,6 +157,7 @@ import sh.vork.ai.security.Restricted;
 import sh.vork.ai.security.SecuredToolCallback;
 import sh.vork.ai.security.VisualizableToolCallback;
 import sh.vork.ai.service.AgentAssignmentService;
+import sh.vork.ai.service.ToolInvocationPersistenceService;
 import sh.vork.ai.request.RequestInformationService;
 import sh.vork.ai.request.RequestCampaignStatus;
 import sh.vork.ai.request.RequestResponsePolicy;
@@ -401,7 +402,8 @@ the protocol and will break the system. Do not converse. Execute.
             AuthorizationRuleEngine authorizationRuleEngine,
             PreAuthorizationTokenService preAuthorizationTokenService,
             ApprovalPolicyRuntimeResolver approvalPolicyRuntimeResolver,
-            ConfigurableListableBeanFactory beanFactory) {
+            ConfigurableListableBeanFactory beanFactory,
+            ToolInvocationPersistenceService toolInvocationPersistenceService) {
         Map<String, ToolCallback> map = new LinkedHashMap<>();
         toolCallbacks.forEach(tool -> {
             String toolName = tool.getToolDefinition().name();
@@ -411,7 +413,7 @@ the protocol and will break the system. Do not converse. Execute.
             ToolCallback wrapped = isRestrictedTool(beanFactory, toolName)
                     ? new SecuredToolCallback(tool, authorizationRuleEngine, preAuthorizationTokenService, approvalPolicyRuntimeResolver, false)
                     : tool;
-            map.put(toolName, new LoggedToolCallback(wrapped));
+            map.put(toolName, new LoggedToolCallback(wrapped, toolInvocationPersistenceService));
         });
         return map;
     }

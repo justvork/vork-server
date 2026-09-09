@@ -43,6 +43,7 @@ import sh.vork.ai.registry.ToolDepends;
 import sh.vork.ai.session.SessionToolStore;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.reflection.Reflection;
+import sh.vork.ai.security.LoggedToolCallback;
 import sh.vork.security.UserService;
 import sh.vork.security.VorkUser;
 
@@ -129,7 +130,12 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 + "Retain conclusions derived from tool output only when those conclusions themselves may matter later. "
                                 + "Do not record tool usage or process narration such as searched/retrieved/read/analyzed/processed/summarized/responded. "
                                 + "Avoid duplicating essentially identical information across arrays. "
-                                + "Be concise, but preserve enough factual detail for a future AI to continue without repeating the work.";
+                                + "Be concise, but preserve enough factual detail for a future AI to continue without repeating the work. "
+                                + "Important continuity rule: future turns replay recent assistant history in full until configured context thresholds are reached; older assistant turns are replayed as retainedContext snapshots keyed by messageUuid. "
+                                + "Threshold accounting uses an approximate token estimate of chars/4 while walking history from most recent backwards, with defaults maxFullHistoryItems=20 and maxFullHistoryTokens=20000. "
+                                + "If you need the complete content of a prior assistant turn, call readChatHistory with that messageUuid (for example, reference='uuid:<messageUuid>'). "
+                                + "Tool history is also replayed as metadata-only records containing messageUuid, toolName, toolCallId, and arguments. "
+                                + "When tool output details are required, call readChatHistory with the tool metadata messageUuid to fetch the full tool response.";
                 }
 
                 StringBuilder sb = new StringBuilder("\n\n### TURN OUTPUT REQUIREMENT\n");
@@ -169,9 +175,21 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 + "For retainedContext.decisions: retain decisions made or determinations reached during the turn that affect how information, work or future processing should be treated. "
                                 + "This includes operational decisions produced by analysis or tools, such as classifications, priorities, actionable status, routing, escalation or selected handling, as well as explicit user or business decisions. "
                                 + "Preserve identifiers needed to associate each decision with its subject. "
+                                + "For retainedContext.unresolved: preserve each distinct unanswered question, pending decision, requested input, blocker, dependency or incomplete matter separately. "
+                                + "If the assistant asked the USER multiple questions and they have not all been answered, retain each unanswered question or required decision as a separate unresolved item with enough detail for a future AI to resume it correctly. "
+                                + "Do not collapse multiple unresolved matters into a vague statement such as 'awaiting user feedback', 'awaiting approval' or 'more information is required'. "
+                                + "When a USER answers only part of a set of outstanding questions, preserve the remaining unanswered questions until they are resolved. "
                                 + "Do not retain collection-level descriptions such as counts or lists of topics when the substantive information within that collection is what may matter later. "
-                                + "Do not retain information merely because it appeared during the turn; retain it only when losing it could cause future reasoning to repeat work, misunderstand the current state, or miss relevant information. "
-                                + "If nothing substantive needs to survive, return empty arrays.");
+                                + "Do not retain information merely because it appeared during the turn; retain it only when losing it could cause future reasoning to repeat work, misunderstand the current state, lose an outstanding conversational commitment, or miss relevant information. "
+                                + "If nothing substantive needs to survive, return empty arrays. "
+                                + "Important continuity rule: history replay may include recent assistant turns in full text, while older assistant turns are represented as retainedContext snapshots with messageUuid once full-history thresholds are reached. "
+                                + "Threshold accounting uses approximate tokens (chars/4) from most recent backwards, with defaults maxFullHistoryItems=20 and maxFullHistoryTokens=20000. "
+                                + "Treat retainedContext.unresolved as active conversational state that may still require follow-up even when the original assistant message is no longer present. "
+                                + "When retainedContext indicates that prior questions, alternatives, decisions or requested input exist but does not contain enough exact detail to continue safely, call readChatHistory for that assistant turn before proceeding. "
+                                + "When you require full details from a prior assistant turn, call readChatHistory using the provided messageUuid (for example, reference='uuid:<messageUuid>'). "
+                                + "Tool history in context is metadata-only (messageUuid, toolName, toolCallId, arguments). "
+                                + "When tool output content is needed, call readChatHistory using the tool metadata messageUuid and use the returned textResponse.");
+
                 if (canDelegate) {
                         sb.append("DELEGATE_TURN: Assign work to a specialist agent — set targetAgent to their exact display name "
                                 + "and provide comprehensive instructions in delegationInstructions.\n");
@@ -232,6 +250,10 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
         @org.springframework.beans.factory.annotation.Autowired
         @Lazy
         private sh.vork.mcp.runtime.McpRuntimeToolService mcpRuntimeToolService;
+
+        @org.springframework.beans.factory.annotation.Autowired(required = false)
+        @Lazy
+        private ToolInvocationPersistenceService toolInvocationPersistenceService;
 
         @org.springframework.beans.factory.annotation.Autowired(required = false)
         @Lazy
@@ -941,7 +963,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 for (ToolCallback hiddenFsTool : resolveAlwaysOnHiddenFileTools()) {
                         String name = hiddenFsTool.getToolDefinition().name();
                         if (presentNames.add(name)) {
-                                merged.add(hiddenFsTool);
+                                merged.add(ensureLoggedToolCallback(hiddenFsTool));
                         }
                 }
 
@@ -958,6 +980,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                         int injected = 0;
                                         for (sh.vork.skill.Skill skill : expandRootSkillsWithEffectiveSubs(tpl.skillUuids())) {
                                                 ToolCallback skillTool = skillToolCallbackFactory.create(skill);
+                                                skillTool = ensureLoggedToolCallback(skillTool);
                                                 String toolName = skillTool.getToolDefinition().name();
                                                 if (presentNames.add(toolName)) {
                                                         merged.add(skillTool);
@@ -982,6 +1005,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 int sessionInjected = 0;
                                 for (sh.vork.skill.Skill skill : expandRootSkillsWithEffectiveSubs(sessionSkillUuids)) {
                                         ToolCallback skillTool = skillToolCallbackFactory.create(skill);
+                                        skillTool = ensureLoggedToolCallback(skillTool);
                                         String toolName = skillTool.getToolDefinition().name();
                                         if (presentNames.add(toolName)) {
                                                 merged.add(skillTool);
@@ -1011,6 +1035,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                         ToolCallback reflectionTool = reflectionToolCallbackFactory.create(
                                                 resolved.reflection(),
                                                 resolved.bindings());
+                                        reflectionTool = ensureLoggedToolCallback(reflectionTool);
                                         String reflectionToolName = reflectionTool.getToolDefinition().name();
                                         if (presentNames.add(reflectionToolName)) {
                                                 merged.add(reflectionTool);
@@ -1037,6 +1062,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                                 .listToolCallbacksForBindings(effectiveMcpBindingUuids);
                         int mcpInjected = 0;
                         for (ToolCallback mcpTool : mcpTools) {
+                                mcpTool = ensureLoggedToolCallback(mcpTool);
                                 String mcpToolName = mcpTool.getToolDefinition().name();
                                 if (presentNames.add(mcpToolName)) {
                                         merged.add(mcpTool);
@@ -1052,7 +1078,7 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                 if (!inSkillFrame && !sessionTools.isEmpty()) {
                         int beforeMerge = merged.size();
                         for (ToolCallback st : sessionTools) {
-                                merged.add(st);
+                                merged.add(ensureLoggedToolCallback(st));
                         }
                         int added = merged.size() - beforeMerge;
                         if (added > 0) {
@@ -1121,6 +1147,16 @@ BACKGROUND OPERATIONAL PROTOCOL: You are executing autonomously in an isolated b
                         }
                 }
                 return callbacks;
+        }
+
+        private ToolCallback ensureLoggedToolCallback(ToolCallback callback) {
+                if (callback == null || callback instanceof LoggedToolCallback) {
+                        return callback;
+                }
+                if (toolInvocationPersistenceService != null) {
+                        return new LoggedToolCallback(callback, toolInvocationPersistenceService);
+                }
+                return new LoggedToolCallback(callback);
         }
 
         /**

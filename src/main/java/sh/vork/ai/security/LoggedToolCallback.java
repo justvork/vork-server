@@ -14,6 +14,7 @@ import org.springframework.ai.tool.metadata.ToolMetadata;
 
 import sh.vork.ai.context.ToolExecutionContext;
 import sh.vork.ai.exception.ToolSuspensionException;
+import sh.vork.ai.service.ToolInvocationPersistenceService;
 
 /**
  * Global tool-call logger that provides consistent observability for all tools.
@@ -21,6 +22,7 @@ import sh.vork.ai.exception.ToolSuspensionException;
 public class LoggedToolCallback implements ToolCallback {
 
     public static final String PENDING_TOOL_SUSPENSION_CONTEXT_KEY = "__pending_tool_suspension__";
+    public static final String SUPPRESS_AUTO_TOOL_PERSIST_CONTEXT_KEY = "__suppress_auto_tool_persist__";
     private static final String SUSPENSION_MESSAGE_PREFIX = "Tool execution suspended pending authorization:";
 
     private static final Logger log = LoggerFactory.getLogger(LoggedToolCallback.class);
@@ -30,9 +32,16 @@ public class LoggedToolCallback implements ToolCallback {
     private static final Pattern BEARER_VALUE = Pattern.compile("(?i)(Bearer\\s+)[A-Za-z0-9._\\-~+/=]+");
 
     private final ToolCallback delegate;
+    private final ToolInvocationPersistenceService invocationPersistenceService;
 
     public LoggedToolCallback(ToolCallback delegate) {
+        this(delegate, null);
+    }
+
+    public LoggedToolCallback(ToolCallback delegate,
+                              ToolInvocationPersistenceService invocationPersistenceService) {
         this.delegate = delegate;
+        this.invocationPersistenceService = invocationPersistenceService;
     }
 
     @Override
@@ -69,6 +78,7 @@ public class LoggedToolCallback implements ToolCallback {
             long durationMs = (System.nanoTime() - startedAt) / 1_000_000;
             log.debug("EXIT tool call: [tool={}, session={}, success=true, durationMs={}, result={}]",
                     toolName, sessionUuid, durationMs, sanitizeForLog(result));
+            persistInvocation(toolName, rawArguments, result, true, false, null, null, durationMs);
             return result;
         } catch (Exception ex) {
             ToolSuspensionException suspension = findToolSuspension(ex);
@@ -85,7 +95,49 @@ public class LoggedToolCallback implements ToolCallback {
                     durationMs,
                     ex.getClass().getSimpleName(),
                     truncate(ex.getMessage()));
+            persistInvocation(
+                    toolName,
+                    rawArguments,
+                    suspension != null ? suspension.getMessage() : "",
+                    false,
+                    suspension != null,
+                    ex.getClass().getSimpleName(),
+                    ex.getMessage(),
+                    durationMs);
             throw ex;
+        }
+    }
+
+    private void persistInvocation(String toolName,
+                                   String arguments,
+                                   String responseData,
+                                   boolean success,
+                                   boolean suspended,
+                                   String errorType,
+                                   String errorMessage,
+                                   long durationMs) {
+        if (invocationPersistenceService == null) {
+            return;
+        }
+        if ("readChatHistory".equals(toolName)) {
+            return;
+        }
+        Object suppress = ToolExecutionContext.get(SUPPRESS_AUTO_TOOL_PERSIST_CONTEXT_KEY);
+        if (Boolean.TRUE.equals(suppress)) {
+            return;
+        }
+        try {
+            invocationPersistenceService.persistInvocation(
+                    toolName,
+                    arguments,
+                    responseData,
+                    success,
+                    suspended,
+                    errorType,
+                    errorMessage,
+                    durationMs);
+        } catch (Exception ex) {
+            log.warn("Tool invocation persistence failed [tool={}]: {}", toolName, ex.getMessage());
         }
     }
 

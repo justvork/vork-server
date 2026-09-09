@@ -23,9 +23,6 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.MessageType;
-import org.springframework.ai.chat.messages.ToolResponseMessage;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.content.Media;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -143,10 +140,24 @@ public class ChatService {
     @Autowired(required = false)
     private RequestInformationService requestInformationService;
 
+    @Autowired(required = false)
+    private HistoryContextBuilderService historyContextBuilderService;
+
     @Value("${vork.app.base-url:}")
     private String configuredRelayHost;
 
     private static final String DEFAULT_SESSION_NAME = "Untitled";
+
+    private HistoryContextBuilderService contextBuilder() {
+        if (historyContextBuilderService != null) {
+            return historyContextBuilderService;
+        }
+        historyContextBuilderService = new HistoryContextBuilderService(
+                objectMapper,
+                HistoryContextBuilderService.DEFAULT_MAX_FULL_HISTORY_ITEMS,
+                HistoryContextBuilderService.DEFAULT_MAX_FULL_HISTORY_TOKENS);
+        return historyContextBuilderService;
+    }
 
     @Autowired
     public ChatService(DatabaseRepository<AiSession> aiSessionRepository,
@@ -3488,137 +3499,10 @@ public class ChatService {
         Set<String> visibleToolNames = skillFrameActive
                 ? null
                 : aiService.resolveVisibleToolNamesForSession(session.uuid());
-        return hydrateHistory(msgs, skillFrameActive, visibleToolNames);
-    }
-
-    private List<Message> hydrateHistory(List<AiChatMessage> messages,
-                                         boolean includeAllToolMessages,
-                                         Set<String> visibleToolNames) {
-        List<Message> history = new ArrayList<>();
-        for (AiChatMessage message : messages) {
-            switch (message.role()) {
-                case "USER" -> history.add(new UserMessage(message.content() == null ? "" : message.content()));
-                case "EXTERNAL" -> history.add(new UserMessage(ExternalMessageProvenance.toWrappedEvidence(message)));
-                case "OUTGOING" -> history.add(new UserMessage(OutgoingMessageProvenance.toWrappedEvidence(message)));
-                case "ASSISTANT" -> history.add(new AssistantMessage(message.content() == null ? "" : message.content()));
-                case "TOOL" -> {
-                    String toolName = message.toolName();
-                    if (includeAllToolMessages
-                            || (toolName != null && visibleToolNames != null && visibleToolNames.contains(toolName))) {
-                        appendToolReplay(history, message);
-                    }
-                }
-                default -> {
-                }
-            }
-        }
-        return history;
-    }
-
-    private void appendToolReplay(List<Message> history, AiChatMessage message) {
-        boolean canEmitFunctionCall = !history.isEmpty()
-                && (history.getLast().getMessageType() == MessageType.USER
-                || history.getLast().getMessageType() == MessageType.TOOL);
-        if (canEmitFunctionCall) {
-            history.add(toSyntheticToolCallMessage(message));
-            history.add(toToolResponseMessage(message));
-            return;
-        }
-        history.add(toToolReplayTextMessage(message));
-    }
-
-    private Message toSyntheticToolCallMessage(AiChatMessage message) {
-        String toolName = message.toolName() == null ? "unknown-tool" : message.toolName();
-        String toolCallId = message.toolCallId() == null ? "pending-unknown" : message.toolCallId();
-
-        AssistantMessage.ToolCall toolCall = new AssistantMessage.ToolCall(
-                toolCallId,
-                "FUNCTION",
-                toolName,
-                "{}");
-
-        return AssistantMessage.builder()
-                .content("")
-                .toolCalls(List.of(toolCall))
-                .build();
-    }
-
-    private Message toToolResponseMessage(AiChatMessage message) {
-        Map<String, Object> payload;
-        try {
-            payload = objectMapper.readValue(message.content(), new TypeReference<Map<String, Object>>() {});
-        } catch (Exception e) {
-            payload = new HashMap<>();
-        }
-
-        String responseData = null;
-        Object responsesRaw = payload.get("responses");
-        if (responsesRaw instanceof List<?> responses && !responses.isEmpty() && responses.get(0) instanceof Map<?, ?> first) {
-            Object value = first.get("responseData");
-            responseData = value == null ? null : String.valueOf(value);
-        }
-        if (responseData == null) {
-            responseData = message.content();
-        }
-        responseData = normalizeToolResponseData(responseData);
-
-        ToolResponseMessage.ToolResponse toolResponse = new ToolResponseMessage.ToolResponse(
-            message.toolCallId() == null ? "pending-unknown" : message.toolCallId(),
-            message.toolName() == null ? "unknown-tool" : message.toolName(),
-            responseData);
-
-        return ToolResponseMessage.builder()
-            .responses(List.of(toolResponse))
-            .metadata(Collections.emptyMap())
-            .build();
-    }
-
-    private Message toToolReplayTextMessage(AiChatMessage message) {
-        String toolName = message.toolName() == null ? "unknown-tool" : message.toolName();
-        String toolCallId = message.toolCallId() == null ? "pending-unknown" : message.toolCallId();
-        String responseData = extractToolResponseData(message);
-        String replayText = "Tool '" + toolName + "' (callId=" + toolCallId + ") result:\n" + responseData;
-        return new AssistantMessage(replayText);
-    }
-
-    private String extractToolResponseData(AiChatMessage message) {
-        Map<String, Object> payload;
-        try {
-            payload = objectMapper.readValue(message.content(), new TypeReference<Map<String, Object>>() {});
-        } catch (Exception e) {
-            payload = new HashMap<>();
-        }
-
-        String responseData = null;
-        Object responsesRaw = payload.get("responses");
-        if (responsesRaw instanceof List<?> responses && !responses.isEmpty() && responses.get(0) instanceof Map<?, ?> first) {
-            Object value = first.get("responseData");
-            responseData = value == null ? null : String.valueOf(value);
-        }
-        if (responseData == null) {
-            responseData = message.content();
-        }
-        return normalizeToolResponseData(responseData);
-    }
-
-    private String normalizeToolResponseData(String responseData) {
-        if (responseData == null || responseData.isBlank()) {
-            return toJson(Map.of("status", "UNKNOWN", "value", ""));
-        }
-        try {
-            objectMapper.readValue(responseData, new TypeReference<Map<String, Object>>() {});
-            return responseData;
-        } catch (Exception ignored) {
-            return toJson(Map.of("status", "LEGACY", "value", responseData));
-        }
-    }
-
-    private String toJson(Object value) {
-        try {
-            return objectMapper.writeValueAsString(value);
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Failed to serialize chat payload", e);
-        }
+        HistoryContextBuilderService.BuildOptions options = skillFrameActive
+                ? HistoryContextBuilderService.BuildOptions.includeAllTools()
+                : HistoryContextBuilderService.BuildOptions.filterTools(visibleToolNames);
+        return contextBuilder().buildHistory(msgs, options);
     }
 
     private boolean hasFullRoundTrip(List<AiChatMessage> messages) {

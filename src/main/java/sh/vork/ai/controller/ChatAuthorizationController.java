@@ -18,9 +18,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -56,12 +54,12 @@ import sh.vork.ai.protocol.interaction.FormField;
 import sh.vork.ai.protocol.interaction.InteractionFormSchema;
 import sh.vork.ai.security.AuthorizationRuleEngine;
 import sh.vork.ai.security.AuthorizationArgumentsFormatter;
+import sh.vork.ai.security.LoggedToolCallback;
 import sh.vork.ai.security.SecuredToolCallback;
 import sh.vork.ai.security.VisualizableTool;
 import sh.vork.ai.service.AiOrchestrationService;
 import sh.vork.ai.service.ChatService;
-import sh.vork.ai.service.ExternalMessageProvenance;
-import sh.vork.ai.service.OutgoingMessageProvenance;
+import sh.vork.ai.service.HistoryContextBuilderService;
 import sh.vork.attention.AttentionSignalService;
 import sh.vork.orm.DatabaseRepository;
 import sh.vork.scheduling.service.AiSchedulerService;
@@ -98,6 +96,20 @@ public class ChatAuthorizationController {
 
     @Autowired(required = false)
     private AttentionSignalService attentionSignalService;
+
+    @Autowired(required = false)
+    private HistoryContextBuilderService historyContextBuilderService;
+
+    private HistoryContextBuilderService contextBuilder() {
+        if (historyContextBuilderService != null) {
+            return historyContextBuilderService;
+        }
+        historyContextBuilderService = new HistoryContextBuilderService(
+                objectMapper,
+                HistoryContextBuilderService.DEFAULT_MAX_FULL_HISTORY_ITEMS,
+                HistoryContextBuilderService.DEFAULT_MAX_FULL_HISTORY_TOKENS);
+        return historyContextBuilderService;
+    }
 
     @Autowired
     public ChatAuthorizationController(DatabaseRepository<AiSession> sessionRepo,
@@ -226,7 +238,8 @@ public class ChatAuthorizationController {
                     "id", toolResponse.id(),
                     "name", toolResponse.name(),
                     "responseData", toolResponse.responseData())),
-                "message", toolResponseMessage.toString(),
+                    "message", toolResponseMessage.toString(),
+                    "arguments", executionArgumentsJson,
                 "fields", conversationFields
             ));
 
@@ -241,6 +254,7 @@ public class ChatAuthorizationController {
                         "name", toolResponse.name(),
                         "responseData", toolResponse.responseData())));
                 payload.put("message", toolResponseMessage.toString());
+                payload.put("arguments", executionArgumentsJson);
                 payload.put("fields", conversationFields);
                 payload.put("terminalTranscript", terminalTranscript);
                 toolPayloadJson = toJson(payload);
@@ -357,11 +371,12 @@ public class ChatAuthorizationController {
                     String continuationPrompt = "DENIED".equals(action)
                             ? "The tool call was denied by the user. Do not call tools again for this request."
                                 + " Explain to the user why you cannot proceed and suggest alternatives if any."
-                            : "The approved tool result is already available in the conversation history."
-                                + " If the latest tool response is plain text intended for end users, place that text verbatim in textResponse"
+                            : "A tool metadata record is available in conversation history."
+                                + " If you need the tool output, call readChatHistory using that metadata messageUuid."
+                                + " If the fetched tool response is plain text intended for end users, place that text verbatim in textResponse"
                                 + " while still returning the required structured JSON envelope."
                                 + " Do not add commentary, wrappers, or next-step suggestions inside textResponse."
-                                + " If the tool response is structured data, provide a concise, accurate summary.";
+                                + " If the fetched tool response is structured data, provide a concise, accurate summary.";
                     final int MAX_RESUME_ITERATIONS = 10;
                     for (int resumeIter = 0; resumeIter < MAX_RESUME_ITERATIONS; resumeIter++) {
                         String rawResponse;
@@ -966,107 +981,9 @@ public class ChatAuthorizationController {
     }
 
     private List<Message> hydrateHistory(List<AiChatMessage> messages) {
-        List<Message> history = new ArrayList<>();
-        for (AiChatMessage message : messages) {
-            switch (message.role()) {
-                case "USER" -> history.add(new UserMessage(message.content() == null ? "" : message.content()));
-                case "EXTERNAL" -> history.add(new UserMessage(ExternalMessageProvenance.toWrappedEvidence(message)));
-                case "OUTGOING" -> history.add(new UserMessage(OutgoingMessageProvenance.toWrappedEvidence(message)));
-                case "ASSISTANT" -> history.add(new AssistantMessage(message.content() == null ? "" : message.content()));
-                case "TOOL" -> appendToolReplay(history, message);
-                default -> {
-                    // Skip non-conversation event frames and internal control records.
-                }
-            }
-        }
-        return history;
+        return contextBuilder().buildHistory(messages, HistoryContextBuilderService.BuildOptions.includeAllTools());
     }
 
-    private void appendToolReplay(List<Message> history, AiChatMessage message) {
-        boolean canEmitFunctionCall = !history.isEmpty()
-            && (history.getLast().getMessageType() == MessageType.USER
-            || history.getLast().getMessageType() == MessageType.TOOL);
-        if (canEmitFunctionCall) {
-            history.add(toSyntheticToolCallMessage(message));
-            history.add(toToolResponseMessage(message));
-            return;
-        }
-        history.add(toToolReplayTextMessage(message));
-    }
-
-    private Message toSyntheticToolCallMessage(AiChatMessage message) {
-        String toolName = message.toolName() == null ? "unknown-tool" : message.toolName();
-        String toolCallId = message.toolCallId() == null ? "pending-unknown" : message.toolCallId();
-
-        AssistantMessage.ToolCall toolCall = new AssistantMessage.ToolCall(
-                toolCallId,
-                "FUNCTION",
-                toolName,
-                "{}");
-
-        return AssistantMessage.builder()
-                .content("")
-                .toolCalls(List.of(toolCall))
-                .build();
-    }
-
-    private Message toToolResponseMessage(AiChatMessage message) {
-        Map<String, Object> payload;
-        try {
-            payload = objectMapper.readValue(message.content(), new TypeReference<Map<String, Object>>() {});
-        } catch (Exception e) {
-            payload = new HashMap<>();
-        }
-
-        String responseData = null;
-        Object responsesRaw = payload.get("responses");
-        if (responsesRaw instanceof List<?> responses && !responses.isEmpty() && responses.get(0) instanceof Map<?, ?> first) {
-            Object v = first.get("responseData");
-            responseData = v == null ? null : String.valueOf(v);
-        }
-        if (responseData == null) {
-            responseData = message.content();
-        }
-        responseData = normalizeToolResponseData(responseData);
-
-        ToolResponseMessage.ToolResponse toolResponse = new ToolResponseMessage.ToolResponse(
-            message.toolCallId() == null ? "pending-unknown" : message.toolCallId(),
-            message.toolName() == null ? "unknown-tool" : message.toolName(),
-            responseData);
-
-        return ToolResponseMessage.builder()
-            .responses(List.of(toolResponse))
-            .metadata(Collections.emptyMap())
-            .build();
-    }
-
-    private Message toToolReplayTextMessage(AiChatMessage message) {
-        String toolName = message.toolName() == null ? "unknown-tool" : message.toolName();
-        String toolCallId = message.toolCallId() == null ? "pending-unknown" : message.toolCallId();
-        String responseData = extractToolResponseData(message);
-        String replayText = "Tool '" + toolName + "' (callId=" + toolCallId + ") result:\n" + responseData;
-        return new AssistantMessage(replayText);
-    }
-
-    private String extractToolResponseData(AiChatMessage message) {
-        Map<String, Object> payload;
-        try {
-            payload = objectMapper.readValue(message.content(), new TypeReference<Map<String, Object>>() {});
-        } catch (Exception e) {
-            payload = new HashMap<>();
-        }
-
-        String responseData = null;
-        Object responsesRaw = payload.get("responses");
-        if (responsesRaw instanceof List<?> responses && !responses.isEmpty() && responses.get(0) instanceof Map<?, ?> first) {
-            Object v = first.get("responseData");
-            responseData = v == null ? null : String.valueOf(v);
-        }
-        if (responseData == null) {
-            responseData = message.content();
-        }
-        return normalizeToolResponseData(responseData);
-    }
 
     private void applyAuthorizationAction(String action,
                                           String username,
@@ -1296,6 +1213,7 @@ public class ChatAuthorizationController {
 
         String result;
         try {
+            ToolExecutionContext.put(LoggedToolCallback.SUPPRESS_AUTO_TOOL_PERSIST_CONTEXT_KEY, Boolean.TRUE);
             result = callback.call(argumentsJson);
         } catch (RuntimeException ex) {
             ToolSuspensionException suspension = findCause(ex, ToolSuspensionException.class);
@@ -1304,6 +1222,7 @@ public class ChatAuthorizationController {
             }
             throw ex;
         } finally {
+            ToolExecutionContext.remove(LoggedToolCallback.SUPPRESS_AUTO_TOOL_PERSIST_CONTEXT_KEY);
             if (previousToolCallId == null) {
                 ToolExecutionContext.remove(SecuredToolCallback.CURRENT_TOOL_CALL_ID_CONTEXT_KEY);
             } else {
@@ -1409,18 +1328,6 @@ public class ChatAuthorizationController {
             current = current.getCause();
         }
         return null;
-    }
-
-    private String normalizeToolResponseData(String responseData) {
-        if (responseData == null || responseData.isBlank()) {
-            return toJson(Map.of("status", "UNKNOWN", "value", ""));
-        }
-        try {
-            objectMapper.readValue(responseData, new TypeReference<Map<String, Object>>() {});
-            return responseData; // already JSON object
-        } catch (Exception ignored) {
-            return toJson(Map.of("status", "LEGACY", "value", responseData));
-        }
     }
 
     private static String normalizeAction(String action) {
