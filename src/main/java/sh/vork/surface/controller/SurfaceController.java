@@ -32,6 +32,7 @@ import sh.vork.skill.Skill;
 import sh.vork.artifact.ArtifactStatus;
 import sh.vork.surface.Surface;
 import sh.vork.surface.service.SurfaceReflectionContractService;
+import sh.vork.surface.service.SurfaceAgentExecutionService;
 import sh.vork.surface.service.SurfaceService;
 import sh.vork.surface.service.SurfaceSkillExecutionService;
 import sh.vork.util.ZipArchiveUtil;
@@ -80,6 +81,7 @@ public class SurfaceController {
     private final ReflectionService reflectionService;
     private final ChatService chatService;
     private final SurfaceSkillExecutionService surfaceSkillExecutionService;
+    private final SurfaceAgentExecutionService surfaceAgentExecutionService;
     private final ObjectMapper objectMapper;
 
     public SurfaceController(SurfaceService surfaceService,
@@ -89,6 +91,7 @@ public class SurfaceController {
                              ReflectionService reflectionService,
                              ChatService chatService,
                              SurfaceSkillExecutionService surfaceSkillExecutionService,
+                             SurfaceAgentExecutionService surfaceAgentExecutionService,
                              ObjectMapper objectMapper) {
         this.surfaceService = surfaceService;
         this.surfaceRepository = surfaceRepository;
@@ -97,6 +100,7 @@ public class SurfaceController {
         this.reflectionService = reflectionService;
         this.chatService = chatService;
         this.surfaceSkillExecutionService = surfaceSkillExecutionService;
+        this.surfaceAgentExecutionService = surfaceAgentExecutionService;
         this.objectMapper = objectMapper;
     }
 
@@ -214,6 +218,7 @@ public class SurfaceController {
                         created.description(),
                         created.skillUuids(),
                         created.reflectionBindingUuids(),
+                    req.agentTemplateUuids(),
                         created.jobUuids(),
                         req.published(),
                         req.logoDataUrl(),
@@ -245,6 +250,7 @@ public class SurfaceController {
                         req == null ? null : req.description(),
                         req == null ? null : req.skillUuids(),
                         req == null ? null : req.reflectionBindingUuids(),
+                    req == null ? null : req.agentTemplateUuids(),
                         req == null ? null : req.jobUuids(),
                         req == null ? null : req.published(),
                         req == null ? null : req.logoDataUrl(),
@@ -413,6 +419,7 @@ public class SurfaceController {
             artifact.put("description", surface.description());
             artifact.put("skillUuids", surface.skillUuids());
             artifact.put("reflectionBindingUuids", surface.reflectionBindingUuids());
+            artifact.put("agentTemplateUuids", surface.agentTemplateUuids());
             artifact.put("jobUuids", surface.jobUuids());
             artifact.put("logoDataUrl", surface.logoDataUrl());
             artifact.put("accessPolicy", surface.accessPolicy());
@@ -523,6 +530,7 @@ public class SurfaceController {
                 incoming.description(),
                 incoming.skillUuids(),
                 incoming.reflectionBindingUuids(),
+            incoming.agentTemplateUuids(),
             incoming.jobUuids(),
             null,
             incoming.logoDataUrl(),
@@ -780,6 +788,39 @@ public class SurfaceController {
                 "skills", skills));
     }
 
+    @GetMapping("/api/surfaces/{uuid}/agent-contracts")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> getSurfaceAgentContracts(@PathVariable String uuid,
+                                                      Principal principal) {
+        log.debug("ENTER getSurfaceAgentContracts: [surfaceUuid={}, user={}]",
+                uuid, principal == null ? null : principal.getName());
+        if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("status", "error", "message", "Access denied"));
+        }
+
+        List<Map<String, Object>> agents = new java.util.ArrayList<>();
+        List<sh.vork.ai.agent.AgentTemplate> attachedAgents;
+        try {
+            attachedAgents = surfaceService.listAttachedSurfaceAgents(uuid);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("status", "error", "message", ex.getMessage()));
+        }
+
+        for (sh.vork.ai.agent.AgentTemplate template : attachedAgents) {
+            agents.add(Map.of(
+                    "agentTemplateId", template.uuid(),
+                    "name", template.name(),
+                    "agentType", template.agentType().name()));
+        }
+
+        return ResponseEntity.ok(Map.of(
+                "surfaceUuid", uuid,
+                "agents", agents));
+    }
+
     @PostMapping("/api/surfaces/{uuid}/skills/invoke")
     @ResponseBody
     @PreAuthorize("hasAuthority('USERS_MANAGE')")
@@ -873,6 +914,81 @@ public class SurfaceController {
         }
     }
 
+    @PostMapping("/api/surfaces/{uuid}/agents/invoke")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> startSurfaceAgentExecution(@PathVariable String uuid,
+                                                        @RequestBody SurfaceAgentInvokeRequest req,
+                                                        Principal principal) {
+        log.debug("ENTER startSurfaceAgentExecution: [surfaceUuid={}, agentTemplateId={}, user={}]",
+                uuid,
+                req == null ? null : req.agentTemplateId(),
+                principal == null ? null : principal.getName());
+        if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("status", "error", "message", "Access denied"));
+        }
+        if (req == null || req.agentTemplateId() == null || req.agentTemplateId().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "message", "agentTemplateId is required."));
+        }
+        if (req == null || req.prompt() == null || req.prompt().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "message", "prompt is required."));
+        }
+        if (req == null || req.outputSchema() == null) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "message", "outputSchema is required."));
+        }
+
+        try {
+            var started = surfaceAgentExecutionService.start(
+                    uuid,
+                    principal.getName(),
+                    req.agentTemplateId(),
+                    req.prompt(),
+                    req.outputSchema());
+            return ResponseEntity.ok(Map.of(
+                    "status", "accepted",
+                    "executionId", started.executionId(),
+                    "state", started.state().name(),
+                    "executionSessionUuid", started.executionSessionUuid(),
+                    "agentTemplateId", started.agentTemplateId()));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "message", ex.getMessage()));
+        }
+    }
+
+    @GetMapping("/api/surfaces/{uuid}/agents/executions/{executionId}")
+    @ResponseBody
+    @PreAuthorize("hasAuthority('USERS_MANAGE')")
+    public ResponseEntity<?> pollSurfaceAgentExecution(@PathVariable String uuid,
+                                                       @PathVariable String executionId,
+                                                       @RequestParam(name = "waitMs", defaultValue = "15000") long waitMs,
+                                                       Principal principal) {
+        log.debug("ENTER pollSurfaceAgentExecution: [surfaceUuid={}, executionId={}, waitMs={}, user={}]",
+                uuid, executionId, waitMs, principal == null ? null : principal.getName());
+        if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("status", "error", "message", "Access denied"));
+        }
+
+        try {
+            var snapshot = surfaceAgentExecutionService.poll(uuid, executionId, waitMs);
+            return ResponseEntity.ok(Map.of(
+                    "status", "ok",
+                    "executionId", snapshot.executionId(),
+                    "state", snapshot.state().name(),
+                    "outputContentType", snapshot.outputContentType() == null ? "" : snapshot.outputContentType(),
+                    "result", snapshot.result(),
+                    "textResponse", snapshot.textResponse() == null ? "" : snapshot.textResponse(),
+                    "error", snapshot.error() == null ? "" : snapshot.error(),
+                    "startedAt", snapshot.startedAt(),
+                    "updatedAt", snapshot.updatedAt(),
+                    "completedAt", snapshot.completedAt() == null ? 0L : snapshot.completedAt()));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("status", "error", "message", ex.getMessage()));
+        }
+    }
+
     @GetMapping("/api/apps/published/{uuid}/reflection-contracts")
     @ResponseBody
     public ResponseEntity<?> getPublishedSurfaceReflectionContracts(@PathVariable String uuid,
@@ -915,6 +1031,17 @@ public class SurfaceController {
         return getSurfaceSkillContracts(uuid, principal);
     }
 
+    @GetMapping("/api/apps/published/{uuid}/agent-contracts")
+    @ResponseBody
+    public ResponseEntity<?> getPublishedSurfaceAgentContracts(@PathVariable String uuid,
+                                                               Principal principal) {
+        ResponseEntity<?> access = ensurePublishedSurfaceAccess(uuid, principal);
+        if (access != null) {
+            return access;
+        }
+        return getSurfaceAgentContracts(uuid, principal);
+    }
+
     @PostMapping("/api/apps/published/{uuid}/skills/invoke")
     @ResponseBody
     public ResponseEntity<?> startPublishedSurfaceSkillExecution(@PathVariable String uuid,
@@ -938,6 +1065,31 @@ public class SurfaceController {
             return access;
         }
         return pollSurfaceSkillExecution(uuid, executionId, waitMs, principal);
+    }
+
+    @PostMapping("/api/apps/published/{uuid}/agents/invoke")
+    @ResponseBody
+    public ResponseEntity<?> startPublishedSurfaceAgentExecution(@PathVariable String uuid,
+                                                                 @RequestBody SurfaceAgentInvokeRequest req,
+                                                                 Principal principal) {
+        ResponseEntity<?> access = ensurePublishedSurfaceAccess(uuid, principal);
+        if (access != null) {
+            return access;
+        }
+        return startSurfaceAgentExecution(uuid, req, principal);
+    }
+
+    @GetMapping("/api/apps/published/{uuid}/agents/executions/{executionId}")
+    @ResponseBody
+    public ResponseEntity<?> pollPublishedSurfaceAgentExecution(@PathVariable String uuid,
+                                                                @PathVariable String executionId,
+                                                                @RequestParam(name = "waitMs", defaultValue = "15000") long waitMs,
+                                                                Principal principal) {
+        ResponseEntity<?> access = ensurePublishedSurfaceAccess(uuid, principal);
+        if (access != null) {
+            return access;
+        }
+        return pollSurfaceAgentExecution(uuid, executionId, waitMs, principal);
     }
 
     @GetMapping("/apps/runtime/v1/reflections.js")
@@ -1093,6 +1245,94 @@ public class SurfaceController {
 
     window.vork = window.vork || {};
     window.vork.skills = { invoke: invoke, getContracts: getContracts };
+})();
+""";
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/javascript"))
+                .body(script);
+    }
+
+    @GetMapping("/apps/runtime/v1/agents.js")
+    @ResponseBody
+    public ResponseEntity<String> publishedAgentRuntimeHelper() {
+        String script = """
+(function () {
+    'use strict';
+
+    function detectSurfaceUuid() {
+        if (window.__VORK_SURFACE_UUID__ && typeof window.__VORK_SURFACE_UUID__ === 'string') {
+            return window.__VORK_SURFACE_UUID__;
+        }
+        var match = window.location.pathname.match(/^\\/apps\\/published\\/([^\\/]+)(?:\\/|$)/);
+        return match ? decodeURIComponent(match[1]) : null;
+    }
+
+    async function getContracts(options) {
+        options = options || {};
+        var surfaceUuid = options.surfaceUuid || detectSurfaceUuid();
+        if (!surfaceUuid) throw new Error('Cannot resolve surfaceUuid for agent contract lookup.');
+        var response = await fetch('/api/apps/published/' + encodeURIComponent(surfaceUuid) + '/agent-contracts');
+        var payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.message || payload.error || ('Agent contract lookup failed with HTTP ' + response.status));
+        }
+        return payload;
+    }
+
+    async function invoke(options) {
+        options = options || {};
+        var surfaceUuid = options.surfaceUuid || detectSurfaceUuid();
+        if (!surfaceUuid) throw new Error('Cannot resolve surfaceUuid for agent invocation.');
+        if (!options.agentTemplateId) throw new Error('agentTemplateId is required.');
+        if (!options.prompt) throw new Error('prompt is required.');
+        if (!options.outputSchema) throw new Error('outputSchema is required.');
+
+        var startRes = await fetch('/api/apps/published/' + encodeURIComponent(surfaceUuid) + '/agents/invoke', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                agentTemplateId: options.agentTemplateId,
+                prompt: options.prompt,
+                outputSchema: options.outputSchema
+            })
+        });
+        var startPayload = await startRes.json();
+        if (!startRes.ok) {
+            throw new Error(startPayload.message || startPayload.error || ('Agent invoke failed with HTTP ' + startRes.status));
+        }
+
+        var executionId = startPayload.executionId;
+        if (!executionId) throw new Error('Agent execution did not return an executionId.');
+
+        var waitMs = typeof options.waitMs === 'number' ? options.waitMs : 15000;
+        while (true) {
+            var pollRes = await fetch('/api/apps/published/' + encodeURIComponent(surfaceUuid)
+                + '/agents/executions/' + encodeURIComponent(executionId)
+                + '?waitMs=' + encodeURIComponent(waitMs));
+            var pollPayload = await pollRes.json();
+            if (!pollRes.ok) {
+                throw new Error(pollPayload.message || pollPayload.error || ('Agent poll failed with HTTP ' + pollRes.status));
+            }
+
+            var state = String(pollPayload.state || '').toUpperCase();
+            if (state === 'COMPLETED') {
+                return {
+                    executionId: executionId,
+                    outputContentType: pollPayload.outputContentType || 'application/json',
+                    result: pollPayload.result,
+                    textResponse: pollPayload.textResponse || ''
+                };
+            }
+            if (state === 'FAILED') {
+                throw new Error(pollPayload.error || 'Agent execution failed.');
+            }
+        }
+    }
+
+    window.vork = window.vork || {};
+    window.vork.agents = window.vork.agents || {};
+    window.vork.agents.invoke = invoke;
+    window.vork.agents.getContracts = getContracts;
 })();
 """;
         return ResponseEntity.ok()
@@ -1334,17 +1574,120 @@ public class SurfaceController {
                                 .body(script);
         }
 
+        @GetMapping("/surface/runtime/v1/agents.js")
+        @ResponseBody
+        @PreAuthorize("hasAuthority('USERS_MANAGE')")
+        public ResponseEntity<String> surfaceAgentRuntimeHelper() {
+                String script = """
+(function () {
+    'use strict';
+
+    function detectSurfaceUuid() {
+        if (window.__VORK_SURFACE_UUID__ && typeof window.__VORK_SURFACE_UUID__ === 'string') {
+            return window.__VORK_SURFACE_UUID__;
+        }
+        var match = window.location.pathname.match(/^\\/surface\\/([^\\/]+)\\/preview(?:\\/|$)/);
+        return match ? decodeURIComponent(match[1]) : null;
+    }
+
+    async function getContracts(options) {
+        options = options || {};
+        var surfaceUuid = options.surfaceUuid || detectSurfaceUuid();
+        if (!surfaceUuid) throw new Error('Cannot resolve surfaceUuid for agent contract lookup.');
+        var response = await fetch('/api/surfaces/' + encodeURIComponent(surfaceUuid) + '/agent-contracts');
+        var payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.message || payload.error || ('Agent contract lookup failed with HTTP ' + response.status));
+        }
+        return payload;
+    }
+
+    async function invoke(options) {
+        options = options || {};
+        var surfaceUuid = options.surfaceUuid || detectSurfaceUuid();
+        if (!surfaceUuid) throw new Error('Cannot resolve surfaceUuid for agent invocation.');
+        if (!options.agentTemplateId) throw new Error('agentTemplateId is required.');
+        if (!options.prompt) throw new Error('prompt is required.');
+        if (!options.outputSchema) throw new Error('outputSchema is required.');
+
+        var startRes = await fetch('/api/surfaces/' + encodeURIComponent(surfaceUuid) + '/agents/invoke', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                agentTemplateId: options.agentTemplateId,
+                prompt: options.prompt,
+                outputSchema: options.outputSchema
+            })
+        });
+        var startPayload = await startRes.json();
+        if (!startRes.ok) {
+            throw new Error(startPayload.message || startPayload.error || ('Agent invoke failed with HTTP ' + startRes.status));
+        }
+
+        var executionId = startPayload.executionId;
+        if (!executionId) throw new Error('Agent execution did not return an executionId.');
+
+        var waitMs = typeof options.waitMs === 'number' ? options.waitMs : 15000;
+        while (true) {
+            var pollRes = await fetch('/api/surfaces/' + encodeURIComponent(surfaceUuid)
+                + '/agents/executions/' + encodeURIComponent(executionId)
+                + '?waitMs=' + encodeURIComponent(waitMs));
+            var pollPayload = await pollRes.json();
+            if (!pollRes.ok) {
+                throw new Error(pollPayload.message || pollPayload.error || ('Agent poll failed with HTTP ' + pollRes.status));
+            }
+
+            var state = String(pollPayload.state || '').toUpperCase();
+            if (state === 'COMPLETED') {
+                return {
+                    executionId: executionId,
+                    outputContentType: pollPayload.outputContentType || 'application/json',
+                    result: pollPayload.result,
+                    textResponse: pollPayload.textResponse || ''
+                };
+            }
+            if (state === 'FAILED') {
+                throw new Error(pollPayload.error || 'Agent execution failed.');
+            }
+        }
+    }
+
+    window.vork = window.vork || {};
+    window.vork.agents = window.vork.agents || {};
+    window.vork.agents.invoke = invoke;
+    window.vork.agents.getContracts = getContracts;
+})();
+""";
+                return ResponseEntity.ok()
+                                .contentType(MediaType.parseMediaType("application/javascript"))
+                                .body(script);
+        }
+
     // ── Request DTOs ──────────────────────────────────────────────────────────
 
     public record UpdateSurfaceRequest(String name,
                                        String description,
                                        List<String> skillUuids,
                                        List<String> reflectionBindingUuids,
+                                       List<String> agentTemplateUuids,
                                        List<String> jobUuids,
                                        Boolean published,
                                        String logoDataUrl,
                                        List<String> assignedUserUuids,
                                        AccessPolicyRequest accessPolicy) {
+
+        public UpdateSurfaceRequest(String name,
+                                    String description,
+                                    List<String> skillUuids,
+                                    List<String> reflectionBindingUuids,
+                                    List<String> jobUuids,
+                                    Boolean published,
+                                    String logoDataUrl,
+                                    List<String> assignedUserUuids,
+                                    AccessPolicyRequest accessPolicy) {
+            this(name, description, skillUuids, reflectionBindingUuids, null, jobUuids,
+                    published, logoDataUrl, assignedUserUuids, accessPolicy);
+        }
 
         public Surface.AccessPolicy toAccessPolicy() {
             if (accessPolicy == null) {
@@ -1374,10 +1717,22 @@ public class SurfaceController {
                                        String description,
                                        String groupId,
                                        String artifactId,
+                                       List<String> agentTemplateUuids,
                                        Boolean published,
                                        String logoDataUrl,
                                        List<String> assignedUserUuids,
                                        AccessPolicyRequest accessPolicy) {
+
+        public CreateSurfaceRequest(String name,
+                                    String description,
+                                    String groupId,
+                                    String artifactId,
+                                    Boolean published,
+                                    String logoDataUrl,
+                                    List<String> assignedUserUuids,
+                                    AccessPolicyRequest accessPolicy) {
+            this(name, description, groupId, artifactId, null, published, logoDataUrl, assignedUserUuids, accessPolicy);
+        }
 
         public Surface.AccessPolicy toAccessPolicy() {
             if (accessPolicy == null) {
@@ -1405,6 +1760,11 @@ public class SurfaceController {
                                             Map<String, Object> args) {
     }
 
+    public record SurfaceAgentInvokeRequest(String agentTemplateId,
+                                            String prompt,
+                                            Object outputSchema) {
+    }
+
         @JsonIgnoreProperties(ignoreUnknown = true)
     public record SurfaceExportPackage(
             String vorkSurfaceExport,
@@ -1419,6 +1779,7 @@ public class SurfaceController {
                 String description,
                 List<String> skillUuids,
                 List<String> reflectionBindingUuids,
+                List<String> agentTemplateUuids,
                 List<String> jobUuids,
                 boolean published,
                 String logoDataUrl,
@@ -1429,6 +1790,24 @@ public class SurfaceController {
                 String version,
                 ArtifactStatus artifactStatus
             ) {
+                public SurfaceArtifact(String uuid,
+                                       String name,
+                                       String description,
+                                       List<String> skillUuids,
+                                       List<String> reflectionBindingUuids,
+                                       List<String> jobUuids,
+                                       boolean published,
+                                       String logoDataUrl,
+                                       List<String> assignedUserUuids,
+                                       Surface.AccessPolicy accessPolicy,
+                                       String groupId,
+                                       String artifactId,
+                                       String version,
+                                       ArtifactStatus artifactStatus) {
+                    this(uuid, name, description, skillUuids, reflectionBindingUuids, null, jobUuids,
+                            published, logoDataUrl, assignedUserUuids, accessPolicy,
+                            groupId, artifactId, version, artifactStatus);
+                }
             }
 
     public record SurfaceImportResult(
@@ -1453,6 +1832,9 @@ public class SurfaceController {
             return true;
         }
         if (req.reflectionBindingUuids() != null && !Objects.equals(req.reflectionBindingUuids(), existing.reflectionBindingUuids())) {
+            return true;
+        }
+        if (req.agentTemplateUuids() != null && !Objects.equals(req.agentTemplateUuids(), existing.agentTemplateUuids())) {
             return true;
         }
         if (req.jobUuids() != null && !Objects.equals(req.jobUuids(), existing.jobUuids())) {
@@ -1594,6 +1976,7 @@ public class SurfaceController {
         String injection = """
 <script src="/surface/runtime/v1/reflections.js"></script>
 <script src="/surface/runtime/v1/skills.js"></script>
+<script src="/surface/runtime/v1/agents.js"></script>
 <script src="/js/surface-preview-console.js"></script>
 """;
 
@@ -1612,17 +1995,20 @@ public class SurfaceController {
         // Published runtime should never load preview-only helpers.
         html = html.replace("/surface/runtime/v1/reflections.js", "/apps/runtime/v1/reflections.js");
         html = html.replace("/surface/runtime/v1/skills.js", "/apps/runtime/v1/skills.js");
+        html = html.replace("/surface/runtime/v1/agents.js", "/apps/runtime/v1/agents.js");
         html = html.replace("/js/surface-preview-console.js", "");
 
         String injection = """
     <script src="/apps/runtime/v1/compat.js"></script>
 <script src="/apps/runtime/v1/reflections.js"></script>
 <script src="/apps/runtime/v1/skills.js"></script>
+    <script src="/apps/runtime/v1/agents.js"></script>
 """;
 
         if (html.contains("/apps/runtime/v1/compat.js")
             && html.contains("/apps/runtime/v1/reflections.js")
-            && html.contains("/apps/runtime/v1/skills.js")) {
+            && html.contains("/apps/runtime/v1/skills.js")
+            && html.contains("/apps/runtime/v1/agents.js")) {
             return html;
         }
 
@@ -1714,6 +2100,8 @@ public class SurfaceController {
         rewritten = rewritten.replace("surface/runtime/v1/reflections.js", "/apps/runtime/v1/reflections.js");
         rewritten = rewritten.replace("/surface/runtime/v1/skills.js", "/apps/runtime/v1/skills.js");
         rewritten = rewritten.replace("surface/runtime/v1/skills.js", "/apps/runtime/v1/skills.js");
+        rewritten = rewritten.replace("/surface/runtime/v1/agents.js", "/apps/runtime/v1/agents.js");
+        rewritten = rewritten.replace("surface/runtime/v1/agents.js", "/apps/runtime/v1/agents.js");
 
         // Normalize reflection and skill API paths for published execution context.
         rewritten = rewritten.replace("/api/surfaces/", "/api/apps/published/");

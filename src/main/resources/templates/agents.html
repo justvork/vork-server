@@ -58,6 +58,7 @@
                         <th>Artifact ID</th>
                         <th>Version</th>
                         <th>Status</th>
+                        <th>Type</th>
                         <th>Recommended Model</th>
                         <th class="text-end">Actions</th>
                     </tr>
@@ -71,6 +72,10 @@
                         <td>
                             <span class="badge bg-dark border border-secondary text-secondary"
                                   th:text="${agent.artifactStatus()}"></span>
+                        </td>
+                        <td>
+                            <span class="badge bg-dark border border-secondary text-secondary"
+                                  th:text="${agent.agentType() != null ? agent.agentType().name() : 'INTERACTIVE'}"></span>
                         </td>
                         <td th:attr="id='agent-model-' + ${agent.uuid()}">
                             <span class="text-muted small">—</span>
@@ -175,106 +180,133 @@
                     </div>
                 </div>
 
-                <div class="mb-3">
-                    <label class="form-label" for="agent-prompt">System Prompt</label>
-                    <textarea id="agent-prompt" class="form-control font-monospace" rows="8"
-                              placeholder="Instructions prepended to every conversation for this agent…"></textarea>
-                </div>
+                <ul class="agent-modal-tabs flex flex-wrap gap-2 border-b border-zinc-700 m-0 p-0 list-none" id="agent-config-tabs" role="tablist">
+                    <li role="presentation">
+                        <button class="agent-tab-button is-active px-3 py-2 text-sm font-semibold rounded-t border bg-zinc-800 text-zinc-100 border-blue-500" id="agent-tab-prompt-model" data-tab-target="#agent-panel-prompt-model" type="button" role="tab" aria-controls="agent-panel-prompt-model" aria-selected="true">
+                            Prompt and Model
+                        </button>
+                    </li>
+                    <li role="presentation">
+                        <button class="agent-tab-button px-3 py-2 text-sm font-semibold rounded-t border bg-zinc-900 text-zinc-300 border-zinc-700" id="agent-tab-users-policy" data-tab-target="#agent-panel-users-policy" type="button" role="tab" aria-controls="agent-panel-users-policy" aria-selected="false">
+                            Users and Policy
+                        </button>
+                    </li>
+                    <li role="presentation">
+                        <button class="agent-tab-button px-3 py-2 text-sm font-semibold rounded-t border bg-zinc-900 text-zinc-300 border-zinc-700" id="agent-tab-capabilities" data-tab-target="#agent-panel-capabilities" type="button" role="tab" aria-controls="agent-panel-capabilities" aria-selected="false">
+                            Tools and Capabilities
+                        </button>
+                    </li>
+                </ul>
 
-                <div class="mb-3">
-                    <label class="form-label" for="agent-recommended-model">Recommended Model</label>
-                    <input type="text" id="agent-recommended-model" class="form-control"
-                           placeholder="PROVIDER:model-id (optional, e.g. GEMINI:gemini-2.5-flash)" oninput="syncRecommendedModelLookup('agent-recommended-model', 'agent-recommended-model-lookup')">
-                    <div class="form-text">If set, this model is preferred for turns handled by this agent unless a skill recommendation overrides it.</div>
-                    <div class="input-group input-group-sm mt-2">
-                        <select id="agent-recommended-model-lookup" class="form-select" onchange="setRecommendedModelFromLookup('agent-recommended-model', 'agent-recommended-model-lookup')">
-                            <option value="">-- Select from configured provider models --</option>
-                        </select>
-                    </div>
-                </div>
+                <div class="pt-3" id="agent-config-tabs-content">
+                    <div class="agent-config-tab-pane is-active" id="agent-panel-prompt-model" role="tabpanel" aria-labelledby="agent-tab-prompt-model" tabindex="0">
+                        <div class="mb-3">
+                            <label class="form-label" for="agent-prompt">System Prompt</label>
+                            <textarea id="agent-prompt" class="form-control font-monospace" rows="8"
+                                      placeholder="Instructions prepended to every conversation for this agent…"></textarea>
+                        </div>
 
-                <div class="mb-3">
-                    <label class="form-label" for="agent-approval-policy">Approval Policy</label>
-                    <select id="agent-approval-policy" class="form-select"></select>
-                    <div class="form-text">Choose a policy override for this agent, or keep system default.</div>
-                </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="agent-type">Agent Type</label>
+                            <select id="agent-type" class="form-select">
+                                <option value="INTERACTIVE">INTERACTIVE</option>
+                                <option value="BACKGROUND">BACKGROUND</option>
+                                <option value="SURFACE">SURFACE</option>
+                            </select>
+                            <div class="form-text">Select where this agent runs. BACKGROUND agents are intended for delegated and scheduled workflows. SURFACE agents can be assigned to surfaces.</div>
+                        </div>
 
-                <!-- Allowed Tools ─────────────────────────────────────────── -->
-                <div class="mb-3">
-                    <label class="form-label">Allowed Tools
-                        <span class="text-muted small">(empty = all tools available)</span>
-                    </label>
+                        <div class="mb-0">
+                            <label class="form-label" for="agent-recommended-model">Recommended Model</label>
+                            <input type="text" id="agent-recommended-model" class="form-control"
+                                   placeholder="PROVIDER:model-id (optional, e.g. GEMINI:gemini-2.5-flash)" oninput="syncRecommendedModelLookup('agent-recommended-model', 'agent-recommended-model-lookup')">
+                            <div class="form-text">If set, this model is preferred for turns handled by this agent unless a skill recommendation overrides it.</div>
+                            <div class="input-group input-group-sm mt-2">
+                                <select id="agent-recommended-model-lookup" class="form-select" onchange="setRecommendedModelFromLookup('agent-recommended-model', 'agent-recommended-model-lookup')">
+                                    <option value="">-- Select from configured provider models --</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
 
-                    <!-- Current tool pills -->
-                    <div id="tool-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary agent-pill-container"></div>
+                    <div class="agent-config-tab-pane hidden" id="agent-panel-users-policy" role="tabpanel" aria-labelledby="agent-tab-users-policy" tabindex="0">
+                        <div class="mb-3">
+                            <label class="form-label" for="agent-approval-policy">Approval Policy</label>
+                            <select id="agent-approval-policy" class="form-select"></select>
+                            <div class="form-text">Choose a policy override for this agent, or keep system default.</div>
+                        </div>
 
-                    <!-- Search + add tool -->
-                    <div class="input-group mb-1">
-                        <span class="input-group-text"><i class="fa-solid fa-magnifying-glass"></i></span>
-                        <input type="text" id="tool-search" class="form-control" placeholder="Search tools to add…" oninput="filterTools()">
+                        <div class="mb-0">
+                            <label class="form-label">Assigned Users
+                                <span class="text-muted small">(admins and Concierge access are always automatic)</span>
+                            </label>
+                            <div id="assigned-user-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary agent-pill-container"></div>
+                            <div class="input-group mb-1">
+                                <span class="input-group-text"><i class="fa-solid fa-user-plus"></i></span>
+                                <input type="text" id="assigned-user-search" class="form-control" placeholder="Search users to assign..." oninput="filterAssignedUsers()">
+                            </div>
+                            <div id="assigned-user-dropdown" class="card agent-dropdown hidden">
+                                <ul id="assigned-user-options" class="list-group list-group-flush"></ul>
+                            </div>
+                        </div>
                     </div>
-                    <div id="tool-dropdown" class="card agent-dropdown hidden">
-                        <ul id="tool-list" class="list-group list-group-flush"></ul>
-                    </div>
-                </div>
 
-                <!-- Bindings ────────────────────────────────────────────── -->
-                <div class="mb-3">
-                    <label class="form-label">Bindings
-                        <span class="text-muted small">(empty = none assigned)</span>
-                    </label>
-                    <div id="reflection-binding-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary agent-pill-container"></div>
-                    <div class="input-group mb-1">
-                        <span class="input-group-text"><i class="fa-solid fa-link"></i></span>
-                        <input type="text" id="reflection-binding-search" class="form-control" placeholder="Search bindings to assign..." oninput="filterReflectionBindings()">
-                    </div>
-                    <div id="reflection-binding-dropdown" class="card agent-dropdown hidden">
-                        <ul id="reflection-binding-options" class="list-group list-group-flush"></ul>
-                    </div>
-                </div>
+                    <div class="agent-config-tab-pane hidden" id="agent-panel-capabilities" role="tabpanel" aria-labelledby="agent-tab-capabilities" tabindex="0">
+                        <div class="mb-3">
+                            <label class="form-label">Allowed Tools
+                                <span class="text-muted small">(empty = all tools available)</span>
+                            </label>
+                            <div id="tool-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary agent-pill-container"></div>
+                            <div class="input-group mb-1">
+                                <span class="input-group-text"><i class="fa-solid fa-magnifying-glass"></i></span>
+                                <input type="text" id="tool-search" class="form-control" placeholder="Search tools to add..." oninput="filterTools()">
+                            </div>
+                            <div id="tool-dropdown" class="card agent-dropdown hidden">
+                                <ul id="tool-list" class="list-group list-group-flush"></ul>
+                            </div>
+                        </div>
 
-                <!-- Assigned Users ─────────────────────────────────────── -->
-                <div class="mb-3">
-                    <label class="form-label">Assigned Users
-                        <span class="text-muted small">(admins and Concierge access are always automatic)</span>
-                    </label>
-                    <div id="assigned-user-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary agent-pill-container"></div>
-                    <div class="input-group mb-1">
-                        <span class="input-group-text"><i class="fa-solid fa-user-plus"></i></span>
-                        <input type="text" id="assigned-user-search" class="form-control" placeholder="Search users to assign..." oninput="filterAssignedUsers()">
-                    </div>
-                    <div id="assigned-user-dropdown" class="card agent-dropdown hidden">
-                        <ul id="assigned-user-options" class="list-group list-group-flush"></ul>
-                    </div>
-                </div>
+                        <div class="mb-3">
+                            <label class="form-label">Bindings
+                                <span class="text-muted small">(empty = none assigned)</span>
+                            </label>
+                            <div id="reflection-binding-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary agent-pill-container"></div>
+                            <div class="input-group mb-1">
+                                <span class="input-group-text"><i class="fa-solid fa-link"></i></span>
+                                <input type="text" id="reflection-binding-search" class="form-control" placeholder="Search bindings to assign..." oninput="filterReflectionBindings()">
+                            </div>
+                            <div id="reflection-binding-dropdown" class="card agent-dropdown hidden">
+                                <ul id="reflection-binding-options" class="list-group list-group-flush"></ul>
+                            </div>
+                        </div>
 
-                <!-- Assigned Jobs ─────────────────────────────────────── -->
-                <div class="mb-3">
-                    <label class="form-label">Assigned Delegated Jobs
-                        <span class="text-muted small">(only these jobs can be delegated; one version per group/artifact)</span>
-                    </label>
-                    <div id="assigned-job-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary agent-pill-container"></div>
-                    <div class="input-group mb-1">
-                        <span class="input-group-text"><i class="fa-solid fa-briefcase"></i></span>
-                        <input type="text" id="assigned-job-search" class="form-control" placeholder="Search jobs to allow for delegation..." oninput="filterAssignedJobs()">
-                    </div>
-                    <div id="assigned-job-dropdown" class="card agent-dropdown hidden">
-                        <ul id="assigned-job-options" class="list-group list-group-flush"></ul>
-                    </div>
-                </div>
+                        <div class="mb-3">
+                            <label class="form-label">Assigned Delegated Jobs
+                                <span class="text-muted small">(only these jobs can be delegated; one version per group/artifact)</span>
+                            </label>
+                            <div id="assigned-job-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary agent-pill-container"></div>
+                            <div class="input-group mb-1">
+                                <span class="input-group-text"><i class="fa-solid fa-briefcase"></i></span>
+                                <input type="text" id="assigned-job-search" class="form-control" placeholder="Search jobs to allow for delegation..." oninput="filterAssignedJobs()">
+                            </div>
+                            <div id="assigned-job-dropdown" class="card agent-dropdown hidden">
+                                <ul id="assigned-job-options" class="list-group list-group-flush"></ul>
+                            </div>
+                        </div>
 
-                <!-- Assigned Skills ─────────────────────────────────────── -->
-                <div>
-                    <label class="form-label">Assigned Skills
-                        <span class="text-muted small">(skills are presented to the agent as tools during execution)</span>
-                    </label>
-                    <div id="skill-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary agent-pill-container"></div>
-                    <div class="input-group mb-1">
-                        <span class="input-group-text"><i class="fa-solid fa-bolt"></i></span>
-                        <input type="text" id="skill-search" class="form-control" placeholder="Search skills to assign…" oninput="filterSkills()">
-                    </div>
-                    <div id="skill-dropdown" class="card agent-dropdown hidden">
-                        <ul id="skill-list" class="list-group list-group-flush"></ul>
+                        <div class="mb-0">
+                            <label class="form-label">Assigned Skills
+                                <span class="text-muted small">(skills are presented to the agent as tools during execution)</span>
+                            </label>
+                            <div id="skill-pill-container" class="d-flex flex-wrap gap-1 mb-2 p-2 rounded border border-secondary agent-pill-container"></div>
+                            <div class="input-group mb-1">
+                                <span class="input-group-text"><i class="fa-solid fa-bolt"></i></span>
+                                <input type="text" id="skill-search" class="form-control" placeholder="Search skills to assign..." oninput="filterSkills()">
+                            </div>
+                            <div id="skill-dropdown" class="card agent-dropdown hidden">
+                                <ul id="skill-list" class="list-group list-group-flush"></ul>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -356,6 +388,6 @@
 <script src="/js/vork-modal.js" th:src="@{/js/vork-modal.js}"></script>
 <script src="/js/github-device-flow-ui.js?v=20260813.2" th:src="@{/js/github-device-flow-ui.js(v='20260813.2')}"></script>
 <script src="/js/contribution-dependency-precheck.js?v=20260813.3" th:src="@{/js/contribution-dependency-precheck.js(v='20260813.3')}"></script>
-<script src="/js/agents-page.js?v=20260813.10" th:src="@{/js/agents-page.js(v='20260813.10')}"></script>
+<script src="/js/agents-page.js?v=20260910.3" th:src="@{/js/agents-page.js(v='20260910.3')}"></script>
 </body>
 </html>

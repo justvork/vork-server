@@ -4,9 +4,12 @@ import sh.vork.artifact.ArtifactStatus;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import sh.vork.ai.AiProvider;
+import sh.vork.ai.agent.AgentTemplate;
+import sh.vork.ai.agent.AgentType;
 import sh.vork.ai.entity.AiSession;
 import sh.vork.ai.lifecycle.AgentTemplateSeeder;
 import sh.vork.ai.service.ChatService;
@@ -37,17 +40,28 @@ public class SurfaceService {
 
     private final DatabaseRepository<Surface> surfaceRepository;
     private final DatabaseRepository<Skill> skillRepository;
+    private final DatabaseRepository<AgentTemplate> agentTemplateRepository;
     private final DatabaseRepository<VorkUser> userRepository;
     private final ChatService chatService;
+
+    @Autowired
+    public SurfaceService(DatabaseRepository<Surface> surfaceRepository,
+                          DatabaseRepository<Skill> skillRepository,
+                          DatabaseRepository<AgentTemplate> agentTemplateRepository,
+                          DatabaseRepository<VorkUser> userRepository,
+                          ChatService chatService) {
+        this.surfaceRepository = surfaceRepository;
+        this.skillRepository = skillRepository;
+        this.agentTemplateRepository = agentTemplateRepository;
+        this.userRepository = userRepository;
+        this.chatService = chatService;
+    }
 
     public SurfaceService(DatabaseRepository<Surface> surfaceRepository,
                           DatabaseRepository<Skill> skillRepository,
                           DatabaseRepository<VorkUser> userRepository,
                           ChatService chatService) {
-        this.surfaceRepository = surfaceRepository;
-        this.skillRepository = skillRepository;
-        this.userRepository = userRepository;
-        this.chatService = chatService;
+        this(surfaceRepository, skillRepository, null, userRepository, chatService);
     }
 
     /**
@@ -97,6 +111,7 @@ public class SurfaceService {
                 List.of(),
                 List.of(),
                 List.of(),
+                List.of(),
                 false,
                 "",
                 List.of(),
@@ -124,6 +139,7 @@ public class SurfaceService {
                           String description,
                           List<String> skillUuids,
                           List<String> reflectionBindingUuids,
+                          List<String> agentTemplateUuids,
                           List<String> jobUuids,
                           Boolean published,
                           String logoDataUrl,
@@ -140,6 +156,9 @@ public class SurfaceService {
         List<String> validatedSkillUuids = skillUuids == null
                 ? existing.skillUuids()
                 : validateAndNormalizeSurfaceSkillUuids(skillUuids);
+        List<String> validatedAgentTemplateUuids = agentTemplateUuids == null
+            ? existing.agentTemplateUuids()
+            : validateAndNormalizeSurfaceAgentTemplateUuids(agentTemplateUuids);
 
         boolean nextPublished = published == null ? existing.published() : published;
         String nextLogoDataUrl = logoDataUrl == null ? existing.logoDataUrl() : normalizeLogoDataUrl(logoDataUrl);
@@ -161,6 +180,7 @@ public class SurfaceService {
                 existing.executionSessionUuid(),
                 validatedSkillUuids,
                 reflectionBindingUuids == null ? existing.reflectionBindingUuids() : reflectionBindingUuids,
+                validatedAgentTemplateUuids,
                 jobUuids == null ? existing.jobUuids() : jobUuids,
                 nextPublished,
                 nextLogoDataUrl,
@@ -178,6 +198,20 @@ public class SurfaceService {
 
         log.info("Updated surface [uuid={}, name={}]", uuid, updated.name());
         return updated;
+    }
+
+    public Surface update(String uuid,
+                          String name,
+                          String description,
+                          List<String> skillUuids,
+                          List<String> reflectionBindingUuids,
+                          List<String> jobUuids,
+                          Boolean published,
+                          String logoDataUrl,
+                          List<String> assignedUserUuids,
+                          Surface.AccessPolicy accessPolicy) {
+        return update(uuid, name, description, skillUuids, reflectionBindingUuids,
+                null, jobUuids, published, logoDataUrl, assignedUserUuids, accessPolicy);
     }
 
         /**
@@ -220,6 +254,7 @@ public class SurfaceService {
             existing.executionSessionUuid(),
             existing.skillUuids(),
             existing.reflectionBindingUuids(),
+            existing.agentTemplateUuids(),
             existing.jobUuids(),
             nextPublished,
             existing.logoDataUrl(),
@@ -290,6 +325,7 @@ public class SurfaceService {
                     surface.executionSessionUuid(),
                     surface.skillUuids(),
                     surface.reflectionBindingUuids(),
+                    surface.agentTemplateUuids(),
                     surface.jobUuids(),
                     surface.published(),
                     surface.logoDataUrl(),
@@ -342,6 +378,7 @@ public class SurfaceService {
                     session.uuid(),
                     surface.skillUuids(),
                     surface.reflectionBindingUuids(),
+                    surface.agentTemplateUuids(),
                     surface.jobUuids(),
                     surface.published(),
                     surface.logoDataUrl(),
@@ -403,6 +440,60 @@ public class SurfaceService {
             }
         }
         return List.copyOf(skills);
+    }
+
+    public List<AgentTemplate> listAttachedSurfaceAgents(String surfaceUuid) {
+        Surface surface = surfaceRepository.get(surfaceUuid);
+        if (surface == null) {
+            throw new IllegalArgumentException("Surface not found: " + surfaceUuid);
+        }
+        List<AgentTemplate> agents = new ArrayList<>();
+        for (String agentTemplateUuid : surface.agentTemplateUuids()) {
+            AgentTemplate template = agentTemplateRepository.get(agentTemplateUuid);
+            if (template != null && template.agentType() == AgentType.SURFACE) {
+                agents.add(template);
+            }
+        }
+        return List.copyOf(agents);
+    }
+
+    public boolean isSurfaceAgentAssigned(String surfaceUuid, String agentTemplateUuid) {
+        if (surfaceUuid == null || surfaceUuid.isBlank() || agentTemplateUuid == null || agentTemplateUuid.isBlank()) {
+            return false;
+        }
+        Surface surface = surfaceRepository.get(surfaceUuid);
+        if (surface == null || surface.agentTemplateUuids() == null || surface.agentTemplateUuids().isEmpty()) {
+            return false;
+        }
+        return surface.agentTemplateUuids().contains(agentTemplateUuid);
+    }
+
+    public AgentTemplate resolveAttachedSurfaceAgent(String surfaceUuid, String agentTemplateUuid) {
+        if (surfaceUuid == null || surfaceUuid.isBlank()) {
+            throw new IllegalArgumentException("surfaceUuid is required");
+        }
+        if (agentTemplateUuid == null || agentTemplateUuid.isBlank()) {
+            throw new IllegalArgumentException("agentTemplateId is required");
+        }
+        Surface surface = surfaceRepository.get(surfaceUuid);
+        if (surface == null) {
+            throw new IllegalArgumentException("Surface not found: " + surfaceUuid);
+        }
+        if (surface.agentTemplateUuids() == null || !surface.agentTemplateUuids().contains(agentTemplateUuid)) {
+            throw new IllegalArgumentException("Agent is not assigned to this surface.");
+        }
+        if (agentTemplateRepository == null) {
+            throw new IllegalStateException("Agent repository is not configured for surface agent assignment validation.");
+        }
+
+        AgentTemplate template = agentTemplateRepository.get(agentTemplateUuid);
+        if (template == null) {
+            throw new IllegalArgumentException("Agent template not found: " + agentTemplateUuid);
+        }
+        if (template.agentType() != AgentType.SURFACE) {
+            throw new IllegalArgumentException("Assigned agent is not a SURFACE agent.");
+        }
+        return template;
     }
 
     private void syncSessionReflectionBindings(String sessionUuid, List<String> reflectionBindingUuids) {
@@ -597,6 +688,32 @@ public class SurfaceService {
             }
             if (!user.isEnabled()) {
                 throw new IllegalArgumentException("Assigned user is disabled: " + trimmed);
+            }
+            normalized.add(trimmed);
+        }
+        return List.copyOf(normalized);
+    }
+
+    private List<String> validateAndNormalizeSurfaceAgentTemplateUuids(List<String> agentTemplateUuids) {
+        if (agentTemplateUuids == null || agentTemplateUuids.isEmpty()) {
+            return List.of();
+        }
+        if (agentTemplateRepository == null) {
+            throw new IllegalStateException("Agent repository is not configured for surface agent assignment validation.");
+        }
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (String raw : agentTemplateUuids) {
+            if (raw == null || raw.isBlank()) {
+                continue;
+            }
+            String trimmed = raw.trim();
+            AgentTemplate template = agentTemplateRepository.get(trimmed);
+            if (template == null) {
+                throw new IllegalArgumentException("Unknown agent UUID in agentTemplateUuids: " + trimmed);
+            }
+            if (template.agentType() != AgentType.SURFACE) {
+                throw new IllegalArgumentException(
+                        "Agent '" + template.name() + "' (" + template.uuid() + ") is not a SURFACE agent.");
             }
             normalized.add(trimmed);
         }

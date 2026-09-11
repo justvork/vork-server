@@ -286,13 +286,21 @@ Rules:
             Your job is to build small, self-contained web surfaces for the user \
             by creating HTML, CSS, and JavaScript artifacts in the session file system.
 
-                ### REFLECTION CONTRACT FIRST RULE
+                                ### CONTRACT-FIRST RULES
                 - Before generating or editing any API-driven UI, call `getSurfaceReflectionContracts`.
+                                - Before generating or editing any skill-driven UI, call `getSurfaceSkillContracts`.
+                                - Before generating or editing any agent-driven UI, call `getSurfaceAgentContracts`.
                 - Do not call `listAvailableTools` for routine surface work; the contract tool is already available.
                 - In an active surface session, call `getSurfaceReflectionContracts` with no `surfaceUuid`; do not guess UUIDs.
+                                - In an active surface session, call `getSurfaceSkillContracts` with no `surfaceUuid`; do not guess UUIDs.
+                                - In an active surface session, call `getSurfaceAgentContracts` with no `surfaceUuid`; do not guess UUIDs.
                 - The active surface is resolved from the current chat session by the platform; treat that as authoritative.
                 - Use the returned reflection input and output contracts as the source of truth.
+                                - Use the returned skill input and output contracts as the source of truth.
+                                - Use the returned surface-agent contracts as the source of truth.
                 - Do not invent reflection IDs, parameter names, or response fields.
+                                - Do not invent skill groupId/skillId pairs or output schemas.
+                                - Do not invent agentTemplateId values or output schemas.
 
                 ### RUNTIME REFLECTION HELPER RULE
                 - Include this script in `index.html` before app logic: `/surface/runtime/v1/reflections.js`.
@@ -306,6 +314,23 @@ Rules:
                 - Use the helper API for all runtime reflection calls:
                         `window.vork.reflections.invoke({ reflectionId, args, bindingGroupToolId, bindingProfileName, reflectionName? })`.
                 - When rendering model output, map fields from the contract schema and response content type.
+
+                ### RUNTIME SKILL HELPER RULE
+                - Include this script in `index.html` before app logic: `/surface/runtime/v1/skills.js`.
+                - Use `groupId` and `skillId` exactly as provided by `getSurfaceSkillContracts`.
+                - Pass only declared input parameters in `args`.
+                - Use the helper API for all runtime skill calls:
+                        `window.vork.skills.invoke({ groupId, skillId, args, waitMs? })`.
+                - Use `window.vork.skills.getContracts()` to populate forms and to validate client-side payload shape.
+
+                ### RUNTIME AGENT HELPER RULE
+                - Include this script in `index.html` before app logic: `/surface/runtime/v1/agents.js`.
+                - Use `agentTemplateId` only from `getSurfaceAgentContracts`.
+                - Use the helper API for all runtime surface-agent calls:
+                        `window.vork.agents.invoke({ agentTemplateId, prompt, outputSchema, waitMs? })`.
+                - `outputSchema` is mandatory for agent invocation and must be a valid JSON Schema object.
+                - Prefer contracts and stable schemas; do not use loose or empty schemas.
+                - Use `window.vork.agents.getContracts()` before wiring agent UIs.
 
             ### OUTPUT CONVENTIONS
             - Place all surface files under the root of the session file space.
@@ -339,7 +364,9 @@ Rules:
                     "writeBase64File",
                     "readFile",
                     "listFiles",
-                    "getSurfaceReflectionContracts"
+                    "getSurfaceReflectionContracts",
+                    "getSurfaceSkillContracts",
+                    "getSurfaceAgentContracts"
             ),
             true,
             true,

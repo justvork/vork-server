@@ -28,6 +28,7 @@ public record Surface(
         String executionSessionUuid,
         List<String> skillUuids,
         List<String> reflectionBindingUuids,
+        List<String> agentTemplateUuids,
         List<String> jobUuids,
     boolean published,
     String logoDataUrl,
@@ -67,6 +68,9 @@ public record Surface(
         if (reflectionBindingUuids == null) {
             reflectionBindingUuids = List.of();
         }
+        if (agentTemplateUuids == null) {
+            agentTemplateUuids = List.of();
+        }
         if (jobUuids == null) {
             jobUuids = List.of();
         }
@@ -94,15 +98,60 @@ public record Surface(
                    String executionSessionUuid,
                    List<String> skillUuids,
                    List<String> reflectionBindingUuids,
+                         List<String> agentTemplateUuids,
                    List<String> jobUuids,
                    long createdAt,
                    long updatedAt) {
         this(uuid, toolId, name, description, sessionUuid, executionSessionUuid,
-                skillUuids, reflectionBindingUuids, jobUuids,
+                     skillUuids, reflectionBindingUuids, agentTemplateUuids, jobUuids,
                 false, "", List.of(), AccessPolicy.defaultPolicy(),
                 null, null, null, ArtifactStatus.SNAPSHOT,
                 createdAt, updatedAt);
     }
+
+            public Surface(String uuid,
+                   String toolId,
+                   String name,
+                   String description,
+                   String sessionUuid,
+                   String executionSessionUuid,
+                   List<String> skillUuids,
+                   List<String> reflectionBindingUuids,
+                   List<String> jobUuids,
+                   long createdAt,
+                   long updatedAt) {
+            this(uuid, toolId, name, description, sessionUuid, executionSessionUuid,
+                skillUuids, reflectionBindingUuids, List.of(), jobUuids,
+                false, "", List.of(), AccessPolicy.defaultPolicy(),
+                null, null, null, ArtifactStatus.SNAPSHOT,
+                createdAt, updatedAt);
+            }
+
+            public Surface(String uuid,
+                   String toolId,
+                   String name,
+                   String description,
+                   String sessionUuid,
+                   String executionSessionUuid,
+                   List<String> skillUuids,
+                   List<String> reflectionBindingUuids,
+                   List<String> jobUuids,
+                   boolean published,
+                   String logoDataUrl,
+                   List<String> assignedUserUuids,
+                   AccessPolicy accessPolicy,
+                   String groupId,
+                   String artifactId,
+                   String version,
+                   ArtifactStatus artifactStatus,
+                   long createdAt,
+                   long updatedAt) {
+            this(uuid, toolId, name, description, sessionUuid, executionSessionUuid,
+                skillUuids, reflectionBindingUuids, List.of(), jobUuids,
+                published, logoDataUrl, assignedUserUuids, accessPolicy,
+                groupId, artifactId, version, artifactStatus,
+                createdAt, updatedAt);
+            }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record AccessPolicy(

@@ -122,7 +122,52 @@ document.addEventListener('DOMContentLoaded', function () {
             validateIdentityField(groupInput, 'agent-group-id-error', 'Group ID');
         });
     }
+
+    initAgentModalTabs();
 });
+
+function initAgentModalTabs() {
+    const tabsRoot = document.getElementById('agent-config-tabs');
+    if (!tabsRoot) return;
+    const buttons = Array.from(tabsRoot.querySelectorAll('.agent-tab-button'));
+    if (buttons.length === 0) return;
+
+    buttons.forEach(function (button) {
+        button.addEventListener('click', function () {
+            setActiveAgentModalTab(button.id);
+        });
+    });
+
+    setActiveAgentModalTab('agent-tab-prompt-model');
+}
+
+function setActiveAgentModalTab(tabButtonId) {
+    const tabsRoot = document.getElementById('agent-config-tabs');
+    if (!tabsRoot) return;
+
+    const buttons = Array.from(tabsRoot.querySelectorAll('.agent-tab-button'));
+    const activeButton = document.getElementById(tabButtonId) || buttons[0];
+    if (!activeButton) return;
+
+    buttons.forEach(function (button) {
+        const isActive = button === activeButton;
+        button.classList.toggle('is-active', isActive);
+        button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        button.classList.toggle('bg-zinc-800', isActive);
+        button.classList.toggle('text-zinc-100', isActive);
+        button.classList.toggle('border-blue-500', isActive);
+        button.classList.toggle('bg-zinc-900', !isActive);
+        button.classList.toggle('text-zinc-300', !isActive);
+        button.classList.toggle('border-zinc-700', !isActive);
+
+        const target = button.getAttribute('data-tab-target');
+        if (!target || !target.startsWith('#')) return;
+        const panel = document.querySelector(target);
+        if (!panel) return;
+        panel.classList.toggle('is-active', isActive);
+        panel.classList.toggle('hidden', !isActive);
+    });
+}
 
 async function loadData() {
     try {
@@ -371,6 +416,10 @@ function syncRecommendedModelLookup(inputId, selectId) {
     }
 }
 
+function activateAgentModalTab(tabButtonId) {
+    setActiveAgentModalTab(tabButtonId);
+}
+
 function openCreate() {
     document.getElementById('agentModalLabel').textContent = 'New Agent';
     document.getElementById('agent-id').value = '';
@@ -383,10 +432,12 @@ function openCreate() {
     clearIdentityValidation('agent-artifact-id', 'agent-artifact-id-error');
     autoArtifactIdEnabled = true;
     document.getElementById('agent-prompt').value = '';
+    document.getElementById('agent-type').value = 'INTERACTIVE';
     document.getElementById('agent-recommended-model').value = '';
     populateAgentApprovalPolicySelect('');
     document.getElementById('agent-name').disabled = false;
     document.getElementById('agent-prompt').disabled = false;
+    document.getElementById('agent-type').disabled = false;
     document.getElementById('agent-recommended-model').disabled = false;
     document.getElementById('agent-recommended-model-lookup').disabled = false;
     document.getElementById('agent-approval-policy').disabled = false;
@@ -404,6 +455,7 @@ function openCreate() {
     renderReflectionBindingPills();
     renderAssignedUserPills();
     renderAssignedJobPills();
+    activateAgentModalTab('agent-tab-prompt-model');
     agentModal.show();
 }
 
@@ -425,11 +477,13 @@ function openEdit(id) {
     clearIdentityValidation('agent-artifact-id', 'agent-artifact-id-error');
     autoArtifactIdEnabled = false;
     document.getElementById('agent-prompt').value = agent.systemPrompt || '';
+    document.getElementById('agent-type').value = agent.agentType || 'INTERACTIVE';
     document.getElementById('agent-recommended-model').value = agent.recommendedModel || '';
     populateAgentApprovalPolicySelect(agentPolicyAssignments[id] || '');
     const mutable = (agent.artifactStatus || 'SNAPSHOT') === 'SNAPSHOT';
     document.getElementById('agent-name').disabled = !mutable;
     document.getElementById('agent-prompt').disabled = !mutable;
+    document.getElementById('agent-type').disabled = !mutable;
     document.getElementById('agent-recommended-model').disabled = !mutable;
     document.getElementById('agent-recommended-model-lookup').disabled = !mutable;
     document.getElementById('agent-approval-policy').disabled = !mutable;
@@ -449,6 +503,7 @@ function openEdit(id) {
     renderReflectionBindingPills();
     renderAssignedUserPills();
     renderAssignedJobPills();
+    activateAgentModalTab('agent-tab-prompt-model');
     agentModal.show();
 }
 
@@ -966,6 +1021,7 @@ async function saveAgent() {
     const body = {
         name: name,
         systemPrompt: document.getElementById('agent-prompt').value,
+        agentType: document.getElementById('agent-type').value || 'INTERACTIVE',
         recommendedModel: document.getElementById('agent-recommended-model').value.trim(),
         allowedTools: modalTools.slice(),
         skillUuids: modalSkills.slice(),

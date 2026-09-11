@@ -93,7 +93,9 @@ import sh.vork.ai.function.GetDateTimeRequest;
 import sh.vork.ai.function.GetMongoDbCollectionSchemaRequest;
 import sh.vork.ai.function.GetTextFileInfoRequest;
 import sh.vork.ai.function.GetPublicKeyRequest;
+import sh.vork.ai.function.GetSurfaceAgentContractsRequest;
 import sh.vork.ai.function.GetSurfaceReflectionContractsRequest;
+import sh.vork.ai.function.GetSurfaceSkillContractsRequest;
 import sh.vork.ai.function.GetTypeSchemaRequest;
 import sh.vork.ai.function.HttpRequestToolRequest;
 import sh.vork.ai.function.InsertMongoDbDocumentRequest;
@@ -639,6 +641,154 @@ the protocol and will break the system. Do not converse. Execute.
                 })
                 .description("Return input/output contracts for reflections attached to the current surface session. Call this before generating UI code that invokes reflections.")
                 .inputType(GetSurfaceReflectionContractsRequest.class)
+                .build();
+    }
+
+    @Bean
+    @ToolCategory("Surface")
+    public ToolCallback getSurfaceSkillContracts(
+            ObjectProvider<SurfaceReflectionContractService> contractServiceProvider,
+            ObjectProvider<sh.vork.surface.service.SurfaceService> surfaceServiceProvider) {
+        return FunctionToolCallback
+                .builder("getSurfaceSkillContracts", (GetSurfaceSkillContractsRequest req) -> {
+                    try {
+                        SurfaceReflectionContractService contractService = contractServiceProvider.getIfAvailable();
+                        sh.vork.surface.service.SurfaceService surfaceService = surfaceServiceProvider.getIfAvailable();
+                        if (contractService == null || surfaceService == null) {
+                            return "{\"status\":\"error\",\"message\":\"Surface skill contracts service is unavailable.\"}";
+                        }
+
+                        String sessionUuid = resolveSessionUuid();
+                        String requestedSurfaceUuid = req == null ? null : req.surfaceUuid();
+
+                        Surface resolvedSurface = null;
+                        boolean resolvedFromSession = false;
+                        if (sessionUuid != null && !sessionUuid.isBlank() && !"system".equals(sessionUuid)) {
+                            resolvedSurface = contractService.findSurfaceBySessionUuid(sessionUuid);
+                            resolvedFromSession = resolvedSurface != null;
+                        }
+
+                        if (resolvedSurface == null) {
+                            if (requestedSurfaceUuid == null || requestedSurfaceUuid.isBlank()) {
+                                return "{\"status\":\"error\",\"message\":\"No surface is linked to this session. Provide surfaceUuid or surfaceId.\"}";
+                            }
+                            resolvedSurface = contractService.resolveSurfaceByUuidOrToolId(requestedSurfaceUuid.trim());
+                        }
+
+                        if (resolvedSurface == null) {
+                            return "{\"status\":\"error\",\"message\":\"Surface not found.\"}";
+                        }
+
+                        if (resolvedFromSession
+                                && requestedSurfaceUuid != null
+                                && !requestedSurfaceUuid.isBlank()
+                                && !resolvedSurface.uuid().equals(requestedSurfaceUuid.trim())
+                                && !resolvedSurface.toolId().equalsIgnoreCase(requestedSurfaceUuid.trim())) {
+                            log.debug("Ignoring mismatched requested surface identifier because active session surface is authoritative [requested={}, activeUuid={}, activeToolId={}]",
+                                    requestedSurfaceUuid, resolvedSurface.uuid(), resolvedSurface.toolId());
+                        }
+
+                        List<Map<String, Object>> skills = new ArrayList<>();
+                        List<Skill> attachedSkills = surfaceService.listAttachedSkills(resolvedSurface.uuid());
+                        for (Skill skill : attachedSkills) {
+                            sh.vork.surface.service.SurfaceService.PublicSkillId ids = surfaceService.publicIdsFor(skill);
+                            Object outputSchema = Map.of();
+                            try {
+                                outputSchema = objectMapper.readValue(skill.outputSchema(), Object.class);
+                            } catch (Exception ignored) {
+                                // Return empty schema when stored value is malformed.
+                            }
+                            skills.add(Map.of(
+                                    "groupId", ids.groupId(),
+                                    "skillId", ids.skillId(),
+                                    "toolName", skill.toolName(),
+                                    "name", skill.name(),
+                                    "outputContentType", skill.outputContentType(),
+                                    "outputSchema", outputSchema));
+                        }
+
+                        return objectMapper.writeValueAsString(Map.of(
+                                "surfaceUuid", resolvedSurface.uuid(),
+                                "skills", skills));
+                    } catch (IllegalArgumentException ex) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + ex.getMessage().replace("\"", "'") + "\"}";
+                    } catch (Exception ex) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + ex.getMessage().replace("\"", "'") + "\"}";
+                    }
+                })
+                .description("Return contracts for skills attached to the current surface session, including groupId/skillId and output schema. Call this before generating UI code that invokes surface skills.")
+                .inputType(GetSurfaceSkillContractsRequest.class)
+                .build();
+    }
+
+    @Bean
+    @ToolCategory("Surface")
+    public ToolCallback getSurfaceAgentContracts(
+            ObjectProvider<SurfaceReflectionContractService> contractServiceProvider,
+            ObjectProvider<sh.vork.surface.service.SurfaceService> surfaceServiceProvider) {
+        return FunctionToolCallback
+                .builder("getSurfaceAgentContracts", (GetSurfaceAgentContractsRequest req) -> {
+                    try {
+                        SurfaceReflectionContractService contractService = contractServiceProvider.getIfAvailable();
+                        sh.vork.surface.service.SurfaceService surfaceService = surfaceServiceProvider.getIfAvailable();
+                        if (contractService == null || surfaceService == null) {
+                            return "{\"status\":\"error\",\"message\":\"Surface agent contracts service is unavailable.\"}";
+                        }
+
+                        String sessionUuid = resolveSessionUuid();
+                        String requestedSurfaceUuid = req == null ? null : req.surfaceUuid();
+
+                        Surface resolvedSurface = null;
+                        boolean resolvedFromSession = false;
+                        if (sessionUuid != null && !sessionUuid.isBlank() && !"system".equals(sessionUuid)) {
+                            resolvedSurface = contractService.findSurfaceBySessionUuid(sessionUuid);
+                            resolvedFromSession = resolvedSurface != null;
+                        }
+
+                        if (resolvedSurface == null) {
+                            if (requestedSurfaceUuid == null || requestedSurfaceUuid.isBlank()) {
+                                return "{\"status\":\"error\",\"message\":\"No surface is linked to this session. Provide surfaceUuid or surfaceId.\"}";
+                            }
+                            resolvedSurface = contractService.resolveSurfaceByUuidOrToolId(requestedSurfaceUuid.trim());
+                        }
+
+                        if (resolvedSurface == null) {
+                            return "{\"status\":\"error\",\"message\":\"Surface not found.\"}";
+                        }
+
+                        if (resolvedFromSession
+                                && requestedSurfaceUuid != null
+                                && !requestedSurfaceUuid.isBlank()
+                                && !resolvedSurface.uuid().equals(requestedSurfaceUuid.trim())
+                                && !resolvedSurface.toolId().equalsIgnoreCase(requestedSurfaceUuid.trim())) {
+                            log.debug("Ignoring mismatched requested surface identifier because active session surface is authoritative [requested={}, activeUuid={}, activeToolId={}]",
+                                    requestedSurfaceUuid, resolvedSurface.uuid(), resolvedSurface.toolId());
+                        }
+
+                        List<Map<String, Object>> agents = new ArrayList<>();
+                        List<AgentTemplate> attachedAgents = surfaceService.listAttachedSurfaceAgents(resolvedSurface.uuid());
+                        for (AgentTemplate template : attachedAgents) {
+                            agents.add(Map.of(
+                                    "agentTemplateId", template.uuid(),
+                                    "name", template.name(),
+                                    "agentType", template.agentType().name()));
+                        }
+
+                        return objectMapper.writeValueAsString(Map.of(
+                                "surfaceUuid", resolvedSurface.uuid(),
+                                "agents", agents));
+                    } catch (IllegalArgumentException ex) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + ex.getMessage().replace("\"", "'") + "\"}";
+                    } catch (Exception ex) {
+                        return "{\"status\":\"error\",\"message\":\""
+                                + ex.getMessage().replace("\"", "'") + "\"}";
+                    }
+                })
+                .description("Return contracts for surface-assigned agents, including agentTemplateId and agent type. Call this before generating UI code that invokes surface agents.")
+                .inputType(GetSurfaceAgentContractsRequest.class)
                 .build();
     }
 

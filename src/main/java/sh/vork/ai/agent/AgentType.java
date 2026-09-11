@@ -10,9 +10,13 @@ package sh.vork.ai.agent;
  *   <li>{@link #BACKGROUND} — automation agents used exclusively by scheduled jobs and
  *       background pipelines.  These agents must call {@code completeBackgroundTask} to
  *       finalise a run and must never appear in the interactive chat dropdown.</li>
+ *   <li>{@link #SURFACE} — agents designed to be invoked from surfaces.
+ *       These agents are attachable to individual surfaces and are not part of
+ *       the interactive chat picker by default.</li>
  * </ul>
  */
 public enum AgentType {
     INTERACTIVE,
-    BACKGROUND
+    BACKGROUND,
+    SURFACE
 }

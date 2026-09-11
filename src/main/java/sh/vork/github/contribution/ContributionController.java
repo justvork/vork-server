@@ -611,6 +611,7 @@ public class ContributionController {
                 existing.executionSessionUuid(),
                 existing.skillUuids(),
                 existing.reflectionBindingUuids(),
+                existing.agentTemplateUuids(),
                 existing.jobUuids(),
                 existing.published(),
                 existing.logoDataUrl(),
@@ -631,6 +632,7 @@ public class ContributionController {
             surfaceArtifact.put("description", submitted.description());
             surfaceArtifact.put("skillUuids", submitted.skillUuids());
             surfaceArtifact.put("reflectionBindingUuids", submitted.reflectionBindingUuids());
+            surfaceArtifact.put("agentTemplateUuids", submitted.agentTemplateUuids());
             surfaceArtifact.put("jobUuids", submitted.jobUuids());
             surfaceArtifact.put("logoDataUrl", submitted.logoDataUrl());
             surfaceArtifact.put("accessPolicy", submitted.accessPolicy());
@@ -1444,6 +1446,7 @@ public class ContributionController {
                 existing.executionSessionUuid(),
                 existing.skillUuids(),
                 existing.reflectionBindingUuids(),
+                existing.agentTemplateUuids(),
                 existing.jobUuids(),
                 existing.published(),
                 existing.logoDataUrl(),

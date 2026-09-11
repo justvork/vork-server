@@ -36,6 +36,7 @@ import sh.vork.skill.SkillVisibility;
 import sh.vork.artifact.ArtifactStatus;
 import sh.vork.surface.Surface;
 import sh.vork.surface.service.SurfaceReflectionContractService;
+import sh.vork.surface.service.SurfaceAgentExecutionService;
 import sh.vork.surface.service.SurfaceService;
 import sh.vork.surface.service.SurfaceSkillExecutionService;
 import sh.vork.util.ZipArchiveUtil;
@@ -51,6 +52,18 @@ class SurfaceControllerTest {
                                                       ReflectionService reflectionService,
                                                       ChatService chatService,
                                                       SurfaceSkillExecutionService executionService) {
+        SurfaceAgentExecutionService agentExecutionService = mock(SurfaceAgentExecutionService.class);
+        return createController(surfaceService, sessionFileSystem, contractService, reflectionService, chatService,
+            executionService, agentExecutionService);
+        }
+
+        private static SurfaceController createController(SurfaceService surfaceService,
+                                  SessionFileSystem sessionFileSystem,
+                                  SurfaceReflectionContractService contractService,
+                                  ReflectionService reflectionService,
+                                  ChatService chatService,
+                                  SurfaceSkillExecutionService executionService,
+                                  SurfaceAgentExecutionService agentExecutionService) {
         @SuppressWarnings("unchecked")
         DatabaseRepository<Surface> surfaceRepository = mock(DatabaseRepository.class);
         return new SurfaceController(
@@ -61,6 +74,7 @@ class SurfaceControllerTest {
                 reflectionService,
                 chatService,
                 executionService,
+            agentExecutionService,
                 new ObjectMapper());
     }
 
@@ -97,6 +111,7 @@ class SurfaceControllerTest {
 
         when(surfaceService.update(
             ArgumentMatchers.eq("vork-surface1-SNAPSHOT"),
+                ArgumentMatchers.any(),
                 ArgumentMatchers.any(),
                 ArgumentMatchers.any(),
                 ArgumentMatchers.any(),
@@ -540,6 +555,7 @@ class SurfaceControllerTest {
         ReflectionService reflectionService = mock(ReflectionService.class);
         ChatService chatService = mock(ChatService.class);
         SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
+        SurfaceAgentExecutionService agentExecutionService = mock(SurfaceAgentExecutionService.class);
         @SuppressWarnings("unchecked")
         DatabaseRepository<Surface> surfaceRepository = mock(DatabaseRepository.class);
         ObjectMapper objectMapper = new ObjectMapper();
@@ -552,6 +568,7 @@ class SurfaceControllerTest {
             reflectionService,
             chatService,
             executionService,
+            agentExecutionService,
             objectMapper);
 
         SurfaceController.SurfaceArtifact incoming = new SurfaceController.SurfaceArtifact(
@@ -602,6 +619,7 @@ class SurfaceControllerTest {
             ArgumentMatchers.eq("created-surface-1"),
             ArgumentMatchers.eq("Imported Surface"),
             ArgumentMatchers.eq("desc"),
+            ArgumentMatchers.any(),
             ArgumentMatchers.any(),
             ArgumentMatchers.any(),
             ArgumentMatchers.any(),
@@ -663,6 +681,89 @@ class SurfaceControllerTest {
         assertEquals(200, response.getStatusCode().value());
         assertEquals(payload, response.getBody());
         }
+
+    @Test
+    void startSurfaceAgentExecution_returnsBadRequest_whenAgentIsNotAssigned() {
+        SurfaceService surfaceService = mock(SurfaceService.class);
+        SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+        SurfaceReflectionContractService contractService = mock(SurfaceReflectionContractService.class);
+        ReflectionService reflectionService = mock(ReflectionService.class);
+        ChatService chatService = mock(ChatService.class);
+        SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
+        SurfaceAgentExecutionService agentExecutionService = mock(SurfaceAgentExecutionService.class);
+        SurfaceController controller = createController(
+            surfaceService,
+            sessionFileSystem,
+            contractService,
+            reflectionService,
+            chatService,
+            executionService,
+            agentExecutionService);
+
+        Principal principal = () -> "admin";
+        when(agentExecutionService.start(
+            ArgumentMatchers.eq("surface-1"),
+            ArgumentMatchers.eq("admin"),
+            ArgumentMatchers.eq("agent-1"),
+            ArgumentMatchers.eq("Generate output"),
+            ArgumentMatchers.any()))
+            .thenThrow(new IllegalArgumentException("Agent is not assigned to this surface."));
+
+        ResponseEntity<?> response = controller.startSurfaceAgentExecution(
+            "surface-1",
+            new SurfaceController.SurfaceAgentInvokeRequest(
+                "agent-1",
+                "Generate output",
+                Map.of("type", "object")),
+            principal);
+
+        assertEquals(400, response.getStatusCode().value());
+        Map<?, ?> body = assertInstanceOf(Map.class, response.getBody());
+        assertEquals("Agent is not assigned to this surface.", body.get("message"));
+    }
+
+    @Test
+    void pollSurfaceAgentExecution_returnsSnapshotPayload() {
+        SurfaceService surfaceService = mock(SurfaceService.class);
+        SessionFileSystem sessionFileSystem = mock(SessionFileSystem.class);
+        SurfaceReflectionContractService contractService = mock(SurfaceReflectionContractService.class);
+        ReflectionService reflectionService = mock(ReflectionService.class);
+        ChatService chatService = mock(ChatService.class);
+        SurfaceSkillExecutionService executionService = mock(SurfaceSkillExecutionService.class);
+        SurfaceAgentExecutionService agentExecutionService = mock(SurfaceAgentExecutionService.class);
+        SurfaceController controller = createController(
+            surfaceService,
+            sessionFileSystem,
+            contractService,
+            reflectionService,
+            chatService,
+            executionService,
+            agentExecutionService);
+
+        Principal principal = () -> "admin";
+        when(agentExecutionService.poll("surface-1", "exec-1", 100L))
+            .thenReturn(new SurfaceAgentExecutionService.ExecutionSnapshot(
+                "exec-1",
+                "surface-1",
+                "session-1",
+                "agent-1",
+                SurfaceAgentExecutionService.ExecutionState.COMPLETED,
+                "application/json",
+                Map.of("status", "ok"),
+                "{\"status\":\"ok\"}",
+                null,
+                1L,
+                2L,
+                2L));
+
+        ResponseEntity<?> response = controller.pollSurfaceAgentExecution("surface-1", "exec-1", 100L, principal);
+
+        assertEquals(200, response.getStatusCode().value());
+        Map<?, ?> body = assertInstanceOf(Map.class, response.getBody());
+        assertEquals("COMPLETED", body.get("state"));
+        assertEquals("application/json", body.get("outputContentType"));
+        assertNotNull(body.get("result"));
+    }
 
         @Test
         void invokeSurfaceReflection_executesAttachedBinding() {
